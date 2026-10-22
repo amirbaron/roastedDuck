@@ -31,6 +31,24 @@ pub struct StorageIndex {
     pub children: Vec<StorageIndex>,
 }
 
+impl rustdb_serde::Serialize for StorageIndex {
+    /// `StorageIndex::Serialize`.
+    fn serialize(&self, serializer: &mut dyn rustdb_serde::Serializer) -> rustdb_common::Result<()> {
+        serializer.write_object(&crate::generated::nodes::StorageIndex {
+            has_index: self.field.is_none(),
+            index: self.index,
+            field: self.field.as_deref().unwrap_or_default(),
+            ty: &self.ty,
+            index_type: if self.pushdown_extract {
+                crate::StorageIndexType::PushdownExtract
+            } else {
+                crate::StorageIndexType::FullRead
+            },
+            child_indexes: &self.children,
+        })
+    }
+}
+
 impl StorageIndex {
     pub const fn new(index: u64) -> Self {
         Self {

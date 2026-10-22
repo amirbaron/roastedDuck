@@ -157,6 +157,9 @@ pub fn union_value_functions() -> ScalarFunctionSet {
     .with_bind(bind_union_value);
     function.varargs = Some(LogicalType::ANY);
     function.null_handling = NullHandling::Special;
+    function.serialize = Some(std::sync::Arc::new(
+        crate::scalar::nested::serialize_variable_return,
+    ));
     let mut set = ScalarFunctionSet::new("union_value");
     set.add(function);
     set

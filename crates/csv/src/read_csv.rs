@@ -969,6 +969,12 @@ fn read_csv_function(name: &'static str, argument: LogicalType) -> TableFunction
     }));
     function.type_pushdown = Some(Arc::new(read_csv_type_pushdown));
     function.file_filter_pushdown = Some(read_csv_file_filter_pushdown());
+    // `CSVReaderSerialize`: DuckDB cannot serialize CSV scans.
+    function.serialize = Some(Arc::new(|_, _, _| {
+        Err(rustdb_common::Error::not_implemented(
+            "CSVReaderSerialize not implemented",
+        ))
+    }));
     function
 }
 

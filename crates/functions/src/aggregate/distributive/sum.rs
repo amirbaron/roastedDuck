@@ -330,6 +330,17 @@ fn sum_no_overflow_bind(
     Err(Error::binder("sum_no_overflow is for internal use only!"))
 }
 
+/// DuckDB's `SumNoOverflowSerialize`: nothing, the function is bound again from its
+/// arguments.
+#[allow(clippy::unnecessary_wraps, reason = "a serialize callback")]
+fn serialize_sum_no_overflow(
+    _: &mut dyn rustdb_serde::Serializer,
+    _: Option<&dyn FunctionData>,
+    _: &AggregateFunction,
+) -> Result<()> {
+    Ok(())
+}
+
 /// `sum_no_overflow`, which the optimizer substitutes for `sum` when statistics prove the
 /// sum fits; calling it directly is an error.
 pub fn sum_no_overflow_functions() -> AggregateFunctionSet {
@@ -356,9 +367,12 @@ pub fn sum_no_overflow_functions() -> AggregateFunctionSet {
     ] {
         let mut function = function.with_bind(sum_no_overflow_bind).order_independent();
         function.arguments = vec![ty];
+        function.serialize = Some(Arc::new(serialize_sum_no_overflow));
         set.add(function);
     }
-    set.add(decimal_overload(sum_no_overflow_bind));
+    let mut decimal = decimal_overload(sum_no_overflow_bind);
+    decimal.serialize = Some(Arc::new(serialize_sum_no_overflow));
+    set.add(decimal);
     set.renamed("sum_no_overflow")
 }
 

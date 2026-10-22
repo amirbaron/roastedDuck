@@ -359,7 +359,24 @@ pub struct AggregateFunction {
     /// returns new bind data (DuckDB's `statistics` callback with `AggregateStatisticsInput`,
     /// which may update the bind data).
     pub statistics: Option<AggregateStatistics>,
+    /// The arguments before the bind removed some (DuckDB's `original_arguments`, set by
+    /// `Function::EraseArgument`); empty when it removed none.
+    pub original_arguments: Vec<LogicalType>,
+    /// The catalog and schema of the function's catalog entry (DuckDB's `catalog_name`
+    /// and `schema_name`); empty for a function not taken from a catalog.
+    pub catalog_name: Arc<str>,
+    pub schema_name: Arc<str>,
+    /// Writes the bind data, so that a serialized plan can bind the function again
+    /// (DuckDB's `serialize` callback).
+    pub serialize: Option<AggregateSerialize>,
 }
+
+/// See [`AggregateFunction::serialize`] (DuckDB's `aggregate_serialize_t`).
+pub type AggregateSerialize = Arc<
+    dyn Fn(&mut dyn rustdb_serde::Serializer, Option<&dyn FunctionData>, &AggregateFunction) -> Result<()>
+        + Send
+        + Sync,
+>;
 
 /// See [`AggregateFunction::statistics`].
 pub type AggregateStatistics = Arc<
@@ -388,8 +405,36 @@ impl AggregateFunction {
             collation: AggregateCollation::None,
             has_state_destructor: false,
             statistics: None,
+            original_arguments: Vec::new(),
+            catalog_name: Arc::from(""),
+            schema_name: Arc::from(""),
+            serialize: None,
         }
         .with_state_destructor_of_ops()
+    }
+
+    /// Sets the catalog and schema of the function's catalog entry (see
+    /// [`AggregateFunction::catalog_name`]); empty ones for a function the engine uses
+    /// directly rather than through the catalog (DuckDB's `XFun::GetFunction()`).
+    pub fn set_catalog_entry(&mut self, catalog: &Arc<str>, schema: &Arc<str>) {
+        self.catalog_name = Arc::clone(catalog);
+        self.schema_name = Arc::clone(schema);
+    }
+
+    /// Forgets the catalog entry: the bind made a new function object (DuckDB's
+    /// `function = GetX(...)` binds and `XFun::GetFunction()` callers).
+    pub fn clear_catalog_entry(&mut self) {
+        let empty: Arc<str> = Arc::from("");
+        self.set_catalog_entry(&empty, &empty);
+    }
+
+    /// Removes argument `index`, which the bind consumed, keeping the arguments as they
+    /// were before the first removal (DuckDB's `Function::EraseArgument`).
+    pub fn erase_argument(&mut self, index: usize) {
+        if self.original_arguments.is_empty() {
+            self.original_arguments.clone_from(&self.arguments);
+        }
+        self.arguments.remove(index);
     }
 
     fn with_state_destructor_of_ops(mut self) -> Self {
@@ -427,6 +472,19 @@ impl AggregateFunction {
         + 'static,
     ) -> Self {
         self.bind = Some(Arc::new(bind));
+        self
+    }
+
+    /// Sets the bind data writer (see [`AggregateFunction::serialize`]).
+    #[must_use]
+    pub fn with_serialize(
+        mut self,
+        serialize: impl Fn(&mut dyn rustdb_serde::Serializer, Option<&dyn FunctionData>, &Self) -> Result<()>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.serialize = Some(Arc::new(serialize));
         self
     }
 

@@ -22,6 +22,23 @@ pub enum CompareOp {
     GreaterThanOrEqual,
 }
 
+impl rustdb_serde::Serialize for CompareOp {
+    /// Written as the `ExpressionType` of the comparison (a table filter's
+    /// `comparison_type`).
+    fn serialize(&self, serializer: &mut dyn rustdb_serde::Serializer) -> rustdb_serde::Result<()> {
+        let (name, value) = match self {
+            Self::Equal => ("COMPARE_EQUAL", 25),
+            Self::NotEqual => ("COMPARE_NOTEQUAL", 26),
+            Self::LessThan => ("COMPARE_LESSTHAN", 27),
+            Self::GreaterThan => ("COMPARE_GREATERTHAN", 28),
+            Self::LessThanOrEqual => ("COMPARE_LESSTHANOREQUALTO", 29),
+            Self::GreaterThanOrEqual => ("COMPARE_GREATERTHANOREQUALTO", 30),
+        };
+        rustdb_serde::write_enum(serializer, name, |serializer| serializer.write_u8(value));
+        Ok(())
+    }
+}
+
 impl CompareOp {
     /// The same comparison with its operands swapped (`a < b` ⇔ `b > a`).
     #[must_use]

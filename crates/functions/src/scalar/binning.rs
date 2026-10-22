@@ -560,5 +560,9 @@ pub fn equi_width_bins_functions() -> ScalarFunctionSet {
         )
         .with_bind(bind),
     );
+    // `EquiWidthBinSerialize` writes nothing: the bind runs again.
+    for function in &mut set.functions {
+        function.serialize = Some(std::sync::Arc::new(|_, _, _| Ok(())));
+    }
     set
 }

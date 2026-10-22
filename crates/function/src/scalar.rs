@@ -3,6 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use rustdb_common::Result;
+use rustdb_serde::Serializer;
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::FunctionClient;
@@ -59,6 +60,44 @@ pub trait FunctionData: Any + Send + Sync + fmt::Debug {
     }
 }
 
+/// The bind data of DECIMAL `+`, `-`, `*` and `%` (DuckDB's `DecimalArithmeticBindData`):
+/// whether the kernel checks for overflow. Statistics propagation clears it when the
+/// operands' ranges rule an overflow out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecimalArithmeticBindData {
+    pub check_overflow: bool,
+}
+
+impl FunctionData for DecimalArithmeticBindData {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn equals(&self, other: &dyn FunctionData) -> bool {
+        other.as_any().downcast_ref::<Self>() == Some(self)
+    }
+}
+
+/// The bind data of `list_transform`, `list_filter` and `list_reduce` (DuckDB's
+/// `ListLambdaBindData`). The lambda body stays on the bound function expression (its
+/// `lambda`), which writes it with this data in serialized plans.
+#[derive(Debug, Clone)]
+pub struct ListLambdaBindData {
+    pub return_type: LogicalType,
+    /// Whether the call keeps its lambda (DuckDB's `lambda_expr`, null for a NULL list).
+    pub has_lambda: bool,
+    /// Whether the last lambda parameter is the element's index.
+    pub has_index: bool,
+    /// Whether `list_reduce` has an initial value.
+    pub has_initial: bool,
+}
+
+impl FunctionData for ListLambdaBindData {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// The bind data of `stats(x)` (DuckDB's `StatsBindData`): the statistics of `x` as
 /// text, filled in by the optimizer's statistics propagation.
 #[derive(Debug, Default)]
@@ -102,7 +141,7 @@ pub type ScalarKernel = Arc<dyn Fn(&DataChunk, &mut FunctionState, &mut Vector) 
 
 /// A builtin aggregate resolved and bound for a scalar function that runs it internally
 /// (such as `list_aggregate`).
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct BoundAggregateFunction {
     /// The chosen overload after its bind callback.
     pub function: AggregateFunction,
@@ -111,6 +150,22 @@ pub struct BoundAggregateFunction {
     pub argument_count: usize,
     /// The bound call as SQL text, e.g. `arg_max(NULL, 1)`.
     pub display: String,
+    /// Writes the bound call as the binder's aggregate expression (a nullable value), for
+    /// the bind data of a serialized plan.
+    pub serialize: ExpressionWriter,
+}
+
+/// Writes an expression the binder made (see [`BoundAggregateFunction::serialize`]).
+pub type ExpressionWriter = Arc<dyn Fn(&mut dyn Serializer) -> Result<()> + Send + Sync>;
+
+impl fmt::Debug for BoundAggregateFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BoundAggregateFunction")
+            .field("function", &self.function)
+            .field("argument_count", &self.argument_count)
+            .field("display", &self.display)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Resolves a builtin aggregate by name and binds it (DuckDB's lookup in the system
@@ -212,7 +267,29 @@ pub struct ScalarFunction {
     /// The kernel statistics propagation switches to when the first argument cannot
     /// contain unicode (the `SetFunctionCallback` of DuckDB's `ILikePropagateStats`).
     pub ascii_kernel: Option<ScalarKernel>,
+    /// The arguments before the bind removed some (DuckDB's `original_arguments`, set by
+    /// `Function::EraseArgument`); empty when it removed none.
+    pub original_arguments: Vec<LogicalType>,
+    /// The positions `erase_argument` removed while binding, in order: the binder drops
+    /// the call's arguments there too.
+    pub erased_arguments: Vec<usize>,
+    /// Casts the bind adds to the call's arguments, by position and in order, keeping
+    /// the declared argument types (DuckDB's binds wrap `arguments[i]` in a cast, e.g.
+    /// `AddArrayCastToList`).
+    pub argument_casts: Vec<(usize, LogicalType)>,
+    /// The catalog and schema of the function's catalog entry (DuckDB's `catalog_name`
+    /// and `schema_name`, set by the function catalog entries); empty for a function not
+    /// taken from a catalog.
+    pub catalog_name: Arc<str>,
+    pub schema_name: Arc<str>,
+    /// Writes the bind data, so that a serialized plan can bind the function again
+    /// (DuckDB's `serialize` callback).
+    pub serialize: Option<ScalarSerialize>,
 }
+
+/// See [`ScalarFunction::serialize`] (DuckDB's `scalar_serialize_t`).
+pub type ScalarSerialize =
+    Arc<dyn Fn(&mut dyn Serializer, Option<&dyn FunctionData>, &ScalarFunction) -> Result<()> + Send + Sync>;
 
 /// See [`ScalarFunction::bind_expression`].
 pub type BindExpression =
@@ -240,7 +317,44 @@ impl ScalarFunction {
             bind_expression: None,
             rewrite_expression: None,
             ascii_kernel: None,
+            original_arguments: Vec::new(),
+            erased_arguments: Vec::new(),
+            argument_casts: Vec::new(),
+            catalog_name: Arc::from(""),
+            schema_name: Arc::from(""),
+            serialize: None,
         }
+    }
+
+    /// Sets the catalog and schema of the function's catalog entry (see
+    /// [`ScalarFunction::catalog_name`]); empty ones for a function the engine uses
+    /// directly rather than through the catalog (DuckDB's `XFun::GetFunction()`).
+    pub fn set_catalog_entry(&mut self, catalog: &Arc<str>, schema: &Arc<str>) {
+        self.catalog_name = Arc::clone(catalog);
+        self.schema_name = Arc::clone(schema);
+    }
+
+    /// Forgets the catalog entry: the bind made a new function object (DuckDB's
+    /// `function = GetX(...)` binds and `XFun::GetFunction()` callers).
+    pub fn clear_catalog_entry(&mut self) {
+        let empty: Arc<str> = Arc::from("");
+        self.set_catalog_entry(&empty, &empty);
+    }
+
+    /// Casts argument `index` of the call to `target` (see
+    /// [`ScalarFunction::argument_casts`]).
+    pub fn cast_argument(&mut self, index: usize, target: LogicalType) {
+        self.argument_casts.push((index, target));
+    }
+
+    /// Removes argument `index`, which the bind consumed, keeping the arguments as they
+    /// were before the first removal (DuckDB's `Function::EraseArgument`).
+    pub fn erase_argument(&mut self, index: usize) {
+        if self.original_arguments.is_empty() {
+            self.original_arguments.clone_from(&self.arguments);
+        }
+        self.arguments.remove(index);
+        self.erased_arguments.push(index);
     }
 
     /// Sets the kernel for arguments without unicode (see [`ScalarFunction::ascii_kernel`]).
@@ -263,6 +377,19 @@ impl ScalarFunction {
         + 'static,
     ) -> Self {
         self.bind_expression = Some(Arc::new(bind_expression));
+        self
+    }
+
+    /// Sets the bind data writer (see [`ScalarFunction::serialize`]).
+    #[must_use]
+    pub fn with_serialize(
+        mut self,
+        serialize: impl Fn(&mut dyn Serializer, Option<&dyn FunctionData>, &Self) -> Result<()>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.serialize = Some(Arc::new(serialize));
         self
     }
 

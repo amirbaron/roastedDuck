@@ -401,6 +401,12 @@ impl Error {
         self.kind
     }
 
+    /// The extra info (`error_subtype`, `position`, ...) in the iteration order of the
+    /// map of an `ErrorData` that caught this error (`ErrorData::ExtraInfo`).
+    pub fn extra_info(&self) -> Vec<(&'static str, &str)> {
+        self.extra_info.iteration_order()
+    }
+
     /// The message without the `"<Kind> Error: "` prefix.
     pub fn raw_message(&self) -> &str {
         &self.message

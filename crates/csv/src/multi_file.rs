@@ -20,7 +20,9 @@ pub struct MultiFileOptions {
     pub auto_detect_hive_partitioning: bool,
     pub union_by_name: bool,
     pub hive_types_autocast: bool,
-    pub hive_types_schema: BTreeMap<String, LogicalType>,
+    /// The partition types, given or detected (DuckDB's `case_insensitive_map_t`), in the
+    /// order they were added.
+    pub hive_types_schema: Vec<(String, LogicalType)>,
 }
 
 impl Default for MultiFileOptions {
@@ -32,8 +34,36 @@ impl Default for MultiFileOptions {
             auto_detect_hive_partitioning: true,
             union_by_name: false,
             hive_types_autocast: true,
-            hive_types_schema: BTreeMap::new(),
+            hive_types_schema: Vec::new(),
         }
+    }
+}
+
+impl MultiFileOptions {
+    /// The type given or detected for the partition `name` (case-insensitively).
+    pub fn hive_type(&self, name: &str) -> Option<&LogicalType> {
+        self.hive_types_schema
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, ty)| ty)
+    }
+
+    /// `hive_types_schema` as DuckDB walks it: a `case_insensitive_map_t`, in libc++'s
+    /// iteration order.
+    pub fn hive_types_in_map_order(&self) -> Vec<(&str, &LogicalType)> {
+        let mut map = rustdb_common::libcxx::UnorderedOrder::default();
+        for (name, _) in &self.hive_types_schema {
+            map.insert(rustdb_common::libcxx::ci_hash(name), name.as_str(), |a, b| {
+                a.eq_ignore_ascii_case(b)
+            });
+        }
+        map.order()
+            .into_iter()
+            .filter_map(|node| {
+                let name = map.keys()[node];
+                self.hive_type(name).map(|ty| (name, ty))
+            })
+            .collect()
     }
 }
 
@@ -177,7 +207,15 @@ impl MultiFileOptions {
                         )));
                     }
                     let parsed = parse_type(child.as_str().unwrap_or_default())?;
-                    self.hive_types_schema.insert(name.clone(), parsed);
+                    // `hive_types_schema[name] = type`.
+                    match self
+                        .hive_types_schema
+                        .iter_mut()
+                        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                    {
+                        Some((_, ty)) => *ty = parsed,
+                        None => self.hive_types_schema.push((name.clone(), parsed)),
+                    }
                 }
             }
             _ => return Ok(false),
@@ -192,10 +230,7 @@ impl MultiFileOptions {
 
     /// `GetHiveLogicalType`.
     pub fn hive_logical_type(&self, column: &str) -> LogicalType {
-        self.hive_types_schema
-            .get(column)
-            .cloned()
-            .unwrap_or(LogicalType::VARCHAR)
+        self.hive_type(column).cloned().unwrap_or(LogicalType::VARCHAR)
     }
 
     /// `AutoDetectHivePartitioning`.
@@ -226,14 +261,17 @@ impl MultiFileOptions {
     /// `AutoDetectHiveTypesInternal`.
     fn auto_detect_hive_types(&mut self, files: &FileList, casts: &CastFunctionSet) {
         let candidates = [LogicalType::DATE, LogicalType::TIMESTAMP, LogicalType::BIGINT];
-        let mut detected: HashMap<String, LogicalType> = HashMap::new();
+        // An `unordered_map<string, LogicalType>`: its types join the schema in libc++'s
+        // iteration order.
+        let mut detected = rustdb_common::libcxx::UnorderedOrder::default();
+        let mut detected_types: Vec<LogicalType> = Vec::new();
         for file in &files.files {
             let partitions = hive_parse(file);
             if partitions.is_empty() {
                 return;
             }
             for (name, value) in partitions {
-                if self.hive_types_schema.contains_key(&name) || hive_is_null(&value) {
+                if self.hive_type(&name).is_some() || hive_is_null(&value) {
                     continue;
                 }
                 let text = Value::varchar(&value);
@@ -242,20 +280,21 @@ impl MultiFileOptions {
                     .find(|candidate| text.try_cast_as(casts, candidate, true).is_ok())
                     .cloned()
                     .unwrap_or(LogicalType::VARCHAR);
-                match detected.get_mut(&name) {
-                    None => {
-                        detected.insert(name, detected_type);
-                    }
-                    Some(existing) => {
-                        if *existing != detected_type {
-                            *existing = LogicalType::VARCHAR;
-                        }
-                    }
+                let hash = rustdb_common::libcxx::string_hash(name.as_bytes());
+                let (inserted, index) = detected.insert(hash, name, |a, b| a == b);
+                if inserted {
+                    detected_types.push(detected_type);
+                } else if detected_types[index] != detected_type {
+                    detected_types[index] = LogicalType::VARCHAR;
                 }
             }
         }
-        for (name, ty) in detected {
-            self.hive_types_schema.entry(name).or_insert(ty);
+        for node in detected.order() {
+            let name = &detected.keys()[node];
+            if self.hive_type(name).is_none() {
+                self.hive_types_schema
+                    .push((name.clone(), detected_types[node].clone()));
+            }
         }
     }
 
@@ -338,7 +377,7 @@ pub fn bind_options(
                 return Err(Error::binder(error));
             }
         }
-        for name in options.hive_types_schema.keys() {
+        for (name, _) in options.hive_types_in_map_order() {
             if !partitions.contains_key(name) {
                 return Err(Error::invalid_input(format!(
                     "Unknown hive_type: \"{name}\" does not appear to be a partition"

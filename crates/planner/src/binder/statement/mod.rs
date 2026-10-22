@@ -10,7 +10,7 @@ use rustdb_ast::{
     TransactionType,
 };
 use rustdb_common::{CaseInsensitiveMap, Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId};
+use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 mod alter;
 mod alter_struct;
@@ -80,6 +80,7 @@ pub fn bind_statement(scope: &mut BindScope<'_>, statement: &mut SqlStatement) -
         SqlStatementKind::Alter(info) => alter::bind_alter(scope, info),
         SqlStatementKind::Attach(info) => bind_attach(scope, info),
         SqlStatementKind::Detach(info) => Ok(bind_detach(scope, info)),
+        SqlStatementKind::Load(info) => Ok(bind_load(scope, info)),
         SqlStatementKind::Copy(info) => copy::bind_copy(scope, info),
         SqlStatementKind::Export(export) => export::bind_export(scope, export),
         SqlStatementKind::Vacuum(info) => bind_vacuum(scope, info),
@@ -160,6 +161,7 @@ fn bind_vacuum(scope: &mut BindScope<'_>, info: &mut rustdb_ast::VacuumInfo) -> 
     let mut plan = LogicalOperator::new(LogicalKind::Vacuum(Box::new(crate::operator::LogicalVacuum {
         table: entry,
         column_id_map,
+        info: info.clone(),
     })));
     plan.add_child(projection);
     Ok(BoundStatement::new(plan, names, types))
@@ -338,6 +340,15 @@ fn bind_detach(scope: &BindScope<'_>, info: &rustdb_ast::DetachInfo) -> BoundSta
     success(LogicalOperator::new(LogicalKind::Detach(info.clone())))
 }
 
+/// `LOAD` / `INSTALL` (DuckDB's `Binder::Bind(LoadStatement &)`).
+fn bind_load(scope: &BindScope<'_>, info: &rustdb_ast::LoadInfo) -> BoundStatement {
+    scope.with_properties(|properties| {
+        properties.allow_stream_result = false;
+        properties.return_type = StatementReturnType::Nothing;
+    });
+    success(LogicalOperator::new(LogicalKind::Load(Box::new(info.clone()))))
+}
+
 /// `BEGIN` / `COMMIT` / `ROLLBACK` (DuckDB's `Bind(TransactionStatement &)`).
 fn bind_transaction(scope: &BindScope<'_>, info: &TransactionInfo) -> BoundStatement {
     scope.with_properties(|properties| {
@@ -360,10 +371,32 @@ fn bind_deallocate(scope: &BindScope<'_>, drop: &DropInfo) -> BoundStatement {
     }))
 }
 
-/// `PRAGMA name(args)` without a result (DuckDB's `Bind(PragmaStatement &)` over
-/// `Binder::BindPragma`): the arguments are constants, and the catalog must hold the
-/// pragma with an overload for them.
+/// A pragma bound to its overload (DuckDB's `BoundPragmaInfo`).
+#[derive(Debug)]
+pub struct BoundPragmaInfo {
+    pub function: rustdb_function::PragmaFunction,
+    pub parameters: Vec<Value>,
+}
+
+/// `PRAGMA name(args)` without a result (DuckDB's `Bind(PragmaStatement &)`): a pragma
+/// that stands for a query was replaced by it before binding.
 fn bind_pragma(scope: &mut BindScope<'_>, pragma: &mut PragmaInfo) -> Result<BoundStatement> {
+    let bound = bind_pragma_info(scope, pragma)?;
+    if bound.function.query {
+        return Err(Error::binder(
+            "PRAGMA function does not have a function specified",
+        ));
+    }
+    scope.with_properties(|properties| properties.return_type = StatementReturnType::Nothing);
+    Ok(success(LogicalOperator::new(LogicalKind::Pragma {
+        name: pragma.name.clone(),
+        parameters: bound.parameters,
+    })))
+}
+
+/// DuckDB's `Binder::BindPragma`: the arguments are constants, and the catalog must hold
+/// the pragma with an overload for them.
+pub fn bind_pragma_info(scope: &mut BindScope<'_>, pragma: &mut PragmaInfo) -> Result<BoundPragmaInfo> {
     let constant = |scope: &mut BindScope<'_>, parameter: &mut rustdb_ast::ParsedExpression| {
         let bound = {
             let (inner, outer) = scope.split();
@@ -429,11 +462,10 @@ fn bind_pragma(scope: &mut BindScope<'_>, pragma: &mut PragmaInfo) -> Result<Bou
         None,
         &function.name,
     )?;
-    scope.with_properties(|properties| properties.return_type = StatementReturnType::Nothing);
-    Ok(success(LogicalOperator::new(LogicalKind::Pragma {
-        name: pragma.name.clone(),
+    Ok(BoundPragmaInfo {
+        function: function.clone(),
         parameters,
-    })))
+    })
 }
 
 /// `PREPARE name AS statement` (DuckDB's `Bind(PrepareStatement &)`).

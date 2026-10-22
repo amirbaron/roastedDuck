@@ -243,7 +243,12 @@ fn bind(function: &mut AggregateFunction, input: &BindInput<'_>) -> Result<Optio
     };
     let list = function.return_type.id() == LogicalTypeId::List;
     let ty = input.argument_types[0].clone();
+    // `EraseArgument`; a DECIMAL call then gets a new function (without the original
+    // arguments or a catalog entry).
+    function.erase_argument(1);
     if ty.id() == LogicalTypeId::Decimal {
+        function.original_arguments.clear();
+        function.clear_catalog_entry();
         function.ops = typed_ops(ty.physical_type(), &ty, list)?;
         if list {
             function.return_type = LogicalType::list(ty.clone());
@@ -256,8 +261,19 @@ fn bind(function: &mut AggregateFunction, input: &BindInput<'_>) -> Result<Optio
             function.arguments[0] = integer;
         }
     }
-    function.arguments.truncate(1);
     Ok(Some(Arc::new(Quantiles(quantiles))))
+}
+
+/// `ApproximateQuantileBindData::Serialize`.
+fn serialize_quantiles(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    bind_data: Option<&dyn FunctionData>,
+    _: &AggregateFunction,
+) -> Result<()> {
+    let quantiles = bind_data
+        .and_then(|data| data.as_any().downcast_ref::<Quantiles>())
+        .ok_or_else(|| Error::internal("approx_quantile without its bind data"))?;
+    serializer.write_property(100, "quantiles", &quantiles.0)
 }
 
 fn overload(ty: &LogicalType, list: bool) -> Result<AggregateFunction> {
@@ -286,6 +302,7 @@ fn overload(ty: &LogicalType, list: bool) -> Result<AggregateFunction> {
     )
     .with_bind(bind);
     function.ops = ops;
+    function.serialize = Some(Arc::new(serialize_quantiles));
     Ok(function)
 }
 

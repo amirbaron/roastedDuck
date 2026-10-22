@@ -137,20 +137,22 @@ fn decimal_multiply_checked<T: DecimalStorage>(left: T, right: T) -> Result<T> {
         .ok_or_else(|| decimal_overflow("multiplication", "*", left, right, "bigger decimal"))
 }
 
-/// Bind data of DECIMAL arithmetic (DuckDB's `DecimalArithmeticBindData`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct DecimalArithmetic {
-    check_overflow: bool,
-}
+/// Bind data of DECIMAL arithmetic.
+type DecimalArithmetic = rustdb_function::DecimalArithmeticBindData;
 
-impl FunctionData for DecimalArithmetic {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn equals(&self, other: &dyn FunctionData) -> bool {
-        other.as_any().downcast_ref::<Self>() == Some(self)
-    }
+/// DuckDB's `SerializeDecimalArithmetic` (of `+`, `-` and `*`): the overflow check and
+/// the bound types.
+fn serialize_decimal_arithmetic(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    bind_data: Option<&dyn FunctionData>,
+    function: &ScalarFunction,
+) -> Result<()> {
+    let check_overflow = bind_data
+        .and_then(|data| data.as_any().downcast_ref::<DecimalArithmetic>())
+        .is_some_and(|data| data.check_overflow);
+    serializer.write_property(100, "check_overflow", &check_overflow)?;
+    serializer.write_property(101, "return_type", &function.return_type)?;
+    serializer.write_property(102, "arguments", &function.arguments)
 }
 
 /// The DECIMAL `(width, scale)` of an argument type.
@@ -411,7 +413,10 @@ fn numeric_binary(op: Arith, ty: &LogicalType) -> ScalarFunction {
             Arith::Subtract => Box::new(bind_decimal_add_subtract(DecimalOp::Subtract)),
             Arith::Multiply => Box::new(bind_decimal_multiply),
         };
-        return function(name, args, ty.clone(), |_, _| Err(unbound())).with_bind(move |f, i| bind(f, i));
+        let mut function =
+            function(name, args, ty.clone(), |_, _| Err(unbound())).with_bind(move |f, i| bind(f, i));
+        function.serialize = Some(Arc::new(serialize_decimal_arithmetic));
+        return function;
     }
     let kernel: Kernel = match ty.physical_type() {
         PhysicalType::Float => float_kernel::<f32>(op),

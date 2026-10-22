@@ -1,7 +1,7 @@
 //! Default values that `WritePropertyWithDefault` omits (DuckDB's
 //! `SerializationDefaultValue`).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rustdb_common::{CaseInsensitiveMap, CaseInsensitiveSet, OrderedMap};
 
@@ -62,6 +62,20 @@ impl DefaultValue for String {
     }
 }
 
+// The borrowed forms written by the property structs of hand-written types (the logical
+// plan's); they are never read, so they have no `default_value`.
+impl DefaultValue for str {
+    fn is_default(&self) -> bool {
+        self.is_empty()
+    }
+}
+
+impl<T> DefaultValue for [T] {
+    fn is_default(&self) -> bool {
+        self.is_empty()
+    }
+}
+
 impl DefaultValue for OptionalIdx {
     fn is_default(&self) -> bool {
         self.0.is_none()
@@ -93,6 +107,16 @@ impl<T> DefaultValue for Vec<T> {
 }
 
 impl<T> DefaultValue for BTreeSet<T> {
+    fn is_default(&self) -> bool {
+        self.is_empty()
+    }
+
+    fn default_value() -> Self {
+        Self::new()
+    }
+}
+
+impl<K, V> DefaultValue for BTreeMap<K, V> {
     fn is_default(&self) -> bool {
         self.is_empty()
     }

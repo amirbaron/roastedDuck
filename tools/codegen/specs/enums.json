@@ -29,6 +29,26 @@
       }
     ]
   },
+  "AggregateType": {
+    "header": "duckdb/function/aggregate_state.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "NON_DISTINCT",
+        "value": 1,
+        "strings": [
+          "NON_DISTINCT"
+        ]
+      },
+      {
+        "name": "DISTINCT",
+        "value": 2,
+        "strings": [
+          "DISTINCT"
+        ]
+      }
+    ]
+  },
   "AlterDatabaseType": {
     "header": "duckdb/parser/parsed_data/alter_database_info.hpp",
     "underlying": "uint8_t",
@@ -705,6 +725,67 @@
           "FOREIGN_KEY"
         ],
         "doc": "FOREIGN KEY constraint"
+      }
+    ]
+  },
+  "CopyFunctionReturnType": {
+    "header": "duckdb/function/copy_function.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "CHANGED_ROWS",
+        "value": 0,
+        "strings": [
+          "CHANGED_ROWS"
+        ]
+      },
+      {
+        "name": "CHANGED_ROWS_AND_FILE_LIST",
+        "value": 1,
+        "strings": [
+          "CHANGED_ROWS_AND_FILE_LIST"
+        ]
+      },
+      {
+        "name": "WRITTEN_FILE_STATISTICS",
+        "value": 2,
+        "strings": [
+          "WRITTEN_FILE_STATISTICS"
+        ]
+      }
+    ]
+  },
+  "CopyOverwriteMode": {
+    "header": "duckdb/common/enums/copy_overwrite_mode.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "COPY_ERROR_ON_CONFLICT",
+        "value": 0,
+        "strings": [
+          "COPY_ERROR_ON_CONFLICT"
+        ]
+      },
+      {
+        "name": "COPY_OVERWRITE",
+        "value": 1,
+        "strings": [
+          "COPY_OVERWRITE"
+        ]
+      },
+      {
+        "name": "COPY_OVERWRITE_OR_IGNORE",
+        "value": 2,
+        "strings": [
+          "COPY_OVERWRITE_OR_IGNORE"
+        ]
+      },
+      {
+        "name": "COPY_APPEND",
+        "value": 3,
+        "strings": [
+          "COPY_APPEND"
+        ]
       }
     ]
   },
@@ -3681,6 +3762,33 @@
         "value": 16,
         "strings": [
           "UPDATE_EXTENSIONS_INFO"
+        ]
+      }
+    ]
+  },
+  "PreserveOrderType": {
+    "header": "duckdb/common/enums/preserve_order.hpp",
+    "underlying": "uint8_t",
+    "members": [
+      {
+        "name": "AUTOMATIC",
+        "value": 0,
+        "strings": [
+          "AUTOMATIC"
+        ]
+      },
+      {
+        "name": "PRESERVE_ORDER",
+        "value": 1,
+        "strings": [
+          "PRESERVE_ORDER"
+        ]
+      },
+      {
+        "name": "DONT_PRESERVE_ORDER",
+        "value": 2,
+        "strings": [
+          "DONT_PRESERVE_ORDER"
         ]
       }
     ]

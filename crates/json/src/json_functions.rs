@@ -10,6 +10,7 @@ pub(crate) mod json_extract;
 pub(crate) mod json_keys;
 pub(crate) mod json_merge_patch;
 pub(crate) mod json_pretty;
+pub mod json_serialize_plan;
 pub mod json_serialize_sql;
 pub(crate) mod json_structure;
 pub(crate) mod json_table_in_out;
@@ -224,6 +225,7 @@ pub fn json_scalar_functions() -> Vec<ScalarFunctionSet> {
     functions.push(json_valid::valid_function());
     functions.push(json_value::value_function());
     functions.push(json_serialize_sql::serialize_sql_function());
+    functions.push(json_serialize_plan::serialize_plan_function());
     functions.push(json_serialize_sql::deserialize_sql_function());
     functions.push(json_pretty::pretty_function());
     functions

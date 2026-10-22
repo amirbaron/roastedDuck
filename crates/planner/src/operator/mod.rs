@@ -9,6 +9,7 @@ mod copy_to_file;
 mod display;
 mod explain;
 mod expression_filter;
+mod serialize;
 mod table_index;
 
 use std::sync::{Arc, Mutex, PoisonError};
@@ -24,13 +25,13 @@ use rustdb_types::{DataChunk, LogicalType, Value};
 use crate::binder::CorrelatedColumns;
 use crate::column_binding::generate_column_bindings;
 use crate::expression::{BoundOrderByNode, BoundOrderModifier, Expression, ExpressionKind};
-use crate::generated::enums::{DistinctType, LogicalOperatorType};
+use crate::generated::enums::{DistinctType, LogicalOperatorType, TupleDataValidityType};
 use crate::prepared::PreparedStatementData;
 use crate::{ColumnBinding, SubqueryType};
 
 pub use copy_to_file::{
-    CopyFunctionReturnType, CopyOverwriteMode, ExportedTable, FilenamePattern, LogicalCopyToFile,
-    LogicalExport,
+    CopyFunctionReturnType, CopyOverwriteMode, ExportedTable, FileNameSegment, FilenamePattern,
+    LogicalCopyToFile, LogicalExport,
 };
 pub use display::render_plan;
 pub use explain::{logical_operator_name, renderer_kind};
@@ -95,6 +96,8 @@ pub struct LogicalAggregate {
     /// The statistics of each group, set by statistics propagation (DuckDB's
     /// `group_stats`); they decide on perfect hash aggregation.
     pub group_stats: Vec<Option<rustdb_storage::statistics::BaseStatistics>>,
+    /// Whether the inputs of the aggregates can be NULL, set by statistics propagation.
+    pub distinct_validity: TupleDataValidityType,
 }
 
 /// A table or table function scan (DuckDB's `LogicalGet`).
@@ -139,6 +142,8 @@ pub struct LogicalGet {
     /// The order a table scan reads its row groups in (DuckDB's
     /// `row_group_order_options`, set by the `RowGroupPruner`).
     pub row_group_order: Option<rustdb_storage::table::RowGroupOrderOptions>,
+    /// The table scan feeds a `CREATE INDEX` (`TableScanBindData::is_create_index`).
+    pub is_create_index: bool,
 }
 
 /// The file filters of a scan (DuckDB's `ExtraOperatorInfo::file_filters`, `total_files`
@@ -538,6 +543,8 @@ pub enum LogicalKind {
     Attach(Box<rustdb_ast::AttachInfo>),
     /// `DETACH`.
     Detach(rustdb_ast::DetachInfo),
+    /// `LOAD` / `INSTALL` (DuckDB's `LogicalSimple` of a `LoadInfo`).
+    Load(Box<rustdb_ast::LoadInfo>),
     /// `ALTER DATABASE` (DuckDB's `LogicalSimple` of an `AlterDatabaseInfo`, run by the
     /// `DatabaseManager`): the database `catalog` of `info`.
     AlterDatabase(rustdb_ast::AlterInfo),
@@ -587,6 +594,8 @@ pub struct LogicalVacuum {
     pub table: Arc<rustdb_catalog::CatalogEntry>,
     /// The physical column of each column the child produces.
     pub column_id_map: Vec<usize>,
+    /// The statement, its columns listed (DuckDB's `info`).
+    pub info: rustdb_ast::VacuumInfo,
 }
 
 /// A bound `CREATE TABLE` (DuckDB's `BoundCreateTableInfo`): the table definition with
@@ -735,15 +744,21 @@ pub struct LogicalCreateIndex {
     /// `column_ids` are the physical columns the keys read.
     pub info: rustdb_ast::CreateInfo,
     pub table: Arc<rustdb_catalog::CatalogEntry>,
-    /// The key expressions, referencing the table's physical columns by index
-    /// (`unbound_expressions`).
+    /// The key expressions, referencing the table's physical columns by index.
     pub expressions: Vec<Expression>,
+    /// The key expressions over `scan`'s columns (DuckDB's `unbound_expressions`).
+    pub unbound_expressions: Vec<Expression>,
+    /// The scan of the indexed table with its row ids (DuckDB's child `LogicalGet`),
+    /// which serialized plans show; the index build reads the table itself.
+    pub scan: Box<LogicalOperator>,
 }
 
 /// `INSERT` (DuckDB's `LogicalInsert`).
 #[derive(Clone, Debug)]
 pub struct LogicalInsert {
     pub table: Arc<rustdb_catalog::CatalogEntry>,
+    /// The catalog and schema of `table`.
+    pub catalog: String,
     pub schema: String,
     pub table_index: u64,
     /// For each physical column, the input column holding its value, or `None` to use the
@@ -760,6 +775,8 @@ pub struct LogicalInsert {
 #[derive(Clone, Debug)]
 pub struct LogicalDelete {
     pub table: Arc<rustdb_catalog::CatalogEntry>,
+    /// The catalog and schema of `table`.
+    pub catalog: String,
     pub schema: String,
     pub table_index: u64,
     pub bound_constraints: Vec<BoundConstraint>,
@@ -771,6 +788,8 @@ pub struct LogicalDelete {
 #[derive(Clone, Debug)]
 pub struct LogicalUpdate {
     pub table: Arc<rustdb_catalog::CatalogEntry>,
+    /// The catalog and schema of `table`.
+    pub catalog: String,
     pub schema: String,
     pub table_index: u64,
     /// The updated physical columns.
@@ -804,6 +823,9 @@ pub struct BoundMergeIntoAction {
 #[derive(Clone, Debug)]
 pub struct LogicalMergeInto {
     pub table: Arc<rustdb_catalog::CatalogEntry>,
+    /// The catalog and schema of `table`.
+    pub catalog: String,
+    pub schema: String,
     pub table_index: u64,
     /// The default of each physical column.
     pub bound_defaults: Vec<Expression>,
@@ -988,6 +1010,7 @@ impl LogicalOperator {
             LogicalKind::Reset { .. } => T::LogicalReset,
             LogicalKind::Attach(_) => T::LogicalAttach,
             LogicalKind::Detach(_) => T::LogicalDetach,
+            LogicalKind::Load(_) => T::LogicalLoad,
             LogicalKind::Transaction { .. } => T::LogicalTransaction,
             LogicalKind::Deallocate { .. } | LogicalKind::Drop(_) => T::LogicalDrop,
             LogicalKind::Pragma { .. } => T::LogicalPragma,
@@ -1144,6 +1167,7 @@ impl LogicalOperator {
             | LogicalKind::Reset { .. }
             | LogicalKind::Attach(_)
             | LogicalKind::Detach(_)
+            | LogicalKind::Load(_)
             | LogicalKind::AlterDatabase(_)
             | LogicalKind::Transaction { .. }
             | LogicalKind::Deallocate { .. }
@@ -1344,6 +1368,7 @@ impl LogicalOperator {
             | LogicalKind::Reset { .. }
             | LogicalKind::Attach(_)
             | LogicalKind::Detach(_)
+            | LogicalKind::Load(_)
             | LogicalKind::AlterDatabase(_)
             | LogicalKind::Transaction { .. }
             | LogicalKind::Pragma { .. }

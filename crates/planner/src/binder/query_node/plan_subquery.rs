@@ -38,7 +38,9 @@ pub(crate) fn builtin_aggregate(
     };
     let binder = FunctionBinder::new(context);
     let types = FunctionBinder::argument_types(&children);
-    let function = binder.bind_aggregate_overload(functions, &types)??;
+    let mut function = binder.bind_aggregate_overload(functions, &types)??;
+    // The function object itself, not its catalog entry's.
+    function.clear_catalog_entry();
     binder.bind_aggregate_function(function, children, None, AggregateType::NonDistinct, None)
 }
 
@@ -50,8 +52,13 @@ fn builtin_scalar(context: &ClientContext, name: &str, children: Vec<Expression>
     let EntryKind::ScalarFunction(functions) = &entry.entry.kind else {
         return Err(Error::internal(format!("{name} is not a scalar function")));
     };
+    // The function objects themselves, not their catalog entry's.
+    let mut functions = functions.clone();
+    for function in &mut functions.functions {
+        function.clear_catalog_entry();
+    }
     FunctionBinder::new(context)
-        .bind_scalar_function(functions, children, false)?
+        .bind_scalar_function(&functions, children, false)?
         .map_err(|error| error.error)
 }
 
@@ -70,6 +77,7 @@ fn aggregate(
         grouping_sets: Vec::new(),
         grouping_functions: Vec::new(),
         group_stats: Vec::new(),
+        distinct_validity: crate::TupleDataValidityType::default(),
     })))
     .with_expressions(expressions)
     .with_children(vec![child])

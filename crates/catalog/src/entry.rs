@@ -427,6 +427,33 @@ pub enum EntryKind {
     Collation(CollationEntry),
 }
 
+impl EntryKind {
+    /// Stamps the functions of a function entry with the entry's catalog and schema, as
+    /// the constructors of DuckDB's function catalog entries do (`catalog_name` and
+    /// `schema_name`, which serialized plans name the functions by).
+    pub fn set_function_catalog(&mut self, catalog: &str, schema: &str) {
+        let (catalog, schema): (Arc<str>, Arc<str>) = (Arc::from(catalog), Arc::from(schema));
+        match self {
+            Self::ScalarFunction(set) => {
+                for function in &mut set.functions {
+                    function.set_catalog_entry(&catalog, &schema);
+                }
+            }
+            Self::AggregateFunction(set) => {
+                for function in &mut set.functions {
+                    function.set_catalog_entry(&catalog, &schema);
+                }
+            }
+            Self::TableFunction(set) => {
+                for function in &mut set.functions {
+                    function.set_catalog_entry(&catalog, &schema);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// A collation (DuckDB's `CollateCatalogEntry`): the function computing the collated
 /// value of a string.
 #[derive(Clone, Debug)]

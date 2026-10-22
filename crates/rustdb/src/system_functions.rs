@@ -861,13 +861,23 @@ pub(crate) fn register_json_macros(system: &Catalog) -> Result<()> {
     Ok(())
 }
 
+/// `duckdb_views()`, which pushes projections down (`DuckDBViewsFun::RegisterFunction`);
+/// its scan fills every column.
+fn views_function() -> TableFunctionSet {
+    let mut set = rows_function("duckdb_views", VIEW_COLUMNS, view_rows);
+    for function in &mut set.functions {
+        function.projection_pushdown = true;
+    }
+    set
+}
+
 /// The catalog table functions.
 pub(crate) fn catalog_table_functions() -> Vec<TableFunctionSet> {
     vec![
         rows_function("duckdb_databases", DATABASE_COLUMNS, database_rows),
         rows_function("duckdb_schemas", SCHEMA_COLUMNS, schema_rows),
         rows_function("duckdb_tables", TABLE_COLUMNS, table_rows),
-        rows_function("duckdb_views", VIEW_COLUMNS, view_rows),
+        views_function(),
         rows_function("duckdb_indexes", INDEX_COLUMNS, index_rows),
         rows_function("duckdb_sequences", SEQUENCE_COLUMNS, sequence_rows),
         rows_function("duckdb_columns", COLUMN_COLUMNS, column_rows),
@@ -3030,6 +3040,9 @@ pub(crate) fn builtin_pragma_functions() -> Vec<PragmaFunctionSet> {
         "disable_print_progress_bar",
         "enable_checkpoint_on_shutdown",
         "disable_checkpoint_on_shutdown",
+    ];
+    // `PragmaQueries::RegisterFunction`: pragmas that stand for a query.
+    let query_statements = [
         "show_tables",
         "show_tables_expanded",
         "show_databases",
@@ -3043,7 +3056,7 @@ pub(crate) fn builtin_pragma_functions() -> Vec<PragmaFunctionSet> {
         "all_profiling_output",
         "user_agent",
     ];
-    let calls = [
+    let query_calls = [
         PragmaFunction::call("table_info", vec![varchar()]),
         PragmaFunction::call("storage_info", vec![varchar()]),
         PragmaFunction::call("metadata_info", Vec::new()),
@@ -3054,7 +3067,13 @@ pub(crate) fn builtin_pragma_functions() -> Vec<PragmaFunctionSet> {
     statements
         .into_iter()
         .map(PragmaFunction::statement)
-        .chain(calls)
+        .chain(
+            query_statements
+                .into_iter()
+                .map(PragmaFunction::statement)
+                .chain(query_calls)
+                .map(PragmaFunction::with_query),
+        )
         .map(PragmaFunctionSet::single)
         .collect()
 }

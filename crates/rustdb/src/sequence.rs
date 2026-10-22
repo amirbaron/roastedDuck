@@ -23,6 +23,9 @@ struct SequenceBindData {
     modifies: bool,
     /// The transaction the call runs in; it logs the sequence's state at commit.
     transaction: Weak<rustdb_storage::Transaction>,
+    /// The sequence's definition when the call was bound (`create_info`), which a
+    /// serialized plan holds.
+    create_info: rustdb_ast::CreateInfo,
 }
 
 impl FunctionData for SequenceBindData {
@@ -114,6 +117,12 @@ fn bind_sequence(input: &BindInput<'_>, modifies: bool) -> Result<Option<Arc<dyn
     let EntryKind::Sequence(sequence) = &found.entry.kind else {
         return Err(Error::internal("sequence lookup found another entry"));
     };
+    let create_info = rustdb_catalog::checkpoint::sequence_create_info(
+        &found.catalog,
+        &found.schema,
+        &found.entry,
+        sequence,
+    );
     Ok(Some(Arc::new(SequenceBindData {
         name: found.entry.name().to_owned(),
         schema: found.schema,
@@ -121,7 +130,20 @@ fn bind_sequence(input: &BindInput<'_>, modifies: bool) -> Result<Option<Arc<dyn
         catalog: context.catalog(&found.catalog).cloned(),
         modifies,
         transaction: Arc::downgrade(&context.transaction),
+        create_info,
     })))
+}
+
+/// `nextval.cpp`'s `Serialize`: the sequence's definition.
+fn serialize_sequence(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    bind_data: Option<&dyn FunctionData>,
+    _: &ScalarFunction,
+) -> Result<()> {
+    let create_info = bind_data
+        .and_then(|data| data.as_any().downcast_ref::<SequenceBindData>())
+        .map(|data| &data.create_info);
+    serializer.write_property_with_default(100, "sequence_create_info", &create_info)
 }
 
 /// `NextValFunction`: one sequence value per row.
@@ -182,6 +204,7 @@ pub(crate) fn sequence_functions() -> Vec<ScalarFunctionSet> {
         .with_bind(move |_, input| bind_sequence(input, logged));
         function.stability = Stability::Volatile;
         function.null_handling = rustdb_function::NullHandling::Special;
+        function.serialize = Some(Arc::new(serialize_sequence));
         let mut set = ScalarFunctionSet::new(name);
         set.add(function);
         set

@@ -147,6 +147,16 @@ impl ExpressionFilter for ExpressionTableFilter {
         self.to_expression(column_name).to_string()
     }
 
+    /// `ExpressionFilter::Serialize`.
+    fn serialize(&self, serializer: &mut dyn rustdb_serde::Serializer) -> Result<()> {
+        serializer.write_property(
+            100,
+            "filter_type",
+            &rustdb_storage::TableFilterType::ExpressionFilter,
+        )?;
+        serializer.write_property_with_default(200, "expr", &Some(&self.expression))
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

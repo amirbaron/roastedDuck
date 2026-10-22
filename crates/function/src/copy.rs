@@ -230,7 +230,14 @@ pub struct CopyFunction {
     /// Rewrites `COPY ... TO` into another COPY (`plan`); the format then has no option
     /// list of its own.
     pub plan: Option<CopyPlan>,
+    /// Writes the bind data of a `COPY ... TO`, for serialized plans (`serialize`).
+    pub serialize: Option<CopySerialize>,
 }
+
+/// See [`CopyFunction::serialize`] (DuckDB's `copy_to_serialize_t`).
+pub type CopySerialize = Arc<
+    dyn Fn(&mut dyn rustdb_serde::Serializer, &dyn FunctionData, &CopyFunction) -> Result<()> + Send + Sync,
+>;
 
 impl CopyFunction {
     pub fn new(name: impl Into<Arc<str>>) -> Self {
@@ -258,6 +265,7 @@ impl CopyFunction {
             copy_to_sink_local: None,
             copy_to_combine: None,
             plan: None,
+            serialize: None,
         }
     }
 }

@@ -3,6 +3,10 @@
 //! DuckDB's specs describe the serialized form; they don't say which pointers may be
 //! NULL, how C++ member names map to idiomatic Rust, or which classes have hand-written
 //! (`custom_implementation`-style) code. Those decisions live here.
+//!
+//! Most classes become Rust types of the same shape. The logical plan's operators and
+//! expressions do not: rustdb's are shaped for planning, so their specs become property
+//! structs ([`Content::Properties`]) that hand-written `Serialize` impls fill in.
 
 /// A crate receiving generated code under `src/generated/`.
 #[derive(Debug)]
@@ -28,6 +32,14 @@ pub struct Module {
 pub enum Content {
     /// Classes from a spec file; `None` selects all classes of the file.
     Classes {
+        spec: &'static str,
+        classes: Option<&'static [&'static str]>,
+    },
+    /// Property structs: for each class of a spec file (`None`: all of them) a struct of
+    /// its members as the serializer writes them, borrowed, with its `SerializeObject`
+    /// impl. The class's Rust type is hand-written; its `Serialize` impl fills one in.
+    /// Write-only, like DuckDB's plans (1.5.6 has no `json_deserialize_plan`).
+    Properties {
         spec: &'static str,
         classes: Option<&'static [&'static str]>,
     },
@@ -76,6 +88,9 @@ pub struct ClassConfig {
     /// Lay the struct out like the C++ one (`#[repr(C)]`), for types stored in vectors
     /// whose bytes are read field by field (`interval_t`).
     pub repr_c: bool,
+    /// Property structs: the hand-written type holding the class's data (a path from its
+    /// crate's root), as members of other classes refer to it.
+    pub data_type: Option<&'static str>,
 }
 
 impl ClassConfig {
@@ -95,6 +110,7 @@ impl ClassConfig {
         extra_variants: &[],
         extra_fields: &[],
         repr_c: false,
+        data_type: None,
     };
 }
 
@@ -137,6 +153,10 @@ pub struct FieldConfig {
     /// Rust expression computing the value to write (C++ `serialize_property` methods);
     /// may use `self` and `serializer`.
     pub serialize_with: Option<&'static str>,
+    /// Property structs: the field's Rust type, where the hand-written type holds the
+    /// member as another type that writes it the same way (a `usize` index, or a type
+    /// of a crate the class's crate does not depend on).
+    pub property_type: Option<&'static str>,
 }
 
 impl FieldConfig {
@@ -145,6 +165,7 @@ impl FieldConfig {
         rename: None,
         required: false,
         serialize_with: None,
+        property_type: None,
     };
 }
 
@@ -160,6 +181,14 @@ const fn rename(member: &'static str, to: &'static str) -> FieldConfig {
     FieldConfig {
         member,
         rename: Some(to),
+        ..FieldConfig::DEFAULT
+    }
+}
+
+const fn property_type(member: &'static str, ty: &'static str) -> FieldConfig {
+    FieldConfig {
+        member,
+        property_type: Some(ty),
         ..FieldConfig::DEFAULT
     }
 }
@@ -198,7 +227,12 @@ pub const TARGETS: &[Target] = &[
         modules: &[
             Module {
                 name: "enums",
-                content: Content::Enums(&["LogicalTypeId", "ExtraTypeInfoType", "GeometryStorageType"]),
+                content: Content::Enums(&[
+                    "LogicalTypeId",
+                    "ExtraTypeInfoType",
+                    "GeometryStorageType",
+                    "ColumnIndexType",
+                ]),
             },
             Module {
                 name: "type_info",
@@ -212,6 +246,13 @@ pub const TARGETS: &[Target] = &[
                 content: Content::Classes {
                     spec: "nodes.json",
                     classes: Some(&["interval_t"]),
+                },
+            },
+            Module {
+                name: "column_index",
+                content: Content::Properties {
+                    spec: "nodes.json",
+                    classes: Some(&["ColumnIndex"]),
                 },
             },
         ],
@@ -395,13 +436,92 @@ pub const TARGETS: &[Target] = &[
         ],
     },
     Target {
+        crate_dir: "crates/storage",
+        crate_name: "rustdb_storage",
+        derives: &[],
+        modules: &[
+            Module {
+                name: "enums",
+                content: Content::Enums(&[
+                    "TableFilterType",
+                    "OrderByStatistics",
+                    "OrderByColumnType",
+                    "StorageIndexType",
+                ]),
+            },
+            Module {
+                name: "table_filter",
+                content: Content::Properties {
+                    spec: "table_filter.json",
+                    classes: None,
+                },
+            },
+            Module {
+                name: "nodes",
+                content: Content::Properties {
+                    spec: "nodes.json",
+                    classes: Some(&["TableFilterSet", "RowGroupOrderOptions", "StorageIndex"]),
+                },
+            },
+        ],
+    },
+    Target {
         crate_dir: "crates/planner",
         crate_name: "rustdb_planner",
         derives: &["PartialEq"],
-        modules: &[Module {
-            name: "enums",
-            content: Content::Enums(&["LogicalOperatorType", "DistinctType"]),
-        }],
+        modules: &[
+            Module {
+                name: "enums",
+                content: Content::Enums(&[
+                    "LogicalOperatorType",
+                    "DistinctType",
+                    "AggregateType",
+                    "LimitNodeType",
+                    "TupleDataValidityType",
+                    "FileNameSegmentType",
+                    "CopyOverwriteMode",
+                    "CopyFunctionReturnType",
+                    "PreserveOrderType",
+                ]),
+            },
+            Module {
+                name: "logical_operator",
+                content: Content::Properties {
+                    spec: "logical_operator.json",
+                    classes: None,
+                },
+            },
+            Module {
+                name: "expression",
+                content: Content::Properties {
+                    spec: "expression.json",
+                    classes: None,
+                },
+            },
+            Module {
+                name: "nodes",
+                content: Content::Properties {
+                    spec: "nodes.json",
+                    classes: Some(&[
+                        "BoundOrderByNode",
+                        "BoundLimitNode",
+                        "BoundCaseCheck",
+                        "BoundPivotInfo",
+                        "ColumnBinding",
+                        "BoundParameterData",
+                        "JoinCondition",
+                        "ExtraOperatorInfo",
+                    ]),
+                },
+            },
+            Module {
+                name: "result_modifier",
+                content: Content::Properties {
+                    spec: "result_modifier.json",
+                    classes: Some(&["BoundOrderModifier"]),
+                },
+            },
+        ],
     },
 ];
 
@@ -453,6 +573,12 @@ pub const CLASSES: &[ClassConfig] = &[
         rust_name: Some("Interval"),
         derives: &["Copy", "Default"],
         repr_c: true,
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "ColumnIndex",
+        data_type: Some("ColumnIndex"),
+        fields: &[rename("type", "ty")],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
@@ -795,6 +921,247 @@ pub const CLASSES: &[ClassConfig] = &[
     ClassConfig {
         class: "LogicalDependencyList",
         derives: &["Default"],
+        ..ClassConfig::DEFAULT
+    },
+    // table_filter.json and nodes.json (property structs of the storage's table filters)
+    ClassConfig {
+        class: "TableFilter",
+        data_type: Some("TableFilter"),
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "ConstantFilter",
+        // rustdb's filters compare with a `CompareOp`, written as its `ExpressionType`.
+        fields: &[property_type(
+            "comparison_type",
+            "rustdb_types::compare::CompareOp",
+        )],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "ExpressionFilter",
+        // The expression is the planner's, behind `table_filter::ExpressionFilter`.
+        custom: true,
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "TableFilterSet",
+        fields: &[property_type(
+            "filters",
+            "&'a std::collections::BTreeMap<usize, crate::TableFilter>",
+        )],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "RowGroupOrderOptions",
+        // The order is the sort's (`rustdb_row::sort`), which has no serialization.
+        custom: true,
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "StorageIndex",
+        data_type: Some("table::StorageIndex"),
+        fields: &[rename("type", "ty")],
+        ..ClassConfig::DEFAULT
+    },
+    // logical_operator.json (property structs of the planner's operators)
+    ClassConfig {
+        class: "LogicalOperator",
+        data_type: Some("LogicalOperator"),
+        fields: &[rename("type", "operator_type")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalSample",
+        fields: &[required("sample_options")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalAnyJoin",
+        fields: &[required("condition")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalInsert",
+        fields: &[required("table_info")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalDelete",
+        fields: &[required("table_info")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalUpdate",
+        fields: &[required("table_info")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalMergeInto",
+        fields: &[required("table_info")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "BoundMergeIntoAction",
+        data_type: Some("operator::BoundMergeIntoAction"),
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalCreateTable",
+        fields: &[required("info")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalCreate",
+        fields: &[required("info")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalSimple",
+        fields: &[required("info")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalCopyDatabase",
+        fields: &[required("info")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalCreateIndex",
+        fields: &[required("info")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalExport",
+        fields: &[required("copy_info"), required("exported_tables")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalGet",
+        custom: true,
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalCopyToFile",
+        custom: true,
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalExtensionOperator",
+        custom: true,
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalVacuum",
+        custom: true,
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "FileNameSegment",
+        data_type: Some("operator::FileNameSegment"),
+        fields: &[rename("type", "segment_type")],
+        ..ClassConfig::DEFAULT
+    },
+    // expression.json (property structs of the planner's expressions)
+    ClassConfig {
+        class: "Expression",
+        data_type: Some("Expression"),
+        fields: &[rename("type", "expression_type")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "BoundBetweenExpression",
+        fields: &[required("input"), required("lower"), required("upper")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "BoundCaseExpression",
+        fields: &[required("else_expr")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "BoundCastExpression",
+        fields: &[required("child")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "BoundComparisonExpression",
+        fields: &[required("left"), required("right")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "BoundLambdaExpression",
+        fields: &[required("lambda_expr")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "BoundParameterExpression",
+        fields: &[required("parameter_data")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "BoundUnnestExpression",
+        fields: &[required("child")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "BoundFunctionExpression",
+        custom: true,
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "BoundAggregateExpression",
+        custom: true,
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "BoundWindowExpression",
+        custom: true,
+        ..ClassConfig::DEFAULT
+    },
+    // nodes.json and result_modifier.json (property structs of the planner's nodes)
+    ClassConfig {
+        class: "BoundOrderByNode",
+        data_type: Some("expression::BoundOrderByNode"),
+        fields: &[rename("type", "order_type"), required("expression")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "BoundLimitNode",
+        data_type: Some("BoundLimitNode"),
+        fields: &[rename("type", "limit_type")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "BoundCaseCheck",
+        data_type: Some("expression::BoundCaseCheck"),
+        fields: &[required("when_expr"), required("then_expr")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "BoundPivotInfo",
+        data_type: Some("operator::BoundPivotInfo"),
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "ColumnBinding",
+        data_type: Some("ColumnBinding"),
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "BoundParameterData",
+        data_type: Some("expression::BoundParameterData"),
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "JoinCondition",
+        data_type: Some("operator::JoinCondition"),
+        fields: &[required("left"), required("right")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "BoundOrderModifier",
+        data_type: Some("expression::BoundOrderModifier"),
         ..ClassConfig::DEFAULT
     },
 ];

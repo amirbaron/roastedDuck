@@ -46,8 +46,6 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      DuckDB passes the bytes on (a string constant then fails with "Invalid unicode
      (byte sequence mismatch) detected in value construction", `.print` writes them as
      they are). Needs byte strings from the shell's input down to the parser.
-   - Functions rustdb lacks, which `duckdb_functions()`, `PRAGMA functions` and the
-     completion lists show: `json_serialize_plan` (8).
    - Object ids: the oid of a database (`PRAGMA database_list`'s `seq`) counts the
      catalog entries created before it, more in DuckDB.
    - "Did you mean" for a type name: DuckDB suggests among the default type entries it
@@ -121,7 +119,27 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    table block re-reads (caching is ruled out by the memory target), the aggregate hash
    table's lookups and resizes, and the hash join probe. Struct projection pushdown is
    ported (13).
-8. **Logical plan serialization** (`json_serialize_plan`).
+8. **Logical plan serialization, the rest.** `json_serialize_plan` writes logical plans
+   with DuckDB's serializers: `tools/codegen` generates property structs from
+   `logical_operator.json`, `expression.json`, `nodes.json`, `table_filter.json` and
+   `column_index.json`, and the hand-written parts (`LogicalGet`, functions and their
+   bind data, `COPY TO`, lambdas) follow DuckDB's. Functions carry their catalog entry,
+   original arguments and a `serialize` callback; binds that replace the function
+   object clear the entry, like DuckDB's. Parquet scans and writes, STRUCT `date_part`
+   (ICU's too), binning and lambdas write their bind data; CSV and JSON scans and
+   exported aggregate states fail as DuckDB's do. What still differs:
+   - `EXPORT DATABASE` is not serialized: rustdb's `LogicalExport` keeps what its
+     operator needs instead of DuckDB's `CopyInfo` and `BoundExportData`, and unions the
+     table copies two at a time.
+   - Equal aggregates are shared when their functions have the same name; DuckDB
+     compares the functions' callbacks, so `median(x)` and `quantile_cont(x, 0.5)` are
+     one aggregate there.
+   - A scan of encrypted Parquet files cannot be serialized: rustdb resolves the footer
+     key's name to the key while binding.
+   - Not comparable: `SELECT $1` and the optimized plans DuckDB fails to bind ("Failed
+     to bind column reference ... inequal num bindings/types", e.g. TPC-H 2, 5, 7, 8, 9,
+     12, 21 and `SUMMARIZE`) are DuckDB internal errors with stack addresses, and
+     `now()` folds to the transaction's time.
 9. **Physical operator logging, the rest.** Every `PhysicalOperatorLogType` site is
    ported (the hash join's `Finalize`, `Repartition` and `GetData`, `JoinHashTable`'s
    `Build`, the Parquet writer's `FlushRowGroup`, the reader's `ReadRowGroup` /

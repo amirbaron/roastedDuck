@@ -7,7 +7,7 @@ use rustdb_ast::SqlStatement;
 use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
 use rustdb_types::LogicalType;
 
-use crate::binder::statement::bind_statement;
+use crate::binder::statement::{BoundPragmaInfo, bind_statement};
 use crate::binder::{BindScope, Binder, BindingMode};
 use crate::context::ClientContext;
 use crate::expression::BoundParameterData;
@@ -25,6 +25,9 @@ pub struct PlannedStatement {
     pub properties: StatementProperties,
     /// The statement's parameters and their resolved types.
     pub parameters: CaseInsensitiveMap<crate::expression::SharedParameterData>,
+    /// The number of table indexes the binder generated; DuckDB's optimizer generates
+    /// further ones with the same binder (`Optimizer(*planner.binder, context)`).
+    pub table_index_count: u64,
 }
 
 /// Binds statements into logical plans.
@@ -57,6 +60,11 @@ impl Planner {
         mut statement: SqlStatement,
         values: CaseInsensitiveMap<BoundParameterData>,
     ) -> Result<PlannedStatement> {
+        // The statements DuckDB's `Planner::CreatePlan` plans: all but the expanded ones
+        // (`StatementTypeToString(MULTI_STATEMENT)` is `MULTI`).
+        if let rustdb_ast::SqlStatementKind::Multi(_) = statement.kind {
+            return Err(Error::not_implemented("Cannot plan statement of type MULTI!"));
+        }
         // DuckDB counts the parameters the parser found, bound or not.
         let parameter_count = statement.named_param_map.len();
         let mut binder = Binder::new(Arc::clone(&self.context))?;
@@ -79,6 +87,7 @@ impl Planner {
             check_tree_depth(&bound_plan, self.context.config.max_expression_depth, 0)?;
             plan = Some(crate::subquery::decorrelate_independent(&binder, bound_plan)?);
         }
+        let table_index_count = binder.table_index_count();
         let parameter_map = binder.take_parameters().unwrap_or_default();
         let mut properties = binder.properties();
         properties.parameter_count = parameter_count;
@@ -103,6 +112,7 @@ impl Planner {
             types,
             properties,
             parameters,
+            table_index_count,
         })
     }
 
@@ -120,6 +130,14 @@ impl Planner {
     }
 
     /// Binds and plans `statement` (DuckDB's `Planner::CreatePlan`).
+    /// Binds a pragma's overload and arguments (DuckDB's `Binder::BindPragma`, which the
+    /// `PragmaHandler` calls before replacing a pragma by its query).
+    pub fn bind_pragma(&self, pragma: &mut rustdb_ast::PragmaInfo) -> Result<BoundPragmaInfo> {
+        let mut binder = Binder::new(Arc::clone(&self.context))?;
+        let mut scope = BindScope::root(&mut binder);
+        crate::binder::statement::bind_pragma_info(&mut scope, pragma)
+    }
+
     pub fn create_plan(&self, statement: SqlStatement) -> Result<PlannedStatement> {
         self.create_plan_with_values(statement, CaseInsensitiveMap::default())
     }

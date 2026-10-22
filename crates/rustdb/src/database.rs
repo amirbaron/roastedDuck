@@ -233,9 +233,11 @@ impl StaticExtension {
                 "add_parquet_key",
                 vec![LogicalType::VARCHAR, LogicalType::VARCHAR],
             ),
-            Self::Json => PragmaFunction::call("json_execute_serialized_sql", vec![LogicalType::VARCHAR]),
-            Self::Tpch => PragmaFunction::call("tpch", vec![LogicalType::BIGINT]),
-            Self::Tpcds => PragmaFunction::call("tpcds", vec![LogicalType::BIGINT]),
+            Self::Json => {
+                PragmaFunction::call("json_execute_serialized_sql", vec![LogicalType::VARCHAR]).with_query()
+            }
+            Self::Tpch => PragmaFunction::call("tpch", vec![LogicalType::BIGINT]).with_query(),
+            Self::Tpcds => PragmaFunction::call("tpcds", vec![LogicalType::BIGINT]).with_query(),
             Self::Autocomplete | Self::Icu => return Vec::new(),
         };
         vec![PragmaFunctionSet::single(function)]
@@ -3125,7 +3127,10 @@ impl Connection {
         }
         if let rustdb_ast::SqlStatementKind::Load(info) = &statement.kind {
             self.run_load(info)?;
-            return Ok(StatementRun::Done(MaterializedResult::default()));
+            // `Binder::Bind(LoadStatement &)`: the statement returns nothing.
+            return Ok(StatementRun::Done(
+                MaterializedResult::default().with_return_type(rustdb_planner::StatementReturnType::Nothing),
+            ));
         }
         // Pragmas that stand for a query run that query (DuckDB's `PragmaHandler`).
         if let rustdb_ast::SqlStatementKind::Pragma(pragma) = &statement.kind
@@ -3269,12 +3274,12 @@ impl Connection {
     /// The values of a `PRAGMA`'s parameters, bound and evaluated as constants
     /// (`Binder::BindPragma`).
     fn bind_pragma_parameters(&mut self, statement: SqlStatement) -> Result<Vec<Value>> {
+        let rustdb_ast::SqlStatementKind::Pragma(mut pragma) = statement.kind else {
+            return Err(Error::internal("expected a PRAGMA"));
+        };
         let transaction = self.transactions.current();
         let planner = Planner::new(self.client_context(transaction));
-        match planner.create_plan(statement)?.plan.map(|plan| plan.kind) {
-            Some(LogicalKind::Pragma { parameters, .. }) => Ok(parameters),
-            _ => Err(Error::internal("a PRAGMA bound to another statement")),
-        }
+        Ok(planner.bind_pragma(&mut pragma)?.parameters)
     }
 
     /// Records that the transaction uses `database` (`MetaTransaction::UseDatabase`).
@@ -3649,7 +3654,7 @@ impl Connection {
         // first: the databases functions write to come before the statement's own target,
         // which its bind registered earlier.
         let mut modified: Vec<String> = function_modified.iter().rev().cloned().collect();
-        collect_modified_databases(plan, instance, &mut modified);
+        collect_modified_databases(plan, instance, &self.default_catalog(), &mut modified);
         // The databases the statement reads or writes join the transaction
         // (`MetaTransaction::GetTransaction`), unless they were invalidated.
         let mut used = modified.clone();
@@ -3747,6 +3752,7 @@ impl Connection {
             LogicalKind::Transaction { .. } => Some("TRANSACTION"),
             LogicalKind::Attach(_) => Some("ATTACH"),
             LogicalKind::Detach(_) => Some("DETACH"),
+            LogicalKind::Load(_) => Some("LOAD"),
             LogicalKind::Set {
                 scope: SetScope::Variable,
                 ..
@@ -3861,6 +3867,10 @@ impl Connection {
             }
             LogicalKind::Detach(info) => {
                 self.detach(info)?;
+                return Ok(StatementRun::Done(nothing()));
+            }
+            LogicalKind::Load(info) => {
+                self.run_load(info)?;
                 return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::AlterDatabase(info) => {
@@ -4402,7 +4412,14 @@ fn collect_read_databases(plan: &LogicalOperator, out: &mut Vec<String>) {
     }
 }
 
-fn collect_modified_databases(plan: &LogicalOperator, instance: &DatabaseInstance, out: &mut Vec<String>) {
+/// The databases `plan` writes to; an empty catalog name (`CREATE SCHEMA` keeps the name
+/// as written) is `default_catalog`.
+fn collect_modified_databases(
+    plan: &LogicalOperator,
+    instance: &DatabaseInstance,
+    default_catalog: &str,
+    out: &mut Vec<String>,
+) {
     let mut push = |name: &str| {
         if !name.is_empty() && !out.iter().any(|existing| existing.eq_ignore_ascii_case(name)) {
             out.push(name.to_owned());
@@ -4456,6 +4473,7 @@ fn collect_modified_databases(plan: &LogicalOperator, instance: &DatabaseInstanc
             }
         }
         LogicalKind::CreateTable(info) => push(&info.catalog),
+        LogicalKind::Create { info, .. } if info.catalog.is_empty() => push(default_catalog),
         LogicalKind::Create { info, .. } => push(&info.catalog),
         LogicalKind::CreateIndex(index) => {
             if let Some(name) = table_database(&index.table) {
@@ -4472,7 +4490,7 @@ fn collect_modified_databases(plan: &LogicalOperator, instance: &DatabaseInstanc
         _ => {}
     }
     for child in &plan.children {
-        collect_modified_databases(child, instance, out);
+        collect_modified_databases(child, instance, default_catalog, out);
     }
 }
 

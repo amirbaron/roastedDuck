@@ -12,8 +12,8 @@ use std::sync::Arc;
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_function::aggregate::AggregateInput;
 use rustdb_function::{
-    AggregateFunction, BindInput, FunctionData, FunctionState, NullHandling, OwnedStates, ScalarFunction,
-    ScalarFunctionSet, StatePtr,
+    AggregateFunction, BindInput, BoundAggregateFunction, FunctionData, FunctionState, NullHandling,
+    OwnedStates, ScalarFunction, ScalarFunctionSet, StatePtr,
 };
 use rustdb_row::hash::hash_bytes;
 use rustdb_row::sort::{NullOrder, OrderModifiers, OrderType, create_sort_keys};
@@ -294,6 +294,8 @@ pub fn list_distinct_functions() -> Vec<(ScalarFunctionSet, &'static [&'static s
 struct ListAggregateData {
     function: AggregateFunction,
     bind_data: Option<Arc<dyn FunctionData>>,
+    /// The aggregate as the binder bound it (`aggr_expr`), for serialized plans.
+    expression: BoundAggregateFunction,
 }
 
 impl FunctionData for ListAggregateData {
@@ -331,7 +333,9 @@ fn bind_list_aggregate_function(function: &mut ScalarFunction, input: &BindInput
     let resolver = input
         .aggregates
         .ok_or_else(|| Error::internal("list_aggregate bound without an aggregate resolver"))?;
-    let mut arguments = vec![(child_type, None)];
+    // The aggregated input is a NULL constant of the element type
+    // (`ListAggregatesBindFunction`).
+    let mut arguments = vec![(child_type.clone(), Some(rustdb_types::Value::null(child_type)))];
     for index in 2..input.argument_types.len() {
         arguments.push((
             input.argument_types[index].clone(),
@@ -365,9 +369,34 @@ fn bind_list_aggregate_function(function: &mut ScalarFunction, input: &BindInput
     function.varargs = None;
     function.return_type = bound.function.return_type.clone();
     Ok(Some(Arc::new(ListAggregateData {
-        function: bound.function,
-        bind_data: bound.bind_data,
+        function: bound.function.clone(),
+        bind_data: bound.bind_data.clone(),
+        expression: bound,
     })))
+}
+
+/// `ListAggregatesBindData::SerializeFunction`: the result type and the aggregate, NULL
+/// when the bind found no list.
+fn serialize_list_aggregate(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    bind_data: Option<&dyn FunctionData>,
+    _: &ScalarFunction,
+) -> Result<()> {
+    let data = bind_data.and_then(|data| data.as_any().downcast_ref::<ListAggregateData>());
+    serializer.write_optional_with(100, "bind_data", data.is_none(), |serializer| {
+        serializer.on_nullable_begin(data.is_some());
+        if let Some(data) = data {
+            serializer.write_object_with(|serializer| {
+                serializer.write_property(1, "stype", &data.function.return_type)?;
+                serializer.on_property_begin(2, "aggr_expr");
+                (data.expression.serialize)(serializer)?;
+                serializer.on_property_end();
+                Ok(())
+            })?;
+        }
+        serializer.on_nullable_end();
+        Ok(())
+    })
 }
 
 /// DuckDB's `ListAggregatesFunction<AggregateFunctor, true>`: one aggregate state per
@@ -441,7 +470,8 @@ pub fn list_aggregate_functions() -> ScalarFunctionSet {
         LogicalType::ANY,
         |args, state, result| list_aggregate(args, state, result),
     )
-    .with_bind(bind_list_aggregate_function);
+    .with_bind(bind_list_aggregate_function)
+    .with_serialize(serialize_list_aggregate);
     function.null_handling = NullHandling::Special;
     function.varargs = Some(LogicalType::ANY);
     let mut set = ScalarFunctionSet::new("list_aggregate");

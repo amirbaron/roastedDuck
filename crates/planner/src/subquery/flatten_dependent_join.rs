@@ -182,8 +182,10 @@ fn first_aggregate(binder: &Binder, child: Expression) -> Result<Expression> {
         return Err(Error::internal("first is not an aggregate function"));
     };
     let function_binder = FunctionBinder::new(context);
-    let function =
+    let mut function =
         function_binder.bind_aggregate_overload(functions, std::slice::from_ref(&child.return_type))??;
+    // The function object itself, not its catalog entry's.
+    function.clear_catalog_entry();
     function_binder.bind_aggregate_function(function, vec![child], None, AggregateType::NonDistinct, None)
 }
 

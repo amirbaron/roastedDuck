@@ -647,6 +647,7 @@ fn bind_base_table(
                 sample_options: None,
                 file_filters: crate::operator::FileFilterInfo::default(),
                 row_group_order: None,
+                is_create_index: false,
             };
             Ok(BoundStatement::new(
                 LogicalOperator::new(LogicalKind::Get(Box::new(get))),

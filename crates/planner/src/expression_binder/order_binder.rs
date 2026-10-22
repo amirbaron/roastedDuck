@@ -63,7 +63,8 @@ impl<'a> OrderBinder<'a> {
             return Err(Error::internal("CreateExtraReference called without extra_list"));
         };
         let index = list.len();
-        let mut reference = Expression::constant(Value::ubigint(index as u64)).with_alias(expr.to_string());
+        // Made before the term joins the list: named by the term's own alias.
+        let mut reference = Expression::constant(Value::ubigint(index as u64)).with_alias(expr.alias.clone());
         reference.query_location = expr.query_location;
         self.bind_state.projection_map.insert(&expr, index);
         list.push(expr);

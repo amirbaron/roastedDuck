@@ -244,6 +244,7 @@ fn aggregate(child: LogicalOperator, aggregates: Vec<Expression>) -> LogicalOper
         grouping_sets: vec![],
         grouping_functions: vec![],
         group_stats: vec![],
+        distinct_validity: rustdb_planner::TupleDataValidityType::default(),
     })))
     .with_expressions(aggregates)
     .with_children(vec![child])
@@ -317,6 +318,7 @@ fn group_by(child: LogicalOperator, sets: Vec<Vec<u64>>, aggregates: Vec<Express
         grouping_sets: sets.into_iter().map(|set| set.into_iter().collect()).collect(),
         grouping_functions: vec![],
         group_stats: vec![],
+        distinct_validity: rustdb_planner::TupleDataValidityType::default(),
     })))
     .with_expressions(aggregates)
     .with_children(vec![child])

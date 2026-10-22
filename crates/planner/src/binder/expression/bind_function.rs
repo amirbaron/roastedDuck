@@ -11,7 +11,8 @@ use rustdb_types::{LogicalType, LogicalTypeId, Value};
 use crate::binder::Binding;
 use crate::expression::{BoundLambdaExpression, Expression, ExpressionKind};
 use crate::expression_binder::{
-    BindResult, ExpressionBinder, bind_and_qualify_function, is_lambda_function, peek_bound, take_bound,
+    BindResult, ExpressionBinder, bind_and_qualify_function, is_bound, is_lambda_function, peek_bound,
+    take_bound,
 };
 use crate::function_binder::{FunctionBinder, add_cast_to_type};
 
@@ -310,14 +311,18 @@ fn bind_lambda_function<B: ExpressionBinder + ?Sized>(
         .state()
         .lambda_bindings
         .push(Binding::dummy(types, names, &table_alias)?);
-    let mut body_error = None;
-    let bound_body = binder.bind_child(&mut lambda.expr, depth, &mut body_error);
+    // `BindExpression`, not `Bind`: the body's root gets no query location. A body bound
+    // by an attempt as the JSON arrow is taken as it is (DuckDB binds a copy again).
+    let bound_body = if is_bound(&lambda.expr) {
+        take_bound(&mut lambda.expr).map(BindResult::Bound)
+    } else {
+        binder.bind_expression(&mut lambda.expr, depth, false)
+    };
     binder.state().lambda_bindings.pop();
-    bound_body?;
-    if let Some(error) = body_error {
-        return Err(error.error);
-    }
-    let body = take_bound(&mut lambda.expr)?;
+    let body = match bound_body? {
+        BindResult::Bound(body) => body,
+        BindResult::Unbound(error) => return Err(error.error),
+    };
 
     // Collect the arguments, with the lambda (and its captures) in second position.
     let mut bound_lambda = BoundLambdaExpression {
@@ -401,7 +406,17 @@ fn bind_lambda_function<B: ExpressionBinder + ?Sized>(
         }
     }
     bound_function.children.extend(captures);
-    bound_function.lambda = Some(Box::new(lambda_expr));
+    let keeps_lambda = bound_function
+        .bind_info
+        .as_ref()
+        .and_then(|data| {
+            data.as_any()
+                .downcast_ref::<rustdb_function::ListLambdaBindData>()
+        })
+        .is_none_or(|data| data.has_lambda);
+    if keeps_lambda {
+        bound_function.lambda = Some(Box::new(lambda_expr));
+    }
     Ok(bound.into())
 }
 

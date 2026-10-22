@@ -142,6 +142,44 @@ impl Default for OptimizerConfig {
     }
 }
 
+impl OptimizerConfig {
+    /// The configuration in a connection's settings, for optimizing outside the
+    /// connection's own query processing (`json_serialize_plan`).
+    pub fn from_settings(settings: &dyn rustdb_function::SettingsSource) -> Self {
+        use rustdb_function::cast::ValueCast as _;
+        let defaults = Self::default();
+        let setting = |name: &str, ty: &rustdb_types::LogicalType| {
+            settings
+                .current_setting(name)
+                .ok()
+                .filter(|value| !value.is_null())
+                .and_then(|value| value.default_cast_as(ty).ok())
+        };
+        let boolean = |name: &str, default: bool| {
+            setting(name, &rustdb_types::LogicalType::BOOLEAN)
+                .and_then(|value| value.as_bool())
+                .unwrap_or(default)
+        };
+        Self {
+            enabled: boolean("enable_optimizer", defaults.enabled),
+            disabled: setting("disabled_optimizers", &rustdb_types::LogicalType::VARCHAR)
+                .and_then(|value| value.to_varchar().ok())
+                .and_then(|list: String| OptimizerType::parse_list(&list).ok())
+                .unwrap_or_default(),
+            force_no_cross_product: boolean("debug_force_no_cross_product", defaults.force_no_cross_product),
+            prefer_range_joins: boolean("prefer_range_joins", defaults.prefer_range_joins),
+            preserve_insertion_order: boolean("preserve_insertion_order", defaults.preserve_insertion_order),
+            late_materialization_max_rows: setting(
+                "late_materialization_max_rows",
+                &rustdb_types::LogicalType::UBIGINT,
+            )
+            .and_then(|value| value.as_i128())
+            .and_then(|value| u64::try_from(value).ok())
+            .unwrap_or(defaults.late_materialization_max_rows),
+        }
+    }
+}
+
 /// Rewrites logical plans into cheaper equivalent ones (DuckDB's `Optimizer`).
 #[derive(Debug)]
 pub struct Optimizer {
@@ -206,6 +244,13 @@ impl Optimizer {
     /// The time each pass took, in the order they ran.
     pub fn timings(&self) -> &[(OptimizerType, Duration)] {
         &self.timings
+    }
+
+    /// Continues the table indexes after the `count` the binder generated (DuckDB's
+    /// optimizer generates them with the plan's binder); by default they follow the
+    /// largest one the plan uses.
+    pub fn reserve_table_indexes(&self, count: u64) {
+        self.next_table_index.set(self.next_table_index.get().max(count));
     }
 
     /// A fresh table index (DuckDB's `Binder::GenerateTableIndex`).

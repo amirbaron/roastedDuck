@@ -26,6 +26,7 @@ pub fn table_of(entry: &CatalogEntry) -> Result<&TableEntry> {
 
 /// A table looked up for INSERT/UPDATE/DELETE, with the schema it was found in.
 pub struct FoundTable {
+    pub catalog: String,
     pub schema: String,
     pub entry: Arc<CatalogEntry>,
 }
@@ -41,6 +42,7 @@ pub fn find_table(scope: &BindScope<'_>, catalog: &str, schema: &str, name: &str
         return Err(Error::catalog(format!("{name} is not an table")));
     }
     Ok(FoundTable {
+        catalog: found.catalog,
         schema: found.schema,
         entry: found.entry,
     })

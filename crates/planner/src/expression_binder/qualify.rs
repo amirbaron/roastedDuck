@@ -295,13 +295,16 @@ fn lambda_reference(lambda_bindings: &[Binding], name: &str) -> Option<ParsedExp
     let index = lambda_bindings
         .iter()
         .rposition(|binding| binding.has_matching_binding(name))?;
-    Some(ParsedExpression::new(
+    let mut reference = ParsedExpression::new(
         ExpressionType::LambdaRef,
         ParsedExpressionKind::LambdaRef(LambdaRefExpression {
             lambda_idx: index as u64,
             column_name: name.to_owned(),
         }),
-    ))
+    );
+    // The `LambdaRefExpression` constructor.
+    name.clone_into(&mut reference.alias);
+    Some(reference)
 }
 
 /// Whether a binding (or the macro binding) has the given alias and column

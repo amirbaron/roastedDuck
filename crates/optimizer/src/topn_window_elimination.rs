@@ -523,6 +523,7 @@ impl TopNWindowElimination<'_> {
             grouping_sets: Vec::new(),
             grouping_functions: Vec::new(),
             group_stats,
+            distinct_validity: rustdb_planner::TupleDataValidityType::default(),
         })))
         .with_expressions(vec![aggregate_expression])
         .with_children(vec![child]);

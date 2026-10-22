@@ -201,6 +201,7 @@ fn bind_mode(
 ) -> Result<Option<Arc<dyn FunctionData>>> {
     let ty = input.argument_types[0].clone();
     function.ops = mode_ops(&ty);
+    function.clear_catalog_entry();
     function.arguments = vec![ty.clone()];
     function.return_type = ty;
     Ok(None)
@@ -213,6 +214,7 @@ fn bind_entropy(
 ) -> Result<Option<Arc<dyn FunctionData>>> {
     let ty = input.argument_types[0].clone();
     function.ops = entropy_ops(&ty);
+    function.clear_catalog_entry();
     function.arguments = vec![ty];
     function.return_type = LogicalType::DOUBLE;
     function.null_handling = NullHandling::Special;

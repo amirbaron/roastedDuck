@@ -42,7 +42,7 @@ pub fn bind_create(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<B
                     info.schema
                 )));
             }
-            info.catalog = catalog;
+            // The info keeps the catalog as written; an empty one is the default catalog.
             LogicalOperator::new(LogicalKind::Create {
                 operator_type: LogicalOperatorType::LogicalCreateSchema,
                 info: Box::new(info.clone()),
@@ -1116,16 +1116,9 @@ pub fn bind_drop(scope: &mut BindScope<'_>, drop: &mut DropInfo) -> Result<Bound
             drop.catalog = found.catalog;
             drop.schema = found.schema;
         } else {
-            drop.schema = if schema.is_empty() {
-                scope.context.default_schema_for(&if catalog.is_empty() {
-                    scope.context.default_catalog()
-                } else {
-                    catalog.clone()
-                })
-            } else {
-                schema
-            };
+            // Not found (`IF EXISTS`): the names stay as written.
             drop.catalog = catalog;
+            drop.schema = schema;
         }
     } else if drop.catalog.is_empty() {
         scope.context.default_catalog().clone_into(&mut drop.catalog);

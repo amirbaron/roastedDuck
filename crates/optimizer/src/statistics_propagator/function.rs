@@ -474,12 +474,15 @@ fn sum_no_overflow(
             "sum_no_overflow is not an aggregate function",
         ));
     };
-    functions
+    let mut function = functions
         .functions
         .iter()
         .find(|function| function.arguments.as_slice() == std::slice::from_ref(argument))
         .cloned()
-        .ok_or_else(|| rustdb_common::Error::internal("Unsupported internal type for sum_no_overflow"))
+        .ok_or_else(|| rustdb_common::Error::internal("Unsupported internal type for sum_no_overflow"))?;
+    // The function object itself, not its catalog entry's.
+    function.clear_catalog_entry();
+    Ok(function)
 }
 
 /// The value of an integer bound.
@@ -613,6 +616,15 @@ fn propagate_arithmetic(
         // No overflow is possible: the plain operator replaces the overflow-checking one
         // (`SetFunctionCallback(GetScalarIntegerFunction<OP>(...))`).
         function.function.kernel = kernel;
+        if function
+            .bind_info
+            .as_ref()
+            .is_some_and(|data| data.as_any().is::<rustdb_function::DecimalArithmeticBindData>())
+        {
+            function.bind_info = Some(Arc::new(rustdb_function::DecimalArithmeticBindData {
+                check_overflow: false,
+            }));
+        }
     }
     let mut result = BaseStatistics::create_empty(return_type);
     set_bounds(&mut result, physical, range, new_bounds);

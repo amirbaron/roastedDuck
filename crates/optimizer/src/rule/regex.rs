@@ -190,8 +190,10 @@ pub fn regex_optimization(
     function.children[1] = Expression::constant(Value::varchar(needle));
     let children = std::mem::take(&mut function.children);
     // DuckDB builds a plain function call, shown as `"~~"(s, '%a_a%')`.
-    match bind_scalar_function(context.client, function_name, children, false) {
-        Ok(replacement) => Ok(RuleOutcome::Replaced(replacement)),
-        Err(error) => Err(error),
+    let mut replacement = bind_scalar_function(context.client, function_name, children, false)?;
+    if let ExpressionKind::Function(function) = &mut replacement.kind {
+        // The function objects (`GetStringContains()`, `LikeFun::GetFunction()`) themselves.
+        function.function.clear_catalog_entry();
     }
+    Ok(RuleOutcome::Replaced(replacement))
 }

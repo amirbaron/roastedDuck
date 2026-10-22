@@ -246,6 +246,7 @@ fn bind_decimal<const MAX: bool>(
             }
         }
         function.ops = arg_min_max_ops::<MAX>(Some(&decimal_type), &by_type);
+        function.clear_catalog_entry();
         function.arguments = vec![decimal_type.clone(), by_type];
         function.return_type = decimal_type;
         Ok(Some(Arc::new(ArgMinMaxData { null_handling })))

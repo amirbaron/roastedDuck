@@ -68,7 +68,7 @@ impl CopyFunctionReturnType {
 
 /// One part of a [`FilenamePattern`] (DuckDB's `FileNameSegment`).
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum FileNameSegment {
+pub enum FileNameSegment {
     Literal(String),
     Offset,
     UuidV4,
@@ -114,6 +114,46 @@ fn random_uuid(version: u8) -> String {
         let _ = write!(result, "{byte:02x}");
     }
     result
+}
+
+impl rustdb_serde::Serialize for FileNameSegment {
+    fn serialize(&self, serializer: &mut dyn rustdb_serde::Serializer) -> rustdb_common::Result<()> {
+        let (segment_type, data) = match self {
+            Self::Literal(text) => (crate::FileNameSegmentType::Literal, text.as_str()),
+            Self::Offset => (crate::FileNameSegmentType::Offset, ""),
+            Self::UuidV4 => (crate::FileNameSegmentType::UuidV4, ""),
+            Self::UuidV7 => (crate::FileNameSegmentType::UuidV7, ""),
+        };
+        serializer.write_object(&crate::generated::logical_operator::FileNameSegment { segment_type, data })
+    }
+}
+
+impl rustdb_serde::Serialize for FilenamePattern {
+    /// `FilenamePattern::Serialize`: patterns with a single placeholder other than
+    /// `{uuidv7}` are written in the legacy form, `base` with the placeholder at `pos`.
+    fn serialize(&self, serializer: &mut dyn rustdb_serde::Serializer) -> rustdb_common::Result<()> {
+        let mut placeholders = 0;
+        let mut legacy = true;
+        let mut base = String::new();
+        let mut pos = 0;
+        for segment in &self.segments {
+            match segment {
+                FileNameSegment::Literal(text) => base += text,
+                FileNameSegment::UuidV7 => legacy = false,
+                FileNameSegment::Offset | FileNameSegment::UuidV4 => {
+                    placeholders += 1;
+                    pos = base.len() as u64;
+                }
+            }
+        }
+        let legacy = legacy && placeholders == 1;
+        serializer.write_object(&crate::generated::logical_operator::FilenamePattern {
+            base: if legacy { &base } else { "" },
+            pos: if legacy { pos } else { 0 },
+            uuid: self.has_uuid(),
+            segments: if legacy { &[] } else { &self.segments },
+        })
+    }
 }
 
 impl FilenamePattern {
@@ -205,6 +245,8 @@ pub struct LogicalCopyToFile {
     pub return_type: CopyFunctionReturnType,
     pub names: Vec<String>,
     pub expected_types: Vec<LogicalType>,
+    /// The statement, its query filled in (DuckDB's `copy_info`).
+    pub copy_info: Box<rustdb_ast::CopyInfo>,
 }
 
 impl LogicalCopyToFile {

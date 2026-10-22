@@ -123,6 +123,7 @@ pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Res
     let entry = Arc::clone(&found.entry);
     let table = table_of(&entry)?;
     let table_name = entry.name().to_owned();
+    let table_index = scope.generate_table_index();
     let mut root_select = None;
     if stmt.column_order == InsertColumnOrder::InsertByName {
         if values_list(stmt).is_some() {
@@ -162,9 +163,9 @@ pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Res
     };
     let columns_provided = !stmt.columns.is_empty();
     expand_default_in_values_list(stmt, table, &table_name, &named_column_map)?;
-    let table_index = scope.generate_table_index();
     let mut insert = LogicalOperator::new(LogicalKind::Insert(Box::new(LogicalInsert {
         table: Arc::clone(&entry),
+        catalog: found.catalog.clone(),
         schema: found.schema.clone(),
         table_index,
         column_index_map,
@@ -192,12 +193,25 @@ pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Res
     }
     // Without a source (COPY FROM) the caller adds the child.
     if !stmt.returning_list.is_empty() {
+        // The returned rows get a table index of their own.
+        let insert_table_index = scope.generate_table_index();
+        if let LogicalKind::Insert(insert) = &mut insert.kind {
+            insert.table_index = insert_table_index;
+        }
         let alias = stmt
             .table_ref
             .as_ref()
             .map_or_else(String::new, |r| r.alias.clone());
         let returning = std::mem::take(&mut stmt.returning_list);
-        return bind_returning(scope, returning, &table_name, &entry, &alias, table_index, insert);
+        return bind_returning(
+            scope,
+            returning,
+            &table_name,
+            &entry,
+            &alias,
+            insert_table_index,
+            insert,
+        );
     }
     scope.with_properties(|properties| properties.return_type = StatementReturnType::ChangedRows);
     Ok(count_result(insert))
@@ -318,12 +332,20 @@ fn add_scan_column(get: &mut LogicalOperator, logical: usize) -> Result<(u64, u6
     Ok((get.table_index, (ids.len() - 1) as u64))
 }
 
+/// The catalog of the table a scan reads.
+fn table_catalog(get: &crate::operator::LogicalGet) -> String {
+    get.table_schema
+        .as_ref()
+        .map(|(catalog, _)| catalog.clone())
+        .unwrap_or_default()
+}
+
 /// `DELETE` (DuckDB's `Binder::Bind(DeleteStatement &)`).
 pub fn bind_delete(scope: &mut BindScope<'_>, stmt: &mut DeleteStatement) -> Result<BoundStatement> {
     let bound_table = bind_table_ref(scope, &mut stmt.table)?;
     let mut root = bound_table.plan;
-    let entry = match &root.kind {
-        LogicalKind::Get(get) => get.table.clone(),
+    let (entry, catalog) = match &root.kind {
+        LogicalKind::Get(get) => get.table.clone().map(|entry| (entry, table_catalog(get))),
         _ => None,
     }
     .ok_or_else(|| Error::binder("Can only delete from base table"))?;
@@ -353,12 +375,16 @@ pub fn bind_delete(scope: &mut BindScope<'_>, stmt: &mut DeleteStatement) -> Res
         plan_subqueries(scope, &mut bound, &mut root)?;
         root = LogicalOperator::filter(bound, root);
     }
+    let mut table_index = scope.generate_table_index();
     let bound_constraints = bind_constraints(scope, &table_name, table)?;
-    let table_index = scope.generate_table_index();
     let row_id = {
         let get = base_get(&mut root).ok_or_else(|| Error::binder("Can only delete from base table"))?;
         bind_row_id_column(get)?
     };
+    if !stmt.returning_list.is_empty() {
+        // The returned rows get a table index of their own.
+        table_index = scope.generate_table_index();
+    }
     let schema = table
         .storage
         .as_ref()
@@ -366,6 +392,7 @@ pub fn bind_delete(scope: &mut BindScope<'_>, stmt: &mut DeleteStatement) -> Res
         .unwrap_or_default();
     let delete = LogicalOperator::new(LogicalKind::Delete(Box::new(LogicalDelete {
         table: Arc::clone(&entry),
+        catalog,
         schema,
         table_index,
         bound_constraints,
@@ -399,8 +426,11 @@ fn supports_regular_update(ty: &LogicalType) -> bool {
 /// `UPDATE` (DuckDB's `Binder::Bind(UpdateStatement &)`).
 pub fn bind_update(scope: &mut BindScope<'_>, stmt: &mut UpdateStatement) -> Result<BoundStatement> {
     let bound_table = bind_table_ref(scope, &mut stmt.table)?;
-    let entry = match &bound_table.plan.kind {
-        LogicalKind::Get(get) => get.table.clone(),
+    let (entry, (catalog, schema)) = match &bound_table.plan.kind {
+        LogicalKind::Get(get) => get
+            .table
+            .clone()
+            .map(|entry| (entry, get.table_schema.clone().unwrap_or_default())),
         _ => None,
     }
     .ok_or_else(|| Error::binder("Can only update base table"))?;
@@ -484,7 +514,8 @@ pub fn bind_update(scope: &mut BindScope<'_>, stmt: &mut UpdateStatement) -> Res
     let table_index = scope.generate_table_index();
     let update = LogicalOperator::new(LogicalKind::Update(Box::new(LogicalUpdate {
         table: Arc::clone(&entry),
-        schema: String::new(),
+        catalog,
+        schema,
         table_index,
         columns,
         bound_defaults,
@@ -636,6 +667,16 @@ pub(super) fn bind_update_set(
     Ok(())
 }
 
+/// The columns of a `physical_index_set_t` filled from `columns`, in libc++'s iteration
+/// order (`std::hash<idx_t>` is the identity).
+fn physical_index_set(columns: &[usize]) -> Vec<usize> {
+    let mut set = rustdb_common::libcxx::UnorderedOrder::default();
+    for &column in columns {
+        set.insert(column as u64, column, |a, b| a == b);
+    }
+    set.order().into_iter().map(|node| set.keys()[node]).collect()
+}
+
 /// `LogicalUpdate::BindExtraColumns`: adds `c = c` updates for columns in `bound_columns`
 /// that are not updated yet.
 fn bind_extra_columns(
@@ -651,13 +692,14 @@ fn bind_extra_columns(
         projection_expressions,
         ..
     } = set;
+    let bound_columns = physical_index_set(bound_columns);
     if bound_columns.len() <= 1 {
         return Ok(());
     }
     if bound_columns.iter().all(|column| columns.contains(column)) {
         return Ok(());
     }
-    for &physical in bound_columns {
+    for physical in bound_columns {
         if columns.contains(&physical) {
             continue;
         }
@@ -673,7 +715,7 @@ fn bind_extra_columns(
         ));
         let (table_index, position) = add_scan_column(get, logical)?;
         projection_expressions.push(Expression::column_ref(
-            table.columns[logical].name.clone(),
+            "",
             ty,
             ColumnBinding::new(table_index, position),
             0,

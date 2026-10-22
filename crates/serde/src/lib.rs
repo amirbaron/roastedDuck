@@ -29,9 +29,9 @@ mod serializer;
 pub use default_value::DefaultValue;
 pub use deserializer::{Deserialize, DeserializeObject, Deserializer};
 pub use enums::{read_enum, write_enum};
-pub use impls::OptionalIdx;
+pub use impls::{IndexVector, OptionalIdx};
 pub use options::{SerializationCompatibility, SerializationOptions};
-pub use pointee::{Pointee, deserialize_present, required, serialize_present};
+pub use pointee::{DeserializePointee, Pointee, deserialize_present, required, serialize_present};
 pub use rustdb_common::{Error, Result};
 pub use serializer::{Serialize, SerializeObject, Serializer};
 
@@ -74,7 +74,9 @@ macro_rules! impl_pointee_serde {
                 fn serialize_pointee(&self, serializer: &mut dyn $crate::Serializer) -> $crate::Result<()> {
                     serializer.write_object(self)
                 }
+            }
 
+            impl $crate::DeserializePointee for $ty {
                 fn deserialize_pointee(deserializer: &mut dyn $crate::Deserializer) -> $crate::Result<Self> {
                     deserializer.read_object()
                 }
@@ -89,6 +91,28 @@ macro_rules! impl_pointee_serde {
             impl $crate::Deserialize for $ty {
                 fn deserialize(deserializer: &mut dyn $crate::Deserializer) -> $crate::Result<Self> {
                     $crate::deserialize_present(deserializer, stringify!($ty))
+                }
+            }
+        )*
+    };
+}
+
+/// Implements [`Pointee`] and [`Serialize`] for a class from its [`SerializeObject`] impl:
+/// the write-only form of [`impl_pointee_serde!`], for classes that are never read back
+/// (the logical plan's operators and expressions).
+#[macro_export]
+macro_rules! impl_pointee_serialize {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl $crate::Pointee for $ty {
+                fn serialize_pointee(&self, serializer: &mut dyn $crate::Serializer) -> $crate::Result<()> {
+                    serializer.write_object(self)
+                }
+            }
+
+            impl $crate::Serialize for $ty {
+                fn serialize(&self, serializer: &mut dyn $crate::Serializer) -> $crate::Result<()> {
+                    $crate::serialize_present(self, serializer)
                 }
             }
         )*

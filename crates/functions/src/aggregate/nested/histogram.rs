@@ -127,6 +127,7 @@ pub(crate) fn bind_histogram(
         return Err(crate::parameter_not_resolved());
     }
     function.ops = histogram_ops(&ty);
+    function.clear_catalog_entry();
     function.arguments = vec![ty.clone()];
     function.return_type = LogicalType::map(ty, LogicalType::UBIGINT);
     Ok(None)

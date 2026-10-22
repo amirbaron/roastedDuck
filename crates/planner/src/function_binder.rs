@@ -685,7 +685,14 @@ impl<'a> FunctionBinder<'a> {
                     lambda: self.lambda.as_ref(),
                 },
             )?;
-            // The bind may have dropped trailing arguments (DuckDB's `EraseArgument`).
+            for (index, target) in std::mem::take(&mut function.argument_casts) {
+                let child = children.remove(index);
+                children.insert(index, add_cast_to_type(self.context, child, &target, false)?);
+            }
+            // The bind may have dropped arguments (DuckDB's `EraseArgument`).
+            for index in std::mem::take(&mut function.erased_arguments) {
+                children.remove(index);
+            }
             if function.varargs.is_none() {
                 children.truncate(function.arguments.len());
             }
@@ -1230,15 +1237,16 @@ impl rustdb_function::AggregateResolver for ClientContext {
         let bound =
             binder.bind_aggregate_function(function, children, None, AggregateType::NonDistinct, None)?;
         let display = bound.to_string();
-        let ExpressionKind::Aggregate(aggregate) = bound.kind else {
+        let ExpressionKind::Aggregate(aggregate) = &bound.kind else {
             return Err(Error::internal("aggregate binding did not produce an aggregate"));
         };
-        let aggregate = *aggregate;
+        let aggregate = (**aggregate).clone();
         Ok(rustdb_function::BoundAggregateFunction {
             argument_count: aggregate.children.len(),
             display,
             function: aggregate.function,
             bind_data: aggregate.bind_info,
+            serialize: Arc::new(move |serializer| rustdb_serde::Serialize::serialize(&bound, serializer)),
         })
     }
 }

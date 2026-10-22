@@ -132,5 +132,9 @@ pub fn export_aggregate(function: &AggregateFunction) -> Result<AggregateFunctio
         },
     );
     export.null_handling = NullHandling::Special;
+    // `ExportStateAggregateSerialize`.
+    export.serialize = Some(Arc::new(|_, _, _| {
+        Err(Error::not_implemented("FIXME: export state serialize"))
+    }));
     Ok(export)
 }

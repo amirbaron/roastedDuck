@@ -293,27 +293,21 @@ fn bind_list_zip(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindRe
         }
     }
     let mut children = Vec::with_capacity(size);
-    let mut arguments = Vec::with_capacity(types.len());
-    for ty in &types[..size] {
+    for (index, ty) in types[..size].iter().enumerate() {
         match ty.id() {
             LogicalTypeId::List | LogicalTypeId::Array => {
                 let child = list_child_type(ty)?;
-                arguments.push(LogicalType::list(child.clone()));
+                if ty.id() == LogicalTypeId::Array {
+                    // `AddArrayCastToList`.
+                    function.cast_argument(index, LogicalType::list(child.clone()));
+                }
                 children.push((String::new(), child));
             }
-            LogicalTypeId::SqlNull => {
-                arguments.push(LogicalType::SQLNULL);
-                children.push((String::new(), LogicalType::SQLNULL));
-            }
+            LogicalTypeId::SqlNull => children.push((String::new(), LogicalType::SQLNULL)),
             LogicalTypeId::Unknown => return Err(crate::parameter_not_resolved()),
             _ => return Err(Error::binder("Parameter type needs to be List")),
         }
     }
-    if size < types.len() {
-        arguments.push(LogicalType::BOOLEAN);
-    }
-    function.arguments = arguments;
-    function.varargs = None;
     function.return_type = LogicalType::list(LogicalType::struct_type(children));
     Ok(None)
 }

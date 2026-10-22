@@ -176,6 +176,7 @@ fn optimize_internal(
         grouping_sets: Vec::new(),
         grouping_functions: Vec::new(),
         group_stats: Vec::new(),
+        distinct_validity: rustdb_planner::TupleDataValidityType::default(),
     })))
     .with_expressions(aggregates)
     .with_children(vec![copy]);

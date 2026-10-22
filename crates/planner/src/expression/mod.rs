@@ -7,6 +7,7 @@
 
 mod display;
 mod equality;
+mod serialize;
 
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -64,12 +65,14 @@ pub enum ExpressionKind {
     Expanded(BoundExpandedExpression),
 }
 
-/// Whether an aggregate removes duplicate inputs (DuckDB's `AggregateType`).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub enum AggregateType {
-    #[default]
-    NonDistinct,
-    Distinct,
+/// Whether an aggregate removes duplicate inputs.
+pub use crate::generated::enums::AggregateType;
+
+impl Default for crate::TupleDataValidityType {
+    /// `LogicalAggregate`'s until statistics propagation knows better.
+    fn default() -> Self {
+        Self::CanHaveNullValues
+    }
 }
 
 /// An aggregate call (DuckDB's `BoundAggregateExpression`).
@@ -582,6 +585,31 @@ impl Expression {
             | ExpressionKind::Expanded(_) => {}
         }
         Ok(())
+    }
+
+    /// A copy as DuckDB's `Expression::Copy` makes it: column references, references and
+    /// lambda parameters lose their query location, lambdas, UNNESTs and DEFAULTs their
+    /// alias too (their `Copy` does not call `CopyProperties`).
+    #[must_use]
+    pub fn copy(&self) -> Self {
+        fn drop_uncopied_properties(expression: &mut Expression) {
+            match &expression.kind {
+                ExpressionKind::ColumnRef(_)
+                | ExpressionKind::Reference(_)
+                | ExpressionKind::LambdaRef(_) => {
+                    expression.query_location = None;
+                }
+                ExpressionKind::Lambda(_) | ExpressionKind::Unnest(_) | ExpressionKind::Default => {
+                    expression.query_location = None;
+                    expression.alias.clear();
+                }
+                _ => {}
+            }
+            expression.for_each_child_mut(drop_uncopied_properties);
+        }
+        let mut copy = self.clone();
+        drop_uncopied_properties(&mut copy);
+        copy
     }
 
     /// Calls `callback` on every direct child.

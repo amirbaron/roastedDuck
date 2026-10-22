@@ -97,6 +97,10 @@ pub fn like_optimization(
     let needle: Vec<u8> = pattern.into_iter().filter(|&c| c != b'%').collect();
     children[1] = Expression::constant(Value::varchar(String::from_utf8_lossy(&needle)));
     let mut result = bind_scalar_function(context.client, name, children, false)?;
+    if let ExpressionKind::Function(function) = &mut result.kind {
+        // DuckDB uses the function objects (`PrefixFun::GetFunction()`, ...) directly.
+        function.function.clear_catalog_entry();
+    }
     result.return_type = return_type;
     if is_not_like {
         result = Expression::operator(ExpressionType::OperatorNot, LogicalType::BOOLEAN, vec![result]);
