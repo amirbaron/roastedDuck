@@ -366,6 +366,52 @@ Memory-heavy queries (`.context/perf/bin/mem.py`, SF1 lineitem): all run under a
 limit at 4 threads with peak RSS within 0.9–1.2× of DuckDB; without a limit, sorting
 `l_comment` takes 651 MB vs 457 MB and 1.15 s vs 0.81 s.
 
+## Out-of-core IEJoin, AsOf join and window
+
+The three queries of `test/sql/outofcore/out_of_core_{ie_join,asof_join,window}.test_slow`
+over TPC-H SF1 `lineitem` (C++ `dbgen`), each a `bit_xor(hash(...))` over the join or
+window result, release builds, spill files on the same external SSD. rustdb ran out of
+memory under 300 MiB before the port; both engines now give the same results in every
+configuration. The SSD was shared with other work: single-threaded out-of-core runs
+were I/O bound for both engines (DuckDB's IEJoin at 300 MiB: 132 s wall for 21 s of
+CPU), so the table compares CPU cycles; wall times are for 8 threads. Speed is DuckDB
+cycles / rustdb cycles, memory is rustdb peak RSS / DuckDB peak RSS (AsOf at 8 threads
+out of core: medians of 3 alternating runs).
+
+| query | limit | threads | rustdb Gcycles | DuckDB Gcycles | speed | rustdb wall | DuckDB wall | rustdb RSS | DuckDB RSS | memory |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| window | none | 1 | 6.37 | 5.75 | 0.90× | | | 1229 MiB | 1456 MiB | 0.84× |
+| window | none | 8 | 7.30 | 6.73 | 0.92× | 0.26 s | 0.25 s | 1333 MiB | 1573 MiB | 0.85× |
+| window | 300 MiB | 1 | 13.05 | 12.36 | 0.95× | | | 337 MiB | 417 MiB | 0.81× |
+| window | 300 MiB | 8 | 25.78 | 26.84 | 1.04× | 2.33 s | 3.12 s | 481 MiB | 485 MiB | 0.99× |
+| window | 600 MiB | 1 | 10.06 | 10.40 | 1.03× | | | 637 MiB | 831 MiB | 0.77× |
+| window | 600 MiB | 8 | 22.50 | 22.13 | 0.98× | 1.44 s | 2.32 s | 732 MiB | 842 MiB | 0.87× |
+| IEJoin | none | 1 | 17.09 | 14.41 | 0.84× | | | 4000 MiB | 4783 MiB | 0.84× |
+| IEJoin | none | 8 | 18.58 | 17.31 | 0.93× | 0.89 s | 0.94 s | 4140 MiB | 4572 MiB | 0.91× |
+| IEJoin | 300 MiB | 1 | 66.98 | 79.98 | 1.19× | | | 543 MiB | 745 MiB | 0.73× |
+| IEJoin | 300 MiB | 8 | 84.37 | 99.27 | 1.18× | 6.45 s | 11.54 s | 699 MiB | 1043 MiB | 0.67× |
+| IEJoin | 600 MiB | 1 | 57.78 | 60.00 | 1.04× | | | 840 MiB | 1297 MiB | 0.65× |
+| IEJoin | 600 MiB | 8 | 70.69 | 76.09 | 1.08× | 2.93 s | 3.21 s | 949 MiB | 1269 MiB | 0.75× |
+| AsOf | none | 1 | 10.50 | 10.45 | 1.00× | | | 5292 MiB | 5372 MiB | 0.99× |
+| AsOf | none | 8 | 12.94 | 12.74 | 0.98× | 0.57 s | 0.57 s | 5331 MiB | 5414 MiB | 0.98× |
+| AsOf | 300 MiB | 1 | 39.12 | 38.14 | 0.97× | | | 357 MiB | 552 MiB | 0.65× |
+| AsOf | 300 MiB | 8 | 51.12 | 49.92 | 0.98× | 1.91 s | 1.87 s | 518 MiB | 569 MiB | 0.91× |
+| AsOf | 600 MiB | 1 | 38.43 | 37.15 | 0.97× | | | 655 MiB | 976 MiB | 0.67× |
+| AsOf | 600 MiB | 8 | 45.37 | 46.42 | 1.02× | 1.68 s | 1.75 s | 767 MiB | 823 MiB | 0.93× |
+
+Peak temporary directory size at 300 MiB and 8 threads: window 759 MiB (DuckDB 768),
+IEJoin 2715 MiB (4066), AsOf 3720 MiB (4058). Compressing spilled blocks (zstd) is
+about half of the out-of-core window's CPU in both engines.
+
+What was ported: `MetaPipeline::AddFinishEvent` (the IEJoin/AsOf sink finalizes each
+input in its own event); `GlobalSortedTable` keeps the sort's spillable `SortedRun`,
+materialized by a parallel finalize stage, and the range joins read it through
+`ExternalBlockIteratorState` (one key and payload chunk pinned at a time); IEJoin's
+source stages (`SINK_L1` … `EXTRACT_P`, `INNER`, `OUTER`), AsOf's `AsOfHashGroup` stages
+and the window's `WindowHashGroup` stages run as tasks shared by all threads; window
+hash groups materialize into a buffer-managed `ColumnDataCollection`; temporary file
+reads and writes run outside the file's lock (AsOf at 8 threads queued on it).
+
 ## Open items
 
 | Area | Gap | Suspected cause | Found in |
@@ -378,8 +424,10 @@ limit at 4 threads with peak RSS within 0.9–1.2× of DuckDB; without a limit, 
 | Regular expressions with captures | `regexp_replace` 1.5× DuckDB (ClickBench q28 0.67×) | the `regex` crate's bounded backtracker finds the groups; RE2's BitState is faster for anchored patterns spanning the whole string | `crates/functions` (`regexp`) |
 | Aggregate hash table lookups | `find_or_create_groups` 1.2–1.5× DuckDB's `FindOrCreateGroupsInternal` (ClickBench q04/q08/q09/q35 0.6–0.8×); resizing at one thread costs ~2× DuckDB's `ReinsertTuples` (q04: 400 ms vs 211 ms) | per-chunk set-up (formats, chunk copies, HLL) and the probe loops cost more instructions; resized pointer tables are fresh mappings whose pages fault in; DuckDB appends a few rows per partition to an unpartitioned collection first (`UNPARTITIONED_RADIX_BITS_THRESHOLD`) | `crates/execution` (`aggregate_hashtable.rs`), `crates/row` |
 | Sorting VARCHAR keys | `l_comment` sort 1.4× slower, 1.4× the memory | the output decodes strings from the sort keys (`decode_value`) instead of reading a payload; contiguous copy of each run's keys | `crates/row` (`sort/`) |
-| Window source | one hash group per thread | DuckDB splits a hash group into tasks (`WindowHashGroup` stages), so a single partition runs on one thread here | `crates/execution` (`operators/window.rs`) |
-| IEJoin / AsOf sinks | sequential | their sinks switch inputs on `combine` instead of DuckDB's two finalize events (`AddFinishEvent`) | `crates/execution` (`operators/join/iejoin.rs`, `asof_join.rs`) |
+| Range joins and window in memory | IEJoin 0.84× / 0.93× and window 0.90× / 0.92× DuckDB's cycles at 1 / 8 threads without a limit; AsOf 0.97–0.98× out of core (see above) | the row-format primitives cost more instructions than DuckDB's: scattering into sort runs and hash partitions (`scatter_column`, heap sizes), gathering payload in the merger, building and decoding sort keys (window 18.9 G vs 14.2 G instructions, IEJoin 58.0 G vs 43.7 G) | `crates/row` (`scatter.rs`, `gather.rs`, `sort/`) |
+| Range joins and window: peak memory | 0.65–0.99× DuckDB's RSS (target ≤ 0.6×); AsOf at 300 MiB and 8 threads varies between 0.91× and 1.15× from run to run | memory outside the buffer manager: per-thread chunks and executor states, IEJoin's `li`/`p` arrays (unmanaged in DuckDB too); not broken down yet | `crates/execution` (`operators/join/`, `operators/window.rs`) |
+| Window `SINK` / `FINALIZE` stages | one task per hash group (the stage's first); the other tasks of the stage only wait | the executors' global states are built single-threaded; DuckDB sinks every block range in parallel into them. Only windows with few, large partitions (ORDER BY only) feel it; not measured | `crates/execution` (`window/executor.rs`, `operators/window.rs`) |
+| `ColumnDataCollection` reads | each chunk read copies its vectors out of the block | rustdb vectors own their buffers; DuckDB's reference the pinned block | `crates/row` (`column_data.rs`) |
 | Struct projection pushdown | `plan_struct_projection_pushdown`, `struct_projection_pushdown_in_storage`, `deliver_child_columns` fail | `struct_extract` on a scanned column is not pushed into the scan as a child column (`ColumnIndex` children, pushdown extract) | `crates/optimizer`, `crates/storage`, `crates/parquet` |
 | Common subexpressions | `l_extendedprice * (1 - l_discount)` computed twice in Q1 | check the CSE optimizer port against DuckDB's plan | `crates/optimizer` |
 | Parser: tiny statements (`SELECT 1`, short SELECTs) | ~1.05–1.25× DuckDB cycles per query | per-node malloc/free vs DuckDB's arena-allocated parse tree | `crates/parser` (`parse_bench`) |
@@ -425,3 +473,6 @@ limit at 4 threads with peak RSS within 0.9–1.2× of DuckDB; without a limit, 
 | Opening a database: checkpoint blocks | every row group's column metadata was read to collect the blocks the checkpoint references (TPC-H SF10: 8,161 metadata block reads, 0.8 G instructions; ClickBench 7.8 G) | every block neither free nor metadata (`LoadFreeList`): 0.11 and 0.39 G instructions (DuckDB 0.09 and 0.16) |
 | Spill files and zstd | `ruzstd` encoded at about zstd level 1 only and decoded at 0.2–0.5× DuckDB's speed | zstd 1.5.6 ported (`crates/zstd`): spill files adapt between levels -5..5 as DuckDB's do; 0.88–1.05× compression, 0.93–0.99× decompression |
 | `COUNT(DISTINCT)` finalize | the tables merging DISTINCT partitions resized from the initial capacity (ClickBench q04: 0.4 of 7.3 Gcycles reinserting) | sized for their partition like the regular finalize (q04 7.39 → 6.85 Gcycles) |
+| Window source | one hash group per thread; a group's rows pinned | DuckDB's `WindowHashGroup` stages as tasks shared by all threads, the largest group on all of them; groups materialize into a buffer-managed `ColumnDataCollection` and spill (out-of-core window 0.95–1.04× DuckDB's cycles) |
+| IEJoin / AsOf sinks and sources | sinks switched inputs on `combine`; the sorted input stayed pinned (out of memory under 300 MiB) | `AddFinishEvent` (a finalize event per input), spillable sorted runs read through `ExternalBlockIteratorState`, DuckDB's IEJoin and `AsOfHashGroup` source stages (out of core: IEJoin 1.04–1.19×, AsOf 0.97–1.02× DuckDB's cycles) |
+| Temporary file I/O | reads and writes held the file's lock (AsOf at 8 threads queued on it) | `pread` / `pwrite` outside the lock |

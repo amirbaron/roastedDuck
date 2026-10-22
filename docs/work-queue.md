@@ -134,30 +134,6 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
     not ICU 66's bytes (`icu_collate_de('Äpfel')`: `2B4935…` vs `2A4834…`): orders
     agree, the strings differ. Matching them needs ICU4C's sort key format
     (`CollationKeys::writeSortKeyUpToQuaternary`) over the same collation elements.
-12. **Out-of-core IEJoin, AsOf join and window** (`out_of_core_ie_join`,
-    `out_of_core_asof_join`, `out_of_core_window`): over TPC-H SF1 `lineitem` under a
-    300 MiB limit at 1, 2 and 8 threads rustdb runs out of memory ("failed to pin
-    block") where DuckDB spills. Their sinks keep the sorted input pinned; DuckDB's
-    sort into buffer-managed, spillable runs (`PhysicalRangeJoin` global sort state,
-    `WindowHashGroup`), and the IEJoin/AsOf sinks finalize in two events
-    (`AddFinishEvent`, see `docs/perf-backlog.md`). The port, in progress:
-    - `MetaPipeline::AddFinishEvent`: the left input's pipeline of an IEJoin/AsOf join
-      gets its own finish event, so the sink finalizes the right input before the left
-      one is sunk (DuckDB's "Finalize twice").
-    - Sorted runs are read like DuckDB reads them: `ExternalBlockIteratorState` pins a
-      run's key (and payload) chunks one at a time, `SortedRunScanState` gathers the
-      payload of selected keys; `SortKey` is public so the joins compare keys directly.
-    - `GlobalSortedTable` keeps the sort's materialized `SortedRun` (spillable) instead of
-      re-collecting it into pinned rows; the materialization runs as a parallel finalize
-      stage (`RangeJoinMaterializeEvent`). The piecewise merge join reads it through
-      iterators like DuckDB's.
-    - IEJoin's source runs DuckDB's stages (`SINK_L1` … `EXTRACT_P`, `INNER`, `OUTER`) as
-      tasks shared by all threads; AsOf's source runs `AsOfHashGroup`'s stages (`SORT`,
-      `MATERIALIZE`, `GET`, `LEFT`, `RIGHT`), probing sorted runs through iterators.
-    - The window source runs `WindowHashGroup`'s stages, the largest hash group on all
-      threads; a group's sorted rows are a buffer-managed collection scanned chunk by
-      chunk. Sinking into and finalizing the executors' global states stays one task per
-      group (their states are built single-threaded).
 13. **VARIANT extract pushdown into shredded columns.** VARIANT columns are stored,
     shredded and unshredded like DuckDB's; a scan of `col.a::INT` still unshreds whole
     values and extracts afterwards. DuckDB scans the typed column of a fully shredded
