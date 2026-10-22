@@ -12,7 +12,7 @@ aes = { version = "0.9", features = ["zeroize"] }
 aes-gcm = { version = "0.11", default-features = false, features = ["aes", "zeroize"] }
 ctr = { version = "0.10", features = ["zeroize"] }
 getrandom = "0.4"
-sha2 = { version = "0.11", default-features = false }
+sha2 = { version = "0.11", default-features = false, features = ["zeroize"] }
 zeroize = "1"
 
 [target.'cfg(unix)'.dependencies]

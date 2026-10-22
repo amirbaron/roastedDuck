@@ -225,11 +225,14 @@ pub fn base64_decode(text: &[u8]) -> Option<Vec<u8>> {
 /// key, base64-decoded if it is base64. `user_key` and the decoded key are zeroed.
 pub fn derive_key(user_key: &mut Vec<u8>, salt: &[u8; SALT_LEN]) -> [u8; DEFAULT_ENCRYPTION_KEY_LENGTH] {
     let mut decoded = base64_decode(user_key).unwrap_or_else(|| user_key.clone());
+    // The hasher wipes its buffer when dropped (`sha2`'s `zeroize`).
     let mut hasher = Sha256::new();
     hasher.update(salt);
     hasher.update(&decoded);
+    let mut digest = hasher.finalize();
     let mut derived = [0u8; DEFAULT_ENCRYPTION_KEY_LENGTH];
-    derived.copy_from_slice(&hasher.finalize());
+    derived.copy_from_slice(&digest);
+    digest.as_mut_slice().zeroize();
     user_key.zeroize();
     decoded.zeroize();
     derived
