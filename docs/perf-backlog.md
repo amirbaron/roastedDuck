@@ -7,6 +7,13 @@ is sufficient. Historical measurements and rejected experiments below retain the
 original targets for context; caching may be re-evaluated under the parity target. Numbers are
 CPU time unless noted; the machine is shared, so small differences need re-checking.
 
+## Validation of new measurements
+
+New performance evidence must retain the result-check verdict in JSON and fail the
+runner on a mismatch or engine error. Earlier `bench.py` runs printed `DIFF` but still
+included its timing in the geometric mean and exited successfully; old reports therefore
+need their text checked as well as their JSON. `--no-check` is exploratory evidence only.
+
 ## Benchmark suites (round 2)
 
 `scripts/perf/bench.py` runs TPC-H, h2oai (groupby and join) and a ClickBench subset on
