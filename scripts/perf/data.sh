@@ -3,6 +3,7 @@
 # $RUSTDB_PERF_DIR (default .context/perf). Both engines read the same files.
 #
 # usage: scripts/perf/data.sh tpch SF          TPC-H, CALL dbgen(sf=SF) -> tpchSF.duckdb
+#        scripts/perf/data.sh tpcds SF         TPC-DS, CALL dsdgen(sf=SF) -> tpcdsSF.duckdb
 #        scripts/perf/data.sh h2o              h2oai G1_1e7_1e2_5_0 (groupby) and J1_1e7_* (join)
 #                                              -> h2o_g.duckdb, h2o_j.duckdb (DuckDB's benchmark data)
 #        scripts/perf/data.sh hits [N]         the first N (default 3) of ClickBench's 100 hits
@@ -20,6 +21,9 @@ cd "$DIR"
 case "${1:-}" in
 tpch)
   "$DUCK" "tpch$2.duckdb" -c "CALL dbgen(sf=$2)" > /dev/null
+  ;;
+tpcds)
+  "$DUCK" "tpcds$2.duckdb" -c "CALL dsdgen(sf=$2)" > /dev/null
   ;;
 h2o)
   BASE=https://github.com/duckdb/duckdb-data/releases/download/v1.0
@@ -48,7 +52,7 @@ hits)
   "$DUCK" hits.duckdb -c "CHECKPOINT"
   ;;
 *)
-  sed -n '2,10p' "$SELF"
+  sed -n '2,11p' "$SELF"
   exit 1
   ;;
 esac

@@ -47,10 +47,7 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      (byte sequence mismatch) detected in value construction", `.print` writes them as
      they are). Needs byte strings from the shell's input down to the parser.
    - Functions rustdb lacks, which `duckdb_functions()`, `PRAGMA functions` and the
-     completion lists show: `icu_collate_<locale>` for each ICU collation (DuckDB's ICU
-     registers every collation as a scalar function too), `seq_scan`,
-     `duckdb_secret_types`, `duckdb_table_sample`, `duckdb_coordinate_systems`,
-     `json_serialize_plan` (8), `tpcds`, `dsdgen` (10).
+     completion lists show: `json_serialize_plan` (8).
    - Object ids: the oid of a database (`PRAGMA database_list`'s `seq`) counts the
      catalog entries created before it, more in DuckDB.
    - "Did you mean" for a type name: DuckDB suggests among the default type entries it
@@ -133,7 +130,6 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    collection's chunk metadata as rustdb holds it (16 KiB where DuckDB's arena holds
    4 KiB), and `FlushRowGroup` estimates DuckDB's buffer (`ColumnDataCollection::
    SizeInBytes`: exact for fixed-size columns, strings and nested types approximate).
-10. **TPC-DS** (`test/sql/tpcds`, the `tpcds` extension).
 11. **ICU collation of `as`, `kok` and `mr`** (`test_icu_extensive`). DuckDB embeds ICU
     66's data; rustdb matches it for 127 of the 130 collations (tailorings ICU4X's
     compiled data lacks come from `crates/icu/data/collation.postcard`, locales ICU 66

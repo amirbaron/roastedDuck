@@ -306,18 +306,24 @@ where
 pub fn scatter(source: &Vector, target: &mut Vector, positions: &[u32]) -> Result<()> {
     fn typed<T: NativeType>(source: &Vector, target: &mut Vector, positions: &[u32]) {
         let src = source.unified::<T>();
-        let mut nulls = Vec::new();
         let data = target.values_mut::<T>();
+        let capacity = data.len();
+        let mut any_null = false;
         for (row, &position) in positions.iter().enumerate() {
             match src.get(row) {
                 Some(value) => data[position as usize] = value,
-                None => nulls.push(position as usize),
+                None => any_null = true,
             }
         }
-        let capacity = data.len();
-        let validity = target.validity_mut();
-        for row in nulls {
-            validity.set_invalid(row, capacity);
+        if any_null {
+            // The NULLs in one pass over the words, not a copy-on-write check per row.
+            let words = target.validity_mut().ensure_writable(capacity);
+            for (row, &position) in positions.iter().enumerate() {
+                if !src.is_valid(row) {
+                    let position = position as usize;
+                    words[position / 64] &= !(1 << (position % 64));
+                }
+            }
         }
     }
     use crate::PhysicalType as P;
@@ -361,6 +367,25 @@ mod tests {
             vector.set_value(row, &value).unwrap();
         }
         vector
+    }
+
+    #[test]
+    fn scatter_writes_values_and_nulls() {
+        let source = int_vector(&[Some(1), None, Some(3), None]);
+        let mut target = int_vector(&[Some(10), Some(20), Some(30), Some(40), Some(50)]);
+        scatter(&source, &mut target, &[4, 0, 2, 1]).unwrap();
+        let values: Vec<_> = (0..5).map(|row| target.get_value(row)).collect();
+        let null = Value::null(LogicalType::INTEGER);
+        assert_eq!(
+            values,
+            vec![
+                null.clone(),
+                null,
+                Value::integer(3),
+                Value::integer(40),
+                Value::integer(1)
+            ]
+        );
     }
 
     #[test]
