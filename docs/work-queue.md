@@ -160,6 +160,26 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
     not ICU 66's bytes (`icu_collate_de('Äpfel')`: `2B4935…` vs `2A4834…`): orders
     agree, the strings differ. Matching them needs ICU4C's sort key format
     (`CollationKeys::writeSortKeyUpToQuaternary`) over the same collation elements.
+    In progress, as follows (not over ICU4X: its collator runs on data built in ICU's
+    `icu4xMode` — no canonical closure, contraction flags ICU 66 does not set, a
+    two-character prefix window — and its sort key writer ends every level with a
+    separator, so neither its runtime nor its data format can reproduce ICU 66's keys):
+    - DuckDB's data is ICU 66's root collation (`ucadata-unihan.icu`) with CLDR 47
+      tailorings compiled by ICU 66's `genrb` (`extension/icu/scripts/makedata.sh`).
+      `scripts/icu-collation-data.sh` builds DuckDB's own ICU sources with its embedded
+      `icudt66l.dat` into an offline exporter (`scripts/icu-collation-data.cpp`) that
+      writes `crates/icu/data/icu66_collation.bin`: the root data as DuckDB loads it,
+      the tailoring every bundle of the coll tree loads (`RuleBasedCollator::
+      cloneBinary`, the format `ucol_openBinary` reads), the `icu_noaccent` collator,
+      and the FCD16 values and canonical decompositions of ICU 66's NFC data. The
+      exporter's `keys` mode prints DuckDB's sort keys for comparisons.
+    - `crates/icu/src/icu4c/collation*.rs` port ICU 66's collation runtime over that
+      data: `CollationDataReader`, `CollationData`, `CollationSettings` (reordering,
+      variable top), the `UTrie2` and `UCharsTrie` readers, `CollationIterator` with
+      `UTF16CollationIterator` and `FCDUTF16CollationIterator`, `CollationFCD`,
+      `CollationKeys::writeSortKeyUpToQuaternary` and `RuleBasedCollator::getSortKey`;
+      `Locale(language, country)` and the coll tree's fallback pick the tailoring.
+      ICU4X goes away.
 13. **Struct and VARIANT extract pushdown, the rest.** The pushdown is ported one to one:
     `RemoveUnusedColumns` registers `struct_extract` / `variant_extract` chains (under a
     cast) on scanned columns, scans read only the fields used (`ColumnIndex` children;
