@@ -210,7 +210,14 @@ multiple columns, NULL validity and struct fields. Each newly exposed defect fai
 before its fix; the mutation tests also verify locks remain held before rollback.
 The final MVCC rerun after the test-helper lint fix passes all 14 tests.
 
-Release SQL acceptance is still pending. The serial driver
+Release stress checks pass: **100 of 100 original runs and 20 of 20 diagnostic
+runs**. The affected SQL cohort has **374 passes and one shared skip** (375 files),
+zero failures/crashes/timeouts, and zero regressions against its scoped ratchet. The
+first driver invocation incorrectly checked the subset against the entire ratchet and
+stopped on missing unrelated files; the corrected scoped check passes without changing
+the canonical list or rerunning the already completed stages.
+
+Full-corpus acceptance is still pending. The serial driver
 `index-reload-20261022/stress-update/verify-journal.py` builds and signs the runner,
 checks 100 original stress trials plus 20 diagnostic trials, checks the affected SQL
 cohort and ratchet, then starts a fresh full sweep only if those gates pass. It stores
@@ -220,6 +227,12 @@ duplicate or rebuild its runner during the sweep. The previous failed full resul
 canonical ratchet remain unchanged. Shell/C API binaries still require rebuilding and
 verification on the final source; an earlier partial release build was deliberately
 stopped after the runner linked, before finishing the remaining packages.
+The full sweep is now running through `resume-after-cohort.py`, which verifies the
+unchanged runner hash and source, checks the scoped ratchet, then resumes at the full
+stage. Its unique directory is recorded in `index-reload-20261022/full-run-path.txt`.
+`verify-post-full.py` is prepared but has not run; after a reviewed clean full sweep it
+rebuilds/signs the public binaries and verifies C API, shell and explicit-transaction
+lock behavior against C++.
 
 Native disk restore covers plain and stored constraint indexes so far; expression/WAL,
 pre-v0.10 and fallback paths remain open under work-queue 16. The cache policy is still
