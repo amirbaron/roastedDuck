@@ -54,6 +54,11 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      created so far (`DefaultTypeGenerator` creates them on first use, e.g. `INTEGER`
      after a table with an `INT` column, so `INTEGR` gets `main.INTEGER`); rustdb's
      builtin types are not catalog entries and get no suggestion.
+     Fresh probes also expose lookup precedence: C++ selects `temp.main.INTEGER`
+     before a user type `s.INTEGER` when creating `s.t(x INTEGER)`, while Rust selects
+     the user type. The port must create real internal/temporary default entries,
+     preserve their first spelling through lookup/scan/error paths, and use C++'s
+     type lookup fallbacks. Baselines: `.context/artifacts/shell-type-catalog-20261023/`.
    - A `memory_limit` far below an aggregate's state (`SELECT list(i) FROM range(1e7)`
      under `1MB`) fails in DuckDB and succeeds in rustdb (4).
 
