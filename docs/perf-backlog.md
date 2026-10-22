@@ -373,6 +373,43 @@ A fresh full corpus sweep remains required. Evidence and binary hashes:
 logs). The next experiment uses a separate artifact subdirectory and preserves these
 binaries and reports.
 
+## Round 6 experiment: C++ table-block caching (not accepted)
+
+The uncached integrated binaries are preserved in `uncached-merged/` under the round's
+artifact directory. The candidate changes only persistent segment registration from
+`release_on_unpin()` to `keep_cached()`, following C++'s retention until eviction.
+Clippy with warnings denied passes; all 392 upstream shell tests (three shared skips)
+and all 30 C API files pass on the candidate. A C++-written 1M-row uncompressed file
+was read by C++, uncached Rust and the candidate: all sums match for cold, warm,
+2 MB-limited and restored reads, and the file SHA is unchanged. C++ and candidate
+both retain 1,835,008 bytes under the tight limit and 17,301,504 bytes after restoring
+it; uncached Rust retains no table blocks.
+
+All 160 benchmark result checks pass with the same data and repetition counts as the
+integrated baseline. These are experimental measurements, not performance acceptance:
+
+| run | suite | threads | DuckDB wall s | rustdb wall s | speed geomean | slowest | mem geomean | max mem |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| cached | h2og | 1 | 3.459 | 3.236 | 1.09× | q05 0.87× | 0.95× | q03 1.01× |
+| cached | h2og | 14 | 0.521 | 0.493 | 1.07× | q09 0.90× | 0.87× | q10 1.01× |
+| cached | h2oj | 1 | 7.408 | 5.826 | 1.27× | q04 1.23× | 0.59× | q05 0.68× |
+| cached | h2oj | 14 | 0.714 | 0.619 | 1.17× | q05 1.09× | 0.91× | q02 0.92× |
+| cached | hits | 1 | 92.624 | 111.764 | 0.98× | q37 0.39× | 0.85× | q22 1.26× |
+| cached | hits | 14 | 10.620 | 12.754 | 0.96× | q37 0.56× | 0.86× | q22 1.12× |
+| cached | tpch10 | 1 | 12.369 | 11.772 | 1.00× | q03 0.82× | 0.96× | q21 1.08× |
+| cached | tpch10 | 14 | 1.470 | 1.501 | 0.95× | q05 0.79× | 0.92× | q21 1.06× |
+
+Caching improves average speed, but the candidate exceeds C++ memory on several
+queries: TPC-H q21 by 6–8%; ClickBench q22 by 12–26%, and q28 by 15% at one thread
+(5.59 GB vs 4.87 GB). Database-open q00's existing extra ~3.2 MB remains. These are
+remaining parity gaps, not waived by better average speed or lower memory elsewhere.
+The buffered right-delim input is a suspected contributor to q21; profiling is still
+needed to attribute its extra memory. q28 and q22 also need allocation/scan diagnosis.
+The candidate remains uncommitted while the full 4870-file corpus runs, including
+memory pressure and spill behavior. Do not rebuild the runner while it is active.
+Evidence: `.context/artifacts/parity-20261022/cache-policy/` (`residency.json`, build
+manifest, `bench/`, and the unique full-run directory recorded by `full-run-path.txt`).
+
 ## zstd (compression parity)
 
 `crates/zstd/examples/bench.rs` against `tools/zstd-ref` (`zstd_ref bench`, DuckDB 1.5.6's

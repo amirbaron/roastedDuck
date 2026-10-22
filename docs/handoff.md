@@ -124,6 +124,22 @@ The port includes a deliberate termination guard: on rare inputs where ICU's FCD
 loops forever, Rust collates the NFD form instead. Such reference hangs are excluded from
 byte comparisons; a Rust unit test covers the fallback.
 
+## Active cache experiment (2026-10-22)
+
+The current working tree has one uncommitted code change in
+`crates/storage/src/table/column_segment.rs`: retain persistent table blocks as C++
+does. Candidate checks and both 160-query benchmark comparisons are saved under
+`.context/artifacts/parity-20261022/cache-policy/`. All candidate shell/C API checks
+and result comparisons pass, but the cache policy is **not accepted**: q21, q22 and
+q28 have memory above C++, despite improved average speed. See the experimental table
+in `docs/perf-backlog.md`. Preserve the uncached binaries in `uncached-merged/`.
+
+A fresh 4870-file sweep is running with one worker, normal SQL thread defaults, and
+worker logs preserved on the SSD. Its path is recorded in `cache-policy/full-run-path.txt`.
+Do not start another workload or rebuild `target/release/slt` until it finishes. After
+it finishes, inspect every result against the prior 4781/15/74 baseline and the ratchet;
+then diagnose or reject the cache policy's memory outliers before claiming parity.
+
 ## How to work
 
 - Build and sign: `cargo build --release -p slt -j 1 && scripts/sign.sh target/release/slt`.
