@@ -70,9 +70,10 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    DuckDB's segments, allocator and copy functions, nested types included, block for
    block), which spills or runs out of memory under a small `memory_limit` as DuckDB's does
    (`buffer_managed_query_result`) and which `pragma database_size` counts for the
-   shell's last result. Two pieces remain:
-   - `PhysicalBatchInsert` has no `BatchMemoryManager`: batches are not throttled
-     against the memory limit.
+   shell's last result. `PhysicalBatchInsert` throttles its unflushed batches with
+   DuckDB's `BatchMemoryManager` (threads ahead of the lowest batch block while the
+   batches take the memory it obtained; `MaxThreads` caps the threads by it). One piece
+   remains:
    - `auto_checkpoint_skip_wal_threshold` is accepted, but a commit that triggers a
      checkpoint still writes its WAL entries.
 5. **Compression parity, the rest.** ZSTD, roaring and hugeint bitpacking segments are
@@ -152,12 +153,13 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
       where `MultiFileColumnMapper` maps the fields.
     - `hash()` of a VARIANT differs from DuckDB's (also for unshredded values, so not a
       layout difference).
-14. **Buffer eviction parity under tight limits** (`max_swap_space_error.test`, failing 4
-    in 10 runs). After `CREATE TABLE t2 AS SELECT random() FROM range(200000)` under
-    `memory_limit='1024KiB'`, two threads and a 4 MB swap limit, rustdb keeps 1,067,008
-    bytes of IN_MEMORY_TABLE resident (above the limit) and 1.31 MB on disk, where
-    DuckDB keeps 542,720 bytes resident and 1.84 MB on disk. With 1M rows, rustdb then
-    holds three pinned blocks (804 KiB) and fails to allocate the fourth ("could not
-    allocate block") before reaching the swap limit DuckDB reports ("failed to offload
-    data block"). Compare what the insert path pins per thread and when DuckDB unloads
-    transient segments.
+14. **Buffer eviction parity under tight limits, the rest.** `max_swap_space_error.test`
+    passes (20 of 20 runs, alone and beside a directory run): an append that starts a new
+    row group unpins the full row group's segments before it allocates the new ones, as
+    DuckDB's `RowGroup::InitializeAppend` does, so a 1M-row insert under a 1 MiB limit
+    spills until the swap limit ("failed to offload data block") instead of running out of
+    pinnable memory. After `CREATE TABLE t2 AS SELECT random() FROM range(200000)` under
+    that limit rustdb still keeps one 256 KiB block more resident than DuckDB (804,864
+    against 542,720 bytes with a buffer-managed result, 1,067,008 against 804,864 with a
+    streaming one): DuckDB charges its pipelines' chunks to the buffer pool
+    (`BufferAllocator`, tag `ALLOCATOR`), rustdb's vectors are plain heap memory.
