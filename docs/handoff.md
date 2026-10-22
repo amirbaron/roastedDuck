@@ -31,17 +31,17 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
 
 ## Where things stand
 
-- **Corpus** (`scripts/conformance.sh`, last full run on main): 4778 of 4870 files pass,
-  17 fail, 75 skip (both engines skip the same files: extensions and settings the
-  reference build lacks), no timeouts. C++ DuckDB passes 4794. Of the 17 files C++ passes
+- **Corpus** (`scripts/conformance.sh`, last full run on main): 4779 of 4870 files pass,
+  16 fail, 75 skip (both engines skip the same files: extensions and settings the
+  reference build lacks), no timeouts. C++ DuckDB passes 4794. Of the 16 files C++ passes
   and rustdb does not:
   - 15 are accepted divergences (`conformance/divergences.md`: 11 load C++ extension
     binaries, 4 expect out-of-memory errors rustdb avoids by using less memory);
-  - 2 are real gaps, each in `docs/work-queue.md`: `json_serialize_plan` (an agent is on
-    it) and ICU `as`/`kok`/`mr` (`test_icu_extensive`, brief `icu66.md` queued).
+  - 1 is a real gap: ICU `as`/`kok`/`mr` (`test_icu_extensive`; an agent is on it).
+    `json_serialize_plan` is ported (1486 of 1524 plans byte-identical, work-queue 8).
     Database encryption is ported (`crates/crypto`): `dict_fsst_expression_filter`
     passes, and so do the encryption tests that `require httpfs` without that line.
-  The ratchet `conformance/passing.txt` lists 4853 files and must never shrink:
+  The ratchet `conformance/passing.txt` lists 4854 files and must never shrink:
   `target/release/slt ratchet update target/slt/rust.jsonl` after a run.
 - **Flaky:** none known since the buffer-memory merge (`max_swap_space_error.test` passed
   20 of 20); rerun a file alone before treating a failure under load as a regression.
@@ -52,10 +52,9 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
   shell one to one, linenoise included: all 392 `tools/shell/tests` that pass on the C++
   CLI pass (`scripts/shell-tests.sh --binary rust|cpp`), and 717 of the 726 cases of
   `scripts/shell-diff.py` (modes, types, dot commands, options, errors, pty sessions)
-  match byte for byte (721 of 727; the 6 others are known engine differences,
+  match byte for byte (722 of 727; the 5 others are known engine differences,
   work-queue item 3).
-  `duckdb_functions()` matches DuckDB's except TPC-DS, `json_serialize_plan` and
-  `duckdb_external_file_cache`.
+  `duckdb_functions()` matches DuckDB's exactly.
 - **Compression:** `crates/zstd` ports zstd 1.5.6's encoder and decoder (zstd's frames at
   levels -5..3; ruzstd is gone); roaring, hugeint bitpacking and partial blocks match
   DuckDB's layouts (work-queue item 5 lists what is left).
@@ -76,11 +75,11 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
 Worktrees under `/Users/amirbaron/src/duckdb-rust/.claude/worktrees/`, briefs in
 `.context/briefs/`:
 
-- logical plan serialization (`plan-serialization.md`, base `9aa5053`).
+- ICU 66 collation data and sort keys (`icu66.md`, base `969c3f6`);
+- performance round 6 (`perf-round-6.md`, base `4dca105`).
 
-Queued, in order (briefs written, each with `<BASE>` to fill in): `icu66.md` (ICU 66
-collation data and sort key bytes); `perf-round-6.md` (performance rounds, repeat until
-the targets hold). `_common.md` holds the
+Queued: more performance rounds (copy `perf-round-6.md` with the next baseline) until
+the targets hold; then differential fuzzing (M9). `_common.md` holds the
 ground rules every brief repeats. If a session ends while
 an agent runs, its worktree holds its commits: review, finish or salvage, merge, run the
 full corpus.
@@ -102,7 +101,7 @@ full corpus.
 
 ## Next steps, in order
 
-1. Merge the running agent's branch (plan serialization), then run the queued briefs.
+1. Merge the running agents' branches (ICU, performance round 6).
 2. Close the remaining gaps in `docs/work-queue.md`, at most two agents at a time: ICU
    collation for as/kok/mr and its sort key bytes, Parquet encryption (15).
 3. TPC-DS is ported (`crates/tpcds`, all 25 files pass). Its `dsdgen`, like TPC-H's
