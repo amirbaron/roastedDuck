@@ -31,9 +31,9 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
 
 ## Where things stand
 
-- **Corpus** (`scripts/conformance.sh`, last full run on main): 4777 of 4870 files pass,
-  18 fail, 75 skip (both engines skip the same files: extensions and settings the
-  reference build lacks), no timeouts. C++ DuckDB passes 4794. Of the 18 files C++ passes
+- **Corpus** (`scripts/conformance.sh`, last full run on main): 4778 of 4870 files pass,
+  17 fail, 75 skip (both engines skip the same files: extensions and settings the
+  reference build lacks), no timeouts. C++ DuckDB passes 4794. Of the 17 files C++ passes
   and rustdb does not:
   - 15 are accepted divergences (`conformance/divergences.md`: 11 load C++ extension
     binaries, 4 expect out-of-memory errors rustdb avoids by using less memory);
