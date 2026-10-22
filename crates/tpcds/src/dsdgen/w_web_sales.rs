@@ -16,7 +16,6 @@ use super::constants::WR_RETURN_PCT;
 use super::context::Context;
 use super::genrand::DIST_UNIFORM;
 use super::pricing::{Pricing, PricingConstants};
-use super::skip_days::skip_days;
 use super::tables::{
     CUSTOMER, CUSTOMER_ADDRESS, CUSTOMER_DEMOGRAPHICS, DATET, HOUSEHOLD_DEMOGRAPHICS, ITEM, PROMOTION,
     REASON, SHIP_MODE, TIME, WAREHOUSE, WEB_PAGE, WEB_RETURNS, WEB_SALES, WEB_SITE,
@@ -88,10 +87,6 @@ pub(crate) struct WebSales {
     /// `g_w_web_sales`, the current line item.
     r: WebSalesRow,
     pricing: PricingConstants,
-    /// The date the sales have reached, and the last order of that date. Web sales draw
-    /// their dates; the date only advances.
-    date: i64,
-    new_date_index: i64,
     /// The position of the current line item in the item permutation.
     item_index: i32,
     item_count: i32,
@@ -102,13 +97,9 @@ pub(crate) struct WebSales {
 impl WebSales {
     /// `mk_master`'s initialization.
     pub(crate) fn new(ctx: &Context) -> Self {
-        let mut new_date_index = 0;
-        let date = skip_days(ctx, WEB_SALES, &mut new_date_index);
         Self {
             r: WebSalesRow::default(),
             pricing: PricingConstants::new(),
-            date,
-            new_date_index,
             item_index: 0,
             item_count: ctx.get_id_count(ITEM) as i32,
             item_permutation: None,
@@ -127,12 +118,11 @@ impl WebSales {
     }
 
     /// `mk_master`: the fields that are the same for every line item of an order.
+    ///
+    /// The original also moves a date forward by the orders of each day (`dateScaling`),
+    /// which nothing reads: the sales draw their dates. It is not kept, as at tiny scale
+    /// factors no day has an order and DuckDB never stops moving it.
     fn mk_master(&mut self, ctx: &mut Context, index: i64) {
-        // Move to a new date.
-        while index > self.new_date_index {
-            self.date += 1;
-            self.new_date_index += ctx.date_scaling(WEB_SALES, self.date);
-        }
         let r = &mut self.r;
         r.sold_date_sk = ctx.mk_join(WS_SOLD_DATE_SK, DATET, 1);
         r.sold_time_sk = ctx.mk_join(WS_SOLD_TIME_SK, TIME, 1);
@@ -166,9 +156,6 @@ impl WebSales {
     /// `mk_detail`: a line item, and its return if it is returned.
     fn mk_detail(&mut self, ctx: &mut Context, out: &mut Output<'_>) -> Result<()> {
         if self.item_permutation.is_none() {
-            // `mk_detail`'s initialization also moves the date back to the first one,
-            // which only the date loop of `mk_master` reads.
-            self.date = skip_days(ctx, WEB_SALES, &mut self.new_date_index);
             self.item_permutation = Some(make_permutation(&mut ctx.rng, self.item_count, WS_PERMUTATION));
         }
         ctx.null_set(WEB_SALES, WS_NULLS);

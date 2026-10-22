@@ -1,7 +1,7 @@
 //! The `catalog_sales` table and its child `catalog_returns` (`w_catalog_sales.c`,
 //! `w_catalog_returns.c`).
 
-use rustdb_common::Result;
+use rustdb_common::{Error, Result};
 
 use super::Output;
 use super::build_support::{get_permutation_entry, make_permutation};
@@ -107,7 +107,7 @@ impl CatalogSales {
 
     /// `mk_w_catalog_sales`: an order and its line items.
     pub(crate) fn mk(&mut self, ctx: &mut Context, out: &mut Output<'_>, index: i64) -> Result<()> {
-        self.mk_master(ctx, index);
+        self.mk_master(ctx, index)?;
         // The number of line items in the order.
         let line_items = ctx.rng.genrand_integer(DIST_UNIFORM, 4, 14, 0, CS_ORDER_NUMBER);
         for _ in 0..line_items {
@@ -117,11 +117,22 @@ impl CatalogSales {
     }
 
     /// `mk_master`: the fields that are the same for every line item of an order.
-    fn mk_master(&mut self, ctx: &mut Context, index: i64) {
-        // Move to a new date.
+    fn mk_master(&mut self, ctx: &mut Context, index: i64) -> Result<()> {
+        // Move to the date of the order. The days repeat their weights every four years:
+        // when no day of four years has an order, as at tiny scale factors, DuckDB never
+        // stops moving the date; fail instead.
+        let mut empty_days = 0;
         while index > self.new_date_index {
             self.date += 1;
-            self.new_date_index += ctx.date_scaling(CATALOG_SALES, self.date);
+            let orders = ctx.date_scaling(CATALOG_SALES, self.date);
+            self.new_date_index += orders;
+            empty_days = if orders == 0 { empty_days + 1 } else { 0 };
+            if empty_days > 4 * 366 {
+                return Err(Error::invalid_input(format!(
+                    "dsdgen cannot date the catalog sales at scale factor {}: no day has an order",
+                    ctx.scale
+                )));
+            }
         }
         let r = &mut self.r;
         r.sold_date_sk = self.date;
@@ -157,6 +168,7 @@ impl CatalogSales {
         self.ticket_item_base = ctx
             .rng
             .genrand_integer(DIST_UNIFORM, 1, self.item_count, 0, CS_SOLD_ITEM_SK);
+        Ok(())
     }
 
     /// `mk_detail`: a line item, and its return if it is returned.

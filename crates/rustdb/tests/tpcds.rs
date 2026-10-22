@@ -138,3 +138,19 @@ fn dsdgen_options() {
         .to_string();
     assert!(error.contains("Catalog \"nope\" does not exist!"), "{error}");
 }
+
+/// At scale factors this small no day has a catalog order: DuckDB never finishes moving
+/// the order date; rustdb fails.
+#[test]
+fn dsdgen_fails_where_duckdb_never_finishes() {
+    let mut con = connect();
+    let error = con.query("CALL dsdgen(sf=0.001)").unwrap_err().to_string();
+    assert!(
+        error.contains("dsdgen cannot date the catalog sales at scale factor 0.001"),
+        "{error}"
+    );
+    // The store and web sales, whose dates the loop does not set, finish.
+    con.query("CALL dsdgen(sf=0.003, suffix='_tiny')").unwrap();
+    let rows = con.query("SELECT count(*) FROM web_sales_tiny").unwrap();
+    assert_eq!(rows.value(0, 0).to_varchar().unwrap(), "2169");
+}

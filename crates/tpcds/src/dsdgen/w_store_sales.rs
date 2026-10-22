@@ -15,7 +15,6 @@ use super::constants::SR_RETURN_PCT;
 use super::context::Context;
 use super::genrand::DIST_UNIFORM;
 use super::pricing::{Pricing, PricingConstants};
-use super::skip_days::skip_days;
 use super::tables::{
     CUSTOMER, CUSTOMER_ADDRESS, CUSTOMER_DEMOGRAPHICS, DATET, HOUSEHOLD_DEMOGRAPHICS, ITEM, PROMOTION,
     REASON, STORE, STORE_RETURNS, STORE_SALES, TIME,
@@ -63,10 +62,6 @@ pub(crate) struct StoreSales {
     /// `g_w_store_sales`, the current line item.
     r: StoreSalesRow,
     pricing: PricingConstants,
-    /// The date the sales have reached, and the last ticket of that date. Store sales
-    /// draw their dates; the date only advances.
-    date: i64,
-    new_date_index: i64,
     /// The position of the current line item in the item permutation.
     item_index: i32,
     item_permutation: Vec<i32>,
@@ -76,15 +71,11 @@ pub(crate) struct StoreSales {
 impl StoreSales {
     /// `mk_master`'s initialization, which draws the item permutation.
     pub(crate) fn new(ctx: &mut Context) -> Self {
-        let mut new_date_index = 0;
-        let date = skip_days(ctx, STORE_SALES, &mut new_date_index);
         let item_count = ctx.get_id_count(ITEM) as i32;
         let item_permutation = make_permutation(&mut ctx.rng, item_count, SS_PERMUTATION);
         Self {
             r: StoreSalesRow::default(),
             pricing: PricingConstants::new(),
-            date,
-            new_date_index,
             item_index: 0,
             item_permutation,
             item_count,
@@ -103,12 +94,11 @@ impl StoreSales {
     }
 
     /// `mk_master`: the fields that are the same for every line item of a ticket.
+    ///
+    /// The original also moves a date forward by the tickets of each day (`dateScaling`),
+    /// which nothing reads: the sales draw their dates. It is not kept, as at tiny scale
+    /// factors no day has a ticket and DuckDB never stops moving it.
     fn mk_master(&mut self, ctx: &mut Context, index: i64) {
-        // Move to a new date.
-        while index > self.new_date_index {
-            self.date += 1;
-            self.new_date_index += ctx.date_scaling(STORE_SALES, self.date);
-        }
         let r = &mut self.r;
         r.sold_store_sk = ctx.mk_join(SS_SOLD_STORE_SK, STORE, 1);
         r.sold_time_sk = ctx.mk_join(SS_SOLD_TIME_SK, TIME, 1);
