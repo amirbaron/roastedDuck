@@ -88,12 +88,24 @@ gates remain in place.
 
 No previous Rust build, corpus run or agent process was active when this session resumed.
 The ICU worktree (`worktree-agent-a57faf12816ee7338`) has been merged; keep it and its
-artifacts intact. Performance round 6 has five saved commits (`1814548` through `155fe70`)
-under review for sequential integration, not a running agent. They pool vector
-buffers by size, speed RLE skips, keep all-row selections implicit, reuse compressed
-string heaps, and reuse expression scratch lists and constants. Acceptance requires
-fresh checks on the merged code, focused conformance and shell comparisons, and
-performance measurements; the saved branch has no completed final benchmark report. Its brief is `.context/briefs/perf-round-6.md` (base `4dca105`).
+artifacts intact. Performance round 6's five saved commits (`1814548` through `155fe70`) are
+integrated as `2a4541a` through `1e53786`. They pool vector buffers by size, speed
+RLE skips, keep all-row selections implicit, reuse compressed string heaps, and reuse
+expression scratch lists and constants. A retained-result lifetime regression test was
+added (`547a13b`). All 202 focused release unit tests pass; workspace/all-targets check
+and Clippy with warnings denied pass. The focused SQL run has 200 passes and three
+shared skips (203 files), with no failures, crashes or timeouts and zero regressions
+against the 4855-file ratchet. These focused rechecks retain the prior overall
+4781/15/74 results; a new full sweep is still required. Shell verification and fresh
+performance measurements are in progress, so performance acceptance remains open.
+
+The benchmark harness now fails on mismatches or engine errors and retains its
+check verdicts in JSON (`65042a1`); six regression tests pass. Older JSON lacks those
+verdicts and can conceal failures: saved `r6base-hits-t1.txt` includes a C++ q10 open
+failure, so that aggregate is incomplete. New evidence lives under
+`.context/artifacts/parity-20261022/`, including the pre-change binaries, unit logs,
+focused SQL results and ratchet check. Global rustfmt also finds pre-existing formatting
+in untouched files; the integrated code was formatted without unrelated churn. Its brief is `.context/briefs/perf-round-6.md` (base `4dca105`).
 Do not launch the historical briefs in parallel: the owner's latest limit is one task.
 
 ICU verification artifacts are under
@@ -127,8 +139,8 @@ byte comparisons; a Rust unit test covers the fallback.
 
 ## Next steps, in order
 
-1. Review the saved performance round 6 work, then work down `docs/work-queue.md`
-   sequentially. ICU verification is complete; Parquet encryption (15) remains.
+1. Finish verification and measurements of the integrated performance round 6 work,
+   then work down `docs/work-queue.md` sequentially. ICU verification is complete; Parquet encryption (15) remains.
 2. Keep one workload at a time. Use `JOBS=1` for canonical conformance runs; do not
    force `SLT_THREADS=1` globally because tests of thread defaults and parallel plans
    intentionally depend on the normal setting. It remains useful for focused diagnostics.
