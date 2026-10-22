@@ -2,6 +2,7 @@
 
 mod alter;
 mod batch_insert;
+mod batch_memory_manager;
 pub mod buffered_data;
 mod column_data_scan;
 mod copy_to_file;
