@@ -243,5 +243,4 @@ stdin = "PRAGMA database_list;\n"
 
 [[case]]
 name = "pragma-functions"
-known = "functions rustdb lacks: json_serialize_plan"
 stdin = "PRAGMA functions;\n"

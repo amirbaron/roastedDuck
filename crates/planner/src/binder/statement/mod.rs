@@ -387,7 +387,9 @@ fn bind_pragma(scope: &mut BindScope<'_>, pragma: &mut PragmaInfo) -> Result<Bou
             "PRAGMA function does not have a function specified",
         ));
     }
-    scope.with_properties(|properties| properties.return_type = StatementReturnType::Nothing);
+    // A pragma call's result is a `Success` column without rows, which clients show
+    // (`properties.return_type = QUERY_RESULT`).
+    scope.with_properties(|properties| properties.return_type = StatementReturnType::QueryResult);
     Ok(success(LogicalOperator::new(LogicalKind::Pragma {
         name: pragma.name.clone(),
         parameters: bound.parameters,
