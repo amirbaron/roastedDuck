@@ -1,7 +1,7 @@
 # Handoff
 
 State of the DuckDB 1.5.6 → Rust port ("rustdb") on the main line
-(`amirbaron/rust-duckdb-port`), updated 2026-10-22, to continue the work in a new session.
+(`amirbaron/rust-duckdb-port`), updated 2026-10-23, to continue the work in a new session.
 
 ## Goal
 
@@ -192,6 +192,34 @@ unittest passes all 20 controls. This is an unresolved concurrency issue, not a 
 cache or index-reload regression. Full logs for the additional 50 checks of each Rust
 binary and JSON summaries are in `index-reload-20261022/stress-update/`. No workload is
 active after those repeats. Diagnose the missing row before further parity acceptance.
+
+The subsequent investigation reproduced two concurrency defects deterministically.
+Column filtering re-read a growing vector's row count after the scan fixed its snapshot
+limit; a new match in the final partial vector could be emitted with an old row ID.
+Filtering now receives and respects the scan's maximum count. Separately, a conflict in
+a later vector, column, validity mask or struct field discarded undo records for earlier
+writes. Mutation records now propagate through errors and enter the transaction's undo
+log before the error returns. This preserves C++'s behavior: an aborted explicit
+transaction keeps earlier writes locked until `ROLLBACK`, then releases them. A live
+C++ C API control confirms that lock sequence (`aborted-locks-cpp.log`).
+
+All **80 storage tests pass** (55 unit, 14 MVCC, nine constraints, two type tests), and
+workspace/all-targets Clippy with warnings denied passes. The six new regression tests
+cover matching/nonmatching snapshot tails, conflicts across vectors and row groups,
+multiple columns, NULL validity and struct fields. Each newly exposed defect failed
+before its fix; the mutation tests also verify locks remain held before rollback.
+The final MVCC rerun after the test-helper lint fix passes all 14 tests.
+
+Release SQL acceptance is still pending. The serial driver
+`index-reload-20261022/stress-update/verify-journal.py` builds and signs the runner,
+checks 100 original stress trials plus 20 diagnostic trials, checks the affected SQL
+cohort and ratchet, then starts a fresh full sweep only if those gates pass. It stores
+the source/binary manifest and all logs under `stress-update/verification/`. Poll the
+live handle recorded in `.context/stress-update-investigation.md`; never launch a
+duplicate or rebuild its runner during the sweep. The previous failed full results and
+canonical ratchet remain unchanged. Shell/C API binaries still require rebuilding and
+verification on the final source; an earlier partial release build was deliberately
+stopped after the runner linked, before finishing the remaining packages.
 
 Native disk restore covers plain and stored constraint indexes so far; expression/WAL,
 pre-v0.10 and fallback paths remain open under work-queue 16. The cache policy is still
