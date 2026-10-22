@@ -40,8 +40,8 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
     out-of-memory errors rustdb avoids);
   - the rest are real gaps, each in `docs/work-queue.md`: `buffer_managed_query_result`,
     `physical_operator_logging` and the external file cache (2) — agents are on these —, `json_serialize_plan`,
-    encryption
-    (`dict_fsst_expression_filter`), ICU `as`/`kok`/`mr`.
+    ICU `as`/`kok`/`mr`. Database encryption is ported (`crates/crypto`): the
+    encryption tests that `require httpfs` pass on rustdb without that line.
   The ratchet `conformance/passing.txt` lists 4827 files and must never shrink:
   `target/release/slt ratchet update target/slt/rust.jsonl` after a run.
 - **Flaky:** none known since the buffer-memory merge (`max_swap_space_error.test` passed
@@ -106,9 +106,8 @@ full corpus.
 
 1. Merge the running agents' branches (TPC-DS, plan serialization), then run the queued
    briefs.
-2. Close the remaining gaps in `docs/work-queue.md`, at most two agents at a time:
-   encryption, ICU
-   collation for as/kok/mr and its sort key bytes.
+2. Close the remaining gaps in `docs/work-queue.md`, at most two agents at a time: ICU
+   collation for as/kok/mr and its sort key bytes, Parquet encryption (15).
 3. TPC-DS (25 tests): port the `tpcds` extension. Its `dsdgen` (like TPC-H's `dbgen`,
    already in `crates/tpch`) carries TPC's license, not MIT — the owner should review
    the TPC terms before rustdb is published; keeping both generators as optional

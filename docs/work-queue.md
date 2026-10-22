@@ -104,32 +104,14 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      the cache (`PREFETCH_FALLBACK_BUFFERSIZE`).
    - `CachingFileSystemWrapper` (the JSON reader, `read_text`, `read_blob`) caches
      remote files only: there is nothing to port until a remote file system exists.
-15. **Database encryption** (`dict_fsst_expression_filter`, which attaches a database
-    with `ENCRYPTION_KEY`; the other encryption tests `require httpfs` and are skipped
-    on both engines). DuckDB encrypts blocks, the WAL and temporary files with
-    AES-256-GCM (or CTR) through mbedtls when httpfs is not loaded
-    (`EncryptionEngine`, `StorageManager` encryption options, the main header's
-    encryption fields). Port it byte-compatibly with a pure-Rust AES-GCM, and check
-    files both ways against the C++ CLI. In progress, as follows:
-    - `crates/crypto` ports `EncryptionTypes`, `EncryptionNonce`/`Tag`/`Canary`, the
-      AES state (GCM with 12- or 16-byte IVs, CTR with a 128-bit big-endian counter, as
-      mbedtls) on RustCrypto, the SHA-256 key derivation over the salt and the
-      base64-decoded (or raw) key, and `EncryptionKeyManager`: derived keys live in
-      `mlock`ed memory that is zeroed when they are dropped, and every copy of the user
-      key and of a derived key is zeroed once used (`test_encryption_key_wiping.cpp`).
-      Nonces come from the OS CSPRNG. rustdb's crypto module is the secure one DuckDB
-      gets from httpfs (OpenSSL): encrypted files are written without
-      `force_mbedtls_unsafe`, which is accepted and changes nothing.
-    - The buffer manager holds the database's key manager (DuckDB keeps it in the
-      object cache): storage adds the derived keys of encrypted files, and temporary
-      files encrypted under `temp_file_encryption` use its `temp_key`.
-    - Storage: `StorageOptions::Initialize`/`SetEncryptionVersion` (cipher, key and
-      `debug_encryption_version` checks; encrypted files default to storage v1.5.0 and
-      encryption v1, v1.4.0 storage to v0), 40-byte block headers (nonce, tag,
-      checksum), the plaintext main header with its encryption metadata, salt and
-      canary, encrypted database headers and blocks, WAL version 3 entries
-      (`[size][nonce][encrypted checksum and entry][tag]`), DuckDB's errors for wrong
-      keys, missing keys, keys on plain files and cipher downgrades.
+15. **Parquet modular encryption, the rest.** Database encryption is ported
+    (`crates/crypto` on RustCrypto; database files, the WAL and temporary files; files
+    open in either engine for every cipher, encryption version and storage version, and
+    the encryption tests pass without their `require httpfs`). The Parquet writer's
+    `encryption_config` is not implemented (`parquet_encryption`,
+    `parquet_encryption_tpch`, which `require httpfs`), and the reader decrypts with its
+    own AES in `crates/parquet/src/crypto.rs`, which should move onto `crates/crypto`
+    (hardware AES, constant time).
 
 ## Planner and execution
 
