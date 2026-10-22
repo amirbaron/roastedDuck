@@ -3,7 +3,8 @@ timed runs, its CPU time, the process's peak RSS, and a result check.
 
 usage: python3 -I scripts/perf/bench.py SUITE [--threads N] [--reps 5] [--queries a,b]
        [--engines duck,rust] [--out results.json] [--no-check] [--memory-limit X] [--dump DIR]
-SUITE: tpch1 | tpch3 | tpch10 (`tpchSF.duckdb`) | h2og (`h2o_g.duckdb`) | h2oj (`h2o_j.duckdb`)
+SUITE: tpch1 | tpch3 | tpch10 (`tpchSF.duckdb`) | tpcds1 (`tpcdsSF.duckdb`) | h2og (`h2o_g.duckdb`)
+       | h2oj (`h2o_j.duckdb`)
        | hits (`hits.duckdb`) | any `NAME.duckdb` with one or more `--sql QUERY`, in the data directory (`RUSTDB_PERF_DIR`, default
        `.context/perf`); `scripts/perf/data.sh` creates them with DuckDB's CLI.
 
@@ -46,6 +47,11 @@ def suite_queries(suite):
         db = os.path.join(PERF, f"{suite}.duckdb")
         for i in range(1, 23):
             path = os.path.join(REF, "extension/tpch/dbgen/queries", f"q{i:02d}.sql")
+            out.append((f"q{i:02d}", db, one_line(open(path).read()), None))
+    elif suite.startswith("tpcds") and not suite.endswith(".duckdb"):
+        db = os.path.join(PERF, f"{suite}.duckdb")
+        for i in range(1, 100):
+            path = os.path.join(REF, "extension/tpcds/dsdgen/queries", f"{i:02d}.sql")
             out.append((f"q{i:02d}", db, one_line(open(path).read()), None))
     elif suite in ("h2og", "h2oj"):
         kind = "group" if suite == "h2og" else "join"
