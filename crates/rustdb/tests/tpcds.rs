@@ -71,3 +71,63 @@ fn dsdgen_matches_duckdb() {
     con.query("CALL dsdgen(sf=0.01)").unwrap();
     assert_fingerprints(&mut con, "", &SF0_01);
 }
+
+/// One thread generates the tables one after the other, as DuckDB does; the tables in
+/// parts (`inventory` and `customer_demographics`) are the same as with many threads.
+#[test]
+fn dsdgen_on_one_thread_matches_duckdb() {
+    let mut con = connect();
+    con.query("SET threads=1").unwrap();
+    con.query("CALL dsdgen(sf=0.01, suffix='_one')").unwrap();
+    assert_fingerprints(&mut con, "_one", &SF0_01);
+}
+
+#[test]
+fn queries_answers_and_pragma() {
+    let mut con = connect();
+    let queries = con
+        .query("SELECT count(*), min(query_nr), max(query_nr) FROM tpcds_queries()")
+        .unwrap();
+    assert_eq!(queries.value(0, 0).to_varchar().unwrap(), "99");
+    assert_eq!(queries.value(2, 0).to_varchar().unwrap(), "99");
+    // DuckDB lists the answers at SF 1 and SF 10, and has none at SF 10.
+    let error = con.query("SELECT * FROM tpcds_answers()").unwrap_err().to_string();
+    assert!(
+        error.contains("Don't have TPC-DS answers for SF 10.000000!"),
+        "{error}"
+    );
+    con.query("CALL dsdgen(sf=0.01)").unwrap();
+    assert_eq!(con.query("PRAGMA tpcds(96)").unwrap().row_count(), 1);
+    let error = con.query("PRAGMA tpcds(100)").unwrap_err().to_string();
+    assert!(error.contains("Out of range TPC-DS query number 100"), "{error}");
+    let error = con.query("PRAGMA tpcds(32908301298)").unwrap_err().to_string();
+    assert!(error.contains("out of range for the destination type INT32"), "{error}");
+}
+
+#[test]
+fn dsdgen_options() {
+    let mut con = connect();
+    // The schema only.
+    con.query("CALL dsdgen(sf=0)").unwrap();
+    let error = con.query("CALL dsdgen(sf=0)").unwrap_err().to_string();
+    assert!(
+        error.contains("Table with name \"call_center\" already exists!"),
+        "{error}"
+    );
+    con.query("CALL dsdgen(sf=0, overwrite=true)").unwrap();
+    // Primary keys, which the generated rows satisfy.
+    con.query("CALL dsdgen(sf=0.01, suffix='_keys', keys=true)").unwrap();
+    let error = con
+        .query("INSERT INTO call_center_keys (cc_call_center_sk) VALUES (1)")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("Duplicate key"), "{error}");
+    assert_fingerprints(&mut con, "_keys", &SF0_01[..3]);
+    let error = con.query("CALL dsdgen(sf=NULL)").unwrap_err().to_string();
+    assert!(error.contains("Cannot use NULL as function argument"), "{error}");
+    let error = con
+        .query("CALL dsdgen(sf=0, catalog='nope')")
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("Catalog \"nope\" does not exist!"), "{error}");
+}
