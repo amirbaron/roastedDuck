@@ -8,6 +8,7 @@ use super::collation_data::CollationData;
 use super::collation_data_reader::{read, read_header};
 use super::collation_package::CollationPackage;
 use super::collation_settings::CollationSettings;
+use super::locid::Locale;
 
 /// The mappings of a tailoring: its own, or the base's when only settings are tailored.
 #[derive(Debug)]
@@ -71,26 +72,55 @@ fn tailoring(index: usize) -> Option<&'static CollationTailoring> {
         .as_ref()
 }
 
-/// `CollationLoader::loadTailoring(locale)`: the collation of a locale ID, from the first
-/// bundle of the coll tree that exists when the ID is truncated at `_` (`ures_openNoDefault`),
-/// else the root's.
-pub fn load_tailoring(locale_name: &str) -> Option<&'static CollationTailoring> {
+/// `CollationLoader::loadTailoring(locale)`: the collation of a locale, by its base name
+/// and collation type: from the first bundle of the coll tree that exists when the base
+/// name is truncated at `_` (`ures_openNoDefault`), else the root bundle. `None` for
+/// `U_MISSING_RESOURCE_ERROR` (a collation type without binary data).
+pub fn load_tailoring(locale: &Locale) -> Option<&'static CollationTailoring> {
     let package = CollationPackage::get()?;
-    let mut name = locale_name;
-    loop {
-        if let Some(&index) = package.bundles.get(name) {
-            return tailoring(index);
+    if locale.name.is_empty() || locale.name == "root" {
+        return root();
+    }
+    // `CollationLoader`: the collation type, lowercase; "default" is no type
+    let collation_type = locale
+        .keyword_value("collation")
+        .filter(|value| !value.eq_ignore_ascii_case("default"))
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    let collation_type = collation_type.as_str();
+    let base_name = locale.base_name.as_str();
+    let mut name = base_name;
+    let bundle = loop {
+        if let Some(bundle) = package.bundles.get(name) {
+            break bundle;
         }
         match name.rfind('_') {
             Some(separator) => name = &name[..separator],
-            None => break,
+            None => break package.bundles.get("root")?,
         }
-    }
-    tailoring(*package.bundles.get("root")?)
+    };
+    let index = if collation_type.is_empty() {
+        Some(bundle.default)
+    } else if let Some(&index) = bundle.types.get(collation_type) {
+        index
+    } else if !package.types.contains(&collation_type)
+        && collation_type.len() > 6
+        && collation_type.starts_with("search")
+    {
+        // `loadFromCollations`: fall back from something like "searchjl" to "search"
+        bundle
+            .types
+            .get("search")
+            .copied()
+            .unwrap_or(Some(bundle.default))
+    } else {
+        // the type falls back to the default one
+        Some(bundle.default)
+    };
+    tailoring(index?)
 }
 
 /// `ucol_open(tag)` for the tags of the package.
 pub fn load_tag(tag: &str) -> Option<&'static CollationTailoring> {
-    let package = CollationPackage::get()?;
-    tailoring(*package.tags.get(tag)?)
+    tailoring(*CollationPackage::get()?.tags.get(tag)?)
 }

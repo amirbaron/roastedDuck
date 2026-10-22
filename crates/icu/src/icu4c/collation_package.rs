@@ -47,6 +47,19 @@ impl<'a> Reader<'a> {
     }
 }
 
+/// The index of a collation whose creation fails with `U_MISSING_RESOURCE_ERROR`.
+const MISSING_RESOURCE: u32 = 0xffff_ffff;
+
+/// A bundle of the coll tree: the tailoring it loads by default and for the collation
+/// types where that differs (`None`: `U_MISSING_RESOURCE_ERROR`).
+#[derive(Debug)]
+pub struct Bundle {
+    /// The default collation.
+    pub default: usize,
+    /// The collation of `@collation=<type>`, where it is not the default one.
+    pub types: HashMap<&'static str, Option<usize>>,
+}
+
 /// The parsed sections of the data.
 #[derive(Debug)]
 pub struct CollationPackage {
@@ -54,8 +67,10 @@ pub struct CollationPackage {
     pub root: &'static [u8],
     /// The tailorings (`RuleBasedCollator::cloneBinary`), with their data headers.
     pub tailorings: Vec<&'static [u8]>,
-    /// Bundle name (`de`, `zh_Hant_TW`, `root`, ...) to tailoring index.
-    pub bundles: HashMap<&'static str, usize>,
+    /// The collation types of the coll tree (`standard`, `phonebook`, `search`, ...).
+    pub types: Vec<&'static str>,
+    /// The bundles by name (`de`, `zh_Hant_TW`, `root`, ...).
+    pub bundles: HashMap<&'static str, Bundle>,
     /// Tag (`ucol_open`) to tailoring index.
     pub tags: HashMap<&'static str, usize>,
     /// Runs `(start, end, fcd16)` of non-zero FCD16 values, in code point order.
@@ -68,6 +83,8 @@ pub struct CollationPackage {
     pub languages: HashMap<&'static str, &'static str>,
     /// Three-character country codes `uloc_getName` replaces, and their replacements.
     pub countries: HashMap<&'static str, &'static str>,
+    /// The names of the scripts and their codes (`u_getPropertyValueEnum(UCHAR_SCRIPT)`).
+    pub scripts: Vec<(&'static str, i32)>,
     /// `Collator::getAvailableLocales`, as DuckDB names the collations.
     pub available_locales: Vec<&'static str>,
 }
@@ -87,18 +104,32 @@ impl CollationPackage {
         let root = r.sized()?;
         let count = r.u32()?;
         let tailorings = (0..count).map(|_| r.sized()).collect::<Option<Vec<_>>>()?;
-        let index_map = |r: &mut Reader<'static>| -> Option<HashMap<&'static str, usize>> {
-            let count = r.u32()?;
-            (0..count)
-                .map(|_| {
-                    let name = r.name()?;
-                    let index = r.u32()? as usize;
-                    (index < tailorings.len()).then_some((name, index))
-                })
-                .collect()
+        let tailoring_index = |index: u32| -> Option<Option<usize>> {
+            if index == MISSING_RESOURCE {
+                Some(None)
+            } else {
+                let index = index as usize;
+                (index < tailorings.len()).then_some(Some(index))
+            }
         };
-        let bundles = index_map(&mut r)?;
-        let tags = index_map(&mut r)?;
+        let count = r.u32()?;
+        let types = (0..count).map(|_| r.name()).collect::<Option<Vec<_>>>()?;
+        let count = r.u32()?;
+        let bundles = (0..count)
+            .map(|_| {
+                let name = r.name()?;
+                let default = tailoring_index(r.u32()?)??;
+                let count = r.u32()?;
+                let types = (0..count)
+                    .map(|_| Some((r.name()?, tailoring_index(r.u32()?)?)))
+                    .collect::<Option<HashMap<_, _>>>()?;
+                Some((name, Bundle { default, types }))
+            })
+            .collect::<Option<HashMap<_, _>>>()?;
+        let count = r.u32()?;
+        let tags = (0..count)
+            .map(|_| Some((r.name()?, tailoring_index(r.u32()?)??)))
+            .collect::<Option<HashMap<_, _>>>()?;
         let count = r.u32()?;
         let fcd16_runs = (0..count)
             .map(|_| Some((r.u32()?, r.u32()?, r.u16()?)))
@@ -120,10 +151,15 @@ impl CollationPackage {
         let languages = code_map(&mut r)?;
         let countries = code_map(&mut r)?;
         let count = r.u32()?;
+        let scripts = (0..count)
+            .map(|_| Some((r.name()?, r.u32()? as i32)))
+            .collect::<Option<Vec<_>>>()?;
+        let count = r.u32()?;
         let available_locales = (0..count).map(|_| r.name()).collect::<Option<Vec<_>>>()?;
         (r.pos == bytes.len()).then_some(Self {
             root,
             tailorings,
+            types,
             bundles,
             tags,
             fcd16_runs,
@@ -131,6 +167,7 @@ impl CollationPackage {
             small_fcd,
             languages,
             countries,
+            scripts,
             available_locales,
         })
     }

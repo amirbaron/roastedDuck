@@ -8,6 +8,8 @@ use super::collation_data::{CollationData, REORDER_CODE_NONE};
 pub const CHECK_FCD: i32 = 1;
 /// `NUMERIC`: numeric collation.
 pub const NUMERIC: i32 = 2;
+/// `SHIFTED`: "shifted" alternate handling.
+pub const SHIFTED: i32 = 4;
 /// `ALTERNATE_MASK`: 0 for non-ignorable, `SHIFTED` (4) for shifted.
 pub const ALTERNATE_MASK: i32 = 0xc;
 /// `MAX_VARIABLE_SHIFT`.
@@ -24,6 +26,8 @@ pub const CASE_LEVEL: i32 = 0x400;
 pub const BACKWARD_SECONDARY: i32 = 0x800;
 /// `STRENGTH_SHIFT`.
 pub const STRENGTH_SHIFT: i32 = 12;
+/// `STRENGTH_MASK`.
+pub const STRENGTH_MASK: i32 = 0xf000;
 /// `UCOL_PRIMARY`.
 pub const STRENGTH_PRIMARY: i32 = 0;
 /// `UCOL_IDENTICAL`.

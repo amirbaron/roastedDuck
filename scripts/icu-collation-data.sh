@@ -30,4 +30,6 @@ printf '%s\n' "${sources[@]}" | xargs -P "$(sysctl -n hw.ncpu 2>/dev/null || npr
 ' sh "$build" {} "$cxx" "${flags[@]}"
 "$cxx" "${flags[@]}" scripts/icu-collation-data.cpp "$build"/obj/*.o -o "$build/icu-collation-data"
 scripts/sign.sh "$build/icu-collation-data"
-"$build/icu-collation-data" export crates/icu/data/icu66_collation.bin
+# (the types come from a process of their own, see `Types`)
+# shellcheck disable=SC2046
+"$build/icu-collation-data" export crates/icu/data/icu66_collation.bin $("$build/icu-collation-data" types)

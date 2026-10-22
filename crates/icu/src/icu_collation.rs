@@ -22,14 +22,6 @@ const FUNCTION_PREFIX: &str = "icu_collate_";
 /// The tag of `icu_noaccent`: Postgres's `ignore_accents` (`und-u-ks-level1-kc-true`).
 const NOACCENT_TAG: &str = "und-u-ks-level1-kc-true";
 
-/// `u_errorName` of a collator creation failure.
-fn error_name(error: CollatorError) -> &'static str {
-    match error {
-        CollatorError::BogusLocale => "U_ILLEGAL_ARGUMENT_ERROR",
-        CollatorError::MissingResource => "U_MISSING_RESOURCE_ERROR",
-    }
-}
-
 /// `IcuBindData`: the collator of a collation.
 #[derive(Debug, Clone)]
 struct IcuBindData {
@@ -44,9 +36,9 @@ impl IcuBindData {
     fn for_locale(language: &str, country: &str) -> Result<Self> {
         let collator = RuleBasedCollator::for_locale(language, country).map_err(|error| match error {
             CollatorError::BogusLocale => Error::invalid_input("Locale is bogus!?"),
-            CollatorError::MissingResource => Error::invalid_input(format!(
+            _ => Error::invalid_input(format!(
                 "Failed to create ICU collator: {} (language: {language}, country: {country})",
-                error_name(error)
+                error.name()
             )),
         })?;
         Ok(Self {
@@ -62,7 +54,7 @@ impl IcuBindData {
         let collator = RuleBasedCollator::for_tag(tag).map_err(|error| {
             Error::invalid_input(format!(
                 "Failed to create ICU collator with tag {tag}: {}",
-                error_name(error)
+                error.name()
             ))
         })?;
         Ok(Self {
@@ -107,7 +99,7 @@ fn icu_collate_function(args: &DataChunk, state: &mut FunctionState, result: &mu
         .as_ref()
         .and_then(|data| data.as_any().downcast_ref::<IcuBindData>())
         .ok_or_else(|| Error::internal("ICU collation without its collator"))?;
-    let collator = info.collator;
+    let collator = &info.collator;
     let strings = DataChunk::new(vec![args.column(0).clone()], args.len());
     let mut utf16 = Vec::new();
     let mut buffer = Vec::new();
