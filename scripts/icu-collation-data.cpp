@@ -15,6 +15,10 @@
 //   u32 count; count × (u8 n, tag, u32 index)     the tags DuckDB opens with ucol_open
 //   u32 count; count × (u32 start, u32 end, u16)  runs of non-zero FCD16 values (NFC data)
 //   u32 count; count × (u32 c, u8 n, n × u32)     canonical decompositions (not Hangul)
+//   256 bytes                                     smallFCD: per 32 code units, may some have
+//                                                 FCD16 != 0 (lead surrogates: their code points)
+//   u32 count; count × (u8 n, from, u8 n, to)     uloc_getName's ISO 639-2 to 639-1 language codes
+//   u32 count; count × (u8 n, from, u8 n, to)     uloc_getName's ISO 3166 alpha-3 to alpha-2 codes
 //   u32 count; count × (u8 n, name)               Collator::getAvailableLocales, as DuckDB
 //                                                 names the collations
 
@@ -33,6 +37,7 @@
 #include "unicode/tblcoll.h"
 #include "unicode/ucol.h"
 #include "unicode/udata.h"
+#include "unicode/uloc.h"
 #include "unicode/unistr.h"
 #include "unicode/utf16.h"
 #include "normalizer2impl.h"
@@ -277,6 +282,60 @@ void Export(const char *path) {
 		}
 	}
 
+	for (UChar32 high = 0; high < 0x10000; high += 0x100) {
+		uint8_t bits = 0;
+		for (int32_t bit = 0; bit < 8; bit++) {
+			if (nfc_impl->singleLeadMightHaveNonZeroFCD16(high | (bit << 5))) {
+				bits |= uint8_t(1 << bit);
+			}
+		}
+		out.U8(bits);
+	}
+
+	// the three-letter codes uloc_getName replaces
+	auto get_name = [](const string &id) {
+		char name[ULOC_FULLNAME_CAPACITY];
+		UErrorCode status = U_ZERO_ERROR;
+		int32_t length = uloc_getName(id.c_str(), name, sizeof(name), &status);
+		check(status, "uloc_getName " + id);
+		return string(name, length);
+	};
+	vector<std::pair<string, string>> languages, countries;
+	const string letters = "abcdefghijklmnopqrstuvwxyz";
+	const string alphanumerics = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+	for (char a : letters) {
+		for (char b : letters) {
+			for (char c : letters) {
+				string code {a, b, c};
+				string name = get_name(code);
+				if (name != code && code != "und") {
+					languages.emplace_back(code, name);
+				}
+			}
+		}
+	}
+	for (char a : alphanumerics) {
+		for (char b : alphanumerics) {
+			for (char c : alphanumerics) {
+				string code {a, b, c};
+				string name = get_name("en_" + code);
+				if (name != "en_" + code) {
+					if (name.compare(0, 3, "en_") != 0) {
+						fail("unexpected uloc_getName of en_" + code);
+					}
+					countries.emplace_back(code, name.substr(3));
+				}
+			}
+		}
+	}
+	for (auto *table : {&languages, &countries}) {
+		out.U32(uint32_t(table->size()));
+		for (auto &entry : *table) {
+			out.Name(entry.first);
+			out.Name(entry.second);
+		}
+	}
+
 	// the collations of `LoadInternal`
 	int32_t count;
 	const icu::Locale *locales = icu::Collator::getAvailableLocales(count);
@@ -297,7 +356,8 @@ void Export(const char *path) {
 	}
 	std::cerr << "icu-collation-data: " << bundles.size() << " bundles, " << tailorings.binaries.size()
 	          << " tailorings, " << runs.size() << " FCD16 runs, " << decompositions.size()
-	          << " decompositions, " << count << " collations, " << out.bytes.size() << " bytes\n";
+	          << " decompositions, " << languages.size() << " + " << countries.size() << " locale codes, "
+	          << count << " collations, " << out.bytes.size() << " bytes\n";
 }
 
 // The sort key of every line on stdin under a DuckDB collation name (`ICUSortKeyBind`)

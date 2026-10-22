@@ -1,34 +1,20 @@
 //! The collations of DuckDB's `icu_extension.cpp`: one `icu_collate_<locale>` function
 //! per locale with collation data (computing the hex of the ICU sort key, which binary
 //! comparison orders like the locale), `icu_noaccent`, and `icu_sort_key(text, locale)`.
-//! The collators are ICU4X's, with its compiled CLDR data. DuckDB embeds ICU 66's data,
-//! so where the two disagree the collation follows ICU 66: tailorings ICU4X's compiled
-//! data lacks come from `data/collation.postcard` (`scripts/icu-collation-data.sh`), and
-//! locales ICU 66 has no tailoring for use the root collation.
+//! The collators are the port of ICU 66's collation runtime (`icu4c::rulebasedcollator`)
+//! over DuckDB's ICU 66 collation data, so orders and sort key bytes are DuckDB's.
 
 use std::any::Any;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::borrow::Cow;
+use std::sync::Arc;
 
-use icu_collator::options::{CaseLevel, CollatorOptions, Strength};
-use icu_collator::{Collator, CollatorBorrowed, CollatorPreferences};
 use rustdb_common::{Error, Result};
 use rustdb_function::{BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
 use rustdb_functions::scalar::executor::{Str, StrOut, unary};
 use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Vector};
 
-/// The locales ICU 77's collation data has (`Collator::getAvailableLocales`), as DuckDB
-/// names the collations (lowercase `language[_country]`).
-pub(crate) const COLLATION_LOCALES: [&str; 129] = [
-    "af", "am", "ar", "ar_sa", "as", "az", "be", "bg", "bn", "bo", "br", "bs", "ca", "ceb", "chr", "cs",
-    "cy", "da", "de", "de_at", "dsb", "dz", "ee", "el", "en", "en_us", "eo", "es", "et", "fa", "fa_af", "ff",
-    "fi", "fil", "fo", "fr", "fr_ca", "ga", "gl", "gu", "ha", "haw", "he", "he_il", "hi", "hr", "hsb", "hu",
-    "hy", "id", "id_id", "ig", "is", "it", "ja", "ka", "kk", "kl", "km", "kn", "ko", "kok", "ku", "ky", "lb",
-    "lkt", "ln", "lo", "lt", "lv", "mk", "ml", "mn", "mr", "ms", "mt", "my", "nb", "nb_no", "ne", "nl", "nn",
-    "om", "or", "pa", "pa_in", "pl", "ps", "pt", "ro", "ru", "sa", "se", "si", "sk", "sl", "smn", "sq", "sr",
-    "sr_ba", "sr_me", "sr_rs", "sv", "sw", "ta", "te", "th", "tk", "to", "tr", "ug", "uk", "ur", "uz", "vi",
-    "wae", "wo", "xh", "yi", "yo", "yue", "yue_cn", "zh", "zh_cn", "zh_hk", "zh_mo", "zh_sg", "zh_tw", "zu",
-];
+use crate::icu4c::collation_package::CollationPackage;
+use crate::icu4c::rulebasedcollator::{CollatorError, RuleBasedCollator};
 
 /// `IcuBindData::FUNCTION_PREFIX`.
 const FUNCTION_PREFIX: &str = "icu_collate_";
@@ -36,120 +22,32 @@ const FUNCTION_PREFIX: &str = "icu_collate_";
 /// The tag of `icu_noaccent`: Postgres's `ignore_accents` (`und-u-ks-level1-kc-true`).
 const NOACCENT_TAG: &str = "und-u-ks-level1-kc-true";
 
-/// A collator shared by every call with the same locale.
-type SharedCollator = Arc<CollatorBorrowed<'static>>;
-
-/// The collators made so far, by locale (or tag).
-fn collator_cache() -> &'static Mutex<HashMap<String, SharedCollator>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, SharedCollator>>> = OnceLock::new();
-    CACHE.get_or_init(Mutex::default)
-}
-
-/// The collator of `key`, made by `create` the first time.
-fn cached_collator(
-    key: String,
-    create: impl FnOnce() -> Result<CollatorBorrowed<'static>>,
-) -> Result<SharedCollator> {
-    let mut cache = collator_cache().lock().unwrap_or_else(PoisonError::into_inner);
-    if let Some(collator) = cache.get(&key) {
-        return Ok(Arc::clone(collator));
+/// `u_errorName` of a collator creation failure.
+fn error_name(error: CollatorError) -> &'static str {
+    match error {
+        CollatorError::BogusLocale => "U_ILLEGAL_ARGUMENT_ERROR",
+        CollatorError::MissingResource => "U_MISSING_RESOURCE_ERROR",
     }
-    let collator = Arc::new(create()?);
-    cache.insert(key, Arc::clone(&collator));
-    Ok(collator)
-}
-
-/// The ICU4X locale of a DuckDB collation's language and country; unknown spellings fall
-/// back to the root locale, like ICU's lenient `Locale(language, country)`.
-fn locale_of(language: &str, country: &str) -> icu_locale_core::Locale {
-    let candidates = if country.is_empty() {
-        vec![language.to_owned()]
-    } else {
-        vec![format!("{language}-{country}"), language.to_owned()]
-    };
-    candidates
-        .iter()
-        .find_map(|candidate| icu_locale_core::Locale::try_from_str(candidate).ok())
-        .unwrap_or(icu_locale_core::Locale::UNKNOWN)
-}
-
-/// The locales whose tailoring ICU4X's compiled data lacks, from `data/collation.postcard`.
-const DATA_FILE_LOCALES: [&str; 5] = ["haw", "kl", "lkt", "se", "smn"];
-
-/// The ICU4X collation data of [`DATA_FILE_LOCALES`].
-static COLLATION_DATA: &[u8] = include_bytes!("../data/collation.postcard");
-
-/// `(language, country)` of the collations ICU 66 has no tailoring for (no `nb`/`nn`
-/// fallback to `no`, no Montenegrin Serbian), which newer data tailors.
-const ROOT_IN_ICU66: [(&str, &str); 4] = [("nb", ""), ("nn", ""), ("nb", "no"), ("sr", "me")];
-
-/// The collators of [`DATA_FILE_LOCALES`], made from [`COLLATION_DATA`] once.
-fn data_file_collators() -> &'static HashMap<&'static str, Collator> {
-    static COLLATORS: OnceLock<HashMap<&'static str, Collator>> = OnceLock::new();
-    COLLATORS.get_or_init(|| {
-        let Ok(provider) = icu_provider_blob::BlobDataProvider::try_new_from_static_blob(COLLATION_DATA) else {
-            return HashMap::new();
-        };
-        DATA_FILE_LOCALES
-            .iter()
-            .filter_map(|&name| {
-                let locale = icu_locale_core::Locale::try_from_str(name).ok()?;
-                let collator = Collator::try_new_with_buffer_provider(
-                    &provider,
-                    CollatorPreferences::from(&locale),
-                    CollatorOptions::default(),
-                )
-                .ok()?;
-                Some((name, collator))
-            })
-            .collect()
-    })
 }
 
 /// `IcuBindData`: the collator of a collation.
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct IcuBindData {
-    collator: SharedCollator,
+    collator: RuleBasedCollator,
     language: String,
     country: String,
     tag: String,
 }
 
-impl std::fmt::Debug for IcuBindData {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("IcuBindData")
-            .field("language", &self.language)
-            .field("country", &self.country)
-            .field("tag", &self.tag)
-            .finish_non_exhaustive()
-    }
-}
-
 impl IcuBindData {
     /// `IcuBindData(string language, string country)`.
     fn for_locale(language: &str, country: &str) -> Result<Self> {
-        let key = format!("{language}_{country}");
-        let collator = cached_collator(key, || {
-            if country.is_empty()
-                && let Some(collator) = data_file_collators().get(language.to_lowercase().as_str())
-            {
-                return Ok(collator.as_borrowed());
-            }
-            let pinned_to_root = ROOT_IN_ICU66
-                .iter()
-                .any(|&(l, c)| language.eq_ignore_ascii_case(l) && country.eq_ignore_ascii_case(c));
-            let locale = if pinned_to_root {
-                icu_locale_core::Locale::UNKNOWN
-            } else {
-                locale_of(language, country)
-            };
-            CollatorBorrowed::try_new(CollatorPreferences::from(&locale), CollatorOptions::default()).map_err(
-                |error| {
-                    Error::invalid_input(format!(
-                        "Failed to create ICU collator: {error} (language: {language}, country: {country})"
-                    ))
-                },
-            )
+        let collator = RuleBasedCollator::for_locale(language, country).map_err(|error| match error {
+            CollatorError::BogusLocale => Error::invalid_input("Locale is bogus!?"),
+            CollatorError::MissingResource => Error::invalid_input(format!(
+                "Failed to create ICU collator: {} (language: {language}, country: {country})",
+                error_name(error)
+            )),
         })?;
         Ok(Self {
             collator,
@@ -161,17 +59,11 @@ impl IcuBindData {
 
     /// `IcuBindData(string tag)`: a collator from a BCP 47 tag (`ucol_open`).
     fn for_tag(tag: &str) -> Result<Self> {
-        let collator = cached_collator(tag.to_owned(), || {
-            let mut options = CollatorOptions::default();
-            if tag == NOACCENT_TAG {
-                options.strength = Some(Strength::Primary);
-                options.case_level = Some(CaseLevel::On);
-            }
-            let locale =
-                icu_locale_core::Locale::try_from_str(tag).unwrap_or(icu_locale_core::Locale::UNKNOWN);
-            CollatorBorrowed::try_new(CollatorPreferences::from(&locale), options).map_err(|error| {
-                Error::invalid_input(format!("Failed to create ICU collator with tag {tag}: {error}"))
-            })
+        let collator = RuleBasedCollator::for_tag(tag).map_err(|error| {
+            Error::invalid_input(format!(
+                "Failed to create ICU collator with tag {tag}: {}",
+                error_name(error)
+            ))
         })?;
         Ok(Self {
             collator,
@@ -215,17 +107,21 @@ fn icu_collate_function(args: &DataChunk, state: &mut FunctionState, result: &mu
         .as_ref()
         .and_then(|data| data.as_any().downcast_ref::<IcuBindData>())
         .ok_or_else(|| Error::internal("ICU collation without its collator"))?;
-    let collator = Arc::clone(&info.collator);
+    let collator = info.collator;
     let strings = DataChunk::new(vec![args.column(0).clone()], args.len());
+    let mut utf16 = Vec::new();
     let mut buffer = Vec::new();
     unary::<Str, StrOut>(&strings, result, |input, out| {
-        // create a sort key from the string
+        // `UnicodeString::fromUTF8`: ill-formed sequences become U+FFFD
+        let text = match std::str::from_utf8(input) {
+            Ok(text) => Cow::Borrowed(text),
+            Err(_) => String::from_utf8_lossy(input),
+        };
+        utf16.clear();
+        utf16.extend(text.encode_utf16());
+        // create a sort key from the string (without its terminating 0 byte)
         buffer.clear();
-        let Ok(()) = collator.write_sort_key_utf8_to(input, &mut buffer);
-        // the key ends with a 0 byte, which is not part of the hex
-        if buffer.last() == Some(&0) {
-            buffer.pop();
-        }
+        collator.write_sort_key(&utf16, &mut buffer);
         // convert the sort key to hexadecimal
         out.reserve(buffer.len() * 2);
         for &byte in &buffer {
@@ -257,12 +153,20 @@ fn icu_collate_function_for(collation: &str, tag: &'static str) -> ScalarFunctio
     })
 }
 
-/// The collations (`LoadInternal`): one per locale, then `icu_noaccent`.
+/// The collations (`LoadInternal`): one per locale of `Collator::getAvailableLocales`
+/// (lowercase `language[_country]`), then `icu_noaccent`.
 pub(crate) fn collations() -> Vec<(String, ScalarFunction)> {
-    let mut result: Vec<(String, ScalarFunction)> = COLLATION_LOCALES
-        .iter()
-        .map(|collation| ((*collation).to_owned(), icu_collate_function_for(collation, "")))
-        .collect();
+    let mut result: Vec<(String, ScalarFunction)> = Vec::new();
+    for locale in CollationPackage::get()
+        .map(|package| package.available_locales.as_slice())
+        .unwrap_or_default()
+    {
+        let collation = locale.to_lowercase();
+        if result.iter().all(|(name, _)| *name != collation) {
+            let function = icu_collate_function_for(&collation, "");
+            result.push((collation, function));
+        }
+    }
     result.push((
         "icu_noaccent".to_owned(),
         icu_collate_function_for("noaccent", NOACCENT_TAG),

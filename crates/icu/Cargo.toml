@@ -1,6 +1,6 @@
 [package]
 name = "rustdb-icu"
-description = "The ICU extension: time zones, calendars and TIMESTAMPTZ functions, and ICU collations (DuckDB's extension/icu), on a port of ICU's calendar code over jiff and ICU4X."
+description = "The ICU extension: time zones, calendars and TIMESTAMPTZ functions, and ICU collations (DuckDB's extension/icu), on ports of ICU 66's calendar code (over jiff) and collation runtime (over DuckDB's ICU 66 collation data)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,10 +12,6 @@ rustdb-types.workspace = true
 rustdb-function = { path = "../function" }
 rustdb-functions = { path = "../functions" }
 rustdb-planner.workspace = true
-icu_collator = { version = "2.3", features = ["serde"] }
-icu_locale_core = "2.3"
-icu_provider = { version = "2.3", features = ["sync"] }
-icu_provider_blob = { version = "2.3", features = ["alloc"] }
 jiff = { version = "0.2.38", default-features = false, features = ["std", "tz-fat", "tzdb-bundle-always"] }
 
 [lints]
