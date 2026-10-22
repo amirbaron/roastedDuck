@@ -137,21 +137,8 @@ fn decimal_multiply_checked<T: DecimalStorage>(left: T, right: T) -> Result<T> {
         .ok_or_else(|| decimal_overflow("multiplication", "*", left, right, "bigger decimal"))
 }
 
-/// Bind data of DECIMAL arithmetic (DuckDB's `DecimalArithmeticBindData`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct DecimalArithmetic {
-    check_overflow: bool,
-}
-
-impl FunctionData for DecimalArithmetic {
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-
-    fn equals(&self, other: &dyn FunctionData) -> bool {
-        other.as_any().downcast_ref::<Self>() == Some(self)
-    }
-}
+/// Bind data of DECIMAL arithmetic.
+type DecimalArithmetic = rustdb_function::DecimalArithmeticBindData;
 
 /// DuckDB's `SerializeDecimalArithmetic` (of `+`, `-` and `*`): the overflow check and
 /// the bound types.

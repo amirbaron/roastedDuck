@@ -590,6 +590,8 @@ pub struct LogicalVacuum {
     pub table: Arc<rustdb_catalog::CatalogEntry>,
     /// The physical column of each column the child produces.
     pub column_id_map: Vec<usize>,
+    /// The statement, its columns listed (DuckDB's `info`).
+    pub info: rustdb_ast::VacuumInfo,
 }
 
 /// A bound `CREATE TABLE` (DuckDB's `BoundCreateTableInfo`): the table definition with

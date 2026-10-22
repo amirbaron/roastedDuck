@@ -616,6 +616,15 @@ fn propagate_arithmetic(
         // No overflow is possible: the plain operator replaces the overflow-checking one
         // (`SetFunctionCallback(GetScalarIntegerFunction<OP>(...))`).
         function.function.kernel = kernel;
+        if function
+            .bind_info
+            .as_ref()
+            .is_some_and(|data| data.as_any().is::<rustdb_function::DecimalArithmeticBindData>())
+        {
+            function.bind_info = Some(Arc::new(rustdb_function::DecimalArithmeticBindData {
+                check_overflow: false,
+            }));
+        }
     }
     let mut result = BaseStatistics::create_empty(return_type);
     set_bounds(&mut result, physical, range, new_bounds);

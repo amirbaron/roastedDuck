@@ -160,6 +160,7 @@ fn bind_vacuum(scope: &mut BindScope<'_>, info: &mut rustdb_ast::VacuumInfo) -> 
     let mut plan = LogicalOperator::new(LogicalKind::Vacuum(Box::new(crate::operator::LogicalVacuum {
         table: entry,
         column_id_map,
+        info: info.clone(),
     })));
     plan.add_child(projection);
     Ok(BoundStatement::new(plan, names, types))

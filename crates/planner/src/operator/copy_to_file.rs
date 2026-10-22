@@ -245,6 +245,8 @@ pub struct LogicalCopyToFile {
     pub return_type: CopyFunctionReturnType,
     pub names: Vec<String>,
     pub expected_types: Vec<LogicalType>,
+    /// The statement, its query filled in (DuckDB's `copy_info`).
+    pub copy_info: Box<rustdb_ast::CopyInfo>,
 }
 
 impl LogicalCopyToFile {

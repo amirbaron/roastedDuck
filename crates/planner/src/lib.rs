@@ -59,7 +59,8 @@ pub use context::{
 };
 pub use expression::{Expression, ExpressionKind};
 pub use generated::enums::{
-    DistinctType, FileNameSegmentType, LimitNodeType, LogicalOperatorType, TupleDataValidityType,
+    CopyFunctionReturnType, CopyOverwriteMode, DistinctType, FileNameSegmentType, LimitNodeType,
+    LogicalOperatorType, PreserveOrderType, TupleDataValidityType,
 };
 pub use operator::{BoundLimitNode, LogicalKind, LogicalOperator, render_plan};
 pub use planner::{PlannedStatement, Planner};

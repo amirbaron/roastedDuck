@@ -11,8 +11,8 @@ use rustdb_function::named_parameters_in_map_order;
 use rustdb_serde::{SerializeObject, Serializer};
 
 use super::{
-    BoundLimitNode, BoundMergeIntoAction, BoundPivotInfo, JoinCondition, LogicalComparisonJoin, LogicalGet,
-    LogicalKind, LogicalOperator,
+    BoundLimitNode, BoundMergeIntoAction, BoundPivotInfo, CopyFunctionReturnType, CopyOverwriteMode,
+    JoinCondition, LogicalComparisonJoin, LogicalCopyToFile, LogicalGet, LogicalKind, LogicalOperator,
 };
 use crate::function_serialization::{FunctionDataWriter, serialize_table_function};
 use crate::generated::{logical_operator as properties, nodes};
@@ -357,12 +357,16 @@ impl SerializeObject for LogicalOperator {
                 }
                 .serialize_fields(serializer)
             }
-            LogicalKind::CopyToFile(_) | LogicalKind::Export(_) | LogicalKind::Vacuum(_) => {
-                Err(Error::not_implemented(format!(
-                    "Serializing {} is not supported yet",
-                    self.operator_type().name()
-                )))
+            LogicalKind::Vacuum(vacuum) => {
+                // `LogicalVacuum::Serialize`.
+                serializer.write_property(200, "info", &Some(ParseInfo::Vacuum(vacuum.info.clone())))?;
+                serializer.write_property(201, "column_id_map", &IndexMap(&vacuum.column_id_map))
             }
+            LogicalKind::CopyToFile(copy) => serialize_copy_to_file(copy, serializer),
+            LogicalKind::Export(_) => Err(Error::not_implemented(format!(
+                "Serializing {} is not supported yet",
+                self.operator_type().name()
+            ))),
             LogicalKind::Explain { .. }
             | LogicalKind::Prepare { .. }
             | LogicalKind::Execute { .. }
@@ -454,6 +458,77 @@ fn serialize_get(get: &LogicalGet, serializer: &mut dyn Serializer) -> Result<()
     serializer.write_property_with_default(214, "row_group_order_options", &get.row_group_order.as_ref())
 }
 
+/// `LogicalCopyToFile::Serialize`.
+fn serialize_copy_to_file(copy: &LogicalCopyToFile, serializer: &mut dyn Serializer) -> Result<()> {
+    use crate::{CopyFunctionReturnType as ReturnType, CopyOverwriteMode as Mode, PreserveOrderType};
+    let overwrite_mode = match copy.overwrite_mode {
+        CopyOverwriteMode::ErrorOnConflict => Mode::CopyErrorOnConflict,
+        CopyOverwriteMode::Overwrite => Mode::CopyOverwrite,
+        CopyOverwriteMode::OverwriteOrIgnore => Mode::CopyOverwriteOrIgnore,
+        CopyOverwriteMode::Append => Mode::CopyAppend,
+    };
+    let return_type = match copy.return_type {
+        CopyFunctionReturnType::ChangedRows => ReturnType::ChangedRows,
+        CopyFunctionReturnType::ChangedRowsAndFileList => ReturnType::ChangedRowsAndFileList,
+        CopyFunctionReturnType::WrittenFileStatistics => ReturnType::WrittenFileStatistics,
+    };
+    let preserve_order = match copy.preserve_order {
+        None => PreserveOrderType::Automatic,
+        Some(true) => PreserveOrderType::PreserveOrder,
+        Some(false) => PreserveOrderType::DontPreserveOrder,
+    };
+    serializer.write_property(200, "file_path", &copy.file_path)?;
+    serializer.write_property(201, "use_tmp_file", &copy.use_tmp_file)?;
+    serializer.write_property(202, "filename_pattern", &copy.filename_pattern)?;
+    serializer.write_property(203, "overwrite_or_ignore", &overwrite_mode)?;
+    serializer.write_property(204, "per_thread_output", &copy.per_thread_output)?;
+    serializer.write_property(205, "partition_output", &copy.partition_output)?;
+    serializer.write_property(206, "partition_columns", &copy.partition_columns)?;
+    serializer.write_property(207, "names", &copy.names)?;
+    serializer.write_property(208, "expected_types", &copy.expected_types)?;
+    serializer.write_property(209, "copy_info", &Some(ParseInfo::Copy(copy.copy_info.clone())))?;
+    serializer.write_property(210, "function_name", &*copy.function.name)?;
+    serializer.write_property(211, "function_has_serialize", &copy.function.serialize.is_some())?;
+    if let Some(serialize) = &copy.function.serialize {
+        serializer.write_object_property(212, "function_data", |serializer| {
+            serialize(serializer, copy.bind_data.as_ref(), &copy.function)
+        })?;
+    }
+    serializer.write_property(213, "file_extension", &copy.file_extension)?;
+    serializer.write_property(214, "rotate", &copy.rotate)?;
+    serializer.write_property(215, "return_type", &return_type)?;
+    serializer.write_optional(
+        216,
+        "write_partition_columns",
+        copy.write_partition_columns,
+        &copy.write_partition_columns,
+    )?;
+    serializer.write_optional(
+        217,
+        "write_empty_file",
+        copy.write_empty_file,
+        &copy.write_empty_file,
+    )?;
+    serializer.write_optional(
+        218,
+        "preserve_order",
+        preserve_order == PreserveOrderType::Automatic,
+        &preserve_order,
+    )?;
+    serializer.write_optional(
+        219,
+        "hive_file_pattern",
+        copy.hive_file_pattern,
+        &copy.hive_file_pattern,
+    )?;
+    serializer.write_property_with_explicit_default(
+        220,
+        "file_size_bytes",
+        &rustdb_serde::OptionalIdx(copy.file_size_bytes),
+        &rustdb_serde::OptionalIdx(None),
+    )
+}
+
 /// `TableScanSerialize`: the scanned table.
 fn serialize_table_scan_bind_data(
     serializer: &mut dyn Serializer,
@@ -479,6 +554,30 @@ impl rustdb_serde::Serialize for NamedParameters<'_> {
             serializer.on_object_begin();
             serializer.write_property(0, "key", *name)?;
             serializer.write_property(1, "value", *value)?;
+            serializer.on_object_end();
+        }
+        serializer.on_list_end();
+        Ok(())
+    }
+}
+
+/// An `unordered_map<idx_t, idx_t>` from each position to its value, in libc++'s
+/// iteration order (`std::hash<idx_t>` is the identity).
+struct IndexMap<'a>(&'a [usize]);
+
+impl rustdb_serde::Serialize for IndexMap<'_> {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        let mut map = rustdb_common::libcxx::UnorderedOrder::default();
+        for key in 0..self.0.len() {
+            map.insert(key as u64, key, |a, b| a == b);
+        }
+        let order = map.order();
+        serializer.on_list_begin(order.len());
+        for node in order {
+            let key = map.keys()[node];
+            serializer.on_object_begin();
+            serializer.write_property(0, "key", &key)?;
+            serializer.write_property(1, "value", &self.0[key])?;
             serializer.on_object_end();
         }
         serializer.on_list_end();

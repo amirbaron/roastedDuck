@@ -479,6 +479,9 @@ pub const TARGETS: &[Target] = &[
                     "LimitNodeType",
                     "TupleDataValidityType",
                     "FileNameSegmentType",
+                    "CopyOverwriteMode",
+                    "CopyFunctionReturnType",
+                    "PreserveOrderType",
                 ]),
             },
             Module {

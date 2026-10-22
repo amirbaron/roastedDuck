@@ -753,6 +753,7 @@ fn bind_copy_to(
         return_type,
         names: unique_column_names,
         expected_types: select_node.types.clone(),
+        copy_info: Box::new(info.clone()),
     };
     scope.with_properties(|properties| {
         properties.return_type = if return_type == CopyFunctionReturnType::ChangedRows {

@@ -723,3 +723,223 @@ impl Deserialize for FileNameSegmentType {
         )
     }
 }
+
+/// DuckDB's `CopyOverwriteMode` (`duckdb/common/enums/copy_overwrite_mode.hpp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum CopyOverwriteMode {
+    CopyErrorOnConflict = 0,
+    CopyOverwrite = 1,
+    CopyOverwriteOrIgnore = 2,
+    CopyAppend = 3,
+}
+
+impl CopyOverwriteMode {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 4] = [
+        Self::CopyErrorOnConflict,
+        Self::CopyOverwrite,
+        Self::CopyOverwriteOrIgnore,
+        Self::CopyAppend,
+    ];
+
+    /// The name `EnumUtil::ToChars` prints.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::CopyErrorOnConflict => "COPY_ERROR_ON_CONFLICT",
+            Self::CopyOverwrite => "COPY_OVERWRITE",
+            Self::CopyOverwriteOrIgnore => "COPY_OVERWRITE_OR_IGNORE",
+            Self::CopyAppend => "COPY_APPEND",
+        }
+    }
+
+    /// Parses any name `EnumUtil::FromString` accepts (ASCII case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        const NAMES: &[(&str, CopyOverwriteMode)] = &[
+            ("COPY_ERROR_ON_CONFLICT", CopyOverwriteMode::CopyErrorOnConflict),
+            ("COPY_OVERWRITE", CopyOverwriteMode::CopyOverwrite),
+            (
+                "COPY_OVERWRITE_OR_IGNORE",
+                CopyOverwriteMode::CopyOverwriteOrIgnore,
+            ),
+            ("COPY_APPEND", CopyOverwriteMode::CopyAppend),
+        ];
+        NAMES
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| *v)
+    }
+
+    /// The member with this numeric value.
+    pub const fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::CopyErrorOnConflict),
+            1 => Some(Self::CopyOverwrite),
+            2 => Some(Self::CopyOverwriteOrIgnore),
+            3 => Some(Self::CopyAppend),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for CopyOverwriteMode {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        write_enum(serializer, self.name(), |serializer| {
+            serializer.write_u8(*self as u8);
+        });
+        Ok(())
+    }
+}
+
+impl Deserialize for CopyOverwriteMode {
+    fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        read_enum(
+            deserializer,
+            "CopyOverwriteMode",
+            Self::from_name,
+            |deserializer| Ok(Self::from_repr(deserializer.read_u8()?)),
+        )
+    }
+}
+
+/// DuckDB's `CopyFunctionReturnType` (`duckdb/function/copy_function.hpp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum CopyFunctionReturnType {
+    ChangedRows = 0,
+    ChangedRowsAndFileList = 1,
+    WrittenFileStatistics = 2,
+}
+
+impl CopyFunctionReturnType {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 3] = [
+        Self::ChangedRows,
+        Self::ChangedRowsAndFileList,
+        Self::WrittenFileStatistics,
+    ];
+
+    /// The name `EnumUtil::ToChars` prints.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::ChangedRows => "CHANGED_ROWS",
+            Self::ChangedRowsAndFileList => "CHANGED_ROWS_AND_FILE_LIST",
+            Self::WrittenFileStatistics => "WRITTEN_FILE_STATISTICS",
+        }
+    }
+
+    /// Parses any name `EnumUtil::FromString` accepts (ASCII case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        const NAMES: &[(&str, CopyFunctionReturnType)] = &[
+            ("CHANGED_ROWS", CopyFunctionReturnType::ChangedRows),
+            (
+                "CHANGED_ROWS_AND_FILE_LIST",
+                CopyFunctionReturnType::ChangedRowsAndFileList,
+            ),
+            (
+                "WRITTEN_FILE_STATISTICS",
+                CopyFunctionReturnType::WrittenFileStatistics,
+            ),
+        ];
+        NAMES
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| *v)
+    }
+
+    /// The member with this numeric value.
+    pub const fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::ChangedRows),
+            1 => Some(Self::ChangedRowsAndFileList),
+            2 => Some(Self::WrittenFileStatistics),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for CopyFunctionReturnType {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        write_enum(serializer, self.name(), |serializer| {
+            serializer.write_u8(*self as u8);
+        });
+        Ok(())
+    }
+}
+
+impl Deserialize for CopyFunctionReturnType {
+    fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        read_enum(
+            deserializer,
+            "CopyFunctionReturnType",
+            Self::from_name,
+            |deserializer| Ok(Self::from_repr(deserializer.read_u8()?)),
+        )
+    }
+}
+
+/// DuckDB's `PreserveOrderType` (`duckdb/common/enums/preserve_order.hpp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum PreserveOrderType {
+    Automatic = 0,
+    PreserveOrder = 1,
+    DontPreserveOrder = 2,
+}
+
+impl PreserveOrderType {
+    /// Every member, in declaration order.
+    pub const ALL: [Self; 3] = [Self::Automatic, Self::PreserveOrder, Self::DontPreserveOrder];
+
+    /// The name `EnumUtil::ToChars` prints.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Automatic => "AUTOMATIC",
+            Self::PreserveOrder => "PRESERVE_ORDER",
+            Self::DontPreserveOrder => "DONT_PRESERVE_ORDER",
+        }
+    }
+
+    /// Parses any name `EnumUtil::FromString` accepts (ASCII case-insensitive).
+    pub fn from_name(name: &str) -> Option<Self> {
+        const NAMES: &[(&str, PreserveOrderType)] = &[
+            ("AUTOMATIC", PreserveOrderType::Automatic),
+            ("PRESERVE_ORDER", PreserveOrderType::PreserveOrder),
+            ("DONT_PRESERVE_ORDER", PreserveOrderType::DontPreserveOrder),
+        ];
+        NAMES
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case(name))
+            .map(|(_, v)| *v)
+    }
+
+    /// The member with this numeric value.
+    pub const fn from_repr(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Automatic),
+            1 => Some(Self::PreserveOrder),
+            2 => Some(Self::DontPreserveOrder),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for PreserveOrderType {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        write_enum(serializer, self.name(), |serializer| {
+            serializer.write_u8(*self as u8);
+        });
+        Ok(())
+    }
+}
+
+impl Deserialize for PreserveOrderType {
+    fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        read_enum(
+            deserializer,
+            "PreserveOrderType",
+            Self::from_name,
+            |deserializer| Ok(Self::from_repr(deserializer.read_u8()?)),
+        )
+    }
+}

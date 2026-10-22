@@ -60,6 +60,24 @@ pub trait FunctionData: Any + Send + Sync + fmt::Debug {
     }
 }
 
+/// The bind data of DECIMAL `+`, `-`, `*` and `%` (DuckDB's `DecimalArithmeticBindData`):
+/// whether the kernel checks for overflow. Statistics propagation clears it when the
+/// operands' ranges rule an overflow out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecimalArithmeticBindData {
+    pub check_overflow: bool,
+}
+
+impl FunctionData for DecimalArithmeticBindData {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn equals(&self, other: &dyn FunctionData) -> bool {
+        other.as_any().downcast_ref::<Self>() == Some(self)
+    }
+}
+
 /// The bind data of `stats(x)` (DuckDB's `StatsBindData`): the statistics of `x` as
 /// text, filled in by the optimizer's statistics propagation.
 #[derive(Debug, Default)]
