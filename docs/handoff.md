@@ -162,7 +162,9 @@ passes again; 384 affected SQL files pass with nine shared skips (393 total). Te
 cross-engine file cases pass across storage 1.0/1.2/1.5 and GCM/CTR, including mutation,
 reopen, cold ART residency and constraints. C++ encrypted fixture writes use its test
 switch `force_mbedtls_unsafe`; normal C++ readers work without it. Workspace Clippy
-with warnings denied, 30 C API files and 392 shell tests pass. A new full sweep is next.
+with warnings denied, 30 C API files and 392 shell tests pass. A new full sweep is
+running, with its unique path in `index-reload-20261022/full-run-path.txt`. Do not
+rebuild the runner or start another workload until it finishes.
 Native disk restore covers plain and stored constraint indexes so far; expression/WAL,
 pre-v0.10 and fallback paths remain open under work-queue 16. The cache policy is still
 uncommitted and unaccepted because its memory/performance gates remain unresolved.
