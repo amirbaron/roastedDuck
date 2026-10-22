@@ -66,7 +66,9 @@ gates remain in place.
   file alone and inspect its real failure before attributing it to a change.
 - **C API:** 546 of 547 functions; all 30 `test/api/capi` files pass
   (`scripts/capi-tests/run.sh`, `--lib cpp` runs them against the C++ library). ADBC is
-  missing.
+  missing. Fresh public binaries on `506354f` also pass 40 C API concurrent-write
+  stress runs with the runner's zero-byte checkpoint threshold; 40 preserved-binary
+  and ten C++ controls pass. The explicit-transaction lock sequence matches C++.
 - **CLI shell (the owner's top priority; engine gaps remain):** `crates/shell` (`rustdb`) is DuckDB's
   shell one to one, linenoise included: all 392 `tools/shell/tests` that pass on the C++
   CLI pass (`scripts/shell-tests.sh --binary rust|cpp`), and 722 of 727 cases of
@@ -247,10 +249,23 @@ stopped after the runner linked, before finishing the remaining packages.
 The completed sweep ran through `resume-after-cohort.py`, which verified the
 unchanged runner hash and source, checks the scoped ratchet, then resumes at the full
 stage. Its unique directory is recorded in `index-reload-20261022/full-run-path.txt`.
-`verify-post-full.py` is now running after that review. It rebuilds/signs the public
-binaries and verifies C API, shell and explicit-transaction lock behavior against C++.
-Its unique output directory is in `stress-update/post-full-path.txt`. No other build or
-test workload may overlap it; the full sweep is terminal, not still running.
+`verify-post-full.py` completed successfully after that review. Fresh signed public
+binaries pass all 30 C API files, 392 shell tests/three shared skips and the 727-case
+shell comparison (zero unexpected differences, the same five known gaps). Forty C API
+stress runs with the SLT checkpoint settings pass, as do 40 preserved-binary and ten
+C++ controls. The live three-connection explicit-transaction lock sequence matches
+C++ exactly. Its unique output directory is in `stress-update/post-full-path.txt`,
+with `verdict.json` and signed identities. Both harnesses re-sign their public binary
+before testing, so the manifest retains initial and final signed-file hashes. The SLT
+hash remains the hash used for the full sweep. Both verification drivers are terminal;
+no build or test workload remains active at this checkpoint.
+
+The next shell gap is reproduced in
+`.context/artifacts/shell-type-catalog-20261023/`: type-name suggestions depend on
+lazy builtin catalog entries and their original spelling. A fresh C++ `INTEGR` error
+suggests `JSON`; after using `INTEGER`, it suggests `main.INTEGER`. Rust omits both.
+Lowercase typos already match. Port the catalog behavior rather than hard-coding hints;
+`.context/shell-type-catalog-investigation.md` records source findings and probes.
 
 Native disk restore covers plain and stored constraint indexes so far; expression/WAL,
 pre-v0.10 and fallback paths remain open under work-queue 16. The cache policy is still
@@ -276,8 +291,9 @@ Details: `.context/index-reload-progress.md`.
 
 ## Next steps, in order
 
-1. Finish the active shell/C API verification on `506354f`. Remaining shell engine
-   differences remain the owner's top priority (work-queue 3). Finish the other native
+1. Continue the shell engine differences, the owner's top priority (work-queue 3),
+   starting with the reproduced lazy type catalog/suggestion gap. The full corpus and
+   fresh public-surface checks on `506354f` are complete. Finish the other native
    persisted-index paths (16); the profiling and concurrency regressions are fixed.
    Resolve or reject/rework caching's memory
    outliers and continue the performance work; the policy is not accepted yet. Work
