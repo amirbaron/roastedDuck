@@ -31,19 +31,18 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
 
 ## Where things stand
 
-- **Corpus** (`scripts/conformance.sh`, last full run on main): 4741 of 4870 files pass,
-  28 fail, 100 skip, 1 timeout (`variant/tpch_sf1`, which takes C++ 400 s). C++ DuckDB
+- **Corpus** (`scripts/conformance.sh`, last full run on main): 4745 of 4870 files pass,
+  25 fail, 100 skip, no timeouts. C++ DuckDB
   passes 4794. Of the files C++ passes and rustdb does not:
   - 25 skip with `require tpcds` (the `tpcds` extension is not ported; its `dsdgen` is
     TPC-licensed code, see below);
   - 15 are accepted divergences (`conformance/divergences.md`: extension binaries, and
     out-of-memory errors rustdb avoids);
-  - the rest are real gaps, each in `docs/work-queue.md`: struct projection pushdown (3)
-    and the VARIANT TPC-H timeout, out-of-core IEJoin/AsOf/window (3) — agents are on
-    these —, `buffer_managed_query_result`, `json_serialize_plan`,
+  - the rest are real gaps, each in `docs/work-queue.md`: out-of-core IEJoin/AsOf/window
+    (3) and `buffer_managed_query_result` — agents are on these —, `json_serialize_plan`,
     `physical_operator_logging`, external file cache (2), encryption
     (`dict_fsst_expression_filter`), ICU `as`/`kok`/`mr`.
-  The ratchet `conformance/passing.txt` lists 4816 files and must never shrink:
+  The ratchet `conformance/passing.txt` lists 4820 files and must never shrink:
   `target/release/slt ratchet update target/slt/rust.jsonl` after a run.
 - **Flaky:** `test/sql/storage/temp_directory/max_swap_space_error.test` fails under load
   (work-queue item 14); `external_file_cache_low_mem.test_slow` failed once under load.
@@ -78,11 +77,11 @@ performance targets of `docs/porting-plan.md` (≥ 1.3× C++ speed, ≤ 0.6× me
 Worktrees under `/Users/amirbaron/src/duckdb-rust/.claude/worktrees/`, briefs in
 `.context/briefs/`:
 
-- struct and VARIANT extract pushdown (`struct-variant-pushdown.md`, base `2c359ab`);
-- out-of-core IEJoin, AsOf join and window (`outofcore-range-window.md`, base `6fc79ad`).
+- out-of-core IEJoin, AsOf join and window (`outofcore-range-window.md`, base `6fc79ad`);
+- buffer-managed results, streaming backpressure, batch insert memory, eviction parity,
+  the aggregate's source reservations (`buffer-memory.md`, base `930d230`).
 
-Queued: `buffer-memory.md` (buffer-managed results, streaming backpressure, batch insert
-memory, eviction parity, the aggregate's source reservations). If a session ends while
+Queued: `logging-filecache.md` (operator logging and the external file cache). If a session ends while
 an agent runs, its worktree holds its commits: review, finish or salvage, merge, run the
 full corpus.
 
@@ -103,11 +102,10 @@ full corpus.
 
 ## Next steps, in order
 
-1. Merge the running agents' branches (pushdown, out-of-core), then run the queued
-   buffer-memory brief.
+1. Merge the running agents' branches (out-of-core, buffer memory), then run the queued
+   logging and file cache brief.
 2. Close the remaining gaps in `docs/work-queue.md`, at most two agents at a time:
-   operator logging and the external file cache (both touch the Parquet reader — after
-   the pushdown merge), plan serialization (`json_serialize_plan`), encryption, ICU
+   plan serialization (`json_serialize_plan`), encryption, ICU
    collation for as/kok/mr and its sort key bytes.
 3. TPC-DS (25 tests): port the `tpcds` extension. Its `dsdgen` (like TPC-H's `dbgen`,
    already in `crates/tpch`) carries TPC's license, not MIT — the owner should review
