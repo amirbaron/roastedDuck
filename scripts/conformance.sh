@@ -4,11 +4,11 @@
 #
 # Usage: scripts/conformance.sh [--update] [test paths...]   (default: the whole corpus)
 #   --update   add newly passing files to conformance/passing.txt
-# Env: REF (DuckDB 1.5.6 source root), JOBS (parallel workers, default 6).
+# Env: REF (DuckDB 1.5.6 source root), JOBS (parallel workers, default 1).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REF="${REF:-$ROOT/.context/duckdb-download/duckdb-1.5.6}"
-JOBS="${JOBS:-6}"
+JOBS="${JOBS:-1}"
 UPDATE=0
 if [[ "${1:-}" == "--update" ]]; then UPDATE=1; shift; fi
 PATHS=("$@")
