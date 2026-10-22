@@ -470,7 +470,7 @@ struct Job {
 }
 
 /// The rows of a part of the tables generated in parts.
-const PART_ROWS: i64 = 1 << 19;
+const PART_ROWS: i64 = 1 << 17;
 
 /// The numbers each row of `table` draws from each of its streams, for the tables whose
 /// parts can start at any row (`row_skip` with their `nUsedPerRow`, which `nullSet` and

@@ -183,24 +183,12 @@ pub(crate) trait ChunkSink {
     fn push(&mut self, table: usize, chunk: DataChunk) -> Result<()>;
 }
 
-/// The table and bit of the NULL bitmap `nullCheck` reads for each column of a table: the
-/// column `first_column + i` of the table, which may belong to the next table when a table
-/// has more columns than streams.
-#[derive(Debug)]
-enum NullColumns {
-    /// Column `i` is bit `i` of the table's own bitmap.
-    Own,
-    /// The table and bit of each column.
-    Mapped(Vec<(usize, u32)>),
-}
-
 /// The rows of one table being collected into chunks (`tpcds_append_information` with its
 /// `InternalAppender`).
 #[derive(Debug)]
 pub(crate) struct RowAppender {
     table: usize,
     columns: Vec<ColumnBuffer>,
-    null_columns: NullColumns,
     /// The next column of the current row.
     column: usize,
     /// The NULL columns of the current row.
@@ -210,21 +198,11 @@ pub(crate) struct RowAppender {
 
 impl RowAppender {
     pub(crate) fn new(table: usize, info: &TableInfo) -> Self {
-        let first_column = get_simple_tdefs_by_number(table).first_column;
-        let mapped: Vec<(usize, u32)> = (0..info.columns.len())
-            .map(|i| {
-                let column = first_column + i;
-                let owner = get_table_from_column(column);
-                (
-                    owner,
-                    (column - get_simple_tdefs_by_number(owner).first_column) as u32,
-                )
-            })
-            .collect();
-        let own = mapped
-            .iter()
-            .enumerate()
-            .all(|(i, &(owner, bit))| owner == table && bit as usize == i);
+        // `nullCheck(first_column + i)` reads bit `i` of the table's bitmap: every table has
+        // at least as many streams as columns.
+        let tdef = get_simple_tdefs_by_number(table);
+        debug_assert!(tdef.first_column + info.columns.len() <= tdef.last_column + 1);
+        debug_assert_eq!(get_table_from_column(tdef.last_column), table);
         Self {
             table,
             columns: info
@@ -232,29 +210,17 @@ impl RowAppender {
                 .iter()
                 .map(|&(_, ty)| ColumnBuffer::new(ty))
                 .collect(),
-            null_columns: if own {
-                NullColumns::Own
-            } else {
-                NullColumns::Mapped(mapped)
-            },
             column: 0,
             nulls: 0,
             rows: 0,
         }
     }
 
-    /// `append_row_start`: the NULL columns of the row are those of the NULL bitmaps of
-    /// the tables now.
+    /// `append_row_start`: the NULL columns of the row are those of the table's NULL bitmap
+    /// now.
     pub(crate) fn start(&mut self, null_bit_maps: &[i64; TDEF_COUNT]) -> &mut Self {
         debug_assert_eq!(self.column, 0, "a row was not finished");
-        self.nulls = match &self.null_columns {
-            NullColumns::Own => null_bit_maps[self.table] as u64,
-            NullColumns::Mapped(columns) => columns
-                .iter()
-                .enumerate()
-                .filter(|&(_, &(owner, bit))| null_bit_maps[owner].wrapping_shr(bit) & 1 != 0)
-                .fold(0, |nulls, (i, _)| nulls | 1 << i),
-        };
+        self.nulls = null_bit_maps[self.table] as u64;
         self
     }
 
