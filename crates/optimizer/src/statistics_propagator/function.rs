@@ -481,7 +481,7 @@ fn sum_no_overflow(
         .cloned()
         .ok_or_else(|| rustdb_common::Error::internal("Unsupported internal type for sum_no_overflow"))?;
     // The function object itself, not its catalog entry's.
-    function.set_catalog_entry(&std::sync::Arc::from(""), &std::sync::Arc::from(""));
+    function.clear_catalog_entry();
     Ok(function)
 }
 

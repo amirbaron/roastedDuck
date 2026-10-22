@@ -193,9 +193,7 @@ pub fn regex_optimization(
     let mut replacement = bind_scalar_function(context.client, function_name, children, false)?;
     if let ExpressionKind::Function(function) = &mut replacement.kind {
         // The function objects (`GetStringContains()`, `LikeFun::GetFunction()`) themselves.
-        function
-            .function
-            .set_catalog_entry(&std::sync::Arc::from(""), &std::sync::Arc::from(""));
+        function.function.clear_catalog_entry();
     }
     Ok(RuleOutcome::Replaced(replacement))
 }

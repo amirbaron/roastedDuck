@@ -139,7 +139,7 @@ pub(crate) fn view_create_info(
 }
 
 /// `SequenceCatalogEntry::GetInfo`: the counter is stored as the start value.
-pub(crate) fn sequence_create_info(
+pub fn sequence_create_info(
     catalog: &str,
     schema: &str,
     entry: &CatalogEntry,

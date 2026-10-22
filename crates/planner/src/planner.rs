@@ -60,6 +60,11 @@ impl Planner {
         mut statement: SqlStatement,
         values: CaseInsensitiveMap<BoundParameterData>,
     ) -> Result<PlannedStatement> {
+        // The statements DuckDB's `Planner::CreatePlan` plans: all but the expanded ones
+        // (`StatementTypeToString(MULTI_STATEMENT)` is `MULTI`).
+        if let rustdb_ast::SqlStatementKind::Multi(_) = statement.kind {
+            return Err(Error::not_implemented("Cannot plan statement of type MULTI!"));
+        }
         // DuckDB counts the parameters the parser found, bound or not.
         let parameter_count = statement.named_param_map.len();
         let mut binder = Binder::new(Arc::clone(&self.context))?;

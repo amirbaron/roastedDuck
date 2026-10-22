@@ -170,6 +170,15 @@ impl dyn Serializer + '_ {
         Ok(())
     }
 
+    /// An object whose properties `write` writes (`WriteValue` of a class, at the current
+    /// position).
+    pub fn write_object_with(&mut self, write: impl FnOnce(&mut dyn Serializer) -> Result<()>) -> Result<()> {
+        self.on_object_begin();
+        write(self)?;
+        self.on_object_end();
+        Ok(())
+    }
+
     /// `WriteObject`: a property holding an object built by `write`.
     pub fn write_object_property(
         &mut self,

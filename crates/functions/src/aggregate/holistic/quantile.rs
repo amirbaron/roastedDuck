@@ -27,6 +27,8 @@ use crate::values::as_double;
 /// unscaled value and scale factor when it was given as a DECIMAL.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct QuantileValue {
+    /// The quantile as given, made positive (DuckDB's `val`): a DECIMAL stays one.
+    val: Value,
     pub(crate) dbl: f64,
     decimal: Option<(i128, i128)>,
 }
@@ -35,19 +37,23 @@ impl QuantileValue {
     /// DuckDB's `QuantileAbs` followed by the `QuantileValue` constructor.
     fn from_value(value: &Value) -> Result<Self> {
         if let Some((width, scale)) = value.logical_type().decimal_properties() {
-            let _ = width;
             let integral = value
                 .as_i128()
                 .ok_or_else(|| Error::internal("DECIMAL quantile without an integral value"))?
                 .abs();
             let scaling = 10i128.pow(u32::from(scale));
             return Ok(Self {
+                val: Value::decimal(integral, width, scale),
                 dbl: i128_to_f64(integral) / i128_to_f64(scaling),
                 decimal: Some((integral, scaling)),
             });
         }
         let dbl = as_double(value)?.abs();
-        Ok(Self { dbl, decimal: None })
+        Ok(Self {
+            val: Value::double(dbl),
+            dbl,
+            decimal: None,
+        })
     }
 }
 
@@ -71,6 +77,7 @@ impl QuantileBindData {
     pub(crate) fn median() -> Self {
         Self {
             quantiles: vec![QuantileValue {
+                val: Value::decimal(5, 2, 1),
                 dbl: 0.5,
                 decimal: Some((5, 10)),
             }],
@@ -145,8 +152,25 @@ pub(crate) fn bind_quantile(
             .collect::<Result<Vec<_>>>()?,
         _ => vec![check_quantile(value)?],
     };
-    function.arguments.truncate(input.argument_types.len() - 1);
+    function.erase_argument(input.argument_types.len() - 1);
     Ok(Arc::new(QuantileBindData::new(&values)?))
+}
+
+/// `QuantileBindData::Serialize`: the quantiles as given, made positive, their order and
+/// whether they were negative.
+fn serialize_quantile(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    bind_data: Option<&dyn FunctionData>,
+    _: &AggregateFunction,
+) -> Result<()> {
+    let data = bind_data
+        .and_then(|data| data.as_any().downcast_ref::<QuantileBindData>())
+        .ok_or_else(|| Error::internal("quantile without its bind data"))?;
+    let quantiles: Vec<&Value> = data.quantiles.iter().map(|quantile| &quantile.val).collect();
+    let order: Vec<u64> = data.order.iter().map(|&index| index as u64).collect();
+    serializer.write_property(100, "quantiles", &quantiles)?;
+    serializer.write_property(101, "order", &order)?;
+    serializer.write_property(102, "desc", &data.desc)
 }
 
 /// The floor/ceiling ranks of a quantile (DuckDB's `QuantileInterpolator`).
@@ -616,6 +640,7 @@ fn install(
 ) {
     bound.arguments.extend(quantile_type);
     bound.bind.clone_from(&function.bind);
+    bound.serialize = Some(Arc::new(serialize_quantile));
     function.replace_with(bound);
     // The bound function is named after its implementation, also when called through
     // an alias (`fun.name = "quantile_disc"`).

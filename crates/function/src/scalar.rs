@@ -103,7 +103,7 @@ pub type ScalarKernel = Arc<dyn Fn(&DataChunk, &mut FunctionState, &mut Vector) 
 
 /// A builtin aggregate resolved and bound for a scalar function that runs it internally
 /// (such as `list_aggregate`).
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct BoundAggregateFunction {
     /// The chosen overload after its bind callback.
     pub function: AggregateFunction,
@@ -112,6 +112,22 @@ pub struct BoundAggregateFunction {
     pub argument_count: usize,
     /// The bound call as SQL text, e.g. `arg_max(NULL, 1)`.
     pub display: String,
+    /// Writes the bound call as the binder's aggregate expression (a nullable value), for
+    /// the bind data of a serialized plan.
+    pub serialize: ExpressionWriter,
+}
+
+/// Writes an expression the binder made (see [`BoundAggregateFunction::serialize`]).
+pub type ExpressionWriter = Arc<dyn Fn(&mut dyn Serializer) -> Result<()> + Send + Sync>;
+
+impl fmt::Debug for BoundAggregateFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BoundAggregateFunction")
+            .field("function", &self.function)
+            .field("argument_count", &self.argument_count)
+            .field("display", &self.display)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Resolves a builtin aggregate by name and binds it (DuckDB's lookup in the system
@@ -271,6 +287,13 @@ impl ScalarFunction {
         self.schema_name = Arc::clone(schema);
     }
 
+    /// Forgets the catalog entry: the bind made a new function object (DuckDB's
+    /// `function = GetX(...)` binds and `XFun::GetFunction()` callers).
+    pub fn clear_catalog_entry(&mut self) {
+        let empty: Arc<str> = Arc::from("");
+        self.set_catalog_entry(&empty, &empty);
+    }
+
     /// Removes argument `index`, which the bind consumed, keeping the arguments as they
     /// were before the first removal (DuckDB's `Function::EraseArgument`).
     pub fn erase_argument(&mut self, index: usize) {
@@ -300,6 +323,19 @@ impl ScalarFunction {
         + 'static,
     ) -> Self {
         self.bind_expression = Some(Arc::new(bind_expression));
+        self
+    }
+
+    /// Sets the bind data writer (see [`ScalarFunction::serialize`]).
+    #[must_use]
+    pub fn with_serialize(
+        mut self,
+        serialize: impl Fn(&mut dyn Serializer, Option<&dyn FunctionData>, &Self) -> Result<()>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.serialize = Some(Arc::new(serialize));
         self
     }
 

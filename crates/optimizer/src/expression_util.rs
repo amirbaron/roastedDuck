@@ -402,7 +402,7 @@ pub fn constant_or_null(
         // DuckDB builds the call from `ConstantOrNullFun::GetFunction()` with the value's
         // type as its first argument and result.
         let function = &mut function.function;
-        function.set_catalog_entry(&std::sync::Arc::from(""), &std::sync::Arc::from(""));
+        function.clear_catalog_entry();
         function.arguments = vec![ty.clone(), LogicalType::ANY];
         function.return_type = ty;
     }

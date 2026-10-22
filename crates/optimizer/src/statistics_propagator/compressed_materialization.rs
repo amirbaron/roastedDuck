@@ -707,7 +707,7 @@ impl StatisticsPropagator<'_> {
             .cloned()
             .ok_or_else(|| Error::internal(format!("no overload of {name} for {arguments:?}")))?;
         // The function object itself, not its catalog entry's.
-        function.set_catalog_entry(&std::sync::Arc::from(""), &std::sync::Arc::from(""));
+        function.clear_catalog_entry();
         Ok(function)
     }
 

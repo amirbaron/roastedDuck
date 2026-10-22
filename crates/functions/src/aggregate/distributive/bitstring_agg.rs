@@ -240,10 +240,25 @@ fn bind_bitstring_agg(
             ));
         };
         let bounds = Bounds(Some((min.clone(), max.clone())));
-        function.arguments.truncate(1);
+        function.erase_argument(2);
+        function.erase_argument(1);
         return Ok(Some(Arc::new(bounds)));
     }
     Ok(Some(Arc::new(Bounds(None))))
+}
+
+/// `BitstringAggBindData::Serialize`: the bounds, NULL when not known.
+fn serialize_bounds(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    bind_data: Option<&dyn FunctionData>,
+    _: &AggregateFunction,
+) -> Result<()> {
+    let bounds = bind_data
+        .and_then(|data| data.as_any().downcast_ref::<Bounds>())
+        .and_then(|bounds| bounds.0.clone());
+    let (min, max) = bounds.unwrap_or_default();
+    serializer.write_property(100, "min", &min)?;
+    serializer.write_property(101, "max", &max)
 }
 
 fn overloads<T: BitInput + 'static>(set: &mut AggregateFunctionSet, ty: &LogicalType) {
@@ -254,6 +269,7 @@ fn overloads<T: BitInput + 'static>(set: &mut AggregateFunctionSet, ty: &Logical
         Typed(BitstringAgg::<T>(PhantomData)),
     )
     .with_bind(bind_bitstring_agg)
+    .with_serialize(serialize_bounds)
     // `BitstringPropagateStats`: the argument's statistics give the bounds.
     .with_statistics(|_, arguments| {
         let (min, max) = arguments.first()?.clone()?;

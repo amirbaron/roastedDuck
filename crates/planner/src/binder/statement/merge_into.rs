@@ -340,8 +340,8 @@ pub fn bind_merge_into(scope: &mut BindScope<'_>, stmt: &mut MergeIntoStatement)
         .collect();
 
     let return_chunk = !stmt.returning_list.is_empty();
-    let proj_index = scope.generate_table_index();
     let merge_table_index = scope.generate_table_index();
+    let proj_index = scope.generate_table_index();
     let target = MergeTarget {
         table,
         table_name: &table_name,

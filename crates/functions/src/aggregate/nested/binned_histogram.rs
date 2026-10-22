@@ -277,6 +277,7 @@ fn bind_binned<const EXACT: bool>(
         ty = LogicalType::DOUBLE;
     }
     function.ops = binned_ops::<EXACT>(&ty);
+    function.clear_catalog_entry();
     function.arguments = vec![ty.clone(), LogicalType::list(ty.clone())];
     function.return_type = LogicalType::map(ty, LogicalType::UBIGINT);
     Ok(None)

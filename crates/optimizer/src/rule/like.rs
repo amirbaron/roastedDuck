@@ -99,9 +99,7 @@ pub fn like_optimization(
     let mut result = bind_scalar_function(context.client, name, children, false)?;
     if let ExpressionKind::Function(function) = &mut result.kind {
         // DuckDB uses the function objects (`PrefixFun::GetFunction()`, ...) directly.
-        function
-            .function
-            .set_catalog_entry(&std::sync::Arc::from(""), &std::sync::Arc::from(""));
+        function.function.clear_catalog_entry();
     }
     result.return_type = return_type;
     if is_not_like {

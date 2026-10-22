@@ -185,7 +185,7 @@ fn first_aggregate(binder: &Binder, child: Expression) -> Result<Expression> {
     let mut function =
         function_binder.bind_aggregate_overload(functions, std::slice::from_ref(&child.return_type))??;
     // The function object itself, not its catalog entry's.
-    function.set_catalog_entry(&std::sync::Arc::from(""), &std::sync::Arc::from(""));
+    function.clear_catalog_entry();
     function_binder.bind_aggregate_function(function, vec![child], None, AggregateType::NonDistinct, None)
 }
 

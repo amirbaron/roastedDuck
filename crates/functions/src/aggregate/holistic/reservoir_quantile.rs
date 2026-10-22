@@ -245,12 +245,30 @@ fn bind(function: &mut AggregateFunction, input: &BindInput<'_>) -> Result<Optio
         let integer = super::integer_type_of(ty.physical_type())?;
         function.return_type = integer.clone();
         function.arguments[0] = integer;
+        function.arguments.truncate(1);
+    } else {
+        // `EraseArgument` of the quantile (and sample size) arguments.
+        while function.arguments.len() > 1 {
+            function.erase_argument(function.arguments.len() - 1);
+        }
     }
-    function.arguments.truncate(1);
     Ok(Some(Arc::new(Bounds {
         quantiles,
         sample_size,
     })))
+}
+
+/// `ReservoirQuantileBindData::Serialize`.
+fn serialize_bounds(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    bind_data: Option<&dyn FunctionData>,
+    _: &AggregateFunction,
+) -> Result<()> {
+    let bounds = bind_data
+        .and_then(|data| data.as_any().downcast_ref::<Bounds>())
+        .ok_or_else(|| Error::internal("reservoir_quantile without its bind data"))?;
+    serializer.write_property(100, "quantiles", &bounds.quantiles)?;
+    serializer.write_property(101, "sample_size", &(bounds.sample_size as u64))
 }
 
 /// The four overloads of a type: scalar and list quantiles, each with and without a
@@ -280,6 +298,7 @@ fn overloads(set: &mut AggregateFunctionSet, ty: &LogicalType) -> Result<()> {
         )
         .with_bind(bind);
         function.ops = typed_ops(physical, list)?;
+        function.serialize = Some(Arc::new(serialize_bounds));
         let mut sized = function.clone();
         sized.arguments.push(LogicalType::INTEGER);
         set.add(function);

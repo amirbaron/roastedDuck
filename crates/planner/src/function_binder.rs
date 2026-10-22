@@ -1230,15 +1230,16 @@ impl rustdb_function::AggregateResolver for ClientContext {
         let bound =
             binder.bind_aggregate_function(function, children, None, AggregateType::NonDistinct, None)?;
         let display = bound.to_string();
-        let ExpressionKind::Aggregate(aggregate) = bound.kind else {
+        let ExpressionKind::Aggregate(aggregate) = &bound.kind else {
             return Err(Error::internal("aggregate binding did not produce an aggregate"));
         };
-        let aggregate = *aggregate;
+        let aggregate = (**aggregate).clone();
         Ok(rustdb_function::BoundAggregateFunction {
             argument_count: aggregate.children.len(),
             display,
             function: aggregate.function,
             bind_data: aggregate.bind_info,
+            serialize: Arc::new(move |serializer| rustdb_serde::Serialize::serialize(&bound, serializer)),
         })
     }
 }

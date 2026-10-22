@@ -123,6 +123,7 @@ pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Res
     let entry = Arc::clone(&found.entry);
     let table = table_of(&entry)?;
     let table_name = entry.name().to_owned();
+    let table_index = scope.generate_table_index();
     let mut root_select = None;
     if stmt.column_order == InsertColumnOrder::InsertByName {
         if values_list(stmt).is_some() {
@@ -162,7 +163,6 @@ pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Res
     };
     let columns_provided = !stmt.columns.is_empty();
     expand_default_in_values_list(stmt, table, &table_name, &named_column_map)?;
-    let table_index = scope.generate_table_index();
     let mut insert = LogicalOperator::new(LogicalKind::Insert(Box::new(LogicalInsert {
         table: Arc::clone(&entry),
         catalog: found.catalog.clone(),
@@ -193,12 +193,25 @@ pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Res
     }
     // Without a source (COPY FROM) the caller adds the child.
     if !stmt.returning_list.is_empty() {
+        // The returned rows get a table index of their own.
+        let insert_table_index = scope.generate_table_index();
+        if let LogicalKind::Insert(insert) = &mut insert.kind {
+            insert.table_index = insert_table_index;
+        }
         let alias = stmt
             .table_ref
             .as_ref()
             .map_or_else(String::new, |r| r.alias.clone());
         let returning = std::mem::take(&mut stmt.returning_list);
-        return bind_returning(scope, returning, &table_name, &entry, &alias, table_index, insert);
+        return bind_returning(
+            scope,
+            returning,
+            &table_name,
+            &entry,
+            &alias,
+            insert_table_index,
+            insert,
+        );
     }
     scope.with_properties(|properties| properties.return_type = StatementReturnType::ChangedRows);
     Ok(count_result(insert))
@@ -362,12 +375,16 @@ pub fn bind_delete(scope: &mut BindScope<'_>, stmt: &mut DeleteStatement) -> Res
         plan_subqueries(scope, &mut bound, &mut root)?;
         root = LogicalOperator::filter(bound, root);
     }
+    let mut table_index = scope.generate_table_index();
     let bound_constraints = bind_constraints(scope, &table_name, table)?;
-    let table_index = scope.generate_table_index();
     let row_id = {
         let get = base_get(&mut root).ok_or_else(|| Error::binder("Can only delete from base table"))?;
         bind_row_id_column(get)?
     };
+    if !stmt.returning_list.is_empty() {
+        // The returned rows get a table index of their own.
+        table_index = scope.generate_table_index();
+    }
     let schema = table
         .storage
         .as_ref()
