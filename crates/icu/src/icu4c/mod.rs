@@ -22,5 +22,6 @@ pub mod normalizer2impl;
 pub mod rulebasedcollator;
 pub mod timezone;
 pub mod ucharstrie;
+pub mod uloc_tag;
 pub mod utrie2;
 pub mod zone_names;

@@ -25,6 +25,10 @@
 //   u32 count; count × (u8 n, from, u8 n, to)     uloc_getName's ISO 639-2 to 639-1 language codes
 //   u32 count; count × (u8 n, from, u8 n, to)     uloc_getName's ISO 3166 alpha-3 to alpha-2 codes
 //   u32 count; count × (u8 n, name, u32 code)     the names of the scripts
+//   u32 count; count × (u8 n, legacy key,         keyTypeData: the locale keywords' keys and
+//     u8 n, BCP 47 key, u8 special types,         types (uloc_toLegacyKey, uloc_toLegacyType):
+//     u32 types, types × (u8 n, name,             every name of a type (legacy, BCP 47, alias)
+//     u8 n, legacy type))                         with its legacy type
 //   u32 count; count × (u8 n, name)               Collator::getAvailableLocales, as DuckDB
 //                                                 names the collations
 
@@ -34,6 +38,7 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <algorithm>
 #include <set>
 #include <string>
 #include <vector>
@@ -221,6 +226,129 @@ void Types() {
 	}
 }
 
+// The UTF-16 string of a resource as an invariant-character string.
+string ResourceString(UResourceBundle *resource) {
+	UErrorCode status = U_ZERO_ERROR;
+	int32_t length;
+	const UChar *chars = ures_getString(resource, &length, &status);
+	check(status, "ures_getString");
+	string result;
+	for (int32_t i = 0; i < length; i++) {
+		result += char(chars[i]);
+	}
+	return result;
+}
+
+// keyTypeData (uloc_keytype.cpp's initFromResourceBundle): for every key, its legacy and
+// BCP 47 ids, its special types (CODEPOINTS 1, REORDER_CODE 2, RG_KEY_VALUE 4), and every
+// name of every type (legacy id, BCP 47 id, aliases) with the type's legacy id.
+void KeyTypeData(Writer &out) {
+	UErrorCode status = U_ZERO_ERROR;
+	UResourceBundle *data = ures_openDirect(nullptr, "keyTypeData", &status);
+	UResourceBundle *key_map = ures_getByKey(data, "keyMap", nullptr, &status);
+	UResourceBundle *type_map = ures_getByKey(data, "typeMap", nullptr, &status);
+	check(status, "keyTypeData");
+	UErrorCode alias_status = U_ZERO_ERROR;
+	UResourceBundle *type_alias = ures_getByKey(data, "typeAlias", nullptr, &alias_status);
+	UErrorCode bcp_alias_status = U_ZERO_ERROR;
+	UResourceBundle *bcp_type_alias = ures_getByKey(data, "bcpTypeAlias", nullptr, &bcp_alias_status);
+	struct Key {
+		string legacy, bcp;
+		uint8_t special = 0;
+		vector<std::pair<string, string>> types;
+	};
+	vector<Key> keys;
+	for (int32_t k = 0; k < ures_getSize(key_map); k++) {
+		UResourceBundle *entry = ures_getByIndex(key_map, k, nullptr, &status);
+		check(status, "keyMap");
+		Key key;
+		key.legacy = ures_getKey(entry);
+		key.bcp = ResourceString(entry);
+		if (key.bcp.empty()) {
+			key.bcp = key.legacy;
+		}
+		ures_close(entry);
+		bool tz = key.legacy == "timezone";
+		auto slashes = [&](string id) {
+			if (tz) {
+				std::replace(id.begin(), id.end(), ':', '/');
+			}
+			return id;
+		};
+		UErrorCode by_key_status = U_ZERO_ERROR;
+		UResourceBundle *aliases = U_SUCCESS(alias_status)
+		                               ? ures_getByKey(type_alias, key.legacy.c_str(), nullptr, &by_key_status)
+		                               : nullptr;
+		if (U_FAILURE(by_key_status)) {
+			aliases = nullptr;
+		}
+		by_key_status = U_ZERO_ERROR;
+		UResourceBundle *bcp_aliases = U_SUCCESS(bcp_alias_status)
+		                                   ? ures_getByKey(bcp_type_alias, key.bcp.c_str(), nullptr, &by_key_status)
+		                                   : nullptr;
+		if (U_FAILURE(by_key_status)) {
+			bcp_aliases = nullptr;
+		}
+		UResourceBundle *types = ures_getByKey(type_map, key.legacy.c_str(), nullptr, &status);
+		check(status, "typeMap " + key.legacy);
+		for (int32_t t = 0; t < ures_getSize(types); t++) {
+			UResourceBundle *type = ures_getByIndex(types, t, nullptr, &status);
+			check(status, "typeMap entry");
+			string legacy = ures_getKey(type);
+			if (legacy == "CODEPOINTS" || legacy == "REORDER_CODE" || legacy == "RG_KEY_VALUE") {
+				key.special |= legacy == "CODEPOINTS" ? 1 : legacy == "REORDER_CODE" ? 2 : 4;
+				ures_close(type);
+				continue;
+			}
+			legacy = slashes(legacy);
+			string bcp = ResourceString(type);
+			if (bcp.empty()) {
+				bcp = legacy;
+			}
+			ures_close(type);
+			key.types.emplace_back(legacy, legacy);
+			if (bcp != legacy) {
+				key.types.emplace_back(bcp, legacy);
+			}
+			for (auto *alias_table : {aliases, bcp_aliases}) {
+				if (!alias_table) {
+					continue;
+				}
+				const string &target = alias_table == aliases ? legacy : bcp;
+				for (int32_t a = 0; a < ures_getSize(alias_table); a++) {
+					UResourceBundle *alias = ures_getByIndex(alias_table, a, nullptr, &status);
+					check(status, "type alias");
+					if (ResourceString(alias) == target) {
+						string from = ures_getKey(alias);
+						key.types.emplace_back(alias_table == aliases ? slashes(from) : from, legacy);
+					}
+					ures_close(alias);
+				}
+			}
+		}
+		ures_close(types);
+		ures_close(aliases);
+		ures_close(bcp_aliases);
+		keys.push_back(std::move(key));
+	}
+	ures_close(bcp_type_alias);
+	ures_close(type_alias);
+	ures_close(type_map);
+	ures_close(key_map);
+	ures_close(data);
+	out.U32(uint32_t(keys.size()));
+	for (auto &key : keys) {
+		out.Name(key.legacy);
+		out.Name(key.bcp);
+		out.U8(key.special);
+		out.U32(uint32_t(key.types.size()));
+		for (auto &type : key.types) {
+			out.Name(type.first);
+			out.Name(type.second);
+		}
+	}
+}
+
 void Export(const char *path, const std::set<string> &types) {
 	auto items = PackageItems();
 	const string coll_prefix = string(U_ICUDATA_NAME) + "/coll/";
@@ -268,7 +396,10 @@ void Export(const char *path, const std::set<string> &types) {
 		for (auto &type : types) {
 			// some types have rules but no binary data: U_MISSING_RESOURCE_ERROR
 			UErrorCode status = U_ZERO_ERROR;
-			icu::Locale locale((bundle + "@collation=" + type).c_str());
+			// (a bundle ending with _, like de_, is reached from IDs with a variant: in
+			// de_@collation=x, uloc_getName would take the keywords for the variant)
+			string id = bundle.back() == '_' ? bundle + "_ZZZZ" : bundle;
+			icu::Locale locale((id + "@collation=" + type).c_str());
 			std::unique_ptr<icu::Collator> collator(icu::Collator::createInstance(locale, status));
 			uint32_t index = MISSING_RESOURCE;
 			if (status != U_MISSING_RESOURCE_ERROR) {
@@ -442,6 +573,9 @@ void Export(const char *path, const std::set<string> &types) {
 		out.Name(script.first);
 		out.U32(uint32_t(script.second));
 	}
+
+	// keyTypeData, as uloc_keytype.cpp's initFromResourceBundle reads it
+	KeyTypeData(out);
 
 	// the collations of `LoadInternal`
 	int32_t count;

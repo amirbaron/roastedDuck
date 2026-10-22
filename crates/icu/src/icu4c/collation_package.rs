@@ -60,6 +60,17 @@ pub struct Bundle {
     pub types: HashMap<&'static str, Option<usize>>,
 }
 
+/// A key of the locale keywords (keyTypeData).
+#[derive(Debug)]
+pub struct KeyType {
+    /// The legacy key (`collation`, `colstrength`, ...).
+    pub legacy: &'static str,
+    /// `CODEPOINTS` (1), `REORDER_CODE` (2), `RG_KEY_VALUE` (4): types matched by pattern.
+    pub special_types: u8,
+    /// Every name of a type (legacy, BCP 47, alias), lowercase, with its legacy type.
+    pub types: HashMap<String, &'static str>,
+}
+
 /// The parsed sections of the data.
 #[derive(Debug)]
 pub struct CollationPackage {
@@ -85,6 +96,8 @@ pub struct CollationPackage {
     pub countries: HashMap<&'static str, &'static str>,
     /// The names of the scripts and their codes (`u_getPropertyValueEnum(UCHAR_SCRIPT)`).
     pub scripts: Vec<(&'static str, i32)>,
+    /// The keys of the locale keywords, by their legacy and BCP 47 names in lowercase.
+    pub key_types: HashMap<String, std::sync::Arc<KeyType>>,
     /// `Collator::getAvailableLocales`, as DuckDB names the collations.
     pub available_locales: Vec<&'static str>,
 }
@@ -155,6 +168,27 @@ impl CollationPackage {
             .map(|_| Some((r.name()?, r.u32()? as i32)))
             .collect::<Option<Vec<_>>>()?;
         let count = r.u32()?;
+        let mut key_types = HashMap::new();
+        for _ in 0..count {
+            let legacy = r.name()?;
+            let bcp = r.name()?;
+            let special_types = r.u8()?;
+            let types_count = r.u32()?;
+            let mut types = HashMap::new();
+            for _ in 0..types_count {
+                let name = r.name()?.to_ascii_lowercase();
+                let legacy_type = r.name()?;
+                types.insert(name, legacy_type);
+            }
+            let key = std::sync::Arc::new(KeyType {
+                legacy,
+                special_types,
+                types,
+            });
+            key_types.insert(legacy.to_ascii_lowercase(), std::sync::Arc::clone(&key));
+            key_types.insert(bcp.to_ascii_lowercase(), key);
+        }
+        let count = r.u32()?;
         let available_locales = (0..count).map(|_| r.name()).collect::<Option<Vec<_>>>()?;
         (r.pos == bytes.len()).then_some(Self {
             root,
@@ -168,6 +202,7 @@ impl CollationPackage {
             languages,
             countries,
             scripts,
+            key_types,
             available_locales,
         })
     }

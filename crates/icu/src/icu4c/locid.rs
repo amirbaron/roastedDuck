@@ -1,8 +1,9 @@
 //! The part of ICU's `Locale` (`locid.cpp`) and `uloc_getName` (`uloc.cpp`) a collator
-//! needs: the locale ID of `Locale(language, country)`, which picks the collation bundle.
-//! Keywords (`@collation=...`) and BCP 47 extensions are not supported.
+//! needs: the locale ID of `Locale(language, country)`, with its keywords, which pick the
+//! collation bundle and type and set collation attributes.
 
 use super::collation_package::CollationPackage;
+use super::uloc_tag::{for_language_tag, has_bcp47_extension};
 
 /// `ULOC_LANG_CAPACITY`.
 const LANG_CAPACITY: usize = 12;
@@ -187,6 +188,18 @@ impl Locale {
 /// `uloc_getName`: language, script, country and variants separated by `_`, a POSIX
 /// charset or variant, and the keywords; `None` if malformed.
 fn get_name(id: &[u8], package: &CollationPackage) -> Option<(String, Vec<(String, String)>)> {
+    // `_ConvertBCP47`: an ID with a one-character subtag may be a language tag
+    let converted;
+    let id = if has_bcp47_extension(id) {
+        converted = for_language_tag(id)?;
+        if converted.is_empty() {
+            id
+        } else {
+            converted.as_bytes()
+        }
+    } else {
+        id
+    };
     let (mut name, mut pos) = get_language(id, package);
     if is_id_separator(at(id, pos)) {
         name.push('_');
