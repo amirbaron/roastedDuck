@@ -3667,7 +3667,9 @@ test/sql/storage/extensions/extension_default.test
 test/sql/storage/extensions/extension_views.test
 test/sql/storage/external_file_cache/external_file_cache_eviction_queue.test_slow
 test/sql/storage/external_file_cache/external_file_cache_low_mem.test_slow
+test/sql/storage/external_file_cache/external_file_cache_parquet.test_slow
 test/sql/storage/external_file_cache/external_file_cache_parquet_tpch.test_slow
+test/sql/storage/external_file_cache/external_file_cache_validate.test
 test/sql/storage/filter_pushdown_struct.test
 test/sql/storage/full_vector_delete_checkpoint.test
 test/sql/storage/icu_collation.test
