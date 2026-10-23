@@ -59,6 +59,10 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      A scalar C API callback error probe also reproduces byte loss: C++ preserves
      invalid UTF-8 in both plain and JSON errors; Rust currently substitutes U+FFFD.
      Error messages and native wire formatting are the next byte-owning boundary.
+     The expanded callback oracle also requires uppercase JSON control escapes.
+     A SQL `error()` probe confirms that embedded NULs are sanitized to literal `\0`
+     before JSON conversion, matching `ErrorData::SanitizeErrorMessage`. Include the
+     SQL error function and its native byte output in this boundary.
    - Object ids: the oid of a database (`PRAGMA database_list`'s `seq`) counts the
      catalog entries created before it, more in DuckDB.
    - A `memory_limit` far below an aggregate's state (`SELECT list(i) FROM range(1e7)`
