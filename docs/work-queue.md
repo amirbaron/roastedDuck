@@ -2,7 +2,10 @@
 
 Workstreams found while closing conformance failures. Execute sequentially: the
 owner limits this workspace to one task and one build or test workload at a time.
-The 2026-10-22 goal is C++ parity, including performance, without outperformance targets.
+The current goal is functional/storage/client C++ parity with the lower-memory
+performance acceptance in `docs/performance-acceptance.md`, not independent speed and
+memory parity. The checkout is mid-native-name integration and does not build yet;
+resume that integration before claiming the historical checks as current evidence.
 Each names the C++ it ports and the tests or checks that close it. Finished streams are
 removed; the commit history records them.
 

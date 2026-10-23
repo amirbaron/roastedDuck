@@ -38,6 +38,34 @@ Complete Python bindings first and all primary clients plus C#/.NET, Swift and J
 - Subagents use model "opus". Commit messages end with the Co-Authored-By line; docs
   changes go in their own commit before the code.
 
+## Current source integration (2026-10-23)
+
+The checkout has an **uncommitted native-identifier migration and does not build as a
+complete workspace yet**. The latest all-target check reports 279 planner diagnostics.
+The corpus, shell and performance results below describe previously accepted binaries;
+they are not validation of this incomplete source. No final public binary or full
+corpus/file/WAL run has been made for the migration.
+
+Names now retain bytes through AST/type/value codecs, parser transformations, casts,
+storage filters/statistics/index descriptors and parts of planner name resolution.
+The remaining work includes table/pivot/statement binding, native plan rendering,
+full catalog/result/execution integration and raw SQL parser ingress. The four raw-name
+file reopen cases remain open. Client packages and final performance acceptance also
+remain open; keep the uncached lower-memory controls unchanged.
+
+New focused evidence includes 5,241 C++ index descriptor cases, 6,988 CTE/macro/lambda
+codec cases, 3,494 native exception metadata cases, and 8,050 parser AST/rendering
+comparisons plus 26 acceptance/rejection decisions. The 700 invalid-UTF8 parser inputs
+remain pending raw ingress and are not counted as passed. Lambda-reference codec/name
+checks do not establish SQL rendering parity: C++ deliberately rejects rendering that
+transient node, while the current Rust renderer returns its name. Record and close
+that difference before final acceptance.
+
+Detailed stage logs, exact limitations, source hashes and resume pointers live in
+`.context/identifier-bytes-progress.md` and the external artifact folder
+`.context/artifacts/identifier-bytes-20261023/`. Do not launch agents or overlap heavy
+workloads to finish this integration.
+
 ## Where things stand
 
 - **Corpus**: the latest complete serial sweep has **4781 of 4870 pass**, 15 fail, 74 skip;
@@ -115,8 +143,9 @@ shared skips (203 files), with no failures, crashes or timeouts and zero regress
 against the 4855-file ratchet. These focused rechecks retain the prior overall
 4781/15/74 results; the subsequent full sweep on `506354f` plus the cache flag confirms
 them without rechecks. Shell verification passes with the same five known differences; all eight fresh
-performance suites are complete with 160 passing result checks. Performance acceptance
-remains open because the parity targets are not yet met.
+performance suites are complete with 160 passing result checks. Final-binary performance acceptance
+remains open under the lower-memory policy in `docs/performance-acceptance.md`; that
+policy supersedes the original independent speed and memory targets.
 
 The benchmark harness now fails on mismatches or engine errors and retains its
 check verdicts in JSON (`65042a1`); six regression tests pass. Older JSON lacks those
