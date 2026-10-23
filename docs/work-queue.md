@@ -48,6 +48,11 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      DuckDB passes the bytes on (a string constant then fails with "Invalid unicode
      (byte sequence mismatch) detected in value construction", `.print` writes them as
      they are). Needs byte strings from the shell's input down to the parser.
+     Raw identifiers can also be created and queried in C++ while metadata conversion
+     rejects them, so blanket validation of SQL input is incorrect. The next boundary
+     being ported is a shared checked byte-to-VARCHAR constructor for value construction;
+     unchecked vector bytes and raw identifiers must remain distinct. Byte probes:
+     `.context/artifacts/shell-bytes-20261023/`.
    - Object ids: the oid of a database (`PRAGMA database_list`'s `seq`) counts the
      catalog entries created before it, more in DuckDB.
    - A `memory_limit` far below an aggregate's state (`SELECT list(i) FROM range(1e7)`
