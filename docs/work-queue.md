@@ -74,13 +74,22 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      parser/name bytes and legacy text wrappers are still open. Current artifacts:
      `.context/artifacts/callback-bytes-20261023/` (`first-path.txt`, `final-path.txt`);
      initial scalar/constructor evidence remains in `shell-bytes-20261023/`.
-     Next, preserve raw shell lines/history/SQL accumulation and dot-command argument
-     bytes. Octal escapes can produce invalid UTF-8 even from ASCII input; decoded NUL
-     terminates an individual command argument in C++. Add a byte callback interface
-     and migrate literal output through it, then migrate the remaining text callbacks,
-     argv, SQL/parser and identifier interfaces. Keep any legacy UTF-8 handoff explicit;
-     this ingress step must not be presented as complete raw SQL/name parity. Probes:
-     `.context/artifacts/shell-input-bytes-20261023/ingress-probes.json`.
+     Raw shell lines/history/SQL accumulation and dot-command tokenization now own
+     bytes. Octal escapes retain invalid bytes; decoded NUL terminates one argument.
+     Literal `.print` uses the byte callback interface, and raw command-name lookup
+     and errors preserve bytes. The old `input-latin1-dot-print` known marker is removed.
+     All 778 native byte comparisons match C++; 14 shell +23 common units, workspace
+     Clippy, 768 shell cases (zero unexpected/four known) and 392 upstream shell tests
+     with three shared skips pass. No full SQL sweep was repeated for this frontend
+     step; the latest accepted full corpus is the callback-byte sweep above.
+     Other metadata callbacks, invalid-byte error highlighting, argv and SQL/parser/name
+     storage still have explicit text boundaries. No blanket UTF-8 SQL rejection was
+     added. Probes/manifests: `.context/artifacts/shell-input-bytes-20261023/`.
+     Its `raw-name-files/report.json` shows C++ can persist/reopen raw table, column,
+     schema and type names; Rust rejects all four at UTF-8 string deserialization.
+     Valid-UTF-8 controls match and all read-only hashes are unchanged. Continue with
+     byte-owning typed identifiers across query/parser/catalog/serialization, using
+     the binary deserializer's existing raw string-byte interface.
    - Object ids: the oid of a database (`PRAGMA database_list`'s `seq`) counts the
      catalog entries created before it, more in DuckDB.
    - A `memory_limit` far below an aggregate's state (`SELECT list(i) FROM range(1e7)`

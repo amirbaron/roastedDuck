@@ -71,9 +71,9 @@ gates remain in place.
   and ten C++ controls pass. The explicit-transaction lock sequence matches C++.
 - **CLI shell (the owner's top priority; engine gaps remain):** `crates/shell` (`rustdb`) is DuckDB's
   shell one to one, linenoise included: all 392 `tools/shell/tests` that pass on the C++
-  CLI pass (`scripts/shell-tests.sh --binary rust|cpp`), and 760 of 765 cases of
+  CLI pass (`scripts/shell-tests.sh --binary rust|cpp`), and 764 of 768 cases of
   `scripts/shell-diff.py` (modes, types, dot commands, options, errors, pty sessions)
-  match byte for byte; the five others are known engine differences (work-queue item 3).
+  match byte for byte; the four others are known engine differences (work-queue item 3).
   Both suites were reverified after the ICU merge with one worker. Upstream shell tests
   leave temporary paths unquoted; `pytest-ssd` in the ICU artifact folder exposes
   `tmp_path` through the workspace symlink so all test files remain on the SSD.
@@ -351,6 +351,36 @@ terminal; manifests/pointers are in `.context/artifacts/callback-bytes-20261023/
 (`first-path.txt`, `final-path.txt`). Raw shell/parser/name bytes and legacy text
 wrappers remain open, as do the other work-queue and performance gates. The original
 cache experiment is excluded from this callback change and remains unaccepted.
+
+Shell ingress now keeps byte-owned lines, SQL accumulation, echo and linenoise
+history/completeness checks. Dot-command tokenization decodes escapes as bytes and
+terminates each decoded argument at NUL, like C++ C strings. A byte callback interface
+carries literal `.print` output without decoding; raw command-name lookup/errors also
+retain bytes. Engine errors use the native byte formatter. Valid UTF-8 still uses the
+existing highlighter; invalid-byte highlighting remains plain raw output until that
+text-only boundary is ported. Other dot callbacks explicitly adapt to their existing
+text state; SQL execution and argv still have legacy UTF-8 handoffs. This does not
+establish raw SQL/parser/name/argv parity and adds no blanket UTF-8 SQL rejection.
+
+The ingress step passes 14 shell and 23 common signed release unit tests plus
+workspace/all-targets Clippy. All 778 cases in `scripts/shell-input-bytes.py` match C++
+(all single-byte raw/escaped arguments and command names plus selected sequences).
+All 768 shell differential cases have zero unexpected differences and four known;
+392 upstream shell tests pass with three shared skips. `input-latin1-dot-print` is
+now unmarked and passes; three additional unmarked cases cover octal/NUL handling,
+quoted raw input and raw command-name errors. The full SQL corpus was not repeated
+for this frontend step; the last accepted full sweep remains the callback-byte run.
+Artifacts: `.context/artifacts/shell-input-bytes-20261023/verify-path.txt`.
+
+Fresh C++ file probes expose the persisted-name boundary: raw table, column, schema
+and enum-type names can be written/checkpointed/reopened by C++, while Rust rejects
+all four with `Serialization Error: Failed to deserialize: string is not valid UTF-8`.
+The corresponding valid-UTF-8 name controls pass on both engines, and every read-only
+file hash stays unchanged. Fixtures/report: `shell-input-bytes-20261023/raw-name-files/`
+under the external artifact root. The binary deserializer already has raw string-byte
+access; typed name storage and its UTF-8 adapter need the remaining port. These
+fixtures must be handled through actual byte-owning identifiers, without encoded
+placeholder names or globally rejecting invalid SQL.
 
 ## How to work
 
