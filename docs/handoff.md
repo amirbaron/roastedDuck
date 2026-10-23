@@ -295,6 +295,18 @@ pre-v0.10 and fallback paths remain open under work-queue 16. The cache policy i
 uncommitted and unaccepted because its memory/performance gates remain unresolved.
 Details: `.context/index-reload-progress.md`.
 
+The raw-byte shell work remains open. Its first shared boundary is implemented:
+`Value::try_varchar(&[u8])` validates bytes with DuckDB's value-construction error
+classification; the C API constructor and appender's fallback use it. Unchecked string
+storage and the appender's direct paths retain their existing validation timing. All
+102 type/vector unit tests and workspace/all-targets Clippy pass. Fresh signed public
+binaries agree with C++ on 65,823 byte sequences (18,445 accepted, 47,378 rejected),
+including exact accepted-byte round trips and embedded NULs; all 30 C API files and
+392 shell tests/three shared skips pass. This behavior-preserving constructor relocation
+does not close the raw input, parser, identifier or error-byte gaps. Artifacts and
+manifests: `.context/artifacts/shell-bytes-20261023/`; source/probe notes:
+`.context/shell-bytes-investigation.md`. No job is active after these checks.
+
 ## How to work
 
 - Build and sign: `cargo build --release -p slt -j 1 && scripts/sign.sh target/release/slt`.
