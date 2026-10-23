@@ -44,7 +44,7 @@ The checkout has an **uncommitted native-identifier migration and does not build
 complete workspace yet**. The planner library now compiles after native renderer and
 SHOW literal integration. The built-in function library also compiles after native
 STRUCT/UNION/ENUM and result-name integration. The latest workspace/all-targets check
-now passes execution, CSV and autocomplete compilation; the latest workspace check stops at **53 Parquet diagnostics**. Runtime and client/result
+now passes execution, CSV, autocomplete, Parquet and ICU compilation; the latest workspace check stops at **13 TPC-H diagnostics**. Runtime and client/result
 consumers remain unchecked by a successful complete build.
 The corpus, shell and performance results below describe previously accepted binaries;
 they are not validation of this incomplete source. No final public binary or full
@@ -310,6 +310,38 @@ autocomplete-stage-workspace-final.jsonl and their hashed logs/source snapshot o
 external SSD. Final SQL/shell/corpus/C API/storage/WAL, raw parser/filesystem and old
 fallible-rendering boundaries, Python and every selected client, and documented final
 speed-memory acceptance remain open. The uncached memory baseline is unchanged.
+
+The Parquet continuation now compiles all targets and passes scoped Parquet/function/
+execution all-target Clippy with warnings denied and codegen --check. **31 release tests
+pass**; two pre-existing Snappy comparison/benchmark tools remain ignored. Schema/path
+Thrift strings, reader/writer/COPY/scan identities, FIELD_IDS/shredding keys, VARIANT
+dictionaries/objects, enum labels and written-statistics names preserve bytes. Actual
+VARCHAR and GeoParquet JSON boundaries retain C++ validation behavior; plan KV metadata
+uses STRING bytes rather than lossy UTF-8 conversion.
+
+**6,988 new C++ comparisons pass**: 5,241 exact Thrift schema/path/encryption-path wire
+round trips and 1,747 actual GeoParquet JSON/error outcomes, including 140 expected invalid-
+UTF8 serialization errors. Geo JSON comparisons are semantic values, not object-key text
+ordering. Sixty golden records and a separate all-256-byte VARIANT key test pass. Geo JSON
+keys use the C++ c_str NUL view; primary_column retains its explicit length.
+
+Two real C++ files (raw caf-E9 and UTF-8 café top-level/nested names) load through the
+signed Rust Parquet SDK with exact names and values. Rust rewrites copies and reopens
+them; C++ sees identical original/rewrite outcomes and the original hashes are unchanged.
+Both files count two rows. UTF-8 scalar/nested data match exactly. Raw scalar/full nested
+materialization throws the same invalid-Unicode value error on both original and Rust-
+written files; this is preserved as expected C++ behavior, not counted as successful raw
+public SQL materialization. Final Rust public SQL/shell parity at this boundary remains
+open. Exact journey evidence: parquet-file-roundtrip-path.txt and its verification-final.json.
+
+COPY RETURN_STATS retains native column identities until checked VARCHAR key construction.
+ICU static output labels and a genuine-text mutable reborrow now compile; no new ICU
+runtime acceptance is claimed. The fresh workspace check passes these packages and stops
+at **13 TPC-H diagnostics**. Evidence: parquet-native-checkpoint.json and
+parquet-stage-workspace-check-4.jsonl on the SSD. No final full-engine/corpus/shell/C API/
+storage/WAL, selected-language-client or performance acceptance is established by these
+component tests. Remaining raw parser/filesystem/fallible-rendering and broader Parquet
+features stay open; the uncached memory baseline remains unchanged.
 
 Detailed stage logs, exact limitations, source hashes and resume pointers live in
 `.context/identifier-bytes-progress.md` and the external artifact folder
