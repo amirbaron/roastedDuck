@@ -41,7 +41,7 @@ Complete Python bindings first and all primary clients plus C#/.NET, Swift and J
 ## Current source integration (2026-10-23)
 
 The checkout has an **uncommitted native-identifier migration and does not build as a
-complete workspace yet**. The latest all-target check reports 190 planner diagnostics.
+complete workspace yet**. The latest all-target check reports 124 planner diagnostics.
 The corpus, shell and performance results below describe previously accepted binaries;
 they are not validation of this incomplete source. No final public binary or full
 corpus/file/WAL run has been made for the migration.
@@ -77,6 +77,20 @@ from cast binding/execution escape unchanged; only recorded conversion failures 
 "Failed to cast value". Scoped common/types/function/AST/parser Clippy with warnings
 denied and codegen --check pass. Final workspace compilation and runtime gates remain
 open. Exact logs and hashes: `table-name-checkpoint.json` in the external artifact folder.
+
+The statement-name stage now carries INSERT target qualifiers/columns, UPDATE SET
+columns, MERGE action/source names, JOIN USING names and COPY column metadata as bytes.
+It passes all 86 affected function/AST/parser release tests (one pre-existing exhaustive
+cast-grid test remains ignored), 5,241 new C++ comparisons and the prior parser oracle.
+The new cases comprise 1,747 INSERT SQL renderings, 1,747 JOIN USING wire/restored-SQL
+cases and 1,747 COPY ParseInfo wire/name cases. COPY cases do not verify COPY SQL text or
+file execution. Scoped Clippy with warnings denied and codegen --check pass.
+
+The workspace still does not build. Remaining statement and table-name errors reach
+real catalog/search-path APIs and filesystem boundaries that must accept native bytes;
+do not decode names to text merely to make compilation succeed. No full engine or
+client/runtime acceptance is established by these focused tests. Evidence and source
+hashes are in `statement-name-checkpoint.json` under the external artifact folder.
 
 Detailed stage logs, exact limitations, source hashes and resume pointers live in
 `.context/identifier-bytes-progress.md` and the external artifact folder
