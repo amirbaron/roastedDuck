@@ -68,6 +68,10 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      carriers and remaining legacy text wrappers are still open. Public/full artifacts:
      `.context/artifacts/shell-bytes-20261023/` (`raw-errors-path.txt` and
      `raw-errors-full-path.txt`); `remaining-error-carriers.txt` records the next paths.
+     Next, compare table, aggregate (including deferred/empty-input), COPY, replacement
+     scan and cast callback errors against C++ before porting their remaining String
+     carriers. CAST must retain source-column context; TRY_CAST must retain first-error
+     behavior and NULL results through the shared cast/JSON transform state.
    - Object ids: the oid of a database (`PRAGMA database_list`'s `seq`) counts the
      catalog entries created before it, more in DuckDB.
    - A `memory_limit` far below an aggregate's state (`SELECT list(i) FROM range(1e7)`
