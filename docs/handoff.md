@@ -42,9 +42,10 @@ Complete Python bindings first and all primary clients plus C#/.NET, Swift and J
 
 The checkout has an **uncommitted native-identifier migration and does not build as a
 complete workspace yet**. The planner library now compiles after native renderer and
-SHOW literal integration. The latest workspace/all-targets check stops at **67 built-in
-function diagnostics** in STRUCT/MAP, logging and table-function result names. Execution
-and client/result consumers remain unchecked by a successful complete build.
+SHOW literal integration. The built-in function library also compiles after native
+STRUCT/UNION/ENUM and result-name integration. The latest workspace/all-targets check
+stops at **25 optimizer diagnostics**; execution and client/result consumers remain
+unchecked by a successful complete build.
 The corpus, shell and performance results below describe previously accepted binaries;
 they are not validation of this incomplete source. No final public binary or full
 corpus/file/WAL run has been made for the migration.
@@ -150,10 +151,35 @@ A read-only C++ journey confirms raw-schema SELECT succeeds while SHOW TABLES FR
 that same schema fails with invalid unicode in value construction; the UTF-8 control
 succeeds. SHOW now validates its generated VARCHAR filter literal at that actual value
 boundary, while catalog/search-path identities retain bytes. Rust public SQL/shell
-rechecks remain pending the full build. Latest check: renderer-workspace-check.jsonl
-(67 built-in-function diagnostics); evidence: renderer-checkpoint.json under the same
-external artifact folder. All language clients and final performance acceptance remain
+rechecks remain pending the full build. Renderer evidence: renderer-checkpoint.json under the same external artifact folder;
+the following function stage advances the build further. All language clients and final performance acceptance remain
 open; keep the uncached lower-memory controls unchanged.
+
+The built-in-function/ENUM continuation passes **197 affected release tests**, with the
+same one pre-existing exhaustive cast grid ignored. Types/function/built-ins and
+storage/catalog/planner all-target Clippy pass with warnings denied; codegen checks pass.
+ENUM dictionaries and codecs now retain bytes through casts, UNION tags and native SQL
+rendering. **8,735 C++ ENUM comparisons** match exact wire data, rendered bytes or errors,
+including 560 expected exception outcomes. The 50-case golden subset is checked in.
+
+Two new C++ databases (raw ENUM label and UTF-8 control) load through the signed Rust
+catalog/storage SDK. Rust appends the second ENUM code on copies, checkpoints them,
+and both Rust and C++ reopen with the expected two rows and unchanged label bytes.
+Original hashes stay unchanged; the eight older raw-name fixtures also pass read-only
+checks. This verifies checkpoint interoperability, not Rust shell or WAL recovery.
+Report pointer: enum-file-roundtrip-path.txt in the external artifact folder.
+
+STRUCT/UNION lookups use native ASCII folding; regex group/result names, VARIANT keys,
+summary/repeat names and log messages retain bytes. Scalar bind-expression callbacks
+can propagate native errors: typeof constructs its VARCHAR while binding; alias keeps
+its argument name as bytes and constructs VARCHAR at execution. C++ direct/pruned
+journeys confirm that distinction; the new Rust component tests cover the callbacks
+and kernel, while full Rust SQL pruning journeys remain pending.
+
+Latest check: functions-native-workspace-check-3.jsonl (25 optimizer diagnostics).
+Evidence/hashes: functions-enum-checkpoint.json. Remaining native expression/value,
+optimizer/execution/result/logger/parser work, public shell/corpus/file/WAL gates,
+selected language clients and final lower-memory performance acceptance remain open.
 
 Detailed stage logs, exact limitations, source hashes and resume pointers live in
 `.context/identifier-bytes-progress.md` and the external artifact folder
