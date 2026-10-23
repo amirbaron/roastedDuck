@@ -40,7 +40,7 @@ gates remain in place.
   C++ is 4795 pass, 1 fail, 74 skip. All remaining Rust failures are the 15 accepted
   divergences in `conformance/divergences.md` (11 C++ extension binaries, 4 expected
   memory errors Rust avoids). No unexplained regressions, crashes or timeouts.
-  - The fresh sweep on `506354f` plus the uncommitted cache flag uses normal thread
+  - The fresh type-catalog sweep plus the uncommitted cache flag uses normal thread
     defaults and passes the 4855-file ratchet without rechecks, shrink or verdict changes.
     Every skip reason matches the prior baseline; the 15 failure messages match too,
     apart from a process ID in a temporary filename. `target/slt/rust.jsonl` is refreshed
@@ -71,7 +71,7 @@ gates remain in place.
   and ten C++ controls pass. The explicit-transaction lock sequence matches C++.
 - **CLI shell (the owner's top priority; engine gaps remain):** `crates/shell` (`rustdb`) is DuckDB's
   shell one to one, linenoise included: all 392 `tools/shell/tests` that pass on the C++
-  CLI pass (`scripts/shell-tests.sh --binary rust|cpp`), and 722 of 727 cases of
+  CLI pass (`scripts/shell-tests.sh --binary rust|cpp`), and 758 of 763 cases of
   `scripts/shell-diff.py` (modes, types, dot commands, options, errors, pty sessions)
   match byte for byte; the five others are known engine differences (work-queue item 3).
   Both suites were reverified after the ICU merge with one worker. Upstream shell tests
@@ -260,12 +260,35 @@ before testing, so the manifest retains initial and final signed-file hashes. Th
 hash remains the hash used for the full sweep. Both verification drivers are terminal;
 no build or test workload remains active at this checkpoint.
 
-The next shell gap is reproduced in
-`.context/artifacts/shell-type-catalog-20261023/`: type-name suggestions depend on
-lazy builtin catalog entries and their original spelling. A fresh C++ `INTEGR` error
-suggests `JSON`; after using `INTEGER`, it suggests `main.INTEGER`. Rust omits both.
-Lowercase typos already match. Port the catalog behavior rather than hard-coding hints;
-`.context/shell-type-catalog-investigation.md` records source findings and probes.
+The lazy type-catalog gap is now ported and verified. Builtin entries are real internal,
+temporary, committed catalog objects: first lookup preserves spelling, scans create
+the remaining lowercase defaults, and failed binds/rollbacks retain the same state as
+C++. Suggestions compare the catalog map's original keys, including invisible versions.
+Type binding follows C++'s fallback and qualification rules, keeps builtin modifiers,
+and distinguishes type scopes from view scopes by default-schema precedence. This
+fixes builtin shadowing and the cross-catalog ALTER enum fallback without weakening
+the test. `duckdb_types()` reads actual entries and uses logical type IDs for internals.
+
+Validation: six catalog unit tests, workspace/all-targets Clippy with warnings denied,
+36 new unmarked byte-for-byte shell cases, the full 763-case shell comparison (zero
+unexpected differences, five existing known gaps), and 882 affected SQL files (875
+passes/seven shared skips, zero regressions). Two enum/schema/index files created by
+opposite engines pass mutation/checkpoint/read-only reopen in both directions, with
+unchanged hashes for read-only checks. The fresh full sweep has 4781 passes, 15 accepted
+failures and 74 shared skips: every status, skip reason and normalized failure message
+matches the baseline; the 4855-file ratchet is unchanged and passes.
+
+Fresh public binaries pass all 30 C API files and 392 shell tests/three shared skips.
+An 18-query, three-connection C API sequence matches C++ exactly, including enum vector
+retrieval, connection-local defaults, rollback, shared types and schema precedence.
+The comparison helper initially dereferenced a null legacy enum fetch; it now uses the
+chunk/vector API on both engines. That helper fault did not require engine changes.
+Artifacts: `.context/artifacts/shell-type-catalog-20261023/` (the final full,
+verification and public directories have pointer files and manifests). The canonical
+results are refreshed with a preserved prior copy; all drivers are terminal and no
+build/test workload remains active. Remaining shell gaps and the cache performance
+experiment stay open. `.context/shell-type-catalog-investigation.md` has the detailed
+source findings and verification history.
 
 Native disk restore covers plain and stored constraint indexes so far; expression/WAL,
 pre-v0.10 and fallback paths remain open under work-queue 16. The cache policy is still
@@ -291,9 +314,9 @@ Details: `.context/index-reload-progress.md`.
 
 ## Next steps, in order
 
-1. Continue the shell engine differences, the owner's top priority (work-queue 3),
-   starting with the reproduced lazy type catalog/suggestion gap. The full corpus and
-   fresh public-surface checks on `506354f` are complete. Finish the other native
+1. Continue the remaining shell engine differences, the owner's top priority
+   (work-queue 3). Lazy type catalog/suggestion parity, its full corpus and fresh public
+   checks are complete. Finish the other native
    persisted-index paths (16); the profiling and concurrency regressions are fixed.
    Resolve or reject/rework caching's memory
    outliers and continue the performance work; the policy is not accepted yet. Work
