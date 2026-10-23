@@ -225,6 +225,14 @@ impl Value {
         Self::bytes(LogicalType::VARCHAR, value.as_ref().as_bytes())
     }
 
+    /// Constructs a VARCHAR from bytes (`Value(string)`), validating only at this
+    /// value-construction boundary. Raw vector/string storage uses [`Value::bytes`].
+    pub fn try_varchar(value: &[u8]) -> Result<Self> {
+        std::str::from_utf8(value)
+            .map_err(|_| rustdb_common::utf8::invalid_unicode_error(value, "value construction"))?;
+        Ok(Self::bytes(LogicalType::VARCHAR, value))
+    }
+
     pub fn blob(value: &[u8]) -> Self {
         Self::bytes(LogicalType::BLOB, value)
     }
@@ -784,6 +792,33 @@ impl Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn byte_varchar_construction_validates_without_changing_storage_bytes() {
+        for bytes in [b"".as_slice(), b"ascii", b"a\0b", "café🦆".as_bytes()] {
+            let value = Value::try_varchar(bytes).unwrap();
+            assert_eq!(value.logical_type(), &LogicalType::VARCHAR);
+            assert_eq!(value.as_bytes(), Some(bytes));
+        }
+        for (bytes, reason) in [
+            (b"caf\xe9".as_slice(), "Invalid unicode (byte sequence mismatch)"),
+            (b"\x80".as_slice(), "Invalid unicode (byte sequence mismatch)"),
+            (b"\xe2\x82".as_slice(), "Invalid unicode (byte sequence mismatch)"),
+            (b"\xc0\xaf".as_slice(), "Invalid unicode"),
+            (b"\xed\xa0\x80".as_slice(), "Invalid unicode"),
+            (b"\xf4\x90\x80\x80".as_slice(), "Invalid unicode"),
+        ] {
+            let error = Value::try_varchar(bytes).unwrap_err();
+            assert_eq!(error.kind(), rustdb_common::ErrorKind::InvalidInput);
+            assert_eq!(
+                error.raw_message(),
+                format!("{reason} detected in value construction")
+            );
+            // Vector and appender fast paths deliberately retain raw bytes until
+            // their own validation boundary, as in C++.
+            assert_eq!(Value::bytes(LogicalType::VARCHAR, bytes).as_bytes(), Some(bytes));
+        }
+    }
 
     #[test]
     fn strings_round_trip_through_vectors() {

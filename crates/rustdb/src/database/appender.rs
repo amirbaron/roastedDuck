@@ -14,7 +14,6 @@ use rustdb_ast::{
     SqlStatementKind, TableRefKind,
 };
 use rustdb_catalog::{CatalogType, EntryKind};
-use rustdb_common::utf8::invalid_unicode_error;
 use rustdb_common::{Error, Result};
 use rustdb_function::cast::ValueCast;
 use rustdb_parser::build;
@@ -318,9 +317,7 @@ impl Appender {
         };
         let input = Value::bytes(LogicalType::VARCHAR, bytes);
         let Some(value) = cast::cast_operation(&input, ty)? else {
-            let text =
-                std::str::from_utf8(bytes).map_err(|_| invalid_unicode_error(bytes, "value construction"))?;
-            return self.append_value(&Value::varchar(text));
+            return self.append_value(&Value::try_varchar(bytes)?);
         };
         let row = self.chunk.len();
         self.chunk.column_mut(self.column).set_value(row, &value)?;

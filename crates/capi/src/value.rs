@@ -92,7 +92,7 @@ pub unsafe extern "C" fn duckdb_destroy_value(value: *mut DuckdbValue) {
 pub unsafe extern "C" fn duckdb_create_varchar_length(text: *const c_char, length: Idx) -> DuckdbValue {
     // SAFETY: `text` points to `length` bytes per the API contract.
     let text = unsafe { bytes(text.cast(), length) };
-    std::str::from_utf8(text).map_or(std::ptr::null_mut(), |text| wrap_value(Value::varchar(text)))
+    Value::try_varchar(text).map_or(std::ptr::null_mut(), wrap_value)
 }
 
 /// `duckdb_value duckdb_create_varchar(const char *text)` (capi/duckdb_value-c.cpp)
