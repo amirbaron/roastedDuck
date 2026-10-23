@@ -61,11 +61,11 @@ mod lists;
 mod transformer;
 
 pub use transformer::build;
-pub use transformer::helpers::{get_value_f64, get_value_i64};
 pub use transformer::expression::{negate_comparison, operator_to_expression_type};
 pub use transformer::function::{
     is_excludable_window_function, is_orderable_window_function, window_to_expression_type,
 };
+pub use transformer::helpers::{get_value_f64, get_value_i64};
 pub use transformer::star::{QualifiedColumnMap, serialized_exclude_list};
 
 /// `ParsedExpression::IsScalar`, `HasSubquery` and child enumeration, for the PEG
@@ -126,7 +126,8 @@ pub fn parse_with_options(query: &str, options: &ParserOptions) -> Result<Vec<Sq
     let pg_options = rustdb_pg_parser::ParserOptions {
         preserve_identifier_case: options.preserve_identifier_case,
     };
-    let raw = rustdb_pg_parser::parse_with_options(query, &pg_options).map_err(|error| syntax_error(&error))?;
+    let raw =
+        rustdb_pg_parser::parse_with_options(query, &pg_options).map_err(|error| syntax_error(&error))?;
     if raw.is_empty() {
         return Ok(Vec::new());
     }
@@ -194,7 +195,7 @@ fn set_create_sql(info: &mut CreateInfo, sql: &str) {
 /// are tagged as syntax errors (the subtype set before the position).
 fn syntax_error(error: &Error) -> Error {
     let position = error.position();
-    Error::new(error.kind(), error.raw_message().to_owned())
+    Error::new_bytes(error.kind(), error.raw_message_bytes().to_vec())
         .with_subtype(SYNTAX_ERROR)
         .with_position(position)
 }

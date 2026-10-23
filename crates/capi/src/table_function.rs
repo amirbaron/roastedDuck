@@ -220,7 +220,7 @@ pub(crate) fn c_table_bind(
         parameters,
         named_parameters,
         return_types,
-        names: names.iter().map(|name| to_cstring(name)).collect(),
+        names: names.iter().map(to_cstring).collect(),
         bind_data: UserData::none(),
         cardinality: None,
         extra_info: callbacks.extra_info,

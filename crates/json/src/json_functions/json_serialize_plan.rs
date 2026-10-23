@@ -147,7 +147,7 @@ fn serialize_plan_document(sql: &str, data: &SerializePlanBindData) -> String {
                 ),
                 (
                     "error_message".to_owned(),
-                    JsonValue::Str(error.raw_message().to_owned()),
+                    JsonValue::Str(error.raw_message().into_owned()),
                 ),
             ];
             entries.extend(

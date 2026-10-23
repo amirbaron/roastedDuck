@@ -35,7 +35,7 @@ fn first_target(sql: &str) -> Node {
 fn error(sql: &str) -> (String, Option<usize>) {
     let err = parse(sql).expect_err(sql);
     assert_eq!(err.kind(), rustdb_common::ErrorKind::Parser, "{err}");
-    (err.raw_message().to_owned(), err.query_location())
+    (err.raw_message().into_owned(), err.query_location())
 }
 
 fn name(node: &Node) -> &str {

@@ -186,8 +186,9 @@ pub fn error_functions() -> ScalarFunctionSet {
             let strings = input.unified::<StringT>();
             for row in 0..args.len() {
                 if let Some(message) = strings.get(row) {
-                    return Err(Error::invalid_input(
-                        String::from_utf8_lossy(input.string_value(&message)).into_owned(),
+                    return Err(Error::new_bytes(
+                        rustdb_common::ErrorKind::InvalidInput,
+                        input.string_value(&message).to_vec(),
                     ));
                 }
             }

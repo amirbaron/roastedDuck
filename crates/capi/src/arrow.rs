@@ -84,7 +84,11 @@ fn invalid_input(message: &str) -> DuckdbErrorData {
 /// The error object of a failed conversion: the error as `std::exception::what()` gives
 /// it, a JSON object, reported as `INVALID_INPUT`.
 fn conversion_error(error: Error) -> DuckdbErrorData {
-    invalid_input(error.into_json().raw_message())
+    ErrorDataWrapper::new(Some(Error::new_bytes(
+        rustdb_common::ErrorKind::InvalidInput,
+        error.into_json().raw_message_bytes().to_vec(),
+    )))
+    .into_handle()
 }
 
 /// `duckdb_error_data duckdb_to_arrow_schema(duckdb_arrow_options arrow_options,

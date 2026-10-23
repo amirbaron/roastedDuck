@@ -84,8 +84,12 @@ pub unsafe extern "C" fn duckdb_expression_fold(
             std::ptr::null_mut()
         }
         Err(error) => {
-            let what = error.into_json().raw_message().to_owned();
-            ErrorDataWrapper::new(Some(rustdb_common::Error::invalid_input(what))).into_handle()
+            let what = error.into_json().raw_message_bytes().to_vec();
+            ErrorDataWrapper::new(Some(rustdb_common::Error::new_bytes(
+                rustdb_common::ErrorKind::InvalidInput,
+                what,
+            )))
+            .into_handle()
         }
     }
 }

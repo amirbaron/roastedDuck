@@ -86,3 +86,12 @@ pub(crate) unsafe fn error_text(error: *const c_char) -> String {
     // SAFETY: guaranteed by the caller.
     unsafe { CStr::from_ptr(error) }.to_string_lossy().into_owned()
 }
+
+/// Copies the byte string supplied by a C callback without UTF-8 conversion.
+///
+/// # Safety
+/// `error` must point to a NUL-terminated string.
+pub(crate) unsafe fn error_bytes(error: *const c_char) -> Vec<u8> {
+    // SAFETY: guaranteed by the caller.
+    unsafe { CStr::from_ptr(error) }.to_bytes().to_vec()
+}

@@ -247,7 +247,7 @@ unsafe fn open_internal(
         Err(error) => {
             if !out_error.is_null() {
                 // SAFETY: `out_error` is writable per the API contract.
-                unsafe { *out_error = c_string(&error.to_string()) };
+                unsafe { *out_error = c_string(error.to_bytes()) };
             }
             DuckdbState::DuckDBError
         }

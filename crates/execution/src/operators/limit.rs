@@ -38,7 +38,10 @@ fn get_value_as(value: &Value, target: &LogicalType) -> Result<Value> {
     };
     value.try_cast(target).map_err(|error| {
         if error.kind() == rustdb_common::ErrorKind::Conversion {
-            Error::invalid_input(error.raw_message().to_owned())
+            Error::new_bytes(
+                rustdb_common::ErrorKind::InvalidInput,
+                error.raw_message_bytes().to_vec(),
+            )
         } else {
             error
         }

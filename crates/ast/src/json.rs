@@ -50,7 +50,7 @@ pub fn serialize_error(error: &Error, extra_info: &[(&str, &str)], format: bool)
         ),
         (
             "error_message".to_owned(),
-            JsonValue::Str(error.raw_message().to_owned()),
+            JsonValue::Str(error.raw_message().into_owned()),
         ),
     ];
     entries.extend(

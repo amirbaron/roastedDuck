@@ -325,7 +325,10 @@ impl UndoBuffer {
                 table
                     .remove_from_indexes(&record.row_ids(), removal)
                     .map_err(|e| {
-                        rustdb_common::Error::new(rustdb_common::ErrorKind::Fatal, e.raw_message().to_owned())
+                        rustdb_common::Error::new_bytes(
+                            rustdb_common::ErrorKind::Fatal,
+                            e.raw_message_bytes().to_vec(),
+                        )
                     })?;
             }
             UndoEntry::Update {

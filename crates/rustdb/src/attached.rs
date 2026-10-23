@@ -93,8 +93,12 @@ impl DatabaseStorage {
         vacuum_lock: &Arc<rustdb_storage::checkpoint_lock::CheckpointLock>,
     ) {
         match self {
-            Self::File(storage) => storage.io().set_vacuum_rebuild_index_threshold(threshold, vacuum_lock),
-            Self::InMemory(storage) => storage.io().set_vacuum_rebuild_index_threshold(threshold, vacuum_lock),
+            Self::File(storage) => storage
+                .io()
+                .set_vacuum_rebuild_index_threshold(threshold, vacuum_lock),
+            Self::InMemory(storage) => storage
+                .io()
+                .set_vacuum_rebuild_index_threshold(threshold, vacuum_lock),
         }
     }
 
@@ -183,13 +187,13 @@ impl AttachedDatabase {
     pub fn checkpoint_failed(&self, error: &Error) -> Error {
         let reason = error.raw_message();
         if self.is_initial() {
-            self.instance_validity.invalidate(reason.to_owned());
+            self.instance_validity.invalidate(reason.clone().into_owned());
             return Error::new(
                 ErrorKind::Fatal,
                 format!("Failed to create checkpoint because of error: {reason}"),
             );
         }
-        self.invalidate(reason);
+        self.invalidate(&reason);
         Error::new(
             ErrorKind::Io,
             format!(
@@ -208,7 +212,7 @@ impl AttachedDatabase {
                 &self.instance_validity.invalidated().unwrap_or_default(),
             )
             .raw_message()
-            .to_owned(),
+            .into_owned(),
         }
     }
 

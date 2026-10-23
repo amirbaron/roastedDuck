@@ -20,7 +20,7 @@ impl ErrorDataWrapper {
     pub(crate) fn new(error: Option<Error>) -> Self {
         let message = error
             .as_ref()
-            .map(|error| crate::helper::to_cstring(error.raw_message()))
+            .map(|error| crate::helper::to_cstring(error.raw_message_bytes()))
             .unwrap_or_default();
         Self { error, message }
     }

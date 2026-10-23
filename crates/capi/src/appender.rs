@@ -47,7 +47,7 @@ impl AppenderWrapper {
     }
 
     fn set_error(&mut self, error: Error) {
-        self.message = to_cstring(error.raw_message());
+        self.message = to_cstring(error.raw_message_bytes());
         self.error = Some(error);
     }
 

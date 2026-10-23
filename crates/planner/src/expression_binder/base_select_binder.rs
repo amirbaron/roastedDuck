@@ -523,7 +523,8 @@ impl<'a> SelectBinder<'a> {
         } else {
             AggregateType::NonDistinct
         };
-        let mut aggregate = binder.bind_aggregate_function(overload, children, filter, aggr_type, order_bys)?;
+        let mut aggregate =
+            binder.bind_aggregate_function(overload, children, filter, aggr_type, order_bys)?;
         if function.export_state
             && let ExpressionKind::Aggregate(bound) = &mut aggregate.kind
         {
@@ -1546,7 +1547,10 @@ fn value_get_bool(value: &Value) -> Result<bool> {
     }
     let number = value.try_cast(&LogicalType::TINYINT).map_err(|error| {
         if error.kind() == rustdb_common::ErrorKind::Conversion {
-            Error::invalid_input(error.raw_message().to_owned())
+            Error::new_bytes(
+                rustdb_common::ErrorKind::InvalidInput,
+                error.raw_message_bytes().to_vec(),
+            )
         } else {
             error
         }

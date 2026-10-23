@@ -281,15 +281,16 @@ pub(crate) fn malloc_bytes(bytes: &[u8], nul_terminated: bool) -> *mut u8 {
 
 /// `text` as a C string kept by this library; like `std::string::c_str()`, C readers see
 /// it up to an interior NUL byte.
-pub(crate) fn to_cstring(text: &str) -> CString {
-    let end = text.find('\0').unwrap_or(text.len());
+pub(crate) fn to_cstring(text: impl AsRef<[u8]>) -> CString {
+    let text = text.as_ref();
+    let end = text.iter().position(|&byte| byte == 0).unwrap_or(text.len());
     CString::new(&text[..end]).unwrap_or_default()
 }
 
 /// Copies `text` into a NUL-terminated buffer the caller frees with `duckdb_free` (the
 /// `strdup` of DuckDB's C API). Interior NUL bytes are kept; C readers stop at the first.
-pub(crate) fn c_string(text: &str) -> *mut c_char {
-    malloc_bytes(text.as_bytes(), true).cast()
+pub(crate) fn c_string(text: impl AsRef<[u8]>) -> *mut c_char {
+    malloc_bytes(text.as_ref(), true).cast()
 }
 
 /// Runs an engine call that may panic, turning a panic into an internal error like the

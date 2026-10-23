@@ -155,7 +155,7 @@ impl CAggregateOps {
             self.deferred_error
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .get_or_insert_with(|| error.raw_message().to_owned());
+                .get_or_insert_with(|| error.raw_message().into_owned());
         }
     }
 

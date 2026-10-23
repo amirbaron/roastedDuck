@@ -215,6 +215,33 @@ pub fn json_quote(value: &str) -> String {
     result
 }
 
+/// yyjson escapes syntax/control bytes and preserves all other bytes, even when an
+/// exception message is not UTF-8. The resulting wire JSON can therefore be non-UTF-8.
+pub fn json_quote_bytes(value: &[u8]) -> Vec<u8> {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut result = Vec::with_capacity(value.len() + 2);
+    result.push(b'"');
+    for &byte in value {
+        match byte {
+            b'"' => result.extend_from_slice(b"\\\""),
+            b'\\' => result.extend_from_slice(b"\\\\"),
+            b'\n' => result.extend_from_slice(b"\\n"),
+            b'\r' => result.extend_from_slice(b"\\r"),
+            b'\t' => result.extend_from_slice(b"\\t"),
+            8 => result.extend_from_slice(b"\\b"),
+            12 => result.extend_from_slice(b"\\f"),
+            byte if byte < 0x20 => {
+                result.extend_from_slice(b"\\u00");
+                result.push(HEX[(byte >> 4) as usize]);
+                result.push(HEX[(byte & 15) as usize]);
+            }
+            byte => result.push(byte),
+        }
+    }
+    result.push(b'"');
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -43,7 +43,7 @@ mod tests {
              See also https://duckdb.org/docs/stable/guides/performance/how_to_tune_workloads"
         );
         // Extending twice is a no-op.
-        let again = out_of_memory(error.raw_message().to_owned());
+        let again = out_of_memory(error.raw_message().into_owned());
         assert_eq!(again, error);
     }
 }

@@ -80,7 +80,7 @@ pub fn cast_rows<O: NativeType>(
                     if !params.is_try_cast() {
                         return Err(error);
                     }
-                    params.assign_error(error.raw_message().to_owned())?;
+                    params.assign_error(error.raw_message().into_owned())?;
                     all_converted = false;
                     null_rows.push(row);
                     Ok(())

@@ -270,7 +270,7 @@ impl Interval {
     /// suppress the error.
     pub fn parse(input: &[u8], strict: bool) -> Result<Self, String> {
         let _ = strict;
-        Self::parse_detailed(input).map_err(|error| error.into_error().raw_message().to_owned())
+        Self::parse_detailed(input).map_err(|error| error.into_error().raw_message().into_owned())
     }
 
     /// Parses an INTERVAL the way `CAST(varchar AS INTERVAL)` does, with DuckDB's error kinds.
@@ -862,7 +862,11 @@ mod tests {
         for (input, kind, message) in other {
             match Interval::parse_detailed(input.as_bytes()) {
                 Err(IntervalParseError::Cast(error)) => {
-                    assert_eq!((error.kind(), error.raw_message()), (kind, message), "{input:?}");
+                    assert_eq!(
+                        (error.kind(), error.raw_message().as_ref()),
+                        (kind, message),
+                        "{input:?}"
+                    );
                 }
                 other => panic!("{input:?}: {other:?}"),
             }

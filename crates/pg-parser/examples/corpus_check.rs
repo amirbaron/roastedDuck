@@ -71,7 +71,7 @@ fn render(sql: &str) -> String {
         Err(err) => {
             let mut out = String::from("{\"ok\":false,\"msg\":");
             if err.kind() == ErrorKind::Parser {
-                json_string(&mut out, err.raw_message());
+                json_string(&mut out, &err.raw_message());
             } else {
                 json_string(&mut out, &err.to_string());
             }

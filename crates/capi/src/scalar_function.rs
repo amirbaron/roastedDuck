@@ -24,7 +24,7 @@ use crate::data_chunk::{DuckdbDataChunk, DuckdbVector};
 use crate::expression::{DuckdbExpression, wrap_expression};
 use crate::function::{
     DuckdbBindInfo, DuckdbCopyCallback, DuckdbDeleteCallback, DuckdbFunctionInfo, DuckdbInitInfo, UserData,
-    error_text, is_valid_parameter_type, is_valid_return_type,
+    error_bytes, is_valid_parameter_type, is_valid_return_type,
 };
 use crate::helper::{catch, opt_str};
 use crate::logical_types::{DuckdbLogicalType, type_ref};
@@ -182,7 +182,7 @@ struct CScalarFunctionInternalBindInfo<'a> {
     arguments: &'a [Expression],
     binder: Option<&'a BinderContext>,
     bind_data: &'a mut CScalarFunctionBindData,
-    error: Option<String>,
+    error: Option<Vec<u8>>,
 }
 
 /// The local state of one execution (DuckDB's `CScalarFunctionLocalState`).
@@ -196,7 +196,7 @@ struct CScalarFunctionLocalState {
 struct CScalarFunctionInternalInitInfo<'a> {
     bind_data: &'a CScalarFunctionBindData,
     local_state: &'a mut CScalarFunctionLocalState,
-    error: Option<String>,
+    error: Option<Vec<u8>>,
 }
 
 /// What a `duckdb_function_info` of a scalar function points to (DuckDB's
@@ -205,7 +205,7 @@ struct CScalarFunctionInternalFunctionInfo<'a> {
     bind_data: &'a CScalarFunctionBindData,
     local_state: &'a CScalarFunctionLocalState,
     extra_info: *mut c_void,
-    error: Option<String>,
+    error: Option<Vec<u8>>,
 }
 
 /// The bind info behind a handle.
@@ -268,7 +268,7 @@ fn c_scalar_function_bind(
         // SAFETY: the client's callback receives the bind info, valid for the call.
         unsafe { bind(std::ptr::from_mut(&mut bind_info).cast()) };
         if let Some(error) = bind_info.error {
-            return Err(Error::binder(error));
+            return Err(Error::new_bytes(rustdb_common::ErrorKind::Binder, error));
         }
     }
     Ok(Some(Arc::new(bind_data)))
@@ -290,7 +290,7 @@ fn c_scalar_function_init(bind_data: &CScalarFunctionBindData) -> Result<CScalar
         // SAFETY: the client's callback receives the init info, valid for the call.
         unsafe { init(std::ptr::from_mut(&mut init_info).cast()) };
         if let Some(error) = init_info.error {
-            return Err(Error::invalid_input(error));
+            return Err(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, error));
         }
     }
     Ok(local_state)
@@ -348,7 +348,7 @@ fn capi_scalar_function(
         );
     }
     if let Some(error) = function_info.error {
-        return Err(Error::invalid_input(error));
+        return Err(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, error));
     }
     if all_constant && (count == 1 || !volatile) {
         result.make_constant();
@@ -697,7 +697,7 @@ pub unsafe extern "C" fn duckdb_scalar_function_set_error(info: DuckdbFunctionIn
         && !error.is_null()
     {
         // SAFETY: `error` is a C string per the API contract.
-        info.error = Some(unsafe { error_text(error) });
+        info.error = Some(unsafe { error_bytes(error) });
     }
 }
 
@@ -710,7 +710,7 @@ pub unsafe extern "C" fn duckdb_scalar_function_bind_set_error(info: DuckdbBindI
         && !error.is_null()
     {
         // SAFETY: `error` is a C string per the API contract.
-        info.error = Some(unsafe { error_text(error) });
+        info.error = Some(unsafe { error_bytes(error) });
     }
 }
 
@@ -781,7 +781,7 @@ pub unsafe extern "C" fn duckdb_scalar_function_init_set_error(info: DuckdbInitI
         && !error.is_null()
     {
         // SAFETY: `error` is a C string per the API contract.
-        info.error = Some(unsafe { error_text(error) });
+        info.error = Some(unsafe { error_bytes(error) });
     }
 }
 

@@ -597,5 +597,5 @@ pub unsafe extern "C" fn duckdb_get_struct_child(value: DuckdbValue, index: Idx)
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn duckdb_value_to_string(value: DuckdbValue) -> *mut c_char {
     // SAFETY: `value` is NULL or a live handle.
-    unsafe { value_ref(value) }.map_or(std::ptr::null_mut(), |value| c_string(&value.to_sql_string()))
+    unsafe { value_ref(value) }.map_or(std::ptr::null_mut(), |value| c_string(value.to_sql_string()))
 }

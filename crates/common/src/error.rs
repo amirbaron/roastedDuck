@@ -105,12 +105,12 @@ impl ErrorKind {
 
 /// An engine error: a category plus DuckDB's raw message text.
 ///
-/// `Display` renders DuckDB's final message (`ErrorData::ConstructFinalMessage`), which is
-/// what clients and the sqllogictest corpus compare against.
+/// Native clients use `to_bytes` for DuckDB's final message
+/// (`ErrorData::ConstructFinalMessage`). `Display` is its UTF-8 presentation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Error {
     kind: ErrorKind,
-    message: Cow<'static, str>,
+    message: Cow<'static, [u8]>,
     /// DuckDB's extra info: `error_subtype`, the query `position` (rendered as `LINE n:`
     /// context once the query text is attached), the `name` and `type` of a missing
     /// entry, `candidates`, ...
@@ -254,9 +254,31 @@ https://duckdb.org/docs/stable/dev/internal_errors";
 
 impl Error {
     pub fn new(kind: ErrorKind, message: impl Into<Cow<'static, str>>) -> Self {
+        let message = match message.into() {
+            Cow::Borrowed(text) => Cow::Borrowed(text.as_bytes()),
+            Cow::Owned(text) => Cow::Owned(text.into_bytes()),
+        };
+        Self::new_bytes(kind, message)
+    }
+
+    /// An exception message is a byte string in DuckDB, including invalid UTF-8.
+    pub fn new_bytes(kind: ErrorKind, message: impl Into<Cow<'static, [u8]>>) -> Self {
+        // ErrorData::SanitizeErrorMessage runs before either native or JSON formatting.
+        let mut message = message.into();
+        if message.contains(&0) {
+            let mut sanitized = Vec::with_capacity(message.len());
+            for &byte in message.iter() {
+                if byte == 0 {
+                    sanitized.extend_from_slice(b"\\0");
+                } else {
+                    sanitized.push(byte);
+                }
+            }
+            message = sanitized.into();
+        }
         Self {
             kind,
-            message: message.into(),
+            message,
             extra_info: ExtraInfo::default(),
             json: false,
         }
@@ -354,7 +376,9 @@ impl Error {
     #[must_use]
     pub fn with_query_context(mut self, query: &str) -> Self {
         if let Some(position) = self.position() {
-            self.message = crate::query_context::format(query, &self.message, position).into();
+            let mut message = self.message.to_vec();
+            message.extend_from_slice(crate::query_context::format(query, "", position).as_bytes());
+            self.message = message.into();
             self.extra_info.set("position", None);
         }
         self
@@ -364,24 +388,24 @@ impl Error {
     /// its whole message (`ErrorData::ConvertErrorToJSON` under `errors_as_json`).
     #[must_use]
     pub fn into_json(mut self) -> Self {
-        if self.json || self.message.starts_with('{') {
+        if self.json || self.message.starts_with(b"{") {
             return self;
         }
-        let mut json = String::from("{");
-        let mut field = |key: &str, value: &str| {
+        let mut json = Vec::from(b"{".as_slice());
+        let mut field = |key: &str, value: &[u8]| {
             if json.len() > 1 {
-                json.push(',');
+                json.push(b',');
             }
-            json.push_str(&crate::string_util::json_quote(key));
-            json.push(':');
-            json.push_str(&crate::string_util::json_quote(value));
+            json.extend(crate::string_util::json_quote(key).as_bytes());
+            json.push(b':');
+            json.extend(crate::string_util::json_quote_bytes(value));
         };
-        field("exception_type", self.kind.display_name());
+        field("exception_type", self.kind.display_name().as_bytes());
         field("exception_message", &self.message);
         for (key, value) in self.extra_info.iteration_order() {
-            field(key, value);
+            field(key, value.as_bytes());
         }
-        json.push('}');
+        json.push(b'}');
         self.message = json.into();
         self.extra_info.set("position", None);
         self.json = true;
@@ -407,9 +431,40 @@ impl Error {
         self.extra_info.iteration_order()
     }
 
-    /// The message without the `"<Kind> Error: "` prefix.
-    pub fn raw_message(&self) -> &str {
+    /// The UTF-8 presentation of the message without the `"<Kind> Error: "` prefix.
+    /// Native interfaces must use `raw_message_bytes` to preserve invalid UTF-8.
+    pub fn raw_message(&self) -> Cow<'_, str> {
+        String::from_utf8_lossy(&self.message)
+    }
+
+    /// Message bytes without the exception type prefix, with NULs sanitized as in
+    /// DuckDB's `ErrorData::SanitizeErrorMessage`.
+    pub fn raw_message_bytes(&self) -> &[u8] {
         &self.message
+    }
+
+    /// Native client formatting, preserving non-UTF-8 exception bytes.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        if self.json {
+            return self.message.to_vec();
+        }
+        let mut result = Vec::new();
+        if self.kind != ErrorKind::UnknownType {
+            result.extend_from_slice(self.kind.display_name().as_bytes());
+            result.push(b' ');
+        }
+        result.extend_from_slice(b"Error: ");
+        for &byte in self.message.iter() {
+            if byte == 0 {
+                result.extend_from_slice(b"\\0");
+            } else {
+                result.push(byte);
+            }
+        }
+        if self.kind == ErrorKind::Internal {
+            result.extend_from_slice(INTERNAL_ERROR_SUFFIX.as_bytes());
+        }
+        result
     }
 
     pub fn parser(message: impl Into<Cow<'static, str>>) -> Self {
@@ -453,17 +508,7 @@ impl Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.json {
-            return f.write_str(&self.message);
-        }
-        if self.kind != ErrorKind::UnknownType {
-            write!(f, "{} ", self.kind.display_name())?;
-        }
-        write!(f, "Error: {}", self.message.replace('\0', "\\0"))?;
-        if self.kind == ErrorKind::Internal {
-            f.write_str(INTERNAL_ERROR_SUFFIX)?;
-        }
-        Ok(())
+        f.write_str(&String::from_utf8_lossy(&self.to_bytes()))
     }
 }
 
@@ -484,6 +529,46 @@ pub fn os_error_text(error: &std::io::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_error_bytes_preserve_invalid_utf8_and_escape_nul() {
+        let error = Error::new_bytes(ErrorKind::InvalidInput, b"caf\xe9\0\xff".to_vec());
+        assert_eq!(error.raw_message_bytes(), b"caf\xe9\\0\xff");
+        assert_eq!(error.to_bytes(), b"Invalid Input Error: caf\xe9\\0\xff");
+        assert_eq!(error.raw_message(), "caf\u{fffd}\\0\u{fffd}");
+        assert_eq!(
+            Error::new_bytes(ErrorKind::UnknownType, vec![255]).to_bytes(),
+            b"Error: \xff"
+        );
+        assert_eq!(
+            Error::internal("boom").to_bytes(),
+            Error::internal("boom").to_string().as_bytes()
+        );
+    }
+
+    #[test]
+    fn json_error_bytes_follow_yyjson_escaping() {
+        let message = b"\xff\"\\\n\r\t\x08\x0c\0\x1f";
+        let error = Error::new_bytes(ErrorKind::InvalidInput, message.to_vec())
+            .with_extra_info("name", "caf\u{e9}")
+            .into_json();
+        assert_eq!(error.to_bytes(), b"{\"exception_type\":\"Invalid Input\",\"exception_message\":\"\xff\\\"\\\\\\n\\r\\t\\b\\f\\\\0\\u001F\",\"name\":\"caf\xc3\xa9\"}");
+        assert_eq!(error.clone().into_json(), error);
+        let rethrown = error.clone().rethrown().to_bytes();
+        assert_eq!(&rethrown[b"Invalid Input Error: ".len()..], error.to_bytes());
+    }
+
+    #[test]
+    fn query_context_keeps_original_error_bytes() {
+        let error = Error::new_bytes(ErrorKind::Binder, b"caf\xe9".to_vec())
+            .with_position(Some(7))
+            .with_query_context("SELECT unknown");
+        assert_eq!(
+            error.raw_message_bytes(),
+            b"caf\xe9\n\nLINE 1: SELECT unknown\n               ^"
+        );
+        assert_eq!(error.position(), None);
+    }
 
     fn json_keys(error: Error) -> Vec<String> {
         let json = error.into_json();

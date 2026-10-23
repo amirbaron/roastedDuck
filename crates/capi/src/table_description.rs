@@ -21,7 +21,7 @@ pub struct TableDescriptionWrapper {
 pub type DuckdbTableDescription = *mut TableDescriptionWrapper;
 
 impl TableDescriptionWrapper {
-    fn set_error(&mut self, message: &str) {
+    fn set_error(&mut self, message: impl AsRef<[u8]>) {
         self.error = to_cstring(message);
     }
 
@@ -29,7 +29,7 @@ impl TableDescriptionWrapper {
     fn column(&mut self, index: Idx) -> Option<&ColumnDescription> {
         let count = self.description.as_ref()?.columns.len();
         if index >= count as Idx {
-            self.set_error(&format!(
+            self.set_error(format!(
                 "Column index {index} is out of range, table only has {count} columns"
             ));
             return None;
@@ -89,7 +89,7 @@ pub unsafe extern "C" fn duckdb_table_description_create_ext(
             DuckdbState::DuckDBError
         }
         Err(error) => {
-            wrapper.set_error(error.raw_message());
+            wrapper.set_error(error.raw_message_bytes());
             DuckdbState::DuckDBError
         }
     }

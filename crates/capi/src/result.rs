@@ -96,13 +96,13 @@ impl ResultData {
     }
 
     fn set_columns(&mut self, names: &[String], types: &[LogicalType]) {
-        self.names = names.iter().map(|name| to_cstring(name)).collect();
+        self.names = names.iter().map(to_cstring).collect();
         self.types = types.to_vec();
     }
 
     /// Records a failure of the result (`QueryResult::SetError`).
     fn set_error(&mut self, error: Error) {
-        let message = to_cstring(&error.to_string());
+        let message = to_cstring(error.to_bytes());
         self.error = Some((error, message));
         self.state = ResultState::Failed;
     }

@@ -294,7 +294,7 @@ pub unsafe extern "C" fn duckdb_enum_dictionary_value(ty: DuckdbLogicalType, ind
     unsafe { type_with_id(ty, LogicalTypeId::Enum) }
         .and_then(LogicalType::enum_values)
         .and_then(|values| values.get(index as usize))
-        .map_or(std::ptr::null_mut(), |value| c_string(value))
+        .map_or(std::ptr::null_mut(), c_string)
 }
 
 /// `duckdb_logical_type duckdb_list_type_child_type(duckdb_logical_type type)`
