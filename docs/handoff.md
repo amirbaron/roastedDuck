@@ -44,7 +44,7 @@ The checkout has an **uncommitted native-identifier migration and does not build
 complete workspace yet**. The planner library now compiles after native renderer and
 SHOW literal integration. The built-in function library also compiles after native
 STRUCT/UNION/ENUM and result-name integration. The latest workspace/all-targets check
-now passes execution and stops at **25 CSV diagnostics**. Runtime and client/result
+now passes execution and CSV and stops at **213 autocomplete diagnostics**. Runtime and client/result
 consumers remain unchecked by a successful complete build.
 The corpus, shell and performance results below describe previously accepted binaries;
 they are not validation of this incomplete source. No final public binary or full
@@ -218,10 +218,35 @@ expected invalid-Unicode errors; a 16-record independent golden subset is checke
 These use real physical projection objects, not mock operators or a C++ engine fallback.
 
 The serial release build took 10m52s and was resumed through the same live process,
-without restart/overlap. Latest whole-workspace stop: execution-workspace-check-2.jsonl
-(25 CSV diagnostics in option names, multi-file metadata, COPY and sniff/read output).
-Evidence: execution-native-checkpoint.json in the external artifact folder. No new
-public CLI/C API/client or full corpus/WAL/performance acceptance is established.
+without restart/overlap. That stage stopped at 25 CSV diagnostics; the following stage
+closes those library errors. Evidence: execution-native-checkpoint.json in the external
+artifact folder. No new public CLI/C API/client or full corpus/WAL/performance acceptance
+is established.
+
+The CSV continuation now compiles all targets and passes scoped Clippy with warnings
+denied, codegen checks and **two release integration tests** (104 frozen C++ records).
+Column names, supplied column/type maps, COPY names, multi-file union names and schema
+errors retain bytes. Cast/sniffer errors and option/prompt buffers retain native names.
+Option keys use ASCII matching; header collision folding now follows ASCII semantics.
+`ToNamedParameters` propagates checked VARCHAR construction errors, while reject-table
+append buffers retain bytes like C++'s direct string_t appends.
+
+**12,228 exact C++ outcomes pass**: 10,482 metadata/error/VARCHAR-boundary comparisons
+(six operations × 1,747 names), plus 1,746 real file scans through C++'s table-function
+relation and Rust's direct read_csv binder/scanner. All scan values match; 140 expected
+invalid-Unicode exceptions from ToNamedParameters match exactly. One empty-name public
+C++ scan is preserved separately: its public binder generates C0, whereas the direct
+Rust reader SDK exposes the original empty name. It is excluded from the SDK comparison;
+public Rust SQL must verify that binder boundary. This is not complete public CSV/shell
+acceptance. Native filesystem paths, raw parser ingress and full runtime/reject-table
+journeys remain open.
+
+The whole-workspace check now stops at **213 autocomplete diagnostics**, primarily AST
+text-to-native-name integration and catalog completion results. Later runtime/readers
+remain unchecked by a successful whole build. Evidence: csv-native-checkpoint.json,
+csv-name-reference-sdk.tsv, csv-workspace-check-1.jsonl in the external artifact folder.
+The low-memory cache policy is unchanged. All selected language clients and final
+corpus/shell/file/WAL/performance acceptance remain open.
 
 Detailed stage logs, exact limitations, source hashes and resume pointers live in
 `.context/identifier-bytes-progress.md` and the external artifact folder
