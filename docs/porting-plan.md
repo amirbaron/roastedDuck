@@ -11,9 +11,12 @@ Target: a 100% Rust engine that is a 1:1 drop-in replacement for DuckDB **1.5.6*
    C++ DuckDB opens databases written by the Rust engine (storage + WAL byte format).
 3. **Same ABI.** It ships a `libduckdb` exporting the C API (`duckdb.h`, 547
    functions, including ADBC) and loads C-API extensions (`duckdb_extension.h`).
-4. **Performance parity with C++ DuckDB.** Match the reference on speed and peak
-   memory on DuckDB's own benchmark suites, on the same machine, with identical
-   results. The owner replaced the earlier outperformance targets on 2026-10-22.
+4. **Preserve the accepted speed–memory tradeoff.** The owner approved the measured
+   lower-memory baseline on 2026-10-23: roughly 15–20% longer execution with 60–70%
+   less memory on TPC-H and ClickBench is acceptable. Do not raise memory merely to
+   match C++ caching or a small speed gap. Compare both metrics against that baseline,
+   report individual query outliers, and document final performance acceptance in
+   `docs/performance-acceptance.md`. Exact speed/memory parity is not required.
 5. **Runs after every step.** Every merged change builds, the `rustdb` CLI and
    `libduckdb` run, and the conformance pass count never goes down.
 6. **Independent review.** At every milestone, reviewer agents that did not write the
@@ -159,10 +162,14 @@ identical), and land only with a benchmark that demonstrates their benefit.
 | Scheduler: lower-overhead task handoff, better pipeline-level work stealing | parallel execution |
 | Build: LTO, PGO (`cargo pgo`), BOLT on the release binary | release pipeline |
 
-## Memory: C++ parity
+## Memory: preserve the lower-memory baseline
 
-Peak memory must be at parity with C++. Lower memory is welcome when it comes from
-internal representation, preserving results and file bytes and meeting the speed target.
+The owner's 2026-10-23 decision supersedes independent C++ speed and memory targets.
+Preserve the measured uncached baseline and its lower peak RSS. Evaluate speed and
+memory together, with correct results and unchanged storage/WAL formats. Persistent
+table caching must not increase memory merely to imitate C++ or close a small speed gap.
+The baseline, rejected cache evidence and final acceptance gates are recorded in
+`docs/performance-acceptance.md`.
 
 | Lever | Where |
 |---|---|
@@ -184,14 +191,22 @@ clickbench, micro, csv, parquet, ingestion, imdb) on both engines on the same ma
 pinned cores, warm and cold runs, results checked equal before timings count. Records
 wall time and peak memory for every benchmark.
 
-**Final targets (M9):**
+**Final performance acceptance (M9):**
 
-- **Speed:** geometric-mean speedup ≥ 1.0× on TPC-H SF10, ClickBench and h2oai,
-  allowing measured noise. No individual benchmark in any suite slower than **0.99×**
-  C++ beyond repeatable measurement noise.
-- **Memory:** geometric-mean peak memory ≤ **1.0×** C++ across all suites. No individual
-  benchmark above 1.0× C++. On the out-of-core suite at a fixed `memory_limit`, never
-  spills more bytes than C++.
+- Preserve the approved lower-memory tradeoff. Roughly 15–20% longer execution time
+  with 60–70% less memory on TPC-H and ClickBench is acceptable; neither exact speed
+  parity nor outperformance is a completion gate.
+- Use the checked round-6 uncached results and preserved binaries as the comparison
+  baseline. Report wall time, CPU time, peak RSS and available buffer/spill metrics
+  per query at the same data, settings and thread counts. Correct results are required
+  before timing a query can count.
+- Report individual slow/memory-heavy queries and regressions against the baseline
+  separately from suite averages. Repeat noisy outliers and explain serious regressions;
+  improved averages cannot conceal them or justify memory increases for small speed gains.
+- Rerun the final signed binaries, retain source/binary/data identities and raw evidence
+  on the external SSD, and complete the acceptance report. The approved policy alone
+  is not final-binary performance verification. Memory-limit and out-of-core correctness
+  gates remain functional requirements.
 
 ## Independent review gate
 
@@ -294,8 +309,8 @@ Task scheduler, pipelines/events, partitioned hash join and aggregate, the sort 
 profiler. Most of the performance levers land here.
 
 **Gate:** `parallelism/`, `outofcore/` green; TPC-H/TPC-DS SF1–SF10 results identical;
-in-memory TPC-H, h2oai, ClickBench: every benchmark ≥ 0.99× C++ speed, geomean ≥ 1.0×,
-geomean peak memory ≤ C++ (allowing measured noise).
+in-memory TPC-H, h2oai and ClickBench have checked results and documented speed–memory
+acceptance against the preserved baseline, including individual query outliers.
 
 ### M6 — Persistent storage, byte-compatible
 Single-file block manager, metadata blocks, row groups, column segments, every
@@ -306,7 +321,8 @@ checkpointing, MVCC (undo buffers, row versions), ART indexes, encryption,
 
 **Gate:** opens every `test/storage/bc/*.db`; C++ opens every Rust-written DB and WAL
 (round-trip suite); crash/WAL-replay tests; `storage/`, `transactions/`, `index/`,
-`attach/`, `upsert/`, `alter/` green; `benchmark/ingestion` and on-disk TPC-H at parity.
+`attach/`, `upsert/`, `alter/` green; ingestion and on-disk TPC-H results match, with
+performance evaluated under the baseline policy.
 
 ### M7 — Formats and in-tree extensions
 CSV sniffer and reader/writer (`copy/` is the second-largest test dir at 539 files),
@@ -314,30 +330,38 @@ Parquet, JSON, ICU, autocomplete, tpch/tpcds, httpfs-equivalent remote file syst
 secrets, delta (`delta-kernel-rs` is already Rust).
 
 **Gate:** `copy/`, `json/`, `timezone/`, `secrets/`, extension test dirs green;
-`data/parquet-testing` read/write round-trips; `benchmark/csv` and `benchmark/parquet`
-at parity with C++.
+`data/parquet-testing` read/write round-trips; CSV/Parquet benchmark correctness and
+speed–memory results documented under the same performance acceptance policy.
 
 ### M8 — Public surface
 - `libduckdb` cdylib with the full C API and C extension API.
 - CLI shell (`tools/shell`, 15k lines); box/table rendering must match byte for byte.
 - Arrow import/export via the Arrow C data interface (arrow-rs), ADBC driver.
 - Native Rust API.
+- Complete Python bindings first, then all primary language clients plus C#/.NET,
+  Swift and Julia, as confirmed by the owner on 2026-10-23. Python and R need real
+  bindings to this engine; their former exclusion is removed. The client/package
+  inventory and per-language completion gates are in `docs/language-bindings.md`.
 
-**Gate:** `test/api` equivalents green; existing C-API clients (duckdb-rs, Go, Node
-"neo") pass their own test suites against the Rust `libduckdb`.
+**Gate:** `test/api` equivalents green; the documented API coverage, upstream suites,
+installation/packaging and resource/data-interchange journeys pass for every selected
+client against the Rust engine. A C API smoke test is not full language-binding parity.
+No client may silently use the C++ DuckDB engine to satisfy this gate.
 
 ### M9 — Parity sign-off
 100% corpus green, including `.test_slow`; differential fuzzing (sqlsmith/SQLancer-style
-generators, oracle = C++) clean over a fixed budget; final performance targets met;
-final speed and memory targets met; CI's no-C/C++ guard green; final full review gate.
+generators, oracle = C++) clean over a fixed budget; complete client binding gates;
+documented final performance acceptance preserving the approved lower-memory baseline;
+CI's no-C/C++ guard green; final full review gate.
 
 ## What cannot be preserved
 
 - **C++-API extensions** (most community extensions today) link against DuckDB's C++
   internals and cannot load into a Rust engine. Only C-API extensions work. Popular ones
   get ported as first-party Rust extensions.
-- **Python/R packages** are built on the C++ API, not the C API. They need new bindings
-  (PyO3 / extendr) on top of the Rust engine.
+Python/R bindings are required under M8. Existing upstream packages that use C++
+internals cannot be treated as compatible merely because the C ABI is available;
+they must be ported or replaced with complete bindings to the Rust engine.
 
 ## Keeping up with upstream
 

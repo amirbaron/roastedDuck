@@ -9,11 +9,15 @@ Every test of DuckDB's sqllogictest corpus passes, except the ones rustdb cannot
 design (`conformance/divergences.md`: C++ extension binaries, and tests that expect an
 out-of-memory error rustdb avoids by using less memory). Along the way: byte-compatible
 storage and WAL with C++ DuckDB, the same C API, no C/C++ in the shipped artifact, and the
-performance targets of `docs/porting-plan.md` (≥ 1.0× C++ speed, ≤ 1.0× memory, allowing measured noise).
+documented speed–memory acceptance of `docs/performance-acceptance.md`.
 
-The owner confirmed on 2026-10-22: parity with C++ is sufficient; the former
-≥ 1.3× speed / ≤ 0.6× memory targets are superseded. Functional and byte-compatibility
-gates remain in place.
+The owner updated the goal on 2026-10-23: preserve the measured lower-memory baseline;
+roughly 15–20% longer execution with 60–70% less memory on TPC-H and ClickBench is
+acceptable. Exact speed/memory parity and outperformance are not required. Do not raise
+memory merely to copy C++ caching or close small speed gaps; report individual query
+outliers. Functional, correctness and storage/WAL compatibility gates remain in place.
+Complete Python bindings first and all primary clients plus C#/.NET, Swift and Julia;
+`docs/language-bindings.md` records the expanded completion scope.
 
 ## Ground rules (from the owner)
 
@@ -93,8 +97,9 @@ gates remain in place.
 
   H2O joins meet the revised gates on this run; the other suites have individual slow
   queries. ClickBench database-open q00 uses about 3.2 MB extra peak RSS (1.11× above
-  the interpreter). Performance parity is open. C++-style table-block caching, formerly
-  dropped for the stricter memory target, is the next experiment.
+  the interpreter). The owner accepts this lower-memory tradeoff as the target baseline; final-binary
+  performance acceptance remains open. Persistent table caching is rejected under the
+  2026-10-23 policy, and the uncached source behavior is restored.
 
 ## Saved work (2026-10-22)
 
@@ -134,7 +139,13 @@ The port includes a deliberate termination guard: on rare inputs where ICU's FCD
 loops forever, Rust collates the NFD form instead. Such reference hangs are excluded from
 byte comparisons; a Rust unit test covers the fallback.
 
-## Active cache experiment (2026-10-22)
+## Historical cache experiment (2026-10-22; rejected 2026-10-23)
+
+Current policy: retain the uncached lower-memory baseline. The uncommitted cache switch
+has been removed; its patch/source and uncached binary identities are preserved under
+`.context/artifacts/performance-policy-20261023/`. The following investigation is a
+historical log. Statements below about an active/uncommitted cache candidate describe
+that earlier experiment, not the current source policy.
 
 The working tree retains the uncommitted persistent-table cache experiment in
 `crates/storage/src/table/column_segment.rs`. Modern plain/constraint ART disk restoration
@@ -415,8 +426,9 @@ file gaps remain open. Continue with persisted column names and their query-resu
    (work-queue 3). Lazy type catalog/suggestion parity, its full corpus and fresh public
    checks are complete. Finish the other native
    persisted-index paths (16); the profiling and concurrency regressions are fixed.
-   Resolve or reject/rework caching's memory
-   outliers and continue the performance work; the policy is not accepted yet. Work
+   Keep the rejected caching policy removed and preserve the lower-memory baseline;
+   evaluate speed and memory together and document per-query outliers. Complete the
+   Python/other client gates in `docs/language-bindings.md`. Work
    down the rest of `docs/work-queue.md` sequentially. ICU verification is complete; Parquet encryption (15) remains.
 2. Keep one workload at a time. Use `JOBS=1` for canonical conformance runs; do not
    force `SLT_THREADS=1` globally because tests of thread defaults and parallel plans
@@ -425,5 +437,7 @@ file gaps remain open. Continue with persisted column names and their query-resu
    `dbgen` in `crates/tpch`, carries TPC's license, not MIT — the owner should review the
    TPC terms before rustdb is published; both stay optional extension crates so the core
    is MIT.
-4. Performance rounds until the targets hold (≥ 1.0× C++ speed, ≤ 1.0× memory, allowing measured noise); then
-   differential fuzzing against C++ (M9 in `docs/porting-plan.md`).
+4. Complete final performance acceptance against the approved lower-memory baseline,
+   with result checks and per-query outlier reporting; exact C++ speed/memory parity is
+   not required. Complete differential fuzzing and all selected language-client gates
+   before M9 sign-off in `docs/porting-plan.md`.

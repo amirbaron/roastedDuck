@@ -1,11 +1,14 @@
 # Performance backlog
 
-Known places where rustdb is slower or heavier than DuckDB 1.5.6. Every item must be
-closed before M9 (no benchmark below 0.99× C++ speed, memory geomean ≤ 1.0×). The
-owner superseded the ≥ 1.3× speed / ≤ 0.6× memory targets on 2026-10-22: parity
-is sufficient. Historical measurements and rejected experiments below retain their
-original targets for context; caching may be re-evaluated under the parity target. Numbers are
-CPU time unless noted; the machine is shared, so small differences need re-checking.
+Known places where rustdb is slower or heavier than DuckDB 1.5.6. The owner's
+2026-10-23 decision supersedes both the old outperformance targets and the later
+independent speed/memory parity gates: preserve the measured lower-memory baseline.
+Roughly 15–20% longer execution with 60–70% less memory on TPC-H and ClickBench is
+acceptable. Do not increase memory merely to match C++ caching or close a small speed
+gap. Evaluate both metrics, report per-query outliers, and finish the final acceptance
+report in `docs/performance-acceptance.md`. Historical measurements below retain their
+original targets as history. Numbers are CPU time unless noted; small differences on
+the shared machine require repeated checks.
 
 ## Validation of new measurements
 
@@ -360,9 +363,9 @@ have slow queries: TPC-H q05 at 0.73× (14 threads), q21 at 0.79× (1 thread);
 ClickBench q19 at 0.42× / 0.39×. The single-thread regexp query q28 takes 44.8 s
 against C++'s 30.7 s (0.69×). Database-open q00 has about 3.2 MB extra Rust peak RSS
 (49.3–49.7 MB vs 46.1–46.5 MB), the remaining memory outlier in these suites. The
-revised target permits re-evaluating C++'s full table-block caching policy, previously
-rejected for the superseded ≤0.6× memory goal. That experiment must preserve result
-and storage behavior and be measured against this uncached baseline.
+2026-10-23 policy preserves this uncached baseline. The full table-block caching
+experiment below is rejected as a tradeoff, even where it improves average speed;
+its increased residency is not justified by matching C++ retention or small speed gaps.
 
 Validation of the integrated baseline: 202 focused release unit tests, 200 SQL passes
 plus three shared skips across 203 files, zero ratchet regressions; 392 upstream shell
@@ -373,7 +376,13 @@ A fresh full corpus sweep remains required. Evidence and binary hashes:
 logs). The next experiment uses a separate artifact subdirectory and preserves these
 binaries and reports.
 
-## Round 6 experiment: C++ table-block caching (not accepted)
+## Round 6 experiment: C++ table-block caching (rejected 2026-10-23)
+
+The owner chose the lower-memory baseline. Persistent segment registration is restored
+to `release_on_unpin()`; the uncommitted `keep_cached()` change is removed. Its exact
+patch, source and preserved uncached binary hashes are retained at
+`.context/artifacts/performance-policy-20261023/`. The measurements below are historical
+experiment evidence, not current configuration or a request to chase C++ cache behavior.
 
 The uncached integrated binaries are preserved in `uncached-merged/` under the round's
 artifact directory. The candidate changes only persistent segment registration from
@@ -405,7 +414,8 @@ queries: TPC-H q21 by 6–8%; ClickBench q22 by 12–26%, and q28 by 15% at one 
 remaining parity gaps, not waived by better average speed or lower memory elsewhere.
 The buffered right-delim input is a suspected contributor to q21; profiling is still
 needed to attribute its extra memory. q28 and q22 also need allocation/scan diagnosis.
-The candidate remains uncommitted. Its full 4870-file sweep finished with 4780 passes,
+The candidate was never accepted and its cache switch is now removed. Its historical
+full 4870-file sweep finished with 4780 passes,
 16 failures and 74 skips, zero crashes/timeouts: the only regression is
 `test_profiling_fs.test`, where ATTACH rebuilds the plain index from table rows and
 warms data before the profiled SELECT. C++ and the uncached Rust control pass; the

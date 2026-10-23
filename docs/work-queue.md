@@ -24,6 +24,15 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    - `parse_statements` hands a PRAGMA's expansion of several statements out as one
      multi-statement, where DuckDB's `StatementPreprocessor` adds `BEGIN`/`COMMIT`
      statements around them, so `duckdb_extract_statements` counts fewer statements.
+17. **Complete language clients.** Owner-confirmed scope (2026-10-23): Python first,
+   all primary clients and C#/.NET, Swift and Julia. This includes R, Go, Rust, Java/JDBC,
+   Node.js Neo, WebAssembly and ODBC, alongside the C API, shell and required ADBC.
+   Python/R are no longer excluded. Inventory the versioned API surfaces and packages,
+   implement missing bindings/adapters, then run upstream suites and real installation,
+   query, interchange, UDF and resource-lifetime journeys against the Rust engine.
+   C API smoke tests alone do not establish client parity; bundling the C++ engine is
+   not completion. Track evidence and remaining gates in `docs/language-bindings.md`.
+
 3. **CLI shell, the engine's part** (top priority). `crates/shell` ports `tools/shell`
    one to one, linenoise included (`crates/shell/src/linenoise`, a module of the shell):
    the 392 tests of `tools/shell/tests` that pass on the C++ CLI pass on rustdb
@@ -198,12 +207,15 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
 
 ## Planner and execution
 
-7. **Performance round 6.** Round 5 (`docs/perf-backlog.md`) ported the Top-N row group
-   order, the partitioned aggregate and the UnnestRewriter's `unnest` pattern, and showed
-   that caching table blocks like DuckDB makes rustdb's memory DuckDB's. Left: cheaper
-   table block re-reads (re-evaluate caching against the current ≤ 1.0× memory target), the aggregate hash
-   table's lookups and resizes, and the hash join probe. Struct projection pushdown is
-   ported (13).
+7. **Performance acceptance preserving the lower-memory baseline.** The owner
+   confirmed on 2026-10-23 that roughly 15–20% longer execution with 60–70% less memory
+   on TPC-H/ClickBench is acceptable. Preserve the uncached baseline; do not increase
+   memory to copy C++ caching or close small speed gaps. The table-cache experiment is
+   rejected, with its patch and evidence retained externally. Evaluate optimizations
+   on both speed and memory, and report individual query outliers separately from
+   averages. Finish `docs/performance-acceptance.md` on the final signed binaries.
+   Remaining useful optimization candidates include cheaper reads without higher
+   residency, aggregate lookups/resizes and join probes, subject to that policy.
 8. **Logical plan serialization, the rest.** `json_serialize_plan` writes logical plans
    with DuckDB's serializers: `tools/codegen` generates property structs from
    `logical_operator.json`, `expression.json`, `nodes.json`, `table_filter.json` and
