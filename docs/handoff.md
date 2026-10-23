@@ -281,20 +281,35 @@ and names, CollateExpression/StringTypeInfo collation and LoadInfo metadata now 
 bytes. Function/window dispatch and collation resolution use ASCII byte semantics;
 actual VARCHAR construction in USE/PRAGMA/ORDER BY propagates validation errors.
 
-This continuation is **not yet runtime/oracle verified**. The signed C++ probe recorded
-20,964 function/window/postfix/collation/LOAD outcomes, but the matching Rust comparison
-harness and new release tests remain to run. PEG VersionNumber uses its native
-QualifiedName rule; replacement-name dispatch remains separate from text option maps.
-A one-line optimizer caller now passes its genuine function text as bytes.
+The autocomplete continuation now passes **154 signed release tests**, zero ignored:
+152 affected types/AST/parser/planner/autocomplete tests plus two public completion
+bind/scan journeys. PEG journeys cover Unicode INSTALL VERSION/repository, replacement
+and table aliases, CTE aliases and named windows. Selected packages and optimizer pass
+all-target Clippy with warnings denied; codegen --check passes.
 
-The latest whole-workspace/all-target check passes autocomplete and optimizer, then
-stops at **53 Parquet diagnostics**. Execution and later public/client consumers are not
-validated by a successful final build. Current evidence/resume details:
-autocomplete-native-wip-checkpoint.json, autocomplete-native-clippy-6.log and
-autocomplete-workspace-check-2.jsonl in the external artifact folder. The prior 138-test
-and 34,940-outcome results predate these additional shared AST changes and must be
-rerun after this integration. Full public SQL/shell/corpus/storage/WAL, Python and other
-selected clients, and final documented speed-memory acceptance remain open.
+**20,964 C++ outcomes match** exact function/window/postfix/collation/LOAD wire bytes and
+native SQL. A 180-record golden subset is checked in. LOAD SQL formatting now matches
+the native component, including its omission of version and single-quoted repository.
+The initial window probe used constructor INVALID frame boundaries, which C++ refuses
+to render. Its corrected name matrix uses the normal unbounded-preceding/current-row
+frame in both implementations. Invalid-frame exception propagation remains an open
+fallible-AST-rendering gate; the original failed reference/log is preserved.
+
+The public sql_auto_complete bind/scan path with real catalogs matches direct C++
+journeys: Unicode démo emits the quoted identifier plus dot, while raw byte FF fails
+with the exact invalid-Unicode exception at VARCHAR construction. This verifies that
+specific public function path, not the final Rust SQL/shell or every completion ranking.
+The earlier **34,940 unbound/SHOW outcomes** still pass after the shared AST changes;
+parser regression is **8,076 matched outcomes**, zero mismatches, with **700 invalid-
+UTF8 inputs still pending** raw ingress and not counted as passed.
+
+The fresh whole-workspace/all-target check passes autocomplete and optimizer, then
+stops at **53 Parquet diagnostics**. Runtime, clients and final public binaries remain
+unchecked by a successful full build. Evidence: autocomplete-native-checkpoint.json,
+autocomplete-stage-workspace-final.jsonl and their hashed logs/source snapshot on the
+external SSD. Final SQL/shell/corpus/C API/storage/WAL, raw parser/filesystem and old
+fallible-rendering boundaries, Python and every selected client, and documented final
+speed-memory acceptance remain open. The uncached memory baseline is unchanged.
 
 Detailed stage logs, exact limitations, source hashes and resume pointers live in
 `.context/identifier-bytes-progress.md` and the external artifact folder
