@@ -55,23 +55,25 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      `.context/artifacts/shell-bytes-20261023/`.
      That boundary passes 102 type/vector tests, all 30 C API files and 392 shell
      tests/three shared skips. A 65,823-input constructor matrix matches C++ exactly.
-     Engine error messages now own bytes. Scalar C API bind/init/execute callbacks,
-     SQL `error()` and native C API error formatting preserve those bytes; NULs are
-     sanitized to literal `\0` before JSON conversion and JSON control escapes use
-     uppercase hex digits. All 2,128 cases in `scripts/capi-error-bytes.py` match C++
-     (all byte values/selected sequences, direct/prepared, plain/JSON, callback phases,
-     raw-vector SQL errors and recovery). The 23 common tests, workspace Clippy,
-     30 C API files, 765 shell cases (zero unexpected/five known), 392 shell tests/three
-     skips and full 4,870-file corpus pass their existing gates. The corpus is unchanged:
-     4,781 pass, 15 accepted divergences, 74 shared skips, zero crashes/timeouts and
-     zero ratchet regressions. Raw shell/parser/name bytes, non-scalar callback error
-     carriers and remaining legacy text wrappers are still open. Public/full artifacts:
-     `.context/artifacts/shell-bytes-20261023/` (`raw-errors-path.txt` and
-     `raw-errors-full-path.txt`); `remaining-error-carriers.txt` records the next paths.
-     Next, compare table, aggregate (including deferred/empty-input), COPY, replacement
-     scan and cast callback errors against C++ before porting their remaining String
-     carriers. CAST must retain source-column context; TRY_CAST must retain first-error
-     behavior and NULL results through the shared cast/JSON transform state.
+     Engine error messages and all native callback error carriers now own bytes:
+     scalar, table, aggregate (including deferred errors), COPY, replacement and cast.
+     SQL `error()`, native C API output and the shared cast/JSON transform/scanner path
+     preserve bytes. NULs are sanitized before JSON conversion; JSON control escapes
+     use uppercase hex. CAST retains source-column context; TRY_CAST retains the first
+     nonempty error and NULL results. Aggregate state-size errors occur at physical
+     preparation after optimization, including SQL PREPARE; pruned aggregates skip
+     the callback and window aggregate size errors remain at execution. JSON-mode
+     prepare no longer adds a caret to raw messages beginning with `{`.
+     All 13,832 cases in `scripts/capi-error-bytes.py --family all` match C++, including
+     all byte values/selected sequences, direct/prepared, plain/JSON, callback phases,
+     deferred/empty-input errors, combine, pruning, SQL PREPARE, windows and recovery.
+     The 35 function tests, workspace Clippy, 30 C API files, 765 shell cases (zero
+     unexpected/five known), 392 shell tests/three skips and full 4,870-file corpus
+     pass their gates. The corpus remains 4,781 pass, 15 accepted divergences and
+     74 shared skips, with zero crashes/timeouts or ratchet regressions. Raw shell,
+     parser/name bytes and legacy text wrappers are still open. Current artifacts:
+     `.context/artifacts/callback-bytes-20261023/` (`first-path.txt`, `final-path.txt`);
+     initial scalar/constructor evidence remains in `shell-bytes-20261023/`.
    - Object ids: the oid of a database (`PRAGMA database_list`'s `seq`) counts the
      catalog entries created before it, more in DuckDB.
    - A `memory_limit` far below an aggregate's state (`SELECT list(i) FROM range(1e7)`

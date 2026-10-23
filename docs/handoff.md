@@ -40,7 +40,7 @@ gates remain in place.
   C++ is 4795 pass, 1 fail, 74 skip. All remaining Rust failures are the 15 accepted
   divergences in `conformance/divergences.md` (11 C++ extension binaries, 4 expected
   memory errors Rust avoids). No unexplained regressions, crashes or timeouts.
-  - The fresh error-byte sweep plus the uncommitted cache flag uses normal thread
+  - The fresh callback/error-byte sweep plus the uncommitted cache flag uses normal thread
     defaults and passes the 4855-file ratchet without rechecks, shrink or verdict changes.
     Every skip reason matches the prior baseline; the 15 failure messages match too,
     apart from a process ID in a temporary filename. `target/slt/rust.jsonl` is refreshed
@@ -307,7 +307,7 @@ does not close the raw input, parser, identifier or error-byte gaps. Artifacts a
 manifests: `.context/artifacts/shell-bytes-20261023/`; source/probe notes:
 `.context/shell-bytes-investigation.md`. No job is active after these checks.
 
-The next shared boundary now preserves error-message bytes: `Error` owns bytes and
+The initial scalar error-byte boundary (`983e3eb`) preserves error-message bytes: `Error` owns bytes and
 provides native byte formatters; scalar C API bind/init/execute callbacks and SQL
 `error()` keep invalid UTF-8 intact. Native C API error accessors use those bytes.
 NUL sanitization runs before JSON conversion, and JSON control escapes use DuckDB's
@@ -324,8 +324,33 @@ ratchet has zero regressions or new entries. Canonical results are refreshed wit
 prior copy preserved. Public/full manifests and pointer files are under
 `.context/artifacts/shell-bytes-20261023/` (`raw-errors-path.txt` and
 `raw-errors-full-path.txt`). Both validation drivers are terminal. This does not close
-raw shell input, parser/name bytes, non-scalar callback carriers or legacy text error
-wrappers. The cache experiment remains uncommitted and unaccepted.
+raw shell input, parser/name bytes or legacy text error wrappers. The cache experiment
+remains uncommitted and unaccepted.
+
+The remaining native callback error carriers are now byte-based too: table,
+aggregate (including deferred errors), COPY, replacement scans and casts. The shared
+cast/JSON transform/scanner path preserves byte messages, source-column context and
+DuckDB's first-nonempty TRY_CAST error. Aggregate state-size errors now occur during
+physical preparation after optimization; SQL PREPARE handles its contained plan too.
+Pruned aggregates do not invoke the callback. Window aggregate state-size errors stay
+at execution, matching C++. JSON-mode prepare no longer appends a caret to raw messages
+beginning with `{`.
+
+The expanded `scripts/capi-error-bytes.py --family all` oracle has 13,832 unique cases:
+2,128 scalar, 2,128 table, 5,320 aggregate, 2,128 COPY, 532 replacement and 1,596 cast.
+It covers all byte values/selected sequences, plain/JSON, direct/prepared statements,
+empty-input/deferred errors, combine, pruning, SQL PREPARE, window timing, CAST source
+context, TRY_CAST NULL results and recovery. All match C++ byte for byte. All 35 signed
+function-library unit tests and workspace/all-targets Clippy pass, as do all 30 C API
+files, 765 shell cases (zero unexpected differences/five known), 392 upstream shell
+tests/three skips and the full 4,870-file corpus (4,781 pass, 15 accepted divergences,
+74 shared skips, zero crashes/timeouts). Every status, skip reason and normalized
+failure message matches the previous baseline; the 4,855-file ratchet is unchanged.
+Canonical results are refreshed with the prior copy preserved. Both drivers are
+terminal; manifests/pointers are in `.context/artifacts/callback-bytes-20261023/`
+(`first-path.txt`, `final-path.txt`). Raw shell/parser/name bytes and legacy text
+wrappers remain open, as do the other work-queue and performance gates. The original
+cache experiment is excluded from this callback change and remains unaccepted.
 
 ## How to work
 
