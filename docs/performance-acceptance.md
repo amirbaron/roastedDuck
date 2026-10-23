@@ -78,3 +78,15 @@ Completion requires a report on the actual final signed binaries, with:
 The owner has approved the baseline tradeoff; this document does not yet certify final
 binary performance. The active name migration, client bindings and other work-queue
 items must finish before final verification and acceptance can close the goal.
+
+## Report tooling verification
+
+The benchmark report now presents the approved policy and separate slowest/highest-RSS
+query tables. The old 1.3×/0.6× gates are removed; comparisons require the preserved
+Rust-baseline ratchet and documented acceptance. Result-mismatch and missing-result
+reporting remain intact. Four report tests and the per-query regression-ratchet test
+pass in a standalone build of the exact repository modules (no engine implementation
+is substituted). This isolated check is necessary while the workspace's name migration
+is unfinished; the full workspace and final performance runs remain pending. Test logs,
+verifier sources and dependency lockfile are retained under
+`.context/artifacts/performance-policy-20261023/`.
