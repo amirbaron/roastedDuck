@@ -44,7 +44,7 @@ The checkout has an **uncommitted native-identifier migration and does not build
 complete workspace yet**. The planner library now compiles after native renderer and
 SHOW literal integration. The built-in function library also compiles after native
 STRUCT/UNION/ENUM and result-name integration. The latest workspace/all-targets check
-now passes execution and CSV; the latest scoped autocomplete check stops at **73 diagnostics**. Runtime and client/result
+now passes execution, CSV and autocomplete compilation; the latest workspace check stops at **53 Parquet diagnostics**. Runtime and client/result
 consumers remain unchecked by a successful complete build.
 The corpus, shell and performance results below describe previously accepted binaries;
 they are not validation of this incomplete source. No final public binary or full
@@ -272,6 +272,29 @@ autocomplete-native-check-7.jsonl in the external artifact folder.
 
 The low-memory cache policy is unchanged. Python and all other selected clients, final
 corpus/shell/file/WAL verification and documented final performance acceptance remain open.
+
+Autocomplete now passes its all-target compile check, and selected autocomplete/types/
+AST/parser/planner all-target Clippy with warnings denied passes. Its original 73
+transformer errors are resolved through native identities and genuine PEG-token encoding,
+without decoding catalog names to text. FunctionExpression/WindowExpression qualifiers
+and names, CollateExpression/StringTypeInfo collation and LoadInfo metadata now retain
+bytes. Function/window dispatch and collation resolution use ASCII byte semantics;
+actual VARCHAR construction in USE/PRAGMA/ORDER BY propagates validation errors.
+
+This continuation is **not yet runtime/oracle verified**. The signed C++ probe recorded
+20,964 function/window/postfix/collation/LOAD outcomes, but the matching Rust comparison
+harness and new release tests remain to run. PEG VersionNumber uses its native
+QualifiedName rule; replacement-name dispatch remains separate from text option maps.
+A one-line optimizer caller now passes its genuine function text as bytes.
+
+The latest whole-workspace/all-target check passes autocomplete and optimizer, then
+stops at **53 Parquet diagnostics**. Execution and later public/client consumers are not
+validated by a successful final build. Current evidence/resume details:
+autocomplete-native-wip-checkpoint.json, autocomplete-native-clippy-6.log and
+autocomplete-workspace-check-2.jsonl in the external artifact folder. The prior 138-test
+and 34,940-outcome results predate these additional shared AST changes and must be
+rerun after this integration. Full public SQL/shell/corpus/storage/WAL, Python and other
+selected clients, and final documented speed-memory acceptance remain open.
 
 Detailed stage logs, exact limitations, source hashes and resume pointers live in
 `.context/identifier-bytes-progress.md` and the external artifact folder
