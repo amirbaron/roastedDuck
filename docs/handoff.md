@@ -1,7 +1,7 @@
 # Handoff
 
 State of the DuckDB 1.5.6 → Rust port ("rustdb") on the main line
-(`amirbaron/rust-duckdb-port`), updated 2026-10-23, to continue the work in a new session.
+(`amirbaron/rust-duckdb-port`), updated 2026-10-24, to continue the work in a new session.
 
 ## Goal
 
@@ -44,8 +44,12 @@ The checkout has an **uncommitted native-identifier migration and does not build
 complete workspace yet**. The planner library now compiles after native renderer and
 SHOW literal integration. The built-in function library also compiles after native
 STRUCT/UNION/ENUM and result-name integration. The latest workspace/all-targets check
-now passes execution, CSV, autocomplete, Parquet, ICU, both TPC generator libraries, JSON and Arrow; the latest scoped runtime check stops at **15 diagnostics** in appender SQL construction and COPY DATABASE. Runtime and client/result
-consumers remain unchecked by a successful complete build.
+now passes execution, CSV, autocomplete, Parquet, ICU, both TPC generator libraries, JSON and Arrow; the last scoped runtime checkpoint stopped at **15 diagnostics** in appender SQL construction and COPY DATABASE.
+The native Postgres-parser continuation now compiles all targets; its new byte parse-tree
+fields expose **95 AST-transformer integration diagnostics** in `rustdb-parser --lib`.
+The workspace still does not build; the earlier runtime count is not a fresh check of
+the new parser interface. Runtime and client/result consumers remain unchecked by a
+successful complete build.
 The corpus, shell and performance results below describe previously accepted binaries;
 they are not validation of this incomplete source. No final public binary or full
 corpus/file/WAL run has been made for the migration.
@@ -870,3 +874,36 @@ generated appender/COPY SQL; do not insert a lossy or checked byte-name-to-Strin
 to quiet these errors. Final shell, corpus, storage/WAL, C API, Python/selected clients
 and documented speed-memory acceptance remain open. The uncached block-release policy
 is unchanged.
+
+
+The native Postgres-parser continuation (2026-10-24) now compiles all targets and
+passes all-target Clippy with warnings denied. **39 signed release tests pass**, none
+ignored. The scanner accepts native bytes, terminates input at NUL as C++ does, preserves
+raw identifier/string/dollar-literal payloads and keyword casing, and leaves literal
+validation to the later DuckDB Value-construction boundary. Parser exceptions retain
+raw bytes and truncate at the exact 1,023-byte `vsnprintf` boundary, including a partial
+UTF-8 sequence. Native Unicode-space stripping and tokenization APIs preserve other
+bytes. The development tree-dump/comparison tools now use byte streams instead of lossy
+text, and a differential mismatch makes the checker fail.
+
+**19,708 exact C++ comparisons pass**: 9,854 SQL inputs in each of case-preserving and
+ASCII-folding modes. Each mode has 9,487 identical accepted Postgres trees and 367
+identical rejected errors/positions; the input set includes 1,238 invalid-UTF-8 queries,
+NUL termination, every single input byte, malformed/long inputs and Unicode spaces.
+The reference compiles the ten unchanged libpg_query sources of the frozen DuckDB 1.5.6
+snapshot; it does not link a C++ engine into shipped Rust artifacts. The 130-record
+frozen fixture passes. The native node generator matches the checked-in node types.
+This proves the scanner/grammar/Postgres-tree component, **not full DuckDB AST, engine,
+shell or client acceptance**.
+
+The next gate is the DuckDB AST transformer's remaining text signatures (95 scoped
+compile diagnostics). It must receive byte names, construct checked VARCHAR literals at
+the actual C++ boundary, and preserve raw query/CREATE SQL/parameter identities before
+appender/COPY SQL can use the native ingress. The earlier 700 pending full-AST byte
+queries are still pending, not counted as passed by these Postgres-tree comparisons.
+Evidence: `pg-native-checkpoint.json`, `pg-native-tests-3-summary.json`,
+`pg-native-comparison-2.log`, `pg-native-fold-comparison-2.log`, `pg-native-clippy-3.jsonl`,
+`pg-native-node-generator-check.log` and `pg-native-parser-integration-1.jsonl` in the
+external `identifier-bytes-20261023` directory. The lower-memory block-release policy is
+unchanged. Complete runtime/shell/corpus/storage/WAL/client/performance acceptance
+remains open.
