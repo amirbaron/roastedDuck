@@ -44,7 +44,7 @@ The checkout has an **uncommitted native-identifier migration and does not build
 complete workspace yet**. The planner library now compiles after native renderer and
 SHOW literal integration. The built-in function library also compiles after native
 STRUCT/UNION/ENUM and result-name integration. The latest workspace/all-targets check
-now passes execution, CSV, autocomplete, Parquet, ICU, both TPC generator libraries, JSON and Arrow; the latest workspace check stops at **205 rustdb runtime diagnostics**. Runtime and client/result
+now passes execution, CSV, autocomplete, Parquet, ICU, both TPC generator libraries, JSON and Arrow; the latest scoped runtime check stops at **15 diagnostics** in appender SQL construction and COPY DATABASE. Runtime and client/result
 consumers remain unchecked by a successful complete build.
 The corpus, shell and performance results below describe previously accepted binaries;
 they are not validation of this incomplete source. No final public binary or full
@@ -829,3 +829,44 @@ file gaps remain open. Continue with persisted column names and their query-resu
    with result checks and per-query outlier reporting; exact C++ speed/memory parity is
    not required. Complete differential fuzzing and all selected language-client gates
    before M9 sign-off in `docs/porting-plan.md`.
+
+
+The runtime continuation (2026-10-24) has reduced the scoped `rustdb --lib` check from
+181 to **15 diagnostics**, in appender SQL construction and COPY DATABASE. This is a
+compilation checkpoint, not a successful runtime/workspace build. Runtime result names,
+search-path/default-database state, database modification lists, attached lookup/rename,
+file-reader metadata and sequence names now retain bytes. Invalidation/checkpoint/WAL
+failure messages and filesystem logging also retain bytes. Secret names and persistent
+secret filenames retain bytes; the existing nontransactional/custom secret-file-format
+gaps remain open. LOAD/INSTALL uses byte names, native Unix paths, binary STRING install
+metadata and byte HTTP request paths; complete filesystem/configuration parity is not
+established.
+
+System-table VARCHAR construction is now fallible instead of decoding names for old
+text interfaces. Its **bind-versus-scan error timing remains open**: the current runtime
+collects rows eagerly during binding, whereas the C++ system scans construct their
+Values during scanning. Profiling now constructs checked VARCHAR Values for extra-info
+MAP keys/values at the C++ `CreateTree`/`MergeOperatorExtraInfo` boundary, and propagates
+native renderer failures and byte output. These runtime paths still need public-journey
+and oracle verification; compilation does not establish their behavior.
+
+Scoped foundation verification passes **138 signed release library tests** (catalog,
+function SDK, built-ins and storage), none ignored. All-target Clippy with warnings
+denied passes those four packages plus planner; codegen --check passes. A further
+signed file-logging test matches **8,735 frozen C++ cases**: four file-handle operations
+for each of 1,747 byte paths, plus 1,747 checked profiler-MAP constructions (140 expected
+invalid-Unicode exceptions). Its 115-record frozen fixture passes. This checks logging
+and the Value boundary, not QueryProfiler or complete runtime execution.
+
+Evidence: `runtime-native-check-18.jsonl`/`.log`, `runtime-foundation-lib-2-summary.json`,
+`runtime-foundation-all-target-clippy-2.jsonl`, `file-logging-reference-2.tsv` and
+`runtime-codegen-check.log` in the external `identifier-bytes-20261023` directory.
+The first file-logging comparison exposed a harness mismatch between C++ prefixed and
+Rust raw exception messages; the corrected oracle compares raw messages on both sides.
+The original failed log remains preserved. The first broad test build was interrupted
+after source changes so that final tests could be rebuilt against current code; it is
+not counted as successful verification. Raw SQL parser ingress is required for
+generated appender/COPY SQL; do not insert a lossy or checked byte-name-to-String adapter
+to quiet these errors. Final shell, corpus, storage/WAL, C API, Python/selected clients
+and documented speed-memory acceptance remain open. The uncached block-release policy
+is unchanged.
