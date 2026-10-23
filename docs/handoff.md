@@ -44,8 +44,8 @@ The checkout has an **uncommitted native-identifier migration and does not build
 complete workspace yet**. The planner library now compiles after native renderer and
 SHOW literal integration. The built-in function library also compiles after native
 STRUCT/UNION/ENUM and result-name integration. The latest workspace/all-targets check
-now passes the optimizer library and stops at **88 execution diagnostics**. Runtime
-and client/result consumers remain unchecked by a successful complete build.
+now passes execution and stops at **25 CSV diagnostics**. Runtime and client/result
+consumers remain unchecked by a successful complete build.
 The corpus, shell and performance results below describe previously accepted binaries;
 they are not validation of this incomplete source. No final public binary or full
 corpus/file/WAL run has been made for the migration.
@@ -197,10 +197,31 @@ subset is checked in. The C++ oracle seeds field objects via its native deserial
 to initialize the otherwise unused/uninitialized index scalar in field constructors.
 These are component/codec checks, not public query, storage-scan or WAL acceptance.
 
-Latest check: optimizer-workspace-check-1.jsonl (88 execution diagnostics, including
-constraints, plan generation, DDL/export and physical/profiling renderers). Evidence:
+That checkpoint stopped at execution; the following stage closes those library errors. Evidence:
 optimizer-path-checkpoint.json in the external artifact folder. The full workspace,
 public shell/corpus/file/WAL gates, clients and final performance acceptance stay open.
+
+The execution continuation passes **170 affected release tests** (the same pre-existing
+exhaustive cast-grid test remains ignored), scoped all-target Clippy with warnings
+denied and codegen checks. Execution and its targets type-check. Constraint/ALTER/DDL
+names and errors, cast source-column context, CTE/window/pivot/copy metadata, scan
+projections and physical plan labels retain bytes. Export SQL is written as bytes and
+Value SQL-formatting errors propagate. EXPLAIN and profiling rendering return Result;
+full public profiling/SQL timing and error journeys remain unverified.
+
+The operator logger owns byte parameters and constructs checked VARCHAR Values at the
+C++ boundary. Normal hash-join logging paths propagate Result; cleanup Drop explicitly
+ignores its result. Parquet row-group logging helpers were adjusted to propagate
+errors too; Parquet still awaits full-build integration. **3,494 C++ physical projection/
+log comparisons** match exact parameter bytes, text or raw exceptions, including 140
+expected invalid-Unicode errors; a 16-record independent golden subset is checked in.
+These use real physical projection objects, not mock operators or a C++ engine fallback.
+
+The serial release build took 10m52s and was resumed through the same live process,
+without restart/overlap. Latest whole-workspace stop: execution-workspace-check-2.jsonl
+(25 CSV diagnostics in option names, multi-file metadata, COPY and sniff/read output).
+Evidence: execution-native-checkpoint.json in the external artifact folder. No new
+public CLI/C API/client or full corpus/WAL/performance acceptance is established.
 
 Detailed stage logs, exact limitations, source hashes and resume pointers live in
 `.context/identifier-bytes-progress.md` and the external artifact folder
