@@ -382,6 +382,16 @@ access; typed name storage and its UTF-8 adapter need the remaining port. These
 fixtures must be handled through actual byte-owning identifiers, without encoded
 placeholder names or globally rejecting invalid SQL.
 
+The typed byte-string codec foundation is verified separately. `ByteString` owns raw
+bytes with checked UTF-8 access and no implicit text display. Binary properties and
+in-memory JSON documents preserve those bytes; normal JSON text output retains C++'s
+UTF-8 rejection. All 271 C++ property/default-property/JSON comparisons match, including
+every single byte, embedded NULs and long strings. All 25 common and six serde unit
+tests pass, as do workspace/all-targets check and Clippy with warnings denied. Evidence
+and source hashes: `.context/artifacts/identifier-bytes-20261023/foundation-status.json`.
+Actual parser/AST/catalog names are not migrated by this foundation; the four raw-name
+file gaps remain open. Continue with persisted column names and their query-result path.
+
 ## How to work
 
 - Build and sign: `cargo build --release -p slt -j 1 && scripts/sign.sh target/release/slt`.
