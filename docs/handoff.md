@@ -38,18 +38,20 @@ Complete Python bindings first and all primary clients plus C#/.NET, Swift and J
 - Subagents use model "opus". Commit messages end with the Co-Authored-By line; docs
   changes go in their own commit before the code.
 
-## Current source integration (2026-10-23)
+## Current source integration (2026-10-24)
 
-The checkout has an **uncommitted native-identifier migration and does not build as a
-complete workspace yet**. The planner library now compiles after native renderer and
-SHOW literal integration. The built-in function library also compiles after native
-STRUCT/UNION/ENUM and result-name integration. The latest workspace/all-targets check
-now passes execution, CSV, autocomplete, Parquet, ICU, both TPC generator libraries, JSON and Arrow; the last scoped runtime checkpoint stopped at **15 diagnostics** in appender SQL construction and COPY DATABASE.
-The native Postgres-parser continuation now compiles all targets; its new byte parse-tree
-fields expose **95 AST-transformer integration diagnostics** in `rustdb-parser --lib`.
-The workspace still does not build; the earlier runtime count is not a fresh check of
-the new parser interface. Runtime and client/result consumers remain unchecked by a
-successful complete build.
+The checkout has an **uncommitted native-byte migration and does not build as a
+complete workspace yet**. The native SQL parser now compiles all targets and passes
+73 signed release tests plus 24,499 exact full-AST C++ comparisons. The earlier 700
+pending full-AST byte inputs are resolved, with zero skipped inputs in that matrix.
+The latest workspace/all-target check stops at **57 planner integration diagnostics**,
+mainly COPY/export and statement/parameter consumers of the new AST fields. Catalog and
+storage library compilation passes that check; the newly touched index-type carrier has
+not had a fresh runtime/storage journey. Earlier scoped runtime counts (including 15)
+are historical checkpoints, not a fresh successful runtime build. Downstream execution,
+extensions, shell, C API and selected-client consumers remain unchecked by a complete
+build. Existing component evidence remains scoped to its recorded source snapshot.
+
 The corpus, shell and performance results below describe previously accepted binaries;
 they are not validation of this incomplete source. No final public binary or full
 corpus/file/WAL run has been made for the migration.
@@ -907,3 +909,53 @@ Evidence: `pg-native-checkpoint.json`, `pg-native-tests-3-summary.json`,
 external `identifier-bytes-20261023` directory. The lower-memory block-release policy is
 unchanged. Complete runtime/shell/corpus/storage/WAL/client/performance acceptance
 remains open.
+
+
+The full DuckDB AST/native SQL ingress continuation (2026-10-24) now compiles all
+parser targets and passes scoped common/serde/AST/parser all-target Clippy with warnings
+denied and codegen --check. **73 signed release tests pass**, none ignored; 205 new frozen
+C++ records cover raw SELECT/error cases and raw statement codecs. The parser exposes
+`parse_bytes`, `parse_bytes_with_options` and native statement splitting. Query source,
+CREATE SQL, parameter identities/maps, identifiers, option maps/sets and additional
+statement metadata retain bytes. Their serialized representation is still STRING;
+case-insensitive sets now serialize native key types without writing byte lists.
+The former checked name-to-text adapters in column constraints and generated PIVOT SQL
+are removed. VARCHAR literals and generated constant expressions validate at the actual
+C++ Value-construction boundary. Invalid raw ENUM labels retain bytes as C++'s
+`StringVector::AddStringOrBlob` does, instead of taking the checked literal path.
+
+**24,499 exact C++ full-AST comparisons pass**, with no byte inputs skipped:
+
+- 8,776 SELECT binary-AST/original-SQL and processed error/metadata outcomes. All 700
+  formerly pending byte-ingress inputs are included and pass.
+- 15,723 statement outcomes across CREATE TABLE/NOT NULL, macro defaults, ALTER SET/
+  RESET options, named parameters, COPY option keys, enum/index metadata and COPY file
+  literals. There are 15,428 accepted statements (including 3,339 COPY cases) and 295
+  matched errors. The test compares stored SQL bytes and binary metadata, separately
+  captures COPY's nonserialized parsed-option keys, and verifies codec read/write round
+  trips, including native case-insensitive sets.
+
+The original saved SELECT reference used newly thrown C++ exception JSON, while Rust's
+error is a caught ErrorData. Its 56 field-order differences have identical decoded
+class/message/metadata. A fresh C++ oracle now compares ErrorData on both sides without
+changing engine error formatting. That probe initially rendered four SELECTs after a
+legacy serialization round trip; it now renders the original parsed tree on both sides.
+All successful bytes/renderings remain identical to the original saved reference. Both
+failed comparisons and the corrected evidence are preserved. An initial COPY fixture
+used unsupported `option=value` syntax; the corrected matrix uses `option value` and
+includes successful native COPY metadata, rather than counting those syntax errors as
+COPY-key acceptance.
+
+Evidence: `parser-native-checkpoint.json`, `parser-native-tests-2-summary.json`,
+`parser-native-select-final.log`, `parser-native-statements-final.log`,
+`parser-native-clippy-4.jsonl`, `parser-native-codegen-check.log` and
+`parser-native-workspace-check-3.jsonl` in the external `identifier-bytes-20261023`
+directory. The workspace now stops at 57 planner diagnostics; runtime/shell/C API,
+public file/WAL journeys, final corpus, Python/selected clients and documented final
+performance acceptance remain open. Native error highlighting and the previously
+recorded fallible rendering boundaries also remain open. The uncached block-release
+policy is unchanged.
+
+Catalog/storage all-target Clippy also passes after checkpoint SQL initialization and
+native unbound-index-type integration (`parser-native-catalog-clippy-1.jsonl`). This is
+compilation/lint evidence; it does not replace a new cross-engine file/WAL journey.
