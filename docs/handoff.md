@@ -44,9 +44,9 @@ The checkout has an **uncommitted native-byte migration and does not build as a
 complete workspace yet**. The native SQL parser now compiles all targets and passes
 73 signed release tests plus 24,499 exact full-AST C++ comparisons. The earlier 700
 pending full-AST byte inputs are resolved, with zero skipped inputs in that matrix.
-The latest workspace/all-target check passes the planner and stops at **five CSV
-integration diagnostics**, including COPY FROM reaching its text-only file-list API.
-Planner/SDK all-target compilation and Clippy pass. Catalog and
+The latest workspace/all-target check passes the planner and CSV, then stops at
+**14 execution-layer integration diagnostics**, mainly COPY/export paths and plan
+generation. Planner/SDK and CSV all-target compilation and scoped Clippy pass. Catalog and
 storage library compilation passes that check; the newly touched index-type carrier has
 not had a fresh runtime/storage journey. Earlier scoped runtime counts (including 15)
 are historical checkpoints, not a fresh successful runtime build. Downstream execution,
@@ -998,3 +998,39 @@ directory. The fresh workspace check stops at five CSV diagnostics. Other legacy
 text-only filesystem APIs, non-Unix path semantics, full engine/shell/C API/storage/WAL,
 final corpus, Python/selected clients and documented performance acceptance remain
 open. The uncached lower-memory policy is unchanged.
+
+
+The CSV native-path/file-list continuation (2026-10-24) compiles all CSV targets and
+passes all-target common/function SDK/CSV Clippy with warnings denied plus codegen
+--check. **Four signed CSV release tests pass**, none ignored (the crate has only four
+release tests; this is not a corpus count). File lists, local glob expansion, CSV buffers,
+scan/schema/sniffer/error/reject paths, file-filter callbacks and COPY initialization
+now carry bytes. Native path checks are retained; directory entry names are read as OS
+bytes rather than lossy text. Option-name dispatch compares bytes. Additional option
+value/display codecs that still use text are not accepted by this checkpoint.
+
+**13,577 exact C++ comparisons pass**: 10,075 hive parse/URL-decode/VARCHAR/BIGINT
+outcomes (2,527 expected errors) and 3,502 glob lists/errors against a real SSD fixture
+with Unicode filenames, nested directories and symlinks. Hive partition keys/values
+retain bytes through parsing. URL decoding now preserves bytes until its actual C++
+UTF-8 validation boundary and returns the same native error; typed hive values then use
+the checked VARCHAR constructor. Auto-detection also propagates constructor failures
+instead of silently replacing bytes. Seventy-five frozen C++ hive records pass in-source.
+
+A real signed Rust journey expands a Unicode path, scans the CSV as INTEGER values
+[42, 7], and writes BLOB bytes 610062ff through the native COPY path callback. A signed
+C++ CLI journey produces the same values and file bytes on the SSD. This is direct CSV
+SDK/file and COPY-function callback evidence, **not full runtime SQL COPY acceptance**.
+The first glob comparison matched 3,501/3,502 patterns; the correction reproduces C++'s
+NUL-terminated OS existence check while preserving the returned path's full bytes.
+The failed log remains preserved. Other native OS read/write/NUL boundaries and the
+pre-existing delimiter/value display conversions still require their own audit.
+
+Evidence: `csv-native-path-checkpoint.json`, `csv-native-path-tests-1-summary.json`,
+`csv-hive-native-final.log`, `csv-glob-native-final.log`, `csv-native-cpp-journey.json`,
+`csv-native-path-clippy-4.jsonl`, `csv-native-path-codegen-check.log` and
+`csv-native-path-workspace-check-1.jsonl` in the external `identifier-bytes-20261023`
+directory. The fresh workspace check stops at 14 execution diagnostics; downstream
+JSON/Parquet/runtime/client consumers remain unchecked by a complete build. Final
+shell/corpus/C API/storage/WAL, Python/all selected clients and documented performance
+acceptance remain open. The uncached block-release policy is unchanged.
