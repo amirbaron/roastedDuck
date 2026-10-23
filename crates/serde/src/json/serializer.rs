@@ -80,12 +80,18 @@ impl JsonSerializer {
     }
 
     /// The finished root object.
-    pub fn finish(mut self) -> Result<JsonValue> {
+    pub fn finish(self) -> Result<JsonValue> {
         if self.invalid_utf8 {
             return Err(Error::serialization(
                 "Failed to serialize json, perhaps the query contains invalid utf8 characters?",
             ));
         }
+        self.finish_document()
+    }
+
+    /// The raw document before JSON text encoding checks. yyjson stores raw byte
+    /// strings in its document even when its text writer would reject them.
+    pub fn finish_document(mut self) -> Result<JsonValue> {
         match self.stack.pop() {
             Some(frame) if self.stack.is_empty() => Ok(frame.value),
             _ => Err(Error::internal(
@@ -248,7 +254,7 @@ impl Serializer for JsonSerializer {
             self.push_value(JsonValue::Str(text.to_owned()));
         } else {
             self.invalid_utf8 = true;
-            self.push_value(JsonValue::Str(String::from_utf8_lossy(value).into_owned()));
+            self.push_value(JsonValue::ByteStr(value.into()));
         }
     }
 

@@ -4,6 +4,7 @@
 //! error text is byte-identical to the reference engine.
 
 pub mod blob;
+mod byte_string;
 pub mod collections;
 mod error;
 mod index;
@@ -15,6 +16,7 @@ pub mod string_util;
 pub mod tree_renderer;
 pub mod utf8;
 
+pub use byte_string::ByteString;
 pub use collections::{CaseInsensitiveMap, CaseInsensitiveSet, OrderedMap};
 pub use error::{Error, ErrorKind, Result, os_error_text};
 pub use index::{LogicalIndex, PhysicalIndex};

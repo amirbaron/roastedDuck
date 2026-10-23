@@ -19,6 +19,9 @@ pub enum JsonValue {
     Raw(String),
     /// A string.
     Str(String),
+    /// A string whose original bytes are not UTF-8. yyjson retains these in the
+    /// document, but its normal JSON writer rejects them.
+    ByteStr(rustdb_common::ByteString),
     /// An array.
     Array(Vec<JsonValue>),
     /// An object, with keys in document order.
@@ -36,7 +39,7 @@ impl JsonValue {
             Self::SInt(_) => "sint",
             Self::Real(_) => "real",
             Self::Raw(_) => "raw",
-            Self::Str(_) => "string",
+            Self::Str(_) | Self::ByteStr(_) => "string",
             Self::Array(_) => "array",
             Self::Object(_) => "object",
         }

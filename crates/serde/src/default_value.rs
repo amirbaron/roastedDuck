@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use rustdb_common::{CaseInsensitiveMap, CaseInsensitiveSet, OrderedMap};
+use rustdb_common::{ByteString, CaseInsensitiveMap, CaseInsensitiveSet, OrderedMap};
 
 use crate::OptionalIdx;
 
@@ -53,6 +53,16 @@ macro_rules! float_default {
 float_default!(f32, f64);
 
 impl DefaultValue for String {
+    fn is_default(&self) -> bool {
+        self.is_empty()
+    }
+
+    fn default_value() -> Self {
+        Self::new()
+    }
+}
+
+impl DefaultValue for ByteString {
     fn is_default(&self) -> bool {
         self.is_empty()
     }

@@ -113,6 +113,9 @@ impl<'a> JsonDeserializer<'a> {
         let value = self.next_value()?;
         match value {
             JsonValue::Str(s) => Ok(s),
+            JsonValue::ByteStr(s) => s
+                .to_str()
+                .map_err(|_| Error::serialization("Failed to deserialize: string is not valid UTF-8")),
             _ => Err(self.type_error(value, "string")),
         }
     }
@@ -264,7 +267,12 @@ impl Deserializer for JsonDeserializer<'_> {
     }
 
     fn read_string_bytes(&mut self) -> Result<Vec<u8>> {
-        self.read_str().map(|s| s.as_bytes().to_vec())
+        let value = self.next_value()?;
+        match value {
+            JsonValue::Str(s) => Ok(s.as_bytes().to_vec()),
+            JsonValue::ByteStr(s) => Ok(s.as_bytes().to_vec()),
+            _ => Err(self.type_error(value, "string")),
+        }
     }
 
     fn read_string(&mut self) -> Result<String> {

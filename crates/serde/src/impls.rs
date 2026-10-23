@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use rustdb_common::{
-    CaseInsensitiveMap, CaseInsensitiveSet, LogicalIndex, OrderedMap, PhysicalIndex, Result,
+    ByteString, CaseInsensitiveMap, CaseInsensitiveSet, LogicalIndex, OrderedMap, PhysicalIndex, Result,
 };
 
 use crate::{Deserialize, Deserializer, Serialize, Serializer};
@@ -68,6 +68,19 @@ impl Serialize for String {
 impl Deserialize for String {
     fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
         deserializer.read_string()
+    }
+}
+
+impl Serialize for ByteString {
+    fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
+        serializer.write_string_bytes(self.as_bytes());
+        Ok(())
+    }
+}
+
+impl Deserialize for ByteString {
+    fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
+        deserializer.read_string_bytes().map(Self::from)
     }
 }
 

@@ -1,18 +1,26 @@
 //! Text output identical to yyjson's writer with DuckDB's flags
 //! (`YYJSON_WRITE_ALLOW_INF_AND_NAN`, optionally `YYJSON_WRITE_PRETTY`).
 
+use rustdb_common::{Error, Result};
 use std::fmt::Write as _;
 
 use super::JsonValue;
 
 /// Renders `value` compactly (`{"a":1}`) or pretty-printed with four-space indentation.
 pub fn write_json(value: &JsonValue, pretty: bool) -> String {
-    let mut out = String::new();
-    write_value(&mut out, value, pretty, 0);
-    out
+    // The native yyjson writer returns no text on failure. Preserve that legacy
+    // interface; callers that need to distinguish failure use try_write_json.
+    try_write_json(value, pretty).unwrap_or_default()
 }
 
-fn write_value(out: &mut String, value: &JsonValue, pretty: bool, depth: usize) {
+/// Writes JSON with an explicit failure when a document string is not UTF-8.
+pub fn try_write_json(value: &JsonValue, pretty: bool) -> Result<String> {
+    let mut out = String::new();
+    write_value(&mut out, value, pretty, 0)?;
+    Ok(out)
+}
+
+fn write_value(out: &mut String, value: &JsonValue, pretty: bool, depth: usize) -> Result<()> {
     match value {
         JsonValue::Null => out.push_str("null"),
         JsonValue::Bool(true) => out.push_str("true"),
@@ -26,10 +34,18 @@ fn write_value(out: &mut String, value: &JsonValue, pretty: bool, depth: usize) 
         JsonValue::Real(v) => write_f64(out, *v),
         JsonValue::Raw(raw) => out.push_str(raw),
         JsonValue::Str(s) => write_string(out, s),
+        JsonValue::ByteStr(s) => {
+            let text = s.to_str().map_err(|_| {
+                Error::serialization(
+                    "Failed to serialize json, perhaps the query contains invalid utf8 characters?",
+                )
+            })?;
+            write_string(out, text);
+        }
         JsonValue::Array(items) => {
             if items.is_empty() {
                 out.push_str("[]");
-                return;
+                return Ok(());
             }
             out.push('[');
             for (i, item) in items.iter().enumerate() {
@@ -37,7 +53,7 @@ fn write_value(out: &mut String, value: &JsonValue, pretty: bool, depth: usize) 
                     out.push(',');
                 }
                 newline_indent(out, pretty, depth + 1);
-                write_value(out, item, pretty, depth + 1);
+                write_value(out, item, pretty, depth + 1)?;
             }
             newline_indent(out, pretty, depth);
             out.push(']');
@@ -45,7 +61,7 @@ fn write_value(out: &mut String, value: &JsonValue, pretty: bool, depth: usize) 
         JsonValue::Object(entries) => {
             if entries.is_empty() {
                 out.push_str("{}");
-                return;
+                return Ok(());
             }
             out.push('{');
             for (i, (key, item)) in entries.iter().enumerate() {
@@ -58,12 +74,13 @@ fn write_value(out: &mut String, value: &JsonValue, pretty: bool, depth: usize) 
                 if pretty {
                     out.push(' ');
                 }
-                write_value(out, item, pretty, depth + 1);
+                write_value(out, item, pretty, depth + 1)?;
             }
             newline_indent(out, pretty, depth);
             out.push('}');
         }
     }
+    Ok(())
 }
 
 fn newline_indent(out: &mut String, pretty: bool, depth: usize) {

@@ -15,4 +15,4 @@ pub use deserializer::JsonDeserializer;
 pub use reader::parse_json;
 pub use serializer::{JsonOptions, JsonSerializer};
 pub use value::JsonValue;
-pub use writer::write_json;
+pub use writer::{try_write_json, write_json};
