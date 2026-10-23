@@ -44,7 +44,7 @@ The checkout has an **uncommitted native-identifier migration and does not build
 complete workspace yet**. The planner library now compiles after native renderer and
 SHOW literal integration. The built-in function library also compiles after native
 STRUCT/UNION/ENUM and result-name integration. The latest workspace/all-targets check
-now passes execution and CSV and stops at **213 autocomplete diagnostics**. Runtime and client/result
+now passes execution and CSV; the latest scoped autocomplete check stops at **73 diagnostics**. Runtime and client/result
 consumers remain unchecked by a successful complete build.
 The corpus, shell and performance results below describe previously accepted binaries;
 they are not validation of this incomplete source. No final public binary or full
@@ -241,12 +241,37 @@ public Rust SQL must verify that binder boundary. This is not complete public CS
 acceptance. Native filesystem paths, raw parser ingress and full runtime/reject-table
 journeys remain open.
 
-The whole-workspace check now stops at **213 autocomplete diagnostics**, primarily AST
-text-to-native-name integration and catalog completion results. Later runtime/readers
-remain unchecked by a successful whole build. Evidence: csv-native-checkpoint.json,
-csv-name-reference-sdk.tsv, csv-workspace-check-1.jsonl in the external artifact folder.
-The low-memory cache policy is unchanged. All selected language clients and final
-corpus/shell/file/WAL/performance acceptance remain open.
+The whole-workspace check at that checkpoint stopped at 213 autocomplete diagnostics.
+Evidence: csv-native-checkpoint.json, csv-name-reference-sdk.tsv,
+csv-workspace-check-1.jsonl in the external artifact folder. The following core stage
+advances type/SHOW names; autocomplete remains unverified.
+
+The unbound-type/SHOW continuation passes **138 scoped release tests**, none ignored,
+across types/AST/parser/planner/CSV. All five packages pass all-target Clippy with warnings
+denied, and codegen --check passes. UnboundTypeInfo, TypeParameter, TypeExpression and
+ShowRef name fields retain bytes; borrowed aliases explicitly serialize as STRING bytes.
+SHOW's generated VARCHAR literals validate at the actual C++ value boundary.
+
+**34,940 C++ comparisons pass**: ten modes × 1,747 names × legacy/current serialization.
+They compare exact wire bytes, native SQL text and raw binding errors, covering type
+names/qualifiers/field aliases, ENUM parameters, direct default binding and SHOW fields.
+A 300-record golden subset is checked in. A real legacy-default-binding difference was
+fixed: an empty parameter alias uses ParsedExpression::GetName, which falls back to
+native expression SQL. Direct C++ verification confirms mixed explicit/empty aliases
+produce STRUCT("INTEGER" INTEGER, b VARCHAR); the old test expecting rejection now
+asserts that exact structure. The initial failing test log is preserved.
+
+This is metadata/component verification, not full type-rendering parity. The old
+LogicalType::to_bytes unbound case and infallible rendering wrappers still need native,
+fallible integration. Raw SQL parser ingress and public SHOW/SQL/shell journeys remain
+open. Autocomplete candidate/result byte carriers and PEG name integration are WIP:
+the fresh all-target check stops at **73 transformer diagnostics**; later workspace
+packages remain unchecked by a successful full build. Do not decode native names to
+satisfy old text signatures. Evidence: unbound-show-native-checkpoint.json and
+autocomplete-native-check-7.jsonl in the external artifact folder.
+
+The low-memory cache policy is unchanged. Python and all other selected clients, final
+corpus/shell/file/WAL verification and documented final performance acceptance remain open.
 
 Detailed stage logs, exact limitations, source hashes and resume pointers live in
 `.context/identifier-bytes-progress.md` and the external artifact folder
