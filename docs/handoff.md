@@ -40,7 +40,7 @@ gates remain in place.
   C++ is 4795 pass, 1 fail, 74 skip. All remaining Rust failures are the 15 accepted
   divergences in `conformance/divergences.md` (11 C++ extension binaries, 4 expected
   memory errors Rust avoids). No unexplained regressions, crashes or timeouts.
-  - The fresh type-catalog sweep plus the uncommitted cache flag uses normal thread
+  - The fresh error-byte sweep plus the uncommitted cache flag uses normal thread
     defaults and passes the 4855-file ratchet without rechecks, shrink or verdict changes.
     Every skip reason matches the prior baseline; the 15 failure messages match too,
     apart from a process ID in a temporary filename. `target/slt/rust.jsonl` is refreshed
@@ -71,7 +71,7 @@ gates remain in place.
   and ten C++ controls pass. The explicit-transaction lock sequence matches C++.
 - **CLI shell (the owner's top priority; engine gaps remain):** `crates/shell` (`rustdb`) is DuckDB's
   shell one to one, linenoise included: all 392 `tools/shell/tests` that pass on the C++
-  CLI pass (`scripts/shell-tests.sh --binary rust|cpp`), and 758 of 763 cases of
+  CLI pass (`scripts/shell-tests.sh --binary rust|cpp`), and 760 of 765 cases of
   `scripts/shell-diff.py` (modes, types, dot commands, options, errors, pty sessions)
   match byte for byte; the five others are known engine differences (work-queue item 3).
   Both suites were reverified after the ICU merge with one worker. Upstream shell tests
@@ -306,6 +306,26 @@ including exact accepted-byte round trips and embedded NULs; all 30 C API files 
 does not close the raw input, parser, identifier or error-byte gaps. Artifacts and
 manifests: `.context/artifacts/shell-bytes-20261023/`; source/probe notes:
 `.context/shell-bytes-investigation.md`. No job is active after these checks.
+
+The next shared boundary now preserves error-message bytes: `Error` owns bytes and
+provides native byte formatters; scalar C API bind/init/execute callbacks and SQL
+`error()` keep invalid UTF-8 intact. Native C API error accessors use those bytes.
+NUL sanitization runs before JSON conversion, and JSON control escapes use DuckDB's
+uppercase hex digits. `scripts/capi-error-bytes.py` compares 2,128 cases with C++:
+all byte values and selected sequences, callback phases and raw-vector SQL errors,
+direct/prepared statements, plain/JSON errors and connection recovery. All match.
+The 23 common unit tests, workspace/all-targets Clippy, 30 C API files, all 765 shell
+differential cases (zero unexpected differences, five known) and 392 upstream shell
+tests/three shared skips pass on fresh signed binaries. Two new unmarked shell cases
+cover NUL/control/Unicode messages and recovery. The full 4,870-file sweep has 4,781
+passes, 15 accepted divergences, 74 shared skips and no crashes/timeouts; every status,
+skip reason and normalized failure message matches the prior baseline. The 4,855-file
+ratchet has zero regressions or new entries. Canonical results are refreshed with the
+prior copy preserved. Public/full manifests and pointer files are under
+`.context/artifacts/shell-bytes-20261023/` (`raw-errors-path.txt` and
+`raw-errors-full-path.txt`). Both validation drivers are terminal. This does not close
+raw shell input, parser/name bytes, non-scalar callback carriers or legacy text error
+wrappers. The cache experiment remains uncommitted and unaccepted.
 
 ## How to work
 

@@ -49,20 +49,25 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      (byte sequence mismatch) detected in value construction", `.print` writes them as
      they are). Needs byte strings from the shell's input down to the parser.
      Raw identifiers can also be created and queried in C++ while metadata conversion
-     rejects them, so blanket validation of SQL input is incorrect. The next boundary
-     ported first is a shared checked byte-to-VARCHAR constructor for value construction;
+     rejects them, so blanket validation of SQL input is incorrect. A shared checked
+     byte-to-VARCHAR constructor is implemented for value construction;
      unchecked vector bytes and raw identifiers must remain distinct. Byte probes:
      `.context/artifacts/shell-bytes-20261023/`.
      That boundary passes 102 type/vector tests, all 30 C API files and 392 shell
      tests/three shared skips. A 65,823-input constructor matrix matches C++ exactly.
-     The remaining byte-preserving shell/parser/name/error interfaces are still open.
-     A scalar C API callback error probe also reproduces byte loss: C++ preserves
-     invalid UTF-8 in both plain and JSON errors; Rust currently substitutes U+FFFD.
-     Error messages and native wire formatting are the next byte-owning boundary.
-     The expanded callback oracle also requires uppercase JSON control escapes.
-     A SQL `error()` probe confirms that embedded NULs are sanitized to literal `\0`
-     before JSON conversion, matching `ErrorData::SanitizeErrorMessage`. Include the
-     SQL error function and its native byte output in this boundary.
+     Engine error messages now own bytes. Scalar C API bind/init/execute callbacks,
+     SQL `error()` and native C API error formatting preserve those bytes; NULs are
+     sanitized to literal `\0` before JSON conversion and JSON control escapes use
+     uppercase hex digits. All 2,128 cases in `scripts/capi-error-bytes.py` match C++
+     (all byte values/selected sequences, direct/prepared, plain/JSON, callback phases,
+     raw-vector SQL errors and recovery). The 23 common tests, workspace Clippy,
+     30 C API files, 765 shell cases (zero unexpected/five known), 392 shell tests/three
+     skips and full 4,870-file corpus pass their existing gates. The corpus is unchanged:
+     4,781 pass, 15 accepted divergences, 74 shared skips, zero crashes/timeouts and
+     zero ratchet regressions. Raw shell/parser/name bytes, non-scalar callback error
+     carriers and remaining legacy text wrappers are still open. Public/full artifacts:
+     `.context/artifacts/shell-bytes-20261023/` (`raw-errors-path.txt` and
+     `raw-errors-full-path.txt`); `remaining-error-carriers.txt` records the next paths.
    - Object ids: the oid of a database (`PRAGMA database_list`'s `seq`) counts the
      catalog entries created before it, more in DuckDB.
    - A `memory_limit` far below an aggregate's state (`SELECT list(i) FROM range(1e7)`
