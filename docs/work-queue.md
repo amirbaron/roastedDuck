@@ -90,6 +90,11 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      Valid-UTF-8 controls match and all read-only hashes are unchanged. Continue with
      byte-owning typed identifiers across query/parser/catalog/serialization, using
      the binary deserializer's existing raw string-byte interface.
+     Introduce an owned byte-string type with checked UTF-8 access (no implicit text
+     dereference or lossy display), and a raw binary string codec before migrating
+     generated AST/catalog name fields. Compare its numbered-property wire bytes
+     against C++ for raw/empty/NUL/long strings. Keep strict String decoding for text
+     fields; this codec foundation alone does not close the four raw-name file gaps.
    - Object ids: the oid of a database (`PRAGMA database_list`'s `seq`) counts the
      catalog entries created before it, more in DuckDB.
    - A `memory_limit` far below an aggregate's state (`SELECT list(i) FROM range(1e7)`
