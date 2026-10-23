@@ -44,7 +44,7 @@ The checkout has an **uncommitted native-identifier migration and does not build
 complete workspace yet**. The planner library now compiles after native renderer and
 SHOW literal integration. The built-in function library also compiles after native
 STRUCT/UNION/ENUM and result-name integration. The latest workspace/all-targets check
-now passes execution, CSV, autocomplete, Parquet, ICU, both TPC generator libraries and JSON; the latest workspace check stops at **14 Arrow diagnostics**. Runtime and client/result
+now passes execution, CSV, autocomplete, Parquet, ICU, both TPC generator libraries, JSON and Arrow; the latest workspace check stops at **205 rustdb runtime diagnostics**. Runtime and client/result
 consumers remain unchecked by a successful complete build.
 The corpus, shell and performance results below describe previously accepted binaries;
 they are not validation of this incomplete source. No final public binary or full
@@ -395,6 +395,30 @@ json-native-workspace-check-1.jsonl on the SSD. This verifies native JSON compon
 not complete public JSON file/SQL/shell/corpus behavior. Arrow/client APIs, the remaining
 runtime/C API build, full correctness/storage/WAL and documented final performance
 acceptance remain open. The uncached lower-memory baseline is unchanged.
+
+The Arrow native-name continuation compiles all targets and passes all-target Clippy
+with warnings denied and codegen --check. **11 signed release tests pass**, none ignored.
+Imported schema names use the actual Arrow C-string byte view, preserving invalid UTF-8
+and truncating at NUL; exported names, nested STRUCT/UNION fields, projected columns and
+DuckDB table-schema names retain native bytes. ENUM dictionary export uses full label
+byte lengths rather than text carriers. Alias lookup compares raw type-name bytes.
+
+**6,988 exact C++ comparisons pass**: 5,241 schema export/root-import/nested-import
+outcomes plus 1,747 ENUM array dictionary outcomes. These compare exported C names/
+formats/flags, imported duplicate/empty names, exact nested DuckDB type serialization,
+dictionary offsets/data and array indices. C-string NUL truncation differs deliberately
+from the dictionary's length-preserving byte data, matching C++. Sixty golden records
+are checked in. This is component C ABI schema/data evidence, not complete Arrow/client
+acceptance: format and extension-metadata text codecs still need their own boundary audit.
+
+The fresh full-workspace/all-target check now reaches the main rustdb crate and stops
+at **205 runtime diagnostics** across result/logging/database/catalog/system-function
+consumers. Evidence: arrow-native-checkpoint.json, arrow-native-workspace-check-1.jsonl
+and runtime-native-diagnostic-index.json on the SSD. Completing these runtime names is
+required before final public binaries, shell/corpus/C API/storage/WAL and selected-client
+verification can run. Python and all other clients, raw parser/filesystem/fallible
+rendering, and documented final speed-memory acceptance remain open. The lower-memory
+uncached baseline is preserved.
 
 Detailed stage logs, exact limitations, source hashes and resume pointers live in
 `.context/identifier-bytes-progress.md` and the external artifact folder
