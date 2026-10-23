@@ -44,8 +44,9 @@ The checkout has an **uncommitted native-byte migration and does not build as a
 complete workspace yet**. The native SQL parser now compiles all targets and passes
 73 signed release tests plus 24,499 exact full-AST C++ comparisons. The earlier 700
 pending full-AST byte inputs are resolved, with zero skipped inputs in that matrix.
-The latest workspace/all-target check stops at **57 planner integration diagnostics**,
-mainly COPY/export and statement/parameter consumers of the new AST fields. Catalog and
+The latest workspace/all-target check passes the planner and stops at **five CSV
+integration diagnostics**, including COPY FROM reaching its text-only file-list API.
+Planner/SDK all-target compilation and Clippy pass. Catalog and
 storage library compilation passes that check; the newly touched index-type carrier has
 not had a fresh runtime/storage journey. Earlier scoped runtime counts (including 15)
 are historical checkpoints, not a fresh successful runtime build. Downstream execution,
@@ -959,3 +960,41 @@ policy is unchanged.
 Catalog/storage all-target Clippy also passes after checkpoint SQL initialization and
 native unbound-index-type integration (`parser-native-catalog-clippy-1.jsonl`). This is
 compilation/lint evidence; it does not replace a new cross-engine file/WAL journey.
+
+
+The planner/native path continuation (2026-10-24) compiles planner/function SDK all
+targets, passes all-target Clippy with warnings denied and codegen --check. COPY/export
+logical metadata and SDK bind inputs now carry byte paths, format and option names;
+SET/RESET/PREPARE/PRAGMA and bound-parameter identifiers remain bytes through the planner
+and generated STRING properties. Secret storage/option identities also retain bytes.
+This verifies interfaces and the scoped behaviors below, **not full COPY/export or
+runtime execution**: downstream CSV/JSON/Parquet/execution/client integration is pending.
+
+**59 signed release tests pass**; one existing exhaustive cast-grid test is ignored.
+**28,021 new exact C++ comparisons pass**: 26,247 path expansion/generic/local
+canonicalization outcomes, 27 extra path edge cases, and 1,747 bound-parameter binary
+metadata/native text outcomes. The parameter test uses the actual BoundParameterMap
+and additionally checks shared bind data for ASCII-case variants. There are 61 stable
+path fixtures and 53 parameter fixtures in source. Access checks now preserve byte paths
+and error messages instead of decoding them. The real SSD journey verifies Unicode
+file read/write, raw-byte allow/deny/home expansion, and rejection of sibling-prefix,
+parent-directory and symlink escapes from an allowed directory.
+
+The first path matrix exposed four mismatches; matching C++ requires its all-empty
+string-delimiter split fallback (e.g. generic "/" becomes "//"), unknown `file://` URL
+absolute-path behavior and the C-string `realpath` boundary. The corrected matrix passes.
+The original real-path test attempted invalid-UTF-8 directory names, which this APFS
+volume rejects with errno 92. A signed C++ LocalFileSystem probe reports the same
+Illegal byte sequence. The final test uses real Unicode names for OS I/O and preserves
+raw bytes in permission checks/errors; it does not claim APFS can create invalid-UTF-8
+filenames. The original failed test and C++ rejection evidence remain preserved.
+
+Evidence: `planner-native-checkpoint.json`, `planner-native-tests-2-summary.json`,
+`planner-native-path-tests-2-summary.json`, `filesystem-native-comparison-2.log`,
+`filesystem-native-extra-comparison-2.log`, `planner-parameter-native-comparison-1.log`,
+`planner-native-clippy-4.jsonl`, `planner-native-codegen-check.log` and
+`planner-native-workspace-check-1.jsonl` in the external `identifier-bytes-20261023`
+directory. The fresh workspace check stops at five CSV diagnostics. Other legacy
+text-only filesystem APIs, non-Unix path semantics, full engine/shell/C API/storage/WAL,
+final corpus, Python/selected clients and documented performance acceptance remain
+open. The uncached lower-memory policy is unchanged.
