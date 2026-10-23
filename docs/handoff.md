@@ -41,7 +41,7 @@ Complete Python bindings first and all primary clients plus C#/.NET, Swift and J
 ## Current source integration (2026-10-23)
 
 The checkout has an **uncommitted native-identifier migration and does not build as a
-complete workspace yet**. The latest all-target check reports 279 planner diagnostics.
+complete workspace yet**. The latest all-target check reports 190 planner diagnostics.
 The corpus, shell and performance results below describe previously accepted binaries;
 they are not validation of this incomplete source. No final public binary or full
 corpus/file/WAL run has been made for the migration.
@@ -60,6 +60,23 @@ remain pending raw ingress and are not counted as passed. Lambda-reference codec
 checks do not establish SQL rendering parity: C++ deliberately rejects rendering that
 transient node, while the current Rust renderer returns its name. Record and close
 that difference before final acceptance.
+
+The latest table/pivot stage passes all 218 affected release tests (one pre-existing
+exhaustive cast-grid test remains ignored), 15,723 new C++ pivot/value comparisons and
+the previous 8,735 cast comparisons. The 15,723 cases cover 3,494 pivot/unpivot AST
+wire/render cases and 12,229 value/cast cases; the latter compare successes and exact
+exceptions, including 841 plain/cast and 561 SQL exception outcomes. C++ validates
+VARCHAR when materializing values: nested values with invalid name bytes can fail
+`ToString`, even though a STRUCT SQL literal can keep those bytes.
+
+`Value::to_varchar_bytes` and `try_to_sql_string` expose that native behavior. The
+infallible `to_sql_string` wrapper and old text callers still need migration so rendering
+exceptions reach the engine/shell; this is not complete native rendering parity. An
+unnamed-STRUCT-to-VARIANT probe also fixed a real cast-error distinction: C++ exceptions
+from cast binding/execution escape unchanged; only recorded conversion failures get
+"Failed to cast value". Scoped common/types/function/AST/parser Clippy with warnings
+denied and codegen --check pass. Final workspace compilation and runtime gates remain
+open. Exact logs and hashes: `table-name-checkpoint.json` in the external artifact folder.
 
 Detailed stage logs, exact limitations, source hashes and resume pointers live in
 `.context/identifier-bytes-progress.md` and the external artifact folder
