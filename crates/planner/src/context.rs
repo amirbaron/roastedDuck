@@ -159,14 +159,21 @@ impl fmt::Debug for ReplacementScan {
 pub struct ClientContext {
     /// The attached catalogs, the default one first; the `system` catalog holds built-ins.
     pub catalogs: Vec<Arc<Catalog>>,
-    /// The `(catalog, schema)` entries of `search_path` / `USE`; empty for the default
-    /// (DuckDB's `CatalogSearchPath::set_paths`).
+    /// Resolved `(catalog, schema)` entries of `search_path` / `USE`.
     pub search_path: Vec<(String, String)>,
+    /// The set paths before resolving an implicit catalog. Qualification compares
+    /// these raw names, including the empty catalog of the default database.
+    pub raw_search_path: Vec<(String, String)>,
+    /// `DatabaseManager::HasDefaultDatabase`; bootstrap type binding uses `system`.
+    pub has_default_database: bool,
     /// The entries searched before `search_path` while a view is bound (DuckDB's
     /// `CatalogEntryRetriever::SetSearchPath` with `Binder::GetSearchPath`): the view's
     /// schema, then its catalog with an empty schema, which non-table lookups resolve to
     /// the catalog's default schema in place (`default_schema_precedence`).
     pub view_search_path: Vec<(String, String)>,
+    /// Views give their catalog's default schema precedence; `SetSearchPath` for
+    /// binding declared types does not (`CatalogSearchEntry::default_schema_precedence`).
+    pub view_default_schema_precedence: bool,
     pub transaction: Arc<Transaction>,
     pub casts: Arc<CastFunctionSet>,
     pub evaluator: Arc<dyn ExpressionEvaluator>,
@@ -345,6 +352,22 @@ impl ClientContext {
             (catalog.to_owned(), schema.to_owned()),
             (catalog.to_owned(), String::new()),
         ];
+        context.view_default_schema_precedence = true;
+        context
+    }
+
+    /// `Binder::SetSearchPath` for a table's declared types: its schema is searched
+    /// first, but its catalog-only entry does not precede the client's set paths.
+    #[must_use]
+    pub fn with_type_search_path(&self, catalog: &str, schema: &str) -> Self {
+        if catalog.is_empty()
+            || catalog.eq_ignore_ascii_case("system")
+            || catalog.eq_ignore_ascii_case(TEMP_CATALOG)
+        {
+            return self.clone();
+        }
+        let mut context = self.with_view_search_path(catalog, schema);
+        context.view_default_schema_precedence = false;
         context
     }
 
@@ -401,7 +424,7 @@ impl ClientContext {
                     .filter_map(|(path_catalog, path_schema)| {
                         if !path_schema.is_empty() {
                             Some((path_catalog, path_schema))
-                        } else if ty == CatalogType::Table {
+                        } else if ty == CatalogType::Table || !self.view_default_schema_precedence {
                             None
                         } else {
                             Some((path_catalog, DEFAULT_SCHEMA.to_owned()))
@@ -579,28 +602,18 @@ impl ClientContext {
                 CatalogType::CopyFunction => &schema.copy_functions,
                 _ => &schema.functions,
             };
-            let mut entry_score = 0.0;
-            let mut entry_name = String::new();
+            let (mut entry_score, mut entry_name) = set.similar_entry(name);
             let mut consider = |candidate: &str| {
-                let score = similarity_rating(&candidate.to_lowercase(), name);
+                let score = similarity_rating(candidate, name);
                 if score > entry_score {
                     entry_score = score;
                     candidate.clone_into(&mut entry_name);
                 }
             };
-            if ty == CatalogType::Type && schema_name.eq_ignore_ascii_case(DEFAULT_SCHEMA) {
-                // The builtin types of every `main` schema (`DefaultTypeGenerator`).
-                for builtin in rustdb_types::builtin_type_names() {
-                    consider(builtin);
-                }
-            }
             if ty == CatalogType::Collation && catalog_name == "system" {
                 for builtin in crate::collation_binding::builtin_collation_names() {
                     consider(builtin);
                 }
-            }
-            for entry in set.scan(&self.transaction) {
-                consider(entry.name());
             }
             if entry_name.is_empty() {
                 continue;
@@ -619,17 +632,46 @@ impl ClientContext {
     /// `name` in `catalog.schema`, qualified only as far as the search path requires
     /// (DuckDB's `FindMinimalQualification` with `SimilarCatalogEntry::GetQualifiedName`).
     fn minimally_qualified(&self, catalog: &str, schema: &str, name: &str) -> String {
-        let reaches = |paths: Vec<(String, String)>| {
+        // `FindMinimalQualification` compares the unresolved search-path catalog,
+        // not the database it will resolve to during an actual lookup.
+        let mut paths = vec![(TEMP_CATALOG.to_owned(), DEFAULT_SCHEMA.to_owned())];
+        paths.extend(self.view_search_path.iter().cloned());
+        paths.extend(self.raw_search_path.iter().cloned());
+        paths.push((String::new(), DEFAULT_SCHEMA.to_owned()));
+        paths.push(("system".to_owned(), DEFAULT_SCHEMA.to_owned()));
+        paths.push(("system".to_owned(), "pg_catalog".to_owned()));
+        let mut schema_catalogs: Vec<String> = if is_default_schema(schema) {
+            vec!["system".to_owned()]
+        } else {
             paths
                 .iter()
-                .any(|(c, s)| c.eq_ignore_ascii_case(catalog) && s.eq_ignore_ascii_case(schema))
+                .filter(|(_, s)| s.is_empty() || s.eq_ignore_ascii_case(schema))
+                .map(|(c, _)| c.clone())
+                .collect()
         };
-        if reaches(self.search_path("", schema, CatalogType::Table)) {
+        if schema_catalogs.is_empty() {
+            let default = self.view_search_path.first().or(self.raw_search_path.first());
+            schema_catalogs.push(
+                default
+                    .filter(|(c, _)| !c.is_empty())
+                    .map_or_else(|| self.default_catalog(), |(c, _)| c.clone()),
+            );
+        }
+        if schema_catalogs.iter().any(|c| c.eq_ignore_ascii_case(catalog)) {
             format!("{schema}.{name}")
-        } else if reaches(self.search_path(catalog, "", CatalogType::Table)) {
-            format!("{catalog}.{name}")
         } else {
-            format!("{catalog}.{schema}.{name}")
+            let catalog_schemas: Vec<&str> = paths
+                .iter()
+                .filter(|(c, s)| c.eq_ignore_ascii_case(catalog) && !s.is_empty())
+                .map(|(_, s)| s.as_str())
+                .collect();
+            if (catalog_schemas.is_empty() && schema.eq_ignore_ascii_case(DEFAULT_SCHEMA))
+                || catalog_schemas.iter().any(|s| s.eq_ignore_ascii_case(schema))
+            {
+                format!("{catalog}.{name}")
+            } else {
+                format!("{catalog}.{schema}.{name}")
+            }
         }
     }
 
@@ -704,9 +746,6 @@ impl ClientContext {
     /// DuckDB's `Catalog::CreateMissingEntryException`.
     fn missing_entry_error(&self, searched: &[(String, String)], ty: CatalogType, name: &str) -> Error {
         const UNSEEN_PENALTY: f64 = 0.2;
-        if let Some(error) = self.extension_entry_error(ty, name) {
-            return error;
-        }
         let (seen_score, seen) = self.similar_entries(searched, ty, name);
         let mut unseen_schemas = Vec::new();
         for catalog in &self.catalogs {
@@ -721,6 +760,9 @@ impl ClientContext {
             .into_iter()
             .filter(|key| !searched.contains(key))
             .collect();
+        if let Some(error) = self.extension_entry_error(ty, name) {
+            return error;
+        }
         let (unseen_score, unseen) = self.similar_entries(&unseen_schemas, ty, name);
         let mut suggestions = BTreeSet::new();
         if !unseen.is_empty() && (unseen_score >= 1.0 || unseen_score - UNSEEN_PENALTY > seen_score) {

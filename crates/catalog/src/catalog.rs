@@ -508,6 +508,7 @@ impl Catalog {
         if ty == CatalogType::Type && is_builtin_type(schema, &name) {
             // The builtin types of `main` exist in every catalog (DuckDB's
             // `DefaultTypeGenerator`) and are internal entries.
+            let _ = set.get(transaction, &name);
             return match on_conflict {
                 OnCreateConflict::IgnoreOnConflict => Ok(false),
                 OnCreateConflict::ReplaceOnConflict => Err(internal_entry_error(&name)),
@@ -689,6 +690,7 @@ impl Catalog {
         let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
         let set = Self::set_for(schema_entry, ty);
         if ty == CatalogType::Type && is_builtin_type(schema, name) {
+            let _ = set.get(transaction, name);
             return Err(internal_entry_error(name));
         }
         let Some(existing) = set.get(transaction, name) else {

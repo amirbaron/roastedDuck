@@ -2902,10 +2902,18 @@ impl Connection {
                 transaction: Arc::clone(&transaction),
             }));
         let instance = self.database.instance();
+        let has_default_database = instance
+            .default_database
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some();
         let context = Arc::new(ClientContext {
             catalogs: self.catalogs(&instance.default_database_name()),
             search_path: self.search_path.clone(),
+            raw_search_path: self.search_path_set.clone(),
+            has_default_database,
             view_search_path: Vec::new(),
+            view_default_schema_precedence: false,
             transaction,
             casts: self.casts(),
             evaluator: Arc::new(ScalarEvaluator),

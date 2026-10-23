@@ -1,9 +1,8 @@
 //! Resolving type names (DuckDB's `Binder::BindLogicalType` in `bind_create.cpp` and
 //! `ExpressionBinder::BindExpression(TypeExpression &)` in `bind_type_expression.cpp`).
 //!
-//! The transformer leaves every type name UNBOUND. Builtin names bind without the
-//! catalog (`DefaultTypeGenerator`); other names are user types (`TypeCatalogEntry`)
-//! looked up through the search path.
+//! The transformer leaves every type name UNBOUND. Names resolve through lazy builtin
+//! and user type catalog entries before their modifiers are bound.
 
 use rustdb_catalog::{CatalogType, EntryKind};
 use rustdb_common::{Error, Result};
@@ -14,11 +13,7 @@ use crate::context::{ClientContext, position_missing_entry};
 /// Resolves a type written in SQL (DuckDB's `Binder::BindLogicalType`): every UNBOUND
 /// type within `ty` is replaced by the builtin or user type it names.
 pub fn bind_logical_type(context: &ClientContext, ty: &LogicalType) -> Result<LogicalType> {
-    TypeBinder {
-        context,
-        schema: None,
-    }
-    .bind(ty)
+    TypeBinder { context }.bind(ty)
 }
 
 /// [`bind_logical_type`] looking for user types in `catalog.schema` first (the binder of
@@ -29,11 +24,8 @@ pub fn bind_logical_type_in_schema(
     catalog: &str,
     schema: &str,
 ) -> Result<LogicalType> {
-    TypeBinder {
-        context,
-        schema: Some((catalog, schema)),
-    }
-    .bind(ty)
+    let context = context.with_type_search_path(catalog, schema);
+    TypeBinder { context: &context }.bind(ty)
 }
 
 /// Whether `ty` contains an UNBOUND type (`TypeVisitor::Contains`).
@@ -57,8 +49,6 @@ fn contains_unbound(ty: &LogicalType) -> bool {
 
 struct TypeBinder<'a> {
     context: &'a ClientContext,
-    /// The catalog and schema searched first for unqualified user types.
-    schema: Option<(&'a str, &'a str)>,
 }
 
 impl TypeBinder<'_> {
@@ -110,22 +100,33 @@ impl TypeBinder<'_> {
     /// One type expression (DuckDB's `BindLogicalTypeInternal` with
     /// `BindExpression(TypeExpression &)`): a builtin type, else a user type.
     fn bind_unbound(&self, info: &UnboundTypeInfo) -> Result<LogicalType> {
-        let unqualified = info.catalog.is_empty() && info.schema.is_empty();
-        if unqualified
-            && let Some((catalog, schema)) = self.schema
-            && let Some(found) =
-                self.context
-                    .get_entry(catalog, schema, CatalogType::Type, &info.name, true)?
-        {
+        let found = self.lookup_type(info).map_err(|error| {
+            // Type extension hints are plain CatalogExceptions without a query
+            // position. Only the ordinary missing-type exception gets a caret.
+            if error.subtype() == Some("MISSING_ENTRY") {
+                position_missing_entry(error, info.query_location)
+            } else {
+                error
+            }
+        })?;
+        let builtin = found.entry.internal
+            && found.entry.temporary
+            && rustdb_types::builtin_type_id(found.entry.name()).is_some();
+        if !builtin {
             return user_type(info, &found.entry);
         }
-        let qualified_in_main =
-            info.schema.is_empty() || info.schema.eq_ignore_ascii_case(rustdb_catalog::DEFAULT_SCHEMA);
-        if qualified_in_main && info.name.eq_ignore_ascii_case("enum") {
+        if !info.parameters.is_empty()
+            && rustdb_types::builtin_type_has_bind_function(&info.name) == Some(false)
+        {
+            return Err(
+                Error::binder(format!("Type '{}' does not take any type parameters", info.name))
+                    .with_position(info.query_location),
+            );
+        }
+        if info.name.eq_ignore_ascii_case("enum") {
             return bind_enum_parameters(info);
         }
-        if qualified_in_main
-            && rustdb_types::builtin_type_id(&info.name) == Some(LogicalTypeId::Varchar)
+        if rustdb_types::builtin_type_id(&info.name) == Some(LogicalTypeId::Varchar)
             && let Some(collation) = varchar_collation(info)
         {
             // `BindVarcharType`: a valid collation names a collated VARCHAR.
@@ -140,8 +141,7 @@ impl TypeBinder<'_> {
             )?;
             return Ok(ty);
         }
-        if qualified_in_main
-            && rustdb_types::builtin_type_id(&info.name) == Some(LogicalTypeId::Geometry)
+        if rustdb_types::builtin_type_id(&info.name) == Some(LogicalTypeId::Geometry)
             && let [parameter] = info.parameters.as_slice()
             && let rustdb_types::TypeParameterValue::Constant(crs) = &parameter.value
             && crs.logical_type().id() == LogicalTypeId::Varchar
@@ -149,34 +149,51 @@ impl TypeBinder<'_> {
         {
             return bind_geometry_crs(crs, self.context.config.ignore_unknown_crs);
         }
-        if qualified_in_main {
-            // Nested type expressions are bound first (`BindExpression(TypeExpression &)`
-            // binds its children), so `ENUM(...)[]` binds the ENUM here.
-            let mut info = info.clone();
-            for parameter in &mut info.parameters {
-                if let rustdb_types::TypeParameterValue::Type(child) = &parameter.value {
-                    let child = self.bind_unbound(child)?;
-                    parameter.value =
-                        rustdb_types::TypeParameterValue::Constant(rustdb_types::Value::type_value(child));
-                }
-            }
-            let bound = info.default_bind()?;
-            if bound.id() != LogicalTypeId::Unbound {
-                // The modifiers of a builtin type may name user types.
-                return self.bind(&bound);
+        // Lookup creates the root entry before its parameter expressions create
+        // child entries, even when binding a modifier subsequently fails.
+        let mut info = info.clone();
+        for parameter in &mut info.parameters {
+            if let rustdb_types::TypeParameterValue::Type(child) = &parameter.value {
+                let child = self.bind_unbound(child)?;
+                parameter.value =
+                    rustdb_types::TypeParameterValue::Constant(rustdb_types::Value::type_value(child));
             }
         }
-        let (mut catalog, mut schema) = (info.catalog.clone(), info.schema.clone());
-        if catalog.is_empty() && !schema.is_empty() && self.context.catalog(&schema).is_some() {
-            // `db.type`: a catalog, not a schema (`BindSchemaOrCatalog`).
-            catalog = std::mem::take(&mut schema);
+        let bound = info.default_bind()?;
+        if bound.id() == LogicalTypeId::Unbound {
+            return Err(Error::internal("builtin type entry has no default binder"));
         }
-        let found = self
-            .context
-            .get_entry(&catalog, &schema, CatalogType::Type, &info.name, false)
-            .map_err(|error| position_missing_entry(error, info.query_location))?
-            .ok_or_else(|| Error::internal("type lookup returned nothing"))?;
-        user_type(info, &found.entry)
+        self.bind(&bound)
+    }
+
+    /// `BindExpression(TypeExpression &)`: try the requested scope, then the search
+    /// path, and report a missing unqualified type from `system.main`.
+    fn lookup_type(&self, info: &UnboundTypeInfo) -> Result<crate::context::EntryLookup> {
+        let (catalog, schema) = self.context.bind_schema_or_catalog(&info.catalog, &info.schema)?;
+        let lookup = |catalog: &str, schema: &str, if_exists| {
+            self.context
+                .get_entry(catalog, schema, CatalogType::Type, &info.name, if_exists)
+        };
+        let valid = |entry: &crate::context::EntryLookup| matches!(&entry.entry.kind, EntryKind::Type(ty) if ty.user_type.id() != LogicalTypeId::Invalid);
+        if catalog.is_empty() && !self.context.has_default_database {
+            return lookup("system", &schema, false)?
+                .ok_or_else(|| Error::internal("type lookup returned nothing"));
+        }
+        if let Some(entry) = lookup(&catalog, &schema, true)?.filter(valid) {
+            return Ok(entry);
+        }
+        if !catalog.is_empty() || !schema.is_empty() {
+            // A qualified name missing from its requested scope reports that scope.
+            lookup(&catalog, &schema, false)?;
+        }
+        if let Some(entry) = lookup(&catalog, "", true)?.filter(valid) {
+            return Ok(entry);
+        }
+        if let Some(entry) = lookup("", "", true)?.filter(valid) {
+            return Ok(entry);
+        }
+        lookup("system", rustdb_catalog::DEFAULT_SCHEMA, false)?
+            .ok_or_else(|| Error::internal("type lookup returned nothing"))
     }
 }
 

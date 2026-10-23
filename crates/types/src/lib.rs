@@ -67,7 +67,8 @@ pub use time::{ParsedTime, Time, TimeNs, TimeTz};
 pub use timestamp::{ParsedTimestamp, Timestamp, TimestampParseError};
 pub use type_info::{CoordinateReferenceSystem, EnumTypeInfo};
 pub use unbound::{
-    TypeParameter, TypeParameterValue, UnboundTypeInfo, builtin_type_id, builtin_type_names, expression_ids,
+    TypeParameter, TypeParameterValue, UnboundTypeInfo, builtin_type_has_bind_function, builtin_type_id,
+    builtin_type_names, expression_ids,
 };
 pub use uuid::Uuid;
 pub use validity::ValidityMask;

@@ -1082,15 +1082,6 @@ pub fn bind_drop(scope: &mut BindScope<'_>, drop: &mut DropInfo) -> Result<Bound
     if let Some(ty) = ty {
         let (catalog, schema) = bind_schema_or_catalog(scope, &drop.catalog, &drop.schema)?;
         let if_exists = drop.if_not_found == OnEntryNotFound::ReturnNull;
-        if ty == CatalogType::Type
-            && (schema.is_empty() || schema.eq_ignore_ascii_case(rustdb_catalog::DEFAULT_SCHEMA))
-            && rustdb_types::builtin_type_id(&drop.name).is_some()
-        {
-            return Err(Error::catalog(format!(
-                "Cannot drop internal catalog entry \"{}\"!",
-                drop.name
-            )));
-        }
         let mut found = scope.context.get_entry(&catalog, &schema, ty, &drop.name, true)?;
         if found.is_none() && ty == CatalogType::Macro {
             // `DROP MACRO` also drops table macros.

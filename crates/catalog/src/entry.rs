@@ -117,7 +117,7 @@ impl SchemaEntry {
             pragma_functions: set(),
             copy_functions: set(),
             sequences: set(),
-            types: set(),
+            types: Arc::new(CatalogSet::with_default_types(catalog, schema)),
             collations: set(),
             indexes: set(),
         }

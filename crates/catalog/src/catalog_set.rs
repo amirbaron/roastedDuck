@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use rustdb_common::{Error, ErrorKind, Result};
@@ -56,16 +57,50 @@ pub enum Lookup {
     Invisible,
 }
 
+/// The key spelling of DuckDB's case-insensitive catalog map stays unchanged when
+/// versions are replaced or cleaned up. Suggestions compare that spelling as bytes.
+#[derive(Debug)]
+struct EntryChain {
+    name: String,
+    versions: Vec<Arc<Version>>,
+}
+
+impl EntryChain {
+    fn committed(entry: CatalogEntry) -> Self {
+        Self {
+            name: entry.name().to_owned(),
+            versions: vec![Version::new(0, Some(Arc::new(entry)))],
+        }
+    }
+}
+
+impl Deref for EntryChain {
+    type Target = Vec<Arc<Version>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.versions
+    }
+}
+
+impl DerefMut for EntryChain {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.versions
+    }
+}
+
 /// Name-keyed, versioned storage for catalog entries (DuckDB's `CatalogSet`).
 ///
 /// Names are case-insensitive. Each chain is ordered newest first.
 #[derive(Debug, Default)]
 pub struct CatalogSet {
-    chains: Mutex<BTreeMap<String, Vec<Arc<Version>>>>,
+    chains: Mutex<BTreeMap<String, EntryChain>>,
     /// The catalog the set belongs to.
     catalog: CatalogName,
     /// The schema the set belongs to (empty for the set of schemas).
     schema: String,
+    /// `DefaultTypeGenerator` belongs only to a schema's type set.
+    default_types: bool,
+    all_default_types: AtomicBool,
 }
 
 /// The name of a catalog, shared by its sets: `ALTER DATABASE ... SET ALIAS TO` renames
@@ -112,6 +147,16 @@ impl CatalogSet {
             chains: Mutex::default(),
             catalog: catalog.clone(),
             schema: schema.into(),
+            default_types: false,
+            all_default_types: AtomicBool::new(false),
+        }
+    }
+
+    /// A type set with DuckDB's lazy builtin generator in `main`.
+    pub fn with_default_types(catalog: &CatalogName, schema: &str) -> Self {
+        Self {
+            default_types: schema == crate::DEFAULT_SCHEMA,
+            ..Self::new(catalog, schema)
         }
     }
 
@@ -125,8 +170,38 @@ impl CatalogSet {
         &self.schema
     }
 
-    fn lock(&self) -> MutexGuard<'_, BTreeMap<String, Vec<Arc<Version>>>> {
+    fn lock(&self) -> MutexGuard<'_, BTreeMap<String, EntryChain>> {
         self.chains.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn create_default_type(&self, chains: &mut BTreeMap<String, EntryChain>, name: &str, name_key: &str) {
+        if !self.default_types || chains.contains_key(name_key) {
+            return;
+        }
+        let Some(id) = rustdb_types::builtin_type_id(name) else {
+            return;
+        };
+        if id == rustdb_types::LogicalTypeId::Invalid {
+            return;
+        }
+        let mut entry = CatalogEntry::new(
+            name,
+            crate::EntryKind::Type(crate::TypeEntry {
+                user_type: rustdb_types::LogicalType::simple(id),
+            }),
+        );
+        entry.internal = true;
+        entry.temporary = true;
+        chains.insert(name_key.to_owned(), EntryChain::committed(entry));
+    }
+
+    fn create_default_types(&self, chains: &mut BTreeMap<String, EntryChain>) {
+        if self.default_types && !self.all_default_types.load(Ordering::Relaxed) {
+            for name in rustdb_types::builtin_type_names() {
+                self.create_default_type(chains, name, name);
+            }
+            self.all_default_types.store(true, Ordering::Relaxed);
+        }
     }
 
     /// Adds an entry visible to every transaction (built-in objects).
@@ -139,7 +214,7 @@ impl CatalogSet {
                 entry.name()
             )));
         }
-        chains.insert(name, vec![Version::new(0, Some(Arc::new(entry)))]);
+        chains.insert(name, EntryChain::committed(entry));
         Ok(())
     }
 
@@ -148,7 +223,13 @@ impl CatalogSet {
     /// system catalog). Transactions holding the old entry keep it.
     pub fn replace_committed(&self, entry: CatalogEntry) {
         let mut chains = self.lock();
-        chains.insert(key(entry.name()), vec![Version::new(0, Some(Arc::new(entry)))]);
+        let name = key(entry.name());
+        if let Some(chain) = chains.get_mut(&name) {
+            // `UpdateEntry` replaces the value, not the map key's spelling.
+            chain.versions = vec![Version::new(0, Some(Arc::new(entry)))];
+        } else {
+            chains.insert(name, EntryChain::committed(entry));
+        }
     }
 
     /// The built-in (committed) entry called `name`, ignoring transactions.
@@ -178,6 +259,7 @@ impl CatalogSet {
         wal: WalRecord,
     ) -> Result<bool> {
         let name = key(entry.name());
+        let original_name = entry.name().to_owned();
         let hook = match &entry.kind {
             crate::EntryKind::Index(index) => index.storage.as_ref().map_or(StorageHook::None, |info| {
                 StorageHook::CreatedIndex(Arc::clone(info), entry.name().to_owned())
@@ -187,11 +269,18 @@ impl CatalogSet {
         let version = Version::new(transaction.transaction_id, Some(Arc::new(entry)));
         {
             let mut chains = self.lock();
+            self.create_default_type(&mut chains, &original_name, &name);
             match chains.get_mut(&name) {
                 None => {
                     // Start the chain with a tombstone so concurrent transactions see
                     // "nothing" instead of our uncommitted entry.
-                    chains.insert(name.clone(), vec![Arc::clone(&version), Version::new(0, None)]);
+                    chains.insert(
+                        name.clone(),
+                        EntryChain {
+                            name: original_name,
+                            versions: vec![Arc::clone(&version), Version::new(0, None)],
+                        },
+                    );
                 }
                 Some(chain) => {
                     let head = &chain[0];
@@ -414,8 +503,10 @@ impl CatalogSet {
 
     /// Looks up `name` as seen by `transaction`.
     pub fn lookup(&self, transaction: &Transaction, name: &str) -> Lookup {
-        let chains = self.lock();
-        let Some(chain) = chains.get(&key(name)) else {
+        let mut chains = self.lock();
+        let name_key = key(name);
+        self.create_default_type(&mut chains, name, &name_key);
+        let Some(chain) = chains.get(&name_key) else {
             return Lookup::NotPresent;
         };
         let (version, is_visible) = version_for(transaction, chain);
@@ -436,11 +527,27 @@ impl CatalogSet {
 
     /// Every entry visible to `transaction`, in name order.
     pub fn scan(&self, transaction: &Transaction) -> Vec<Arc<CatalogEntry>> {
-        let chains = self.lock();
+        let mut chains = self.lock();
+        self.create_default_types(&mut chains);
         chains
             .values()
             .filter_map(|chain| version_for(transaction, chain).0.entry.clone())
             .collect()
+    }
+
+    /// `CatalogSet::SimilarEntry`: materializes defaults and compares map keys,
+    /// including keys whose versions are invisible or deleted in this transaction.
+    pub fn similar_entry(&self, name: &str) -> (f64, String) {
+        let mut chains = self.lock();
+        self.create_default_types(&mut chains);
+        let mut best = (0.0, String::new());
+        for chain in chains.values() {
+            let score = rustdb_common::string_util::similarity_rating(&chain.name, name);
+            if score > best.0 {
+                best = (score, chain.name.clone());
+            }
+        }
+        best
     }
 
     /// Drops the versions older than the committed `version`, which no transaction can
@@ -501,6 +608,80 @@ mod tests {
 
     fn entry(name: &str) -> CatalogEntry {
         CatalogEntry::new(name, EntryKind::Schema(crate::SchemaEntry::default()))
+    }
+
+    #[test]
+    fn default_types_preserve_first_spelling_and_survive_rollback() {
+        let manager = TransactionManager::default();
+        let set = CatalogSet::with_default_types(&CatalogName::new("memory"), "main");
+        let transaction = manager.begin();
+        let integer = set.get(&transaction, "INTEGER").unwrap();
+        assert_eq!(integer.name(), "INTEGER");
+        assert!(integer.internal && integer.temporary);
+        assert!(matches!(&integer.kind, EntryKind::Type(ty)
+            if ty.user_type == rustdb_types::LogicalType::INTEGER));
+        manager.rollback(&transaction);
+
+        let transaction = manager.begin();
+        assert!(Arc::ptr_eq(&integer, &set.get(&transaction, "integer").unwrap()));
+        let entries = set.scan(&transaction);
+        assert_eq!(entries.len(), rustdb_types::builtin_type_names().count());
+        assert_eq!(
+            entries.iter().filter(|entry| entry.name() == "INTEGER").count(),
+            1
+        );
+        assert!(!entries.iter().any(|entry| entry.name() == "integer"));
+        assert_eq!(
+            set.get(&transaction, "DECIMAL").unwrap().name(),
+            "decimal",
+            "the scan creates remaining defaults with lowercase names"
+        );
+        assert!(set.get(&transaction, "not_a_type").is_none());
+        manager.rollback(&transaction);
+    }
+
+    #[test]
+    fn default_types_are_created_once_under_concurrent_lookup() {
+        let set = Arc::new(CatalogSet::with_default_types(&CatalogName::new("temp"), "main"));
+        let entries = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..8)
+                .map(|_| {
+                    let set = Arc::clone(&set);
+                    scope.spawn(move || set.get(&Transaction::system(), "INTEGER").unwrap())
+                })
+                .collect();
+            threads
+                .into_iter()
+                .map(|thread| thread.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert!(entries.iter().all(|entry| Arc::ptr_eq(&entries[0], entry)));
+        let other = CatalogSet::with_default_types(&CatalogName::new("memory"), "other");
+        assert!(other.get(&Transaction::system(), "INTEGER").is_none());
+        assert!(other.scan(&Transaction::system()).is_empty());
+    }
+
+    #[test]
+    fn suggestions_use_map_key_spelling_including_invisible_entries() {
+        let manager = TransactionManager::default();
+        let set = Arc::new(CatalogSet::default());
+        let writer = manager.begin();
+        let reader = manager.begin();
+        set.create(&writer, entry("MixedCase")).unwrap();
+        assert!(set.scan(&reader).is_empty());
+        assert_eq!(set.similar_entry("MixedCas").1, "MixedCase");
+        manager.rollback(&writer);
+        assert_eq!(set.similar_entry("MixedCas"), (0.0, String::new()));
+
+        set.create_committed(entry("MixedCase")).unwrap();
+        set.replace_committed(entry("MIXEDCASE"));
+        assert_eq!(set.get(&reader, "mixedcase").unwrap().name(), "MIXEDCASE");
+        assert_eq!(
+            set.similar_entry("MixedCas").1,
+            "MixedCase",
+            "replacement keeps the catalog map key's original spelling"
+        );
+        manager.rollback(&reader);
     }
 
     #[test]

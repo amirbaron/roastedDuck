@@ -2452,27 +2452,17 @@ fn type_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
             continue;
         };
         let mut types: Vec<TypeRow> = Vec::new();
-        if schema.name().eq_ignore_ascii_case(rustdb_catalog::DEFAULT_SCHEMA) {
-            for name in rustdb_types::builtin_type_names() {
-                let Some(id) = rustdb_types::builtin_type_id(name) else {
-                    continue;
-                };
-                types.push(TypeRow {
-                    name: name.to_owned(),
-                    ty: LogicalType::simple(id),
-                    internal: true,
-                    oid: u64::from(id as u8),
-                    comment: Value::default(),
-                });
-            }
-        }
         for entry in contents.types.scan(&context.transaction) {
             if let EntryKind::Type(ty) = &entry.kind {
                 types.push(TypeRow {
                     name: entry.name().to_owned(),
                     ty: ty.user_type.clone(),
                     internal: entry.internal,
-                    oid: entry.oid,
+                    oid: if entry.internal {
+                        u64::from(ty.user_type.id() as u8)
+                    } else {
+                        entry.oid
+                    },
                     comment: entry.comment.clone(),
                 });
             }

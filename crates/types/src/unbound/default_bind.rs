@@ -135,6 +135,15 @@ pub fn builtin_type_names() -> impl Iterator<Item = &'static str> {
     BUILTIN_TYPES.iter().map(|&(name, _, _)| name)
 }
 
+/// Whether the default type catalog entry has a modifier-binding callback.
+/// A known type without one rejects modifiers before their expressions are bound.
+pub fn builtin_type_has_bind_function(name: &str) -> Option<bool> {
+    BUILTIN_TYPES
+        .iter()
+        .find(|(builtin, _, _)| builtin.eq_ignore_ascii_case(name))
+        .map(|&(_, _, bind)| bind.is_some())
+}
+
 impl UnboundTypeInfo {
     /// Binds this type, and the types among its parameters, where they name builtin types
     /// (DuckDB's `TryDefaultBindTypeExpression`). A name that is not builtin stays an

@@ -3,7 +3,7 @@
 
 mod default_bind;
 
-pub use default_bind::{builtin_type_id, builtin_type_names};
+pub use default_bind::{builtin_type_has_bind_function, builtin_type_id, builtin_type_names};
 
 use rustdb_serde::{
     DeserializeObject, Deserializer, Error, OptionalIdx, Result, SerializeObject, Serializer, write_enum,
