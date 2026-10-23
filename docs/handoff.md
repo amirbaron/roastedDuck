@@ -41,16 +41,17 @@ Complete Python bindings first and all primary clients plus C#/.NET, Swift and J
 ## Current source integration (2026-10-23)
 
 The checkout has an **uncommitted native-identifier migration and does not build as a
-complete workspace yet**. The latest planner check reports seven diagnostics after
-the Context and binder integration. SHOW TABLES query generation and native EXPLAIN rendering remain open;
-this is not a successful workspace build.
+complete workspace yet**. The planner library now compiles after native renderer and
+SHOW literal integration. The latest workspace/all-targets check stops at **67 built-in
+function diagnostics** in STRUCT/MAP, logging and table-function result names. Execution
+and client/result consumers remain unchecked by a successful complete build.
 The corpus, shell and performance results below describe previously accepted binaries;
 they are not validation of this incomplete source. No final public binary or full
 corpus/file/WAL run has been made for the migration.
 
 Names now retain bytes through AST/type/value codecs, parser transformations, casts,
 storage filters/statistics/index descriptors and parts of planner name resolution.
-The remaining work includes native plan rendering, SHOW query generation,
+The remaining work includes native expression/value rendering integration,
 downstream result/execution integration and raw SQL parser ingress. Catalog SDK raw-name
 file round trips pass, but public SQL/shell and WAL replay remain unverified. Client
 packages and final performance acceptance also remain open; keep the uncached lower-memory controls unchanged.
@@ -117,9 +118,9 @@ their planner interfaces. Transaction database names and sequence WAL records us
 carriers and explicit native string serialization. Prepared-parameter maps, export
 metadata, COLUMNS aliases and debug plan rendering have also been integrated. Export
 filename sanitization now replaces each non-letter byte, matching the frozen C++ source.
-The latest planner check has seven remaining diagnostics in SHOW TABLES query generation
-and EXPLAIN rendering; downstream execution/result consumers have not yet been checked
-by a successful full build. Rebuild the entire engine and repeat real SQL, shell, corpus
+That checkpoint had seven planner diagnostics; the renderer continuation below closes
+those library compilation errors. Downstream execution/result consumers have not yet
+been checked by a successful full build. Rebuild the entire engine and repeat real SQL, shell, corpus
 and WAL journeys before claiming acceptance. The logger interface now has a native byte-message method; the runtime logger
 implementation and native plan/value formatting callers still require integration.
 These remaining gates, language clients and final performance acceptance stay open.
@@ -127,15 +128,32 @@ These remaining gates, language clients and final performance acceptance stay op
 The Context/binder continuation passes **310 core/parser release tests**, with the same
 one pre-existing exhaustive cast-grid test ignored. All affected core packages pass
 all-target Clippy with warnings denied; codegen --check passes. These tests do not build
-or execute the incomplete planner. Logs: `context-core-stage-verification.json`,
+or execute the planner. Logs: `context-core-stage-verification.json`,
 `context-core-clippy.log` and `context-codegen-check.log` in the external artifact folder.
 
-A fresh signed C++ renderer probe records **4,608 reference outcomes** across all byte
-values in node names, parameter keys and values, and six formats. These are reference
-results, not Rust comparisons. HTML/Graphviz/YAML/Mermaid retain these bytes; text and
-JSON reject different subsets. Do not solve the remaining rendering diagnostics with a
-blanket UTF-8 conversion. Preserve `cpp-tree-name-bytes.tsv` and its summary for the
-native renderer migration; public SQL/shell acceptance remains open.
+The renderer continuation now matches **5,832 C++ outcomes**, comparing exact output
+or raw exceptions: 4,608 single-byte cases and 1,224 Unicode/layout cases across six
+formats, three name/value fields and trees with children. **32 common release tests**
+pass, including a 372-case frozen C++ golden subset; scoped all-target Clippy with
+warnings denied passes. This verifies the native tree component, not complete public
+EXPLAIN/expression/value integration or shell behavior.
+
+RenderTree/RenderParams/output now own bytes and rendering returns Result. Text layout
+uses 13,032 bytes of frozen utf8proc Unicode 15.1 properties and Rust grapheme rules;
+no C++ is linked. The port matches C++'s invalid-value omission, JSON validation/NUL
+handling and uppercase control escapes, empty-line splitting, ASCII-CI first-value map
+semantics and target-C-char Mermaid trimming/splitting behavior. Reproducible offline
+export/oracle sources are in scripts/; binaries, full outcomes and earlier mismatch
+logs remain on the external SSD. Original raw-name databases remain unchanged.
+
+A read-only C++ journey confirms raw-schema SELECT succeeds while SHOW TABLES FROM
+that same schema fails with invalid unicode in value construction; the UTF-8 control
+succeeds. SHOW now validates its generated VARCHAR filter literal at that actual value
+boundary, while catalog/search-path identities retain bytes. Rust public SQL/shell
+rechecks remain pending the full build. Latest check: renderer-workspace-check.jsonl
+(67 built-in-function diagnostics); evidence: renderer-checkpoint.json under the same
+external artifact folder. All language clients and final performance acceptance remain
+open; keep the uncached lower-memory controls unchanged.
 
 Detailed stage logs, exact limitations, source hashes and resume pointers live in
 `.context/identifier-bytes-progress.md` and the external artifact folder
