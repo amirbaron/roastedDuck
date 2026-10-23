@@ -44,8 +44,8 @@ The checkout has an **uncommitted native-identifier migration and does not build
 complete workspace yet**. The planner library now compiles after native renderer and
 SHOW literal integration. The built-in function library also compiles after native
 STRUCT/UNION/ENUM and result-name integration. The latest workspace/all-targets check
-stops at **25 optimizer diagnostics**; execution and client/result consumers remain
-unchecked by a successful complete build.
+now passes the optimizer library and stops at **88 execution diagnostics**. Runtime
+and client/result consumers remain unchecked by a successful complete build.
 The corpus, shell and performance results below describe previously accepted binaries;
 they are not validation of this incomplete source. No final public binary or full
 corpus/file/WAL run has been made for the migration.
@@ -176,10 +176,31 @@ its argument name as bytes and constructs VARCHAR at execution. C++ direct/prune
 journeys confirm that distinction; the new Rust component tests cover the callbacks
 and kernel, while full Rust SQL pruning journeys remain pending.
 
-Latest check: functions-native-workspace-check-3.jsonl (25 optimizer diagnostics).
+That stage stopped at 25 optimizer diagnostics; the next continuation closes them.
 Evidence/hashes: functions-enum-checkpoint.json. Remaining native expression/value,
 optimizer/execution/result/logger/parser work, public shell/corpus/file/WAL gates,
 selected language clients and final lower-memory performance acceptance remain open.
+
+The optimizer/path continuation passes **187 affected release tests**, all-target
+Clippy with warnings denied, and codegen checks. Join-statistics names, late row-id
+rewrites, CTE result names, STRUCT/VARIANT paths and ENUM comparisons retain bytes;
+STRUCT lookup follows ASCII folding. Rewrites that create VARCHAR constants validate
+at C++'s actual Value-construction boundaries. The table-file known-value callback now
+accepts byte column names; downstream CSV/JSON/Parquet/runtime adapters still need the
+full-build integration.
+
+ColumnIndex and StorageIndex now own raw VARIANT field-name bytes and have native
+binary decoders. Generated property structs use ByteString string properties, not a
+generic byte-list encoding. **10,482 C++ path comparisons** match exact metadata and
+wire round trips across leaf, nested and pushed-down-extract paths; a 42-record golden
+subset is checked in. The C++ oracle seeds field objects via its native deserializer
+to initialize the otherwise unused/uninitialized index scalar in field constructors.
+These are component/codec checks, not public query, storage-scan or WAL acceptance.
+
+Latest check: optimizer-workspace-check-1.jsonl (88 execution diagnostics, including
+constraints, plan generation, DDL/export and physical/profiling renderers). Evidence:
+optimizer-path-checkpoint.json in the external artifact folder. The full workspace,
+public shell/corpus/file/WAL gates, clients and final performance acceptance stay open.
 
 Detailed stage logs, exact limitations, source hashes and resume pointers live in
 `.context/identifier-bytes-progress.md` and the external artifact folder
