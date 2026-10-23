@@ -41,17 +41,19 @@ Complete Python bindings first and all primary clients plus C#/.NET, Swift and J
 ## Current source integration (2026-10-23)
 
 The checkout has an **uncommitted native-identifier migration and does not build as a
-complete workspace yet**. The latest all-target check reports 166 planner diagnostics after the catalog API migration.
+complete workspace yet**. The latest planner check reports seven diagnostics after
+the Context and binder integration. SHOW TABLES query generation and native EXPLAIN rendering remain open;
+this is not a successful workspace build.
 The corpus, shell and performance results below describe previously accepted binaries;
 they are not validation of this incomplete source. No final public binary or full
 corpus/file/WAL run has been made for the migration.
 
 Names now retain bytes through AST/type/value codecs, parser transformations, casts,
 storage filters/statistics/index descriptors and parts of planner name resolution.
-The remaining work includes table/pivot/statement binding, native plan rendering,
-full catalog/result/execution integration and raw SQL parser ingress. The four raw-name
-file reopen cases remain open. Client packages and final performance acceptance also
-remain open; keep the uncached lower-memory controls unchanged.
+The remaining work includes native plan rendering, SHOW query generation,
+downstream result/execution integration and raw SQL parser ingress. Catalog SDK raw-name
+file round trips pass, but public SQL/shell and WAL replay remain unverified. Client
+packages and final performance acceptance also remain open; keep the uncached lower-memory controls unchanged.
 
 New focused evidence includes 5,241 C++ index descriptor cases, 6,988 CTE/macro/lambda
 codec cases, 3,494 native exception metadata cases, and 8,050 parser AST/rendering
@@ -110,12 +112,30 @@ recovery remain unverified. Round-trip report pointer:
 `identifier-bytes-20261023/catalog-file-roundtrip-path.txt` under the external artifact
 root. No C++ DuckDB engine is linked into the Rust reader.
 
-The new catalog API exposes downstream planner consumers; the 166 diagnostics are not
-directly comparable to the prior 124. Port Context search paths/lookups and remaining
-binders, then rebuild the entire engine and repeat real SQL, shell, corpus and WAL
-journeys. The logger interface now has a native byte-message method; the runtime logger
+Context search paths/lookups, CREATE/ALTER and table metadata now retain bytes through
+their planner interfaces. Transaction database names and sequence WAL records use byte
+carriers and explicit native string serialization. Prepared-parameter maps, export
+metadata, COLUMNS aliases and debug plan rendering have also been integrated. Export
+filename sanitization now replaces each non-letter byte, matching the frozen C++ source.
+The latest planner check has seven remaining diagnostics in SHOW TABLES query generation
+and EXPLAIN rendering; downstream execution/result consumers have not yet been checked
+by a successful full build. Rebuild the entire engine and repeat real SQL, shell, corpus
+and WAL journeys before claiming acceptance. The logger interface now has a native byte-message method; the runtime logger
 implementation and native plan/value formatting callers still require integration.
 These remaining gates, language clients and final performance acceptance stay open.
+
+The Context/binder continuation passes **310 core/parser release tests**, with the same
+one pre-existing exhaustive cast-grid test ignored. All affected core packages pass
+all-target Clippy with warnings denied; codegen --check passes. These tests do not build
+or execute the incomplete planner. Logs: `context-core-stage-verification.json`,
+`context-core-clippy.log` and `context-codegen-check.log` in the external artifact folder.
+
+A fresh signed C++ renderer probe records **4,608 reference outcomes** across all byte
+values in node names, parameter keys and values, and six formats. These are reference
+results, not Rust comparisons. HTML/Graphviz/YAML/Mermaid retain these bytes; text and
+JSON reject different subsets. Do not solve the remaining rendering diagnostics with a
+blanket UTF-8 conversion. Preserve `cpp-tree-name-bytes.tsv` and its summary for the
+native renderer migration; public SQL/shell acceptance remains open.
 
 Detailed stage logs, exact limitations, source hashes and resume pointers live in
 `.context/identifier-bytes-progress.md` and the external artifact folder
