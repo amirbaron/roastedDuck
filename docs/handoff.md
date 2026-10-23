@@ -41,7 +41,7 @@ Complete Python bindings first and all primary clients plus C#/.NET, Swift and J
 ## Current source integration (2026-10-23)
 
 The checkout has an **uncommitted native-identifier migration and does not build as a
-complete workspace yet**. The latest all-target check reports 124 planner diagnostics.
+complete workspace yet**. The latest all-target check reports 166 planner diagnostics after the catalog API migration.
 The corpus, shell and performance results below describe previously accepted binaries;
 they are not validation of this incomplete source. No final public binary or full
 corpus/file/WAL run has been made for the migration.
@@ -91,6 +91,31 @@ real catalog/search-path APIs and filesystem boundaries that must accept native 
 do not decode names to text merely to make compilation succeed. No full engine or
 client/runtime acceptance is established by these focused tests. Evidence and source
 hashes are in `statement-name-checkpoint.json` under the external artifact folder.
+
+The native catalog/storage stage now passes **287 core release tests plus 23 parser
+release tests** (one pre-existing exhaustive cast-grid test remains ignored), scoped
+all-target Clippy and codegen checks. Catalog names/keys, object/dependency/view names,
+type aliases, table storage names and catalog undo/WAL/checkpoint carriers retain bytes.
+Snapshot rollback/rename tests cover all 256 byte values, and Unicode names are kept
+distinct under C++'s ASCII-only identifier folding.
+
+The four preserved C++ raw-name databases (table, column, schema and enum-type names)
+and their four UTF-8 controls now load and scan through the signed Rust catalog/storage
+SDK. Copies were appended to, checkpointed by Rust, reopened by Rust and queried by the
+C++ CLI: **all eight cross-engine round trips pass**, with two expected rows each. All
+original hashes are unchanged. A native C++ metadata probe confirms that the stored enum
+column has no alias; an initial harness assumption expecting one was corrected. The
+reader is a Rust catalog example, not the public Rust shell: full Rust SQL/shell and WAL
+recovery remain unverified. Round-trip report pointer:
+`identifier-bytes-20261023/catalog-file-roundtrip-path.txt` under the external artifact
+root. No C++ DuckDB engine is linked into the Rust reader.
+
+The new catalog API exposes downstream planner consumers; the 166 diagnostics are not
+directly comparable to the prior 124. Port Context search paths/lookups and remaining
+binders, then rebuild the entire engine and repeat real SQL, shell, corpus and WAL
+journeys. The logger interface now has a native byte-message method; the runtime logger
+implementation and native plan/value formatting callers still require integration.
+These remaining gates, language clients and final performance acceptance stay open.
 
 Detailed stage logs, exact limitations, source hashes and resume pointers live in
 `.context/identifier-bytes-progress.md` and the external artifact folder
