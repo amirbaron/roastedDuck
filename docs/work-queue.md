@@ -74,6 +74,13 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      parser/name bytes and legacy text wrappers are still open. Current artifacts:
      `.context/artifacts/callback-bytes-20261023/` (`first-path.txt`, `final-path.txt`);
      initial scalar/constructor evidence remains in `shell-bytes-20261023/`.
+     Next, preserve raw shell lines/history/SQL accumulation and dot-command argument
+     bytes. Octal escapes can produce invalid UTF-8 even from ASCII input; decoded NUL
+     terminates an individual command argument in C++. Add a byte callback interface
+     and migrate literal output through it, then migrate the remaining text callbacks,
+     argv, SQL/parser and identifier interfaces. Keep any legacy UTF-8 handoff explicit;
+     this ingress step must not be presented as complete raw SQL/name parity. Probes:
+     `.context/artifacts/shell-input-bytes-20261023/ingress-probes.json`.
    - Object ids: the oid of a database (`PRAGMA database_list`'s `seq`) counts the
      catalog entries created before it, more in DuckDB.
    - A `memory_limit` far below an aggregate's state (`SELECT list(i) FROM range(1e7)`
