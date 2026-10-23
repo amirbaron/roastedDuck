@@ -95,6 +95,14 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      generated AST/catalog name fields. Compare its numbered-property wire bytes
      against C++ for raw/empty/NUL/long strings. Keep strict String decoding for text
      fields; this codec foundation alone does not close the four raw-name file gaps.
+     During the name migration, native formatting must also own bytes. Bound and
+     parsed expression/query renderers must recursively use byte output rather than
+     sending names through Rust Display. A byte-format helper may select a native
+     renderer for byte-owning types and use ordinary Display for text/numeric types;
+     ByteString itself must never gain a lossy Display or text dereference. Preserve
+     numbered-property wire bytes, checked VARCHAR boundaries, keyword quoting and
+     C++ formatting evidence while extending bindings and result names. Partial name
+     migrations are not an accepted workspace or shell baseline.
    - Object ids: the oid of a database (`PRAGMA database_list`'s `seq`) counts the
      catalog entries created before it, more in DuckDB.
    - A `memory_limit` far below an aggregate's state (`SELECT list(i) FROM range(1e7)`
