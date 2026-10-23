@@ -44,7 +44,7 @@ The checkout has an **uncommitted native-identifier migration and does not build
 complete workspace yet**. The planner library now compiles after native renderer and
 SHOW literal integration. The built-in function library also compiles after native
 STRUCT/UNION/ENUM and result-name integration. The latest workspace/all-targets check
-now passes execution, CSV, autocomplete, Parquet and ICU compilation; the latest workspace check stops at **13 TPC-H diagnostics**. Runtime and client/result
+now passes execution, CSV, autocomplete, Parquet, ICU and both TPC generator libraries; the latest workspace check stops at **35 JSON diagnostics**. Runtime and client/result
 consumers remain unchecked by a successful complete build.
 The corpus, shell and performance results below describe previously accepted binaries;
 they are not validation of this incomplete source. No final public binary or full
@@ -342,6 +342,30 @@ parquet-stage-workspace-check-4.jsonl on the SSD. No final full-engine/corpus/sh
 storage/WAL, selected-language-client or performance acceptance is established by these
 component tests. Remaining raw parser/filesystem/fallible-rendering and broader Parquet
 features stay open; the uncached memory baseline remains unchanged.
+
+The TPC generator continuation compiles TPC-H and TPC-DS libraries and all selected
+targets. Catalog/schema/suffix identifiers remain bytes through generator binding,
+schema creation and append lookups. FunctionData::modified_database and planner
+statement modification lists now retain database-name bytes; known runtime sequence/
+table-function callback signatures were updated, but the full runtime still awaits the
+complete workspace build. Static query/result labels encode genuine text at AST edges.
+
+Two signed release integration tests pass (one per generator), each exercising actual
+scale-zero bind/scan and table creation with raw catalog/schema/suffix names and UTF-8
+controls, including exact modified-database identity. Four direct native C++ schema
+creation journeys confirm raw/control behavior for both generators and empty tables.
+The C++ probe must register the target in MetaTransaction before invoking the native
+wrapper; initial missing-registration failures are preserved as harness evidence.
+These checks establish native schema/name handling, not generated row/data parity or
+fresh benchmark acceptance. Scoped TPC-H/TPC-DS/function/planner all-target Clippy with
+warnings denied and codegen --check pass.
+
+The latest whole-workspace check now stops at **35 JSON diagnostics**, covering JSON
+creation/transformation, scan names and native VARIANT integration. Evidence:
+generator-native-checkpoint.json and tpch-native-workspace-check-5.jsonl on the SSD.
+Selected client bindings, full public SQL/shell/corpus/C API/storage/WAL, raw parser/
+filesystem and fallible rendering, and final signed-binary speed-memory acceptance
+remain open. No memory-increasing table cache was restored.
 
 Detailed stage logs, exact limitations, source hashes and resume pointers live in
 `.context/identifier-bytes-progress.md` and the external artifact folder
