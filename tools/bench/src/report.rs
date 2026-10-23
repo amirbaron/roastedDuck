@@ -1,5 +1,5 @@
 //! `bench compare`: a markdown report of rustdb against C++ DuckDB, with per-benchmark
-//! speedups and memory ratios, per-suite geometric means and the plan's final gates.
+//! speedups and memory ratios, per-suite geometric means and individual query outliers.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -7,33 +7,24 @@ use std::fmt::Write as _;
 use crate::measure::geomean;
 use crate::record::{BenchmarkRecord, MachineInfo, Results, Status};
 
-/// The plan's speed target: geometric-mean speedup on each of these suites.
-pub const SPEED_GEOMEAN_TARGET: f64 = 1.3;
-/// No benchmark may be slower than this speedup.
-pub const SPEED_FLOOR: f64 = 0.99;
-/// Geometric-mean peak memory ratio (Rust / C++) across all suites.
-pub const MEMORY_GEOMEAN_TARGET: f64 = 0.6;
-/// No benchmark may use more peak memory than C++.
-pub const MEMORY_CEILING: f64 = 1.0;
-
-/// A suite the speed gate is evaluated on.
-struct GateSuite {
+/// Suites shown together in the speed–memory comparison.
+struct ComparisonSuite {
     label: &'static str,
     selects: fn(&BenchmarkRecord) -> bool,
 }
 
-const SPEED_GATE_SUITES: [GateSuite; 3] = [
-    GateSuite {
+const COMPARISON_SUITES: [ComparisonSuite; 3] = [
+    ComparisonSuite {
         label: "TPC-H SF10",
         selects: |r| {
             r.name.starts_with("benchmark/tpch/sf1/") && r.arguments.get("sf").is_some_and(|sf| sf == "10")
         },
     },
-    GateSuite {
+    ComparisonSuite {
         label: "ClickBench",
         selects: |r| r.suite == "clickbench",
     },
-    GateSuite {
+    ComparisonSuite {
         label: "h2oai",
         selects: |r| r.suite == "h2oai",
     },
@@ -100,7 +91,7 @@ pub fn compare(cpp: &Results, rust: &Results, cpp_label: &str, rust_label: &str)
     let mut out = String::new();
     out.push_str("# rustdb vs C++ DuckDB: benchmark comparison\n\n");
     write_runs(&mut out, cpp, rust, cpp_label, rust_label);
-    write_gates(&mut out, &pairs);
+    write_performance_policy(&mut out, &pairs);
     write_suites(&mut out, &pairs);
     write_cross_checks(&mut out, &pairs);
     write_benchmarks(&mut out, &pairs);
@@ -163,84 +154,76 @@ fn write_runs(out: &mut String, cpp: &Results, rust: &Results, cpp_label: &str, 
     out.push('\n');
 }
 
-fn verdict(value: Option<f64>, pass: impl Fn(f64) -> bool) -> &'static str {
-    match value {
-        None => "not evaluated (no comparable benchmarks)",
-        Some(v) if pass(v) => "pass",
-        Some(_) => "**FAIL**",
-    }
-}
-
 fn ratio(value: Option<f64>) -> String {
     value.map_or_else(|| "–".to_owned(), |v| format!("{v:.2}×"))
 }
 
-fn write_gates(out: &mut String, pairs: &[Pair<'_>]) {
-    out.push_str("## Final targets (plan, M9)\n\n");
-    out.push_str(
-        "Only benchmarks that are correct on both engines (and whose result fingerprints agree) count.\n\n",
-    );
-    out.push_str("| Gate | Target | Value | Benchmarks | Verdict |\n|---|---|---:|---:|---|\n");
-    for suite in &SPEED_GATE_SUITES {
+fn write_performance_policy(out: &mut String, pairs: &[Pair<'_>]) {
+    out.push_str("## Performance acceptance policy (2026-10-23)\n\n");
+    out.push_str("Preserve the lower-memory uncached baseline. Roughly 15–20% longer execution time with 60–70% less memory on TPC-H and ClickBench is acceptable. Evaluate speed and memory together; do not increase memory merely to match C++ caching or close a small speed gap.\n\n");
+    out.push_str("**Final acceptance: pending baseline comparison and documented review.** Use `bench ratchet check` against the preserved Rust baseline and complete `docs/performance-acceptance.md`. C++ ratios below are measurements; report individual query regressions and outliers separately from suite averages.\n\n");
+    out.push_str("Only correct, comparable results count. Result mismatches, errors and missing results remain visible in the checks and coverage below.\n\n");
+    out.push_str("| Comparison | Value | Benchmarks |\n|---|---:|---:|\n");
+    for suite in &COMPARISON_SUITES {
         let speedups: Vec<f64> = pairs
             .iter()
             .filter(|p| (suite.selects)(p.cpp))
             .filter_map(Pair::speedup)
             .collect();
-        let value = geomean(speedups.iter().copied());
         let _ = writeln!(
             out,
-            "| Speed geomean, {} | ≥ {SPEED_GEOMEAN_TARGET:.2}× | {} | {} | {} |",
+            "| Speed geomean, {} | {} | {} |",
             suite.label,
-            ratio(value),
-            speedups.len(),
-            verdict(value, |v| v >= SPEED_GEOMEAN_TARGET)
+            ratio(geomean(speedups.iter().copied())),
+            speedups.len()
         );
     }
-    let speedups: Vec<(f64, &str)> = pairs
-        .iter()
-        .filter_map(|p| Some((p.speedup()?, p.cpp.name.as_str())))
-        .collect();
-    let slowest = speedups.iter().copied().min_by(|a, b| a.0.total_cmp(&b.0));
-    let below = speedups.iter().filter(|(s, _)| *s < SPEED_FLOOR).count();
+    let memory: Vec<f64> = pairs.iter().filter_map(Pair::memory_ratio).collect();
     let _ = writeln!(
         out,
-        "| Slowest benchmark (all suites) | ≥ {SPEED_FLOOR:.2}× | {}{} | {} | {} |",
-        ratio(slowest.map(|s| s.0)),
-        slowest.map_or_else(String::new, |s| format!(" (`{}`)", s.1)),
-        speedups.len(),
-        if below > 0 {
-            format!("**FAIL** ({below} below)")
+        "| Peak memory geomean (all suites) | {} | {} |\n",
+        ratio(geomean(memory.iter().copied())),
+        memory.len()
+    );
+    out.push_str("### Individual query comparisons\n\n");
+    out.push_str("The ten slowest comparisons and ten largest memory ratios are listed separately; all comparable queries appear in the detailed table. These C++ comparisons supplement the per-query Rust-baseline ratchet.\n\n");
+    for memory_order in [false, true] {
+        let mut ranked: Vec<(f64, &Pair<'_>)> = pairs
+            .iter()
+            .filter_map(|pair| {
+                let value = if memory_order {
+                    pair.memory_ratio()?
+                } else {
+                    pair.speedup()?
+                };
+                Some((value, pair))
+            })
+            .collect();
+        ranked.sort_by(|(a, left), (b, right)| {
+            let order = if memory_order {
+                b.total_cmp(a)
+            } else {
+                a.total_cmp(b)
+            };
+            order.then_with(|| left.cpp.key().cmp(&right.cpp.key()))
+        });
+        out.push_str(if memory_order {
+            "Largest memory comparisons:\n\n"
         } else {
-            verdict(slowest.map(|s| s.0), |v| v >= SPEED_FLOOR).to_owned()
+            "Slowest comparisons:\n\n"
+        });
+        out.push_str("| Benchmark | Speed (C++/Rust) | Peak memory (Rust/C++) |\n|---|---:|---:|\n");
+        for (_, pair) in ranked.iter().take(10) {
+            let _ = writeln!(
+                out,
+                "| `{}` | {} | {} |",
+                pair.cpp.key().trim_start_matches("benchmark/"),
+                ratio(pair.speedup()),
+                ratio(pair.memory_ratio())
+            );
         }
-    );
-    let memory: Vec<(f64, &str)> = pairs
-        .iter()
-        .filter_map(|p| Some((p.memory_ratio()?, p.cpp.name.as_str())))
-        .collect();
-    let memory_geomean = geomean(memory.iter().map(|m| m.0));
-    let _ = writeln!(
-        out,
-        "| Peak memory geomean (all suites) | ≤ {MEMORY_GEOMEAN_TARGET:.2}× | {} | {} | {} |",
-        ratio(memory_geomean),
-        memory.len(),
-        verdict(memory_geomean, |v| v <= MEMORY_GEOMEAN_TARGET)
-    );
-    let largest = memory.iter().copied().max_by(|a, b| a.0.total_cmp(&b.0));
-    let above = memory.iter().filter(|(m, _)| *m > MEMORY_CEILING).count();
-    let _ = writeln!(
-        out,
-        "| Largest peak memory ratio | ≤ {MEMORY_CEILING:.2}× | {}{} | {} | {} |\n",
-        ratio(largest.map(|m| m.0)),
-        largest.map_or_else(String::new, |m| format!(" (`{}`)", m.1)),
-        memory.len(),
-        if above > 0 {
-            format!("**FAIL** ({above} above)")
-        } else {
-            verdict(largest.map(|m| m.0), |v| v <= MEMORY_CEILING).to_owned()
-        }
-    );
+        out.push('\n');
+    }
 }
 
 /// Per-suite label: the suite plus non-default arguments (e.g. `tpch [sf=10]`).
@@ -429,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn computes_ratios_and_gates() {
+    fn reports_tradeoff_and_individual_outliers() {
         let mut cpp = Results::default();
         let mut rust = Results::default();
         for (name, cpp_ms, rust_ms) in [
@@ -451,21 +434,64 @@ mod tests {
         ));
 
         let report = compare(&cpp, &rust, "cpp.jsonl", "rust.jsonl");
-        // geomean(2.0, 0.5) = 1.0 < 1.3; slowest 0.5 < 0.99; memory 0.5 <= 0.6.
+        // geomean(2.0, 0.5) = 1.0; retain the slow query alongside that average.
         assert!(
-            report.contains("| Speed geomean, h2oai | ≥ 1.30× | 1.00× | 2 | **FAIL** |"),
+            report.contains("| Speed geomean, h2oai | 1.00× | 2 |"),
             "{report}"
         );
         assert!(
-            report.contains("| Speed geomean, ClickBench | ≥ 1.30× | – | 0 | not evaluated"),
+            report.contains("| Speed geomean, ClickBench | – | 0 |"),
             "{report}"
         );
-        assert!(report.contains("**FAIL** (1 below)"), "{report}");
         assert!(
-            report.contains("| Peak memory geomean (all suites) | ≤ 0.60× | 0.50× | 2 | pass |"),
+            report.contains("| Peak memory geomean (all suites) | 0.50× | 2 |"),
             "{report}"
         );
+        assert!(
+            report.contains("| `h2oai/q02.benchmark` | 0.50× | 0.50× |"),
+            "{report}"
+        );
+        assert!(
+            report.contains("Final acceptance: pending baseline comparison and documented review"),
+            "{report}"
+        );
+        assert!(!report.contains("≥ 1.30×"), "{report}");
+        assert!(!report.contains("≤ 0.60×"), "{report}");
         assert!(report.contains("| micro | 1 | 1 | 0 | 1 | 0 | 0 |"), "{report}");
+    }
+
+    #[test]
+    fn accepted_lower_memory_tradeoff_still_requires_baseline_review() {
+        let mut cpp = Results::default();
+        let mut rust = Results::default();
+        cpp.benchmarks.push(record(
+            "cpp",
+            "benchmark/clickbench/q01.benchmark",
+            Status::Ok,
+            100.0,
+            1000,
+        ));
+        rust.benchmarks.push(record(
+            "rust",
+            "benchmark/clickbench/q01.benchmark",
+            Status::Ok,
+            120.0,
+            300,
+        ));
+        let report = compare(&cpp, &rust, "cpp.jsonl", "rust.jsonl");
+        assert!(
+            report.contains("| Speed geomean, ClickBench | 0.83× | 1 |"),
+            "{report}"
+        );
+        assert!(
+            report.contains("| Peak memory geomean (all suites) | 0.30× | 1 |"),
+            "{report}"
+        );
+        assert!(
+            report.contains("Final acceptance: pending baseline comparison"),
+            "{report}"
+        );
+        assert!(!report.contains("**FAIL**"), "{report}");
     }
 
     #[test]
