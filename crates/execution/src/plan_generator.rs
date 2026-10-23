@@ -65,9 +65,27 @@ use crate::operators::{
 };
 use rustdb_optimizer::rule::{RuleOutcome, apply_ordered_aggregate};
 
+/// Resolve aggregate state-size callbacks at physical preparation, after optimization
+/// has removed unused expressions. This also serves prepared statements, which bind
+/// again when executed and do not allocate aggregate states during preparation.
+pub fn verify_aggregate_state_layouts(plan: &mut LogicalOperator) -> Result<()> {
+    fn expression(expr: &mut Expression) -> Result<()> {
+        expr.try_for_each_child_mut(expression)?;
+        if let ExpressionKind::Aggregate(aggregate) = &expr.kind {
+            aggregate.function.ops.verify_state_layout()?;
+        }
+        Ok(())
+    }
+    for child in &mut plan.children {
+        verify_aggregate_state_layouts(child)?;
+    }
+    plan.try_for_each_expression_mut(expression)
+}
+
 /// Converts a logical plan whose column references are resolved into a physical plan.
 /// Plans that read or change tables or the catalog need [`create_physical_plan_with`].
 pub fn create_physical_plan(mut op: LogicalOperator) -> Result<PhysicalRef> {
+    verify_aggregate_state_layouts(&mut op)?;
     op.estimate_cardinality();
     PlanGenerator::default().plan(op)
 }
@@ -75,6 +93,7 @@ pub fn create_physical_plan(mut op: LogicalOperator) -> Result<PhysicalRef> {
 /// Converts a logical plan into a physical plan running in `context`'s transaction
 /// (DuckDB's `PhysicalPlanGenerator::PlanInternal`).
 pub fn create_physical_plan_with(mut op: LogicalOperator, context: &PlanContext) -> Result<PhysicalPlan> {
+    verify_aggregate_state_layouts(&mut op)?;
     let estimate = op.estimate_cardinality();
     op.estimated_cardinality = Some(estimate);
     let mut generator = PlanGenerator {

@@ -8,7 +8,9 @@ use rustdb_function::cast::{BoundCastInfo, CastParameters};
 use rustdb_types::{LogicalType, STANDARD_VECTOR_SIZE, Vector};
 
 use crate::data_chunk::DuckdbVector;
-use crate::function::{DuckdbDeleteCallback, DuckdbFunctionInfo, UserData, error_text, is_valid_return_type};
+use crate::function::{
+    DuckdbDeleteCallback, DuckdbFunctionInfo, UserData, error_bytes, is_valid_return_type,
+};
 use crate::helper::catch;
 use crate::logical_types::{DuckdbLogicalType, type_ref};
 use crate::open::{DuckdbConnection, connection_ref};
@@ -42,7 +44,7 @@ pub type DuckdbCastFunction = *mut CCastFunction;
 struct CCastExecuteInfo<'a> {
     parameters: &'a CastParameters,
     extra_info: *mut c_void,
-    error_message: Option<String>,
+    error_message: Option<Vec<u8>>,
 }
 
 /// The execute info behind a handle.
@@ -86,7 +88,7 @@ fn capi_cast_function(
     };
     let error_message = info.error_message.unwrap_or_default();
     if !success {
-        parameters.assign_error(error_message)?;
+        parameters.assign_error_bytes(error_message)?;
     }
     if is_constant && count == 1 && (success || !parameters.strict) {
         output.make_constant();
@@ -189,7 +191,7 @@ pub unsafe extern "C" fn duckdb_cast_function_set_error(info: DuckdbFunctionInfo
         && !error.is_null()
     {
         // SAFETY: `error` is a C string per the API contract.
-        info.error_message = Some(unsafe { error_text(error) });
+        info.error_message = Some(unsafe { error_bytes(error) });
     }
 }
 

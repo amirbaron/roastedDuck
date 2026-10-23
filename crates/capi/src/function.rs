@@ -78,15 +78,6 @@ pub(crate) fn is_valid_return_type(ty: &LogicalType) -> bool {
     !contains_type(ty, LogicalTypeId::Invalid) && !contains_type(ty, LogicalTypeId::Any)
 }
 
-/// The text of an error a callback reports, as DuckDB copies it into a `std::string`.
-///
-/// # Safety
-/// `error` must point to a NUL-terminated string.
-pub(crate) unsafe fn error_text(error: *const c_char) -> String {
-    // SAFETY: guaranteed by the caller.
-    unsafe { CStr::from_ptr(error) }.to_string_lossy().into_owned()
-}
-
 /// Copies the byte string supplied by a C callback without UTF-8 conversion.
 ///
 /// # Safety

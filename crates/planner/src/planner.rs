@@ -144,8 +144,10 @@ impl Planner {
 
     /// Prepares `statement` (DuckDB's `Planner::PrepareSQLStatement`).
     pub fn prepare(&self, statement: SqlStatement) -> Result<PreparedStatementData> {
-        let planned = self.create_plan(statement.clone())?;
-        Ok(Self::prepared_data(statement, &planned))
+        let mut planned = self.create_plan(statement.clone())?;
+        let mut prepared = Self::prepared_data(statement, &planned);
+        prepared.preparation_plan = planned.plan.take();
+        Ok(prepared)
     }
 
     /// Plans a prepared statement again with parameter values, as `EXECUTE` does.
@@ -170,6 +172,7 @@ impl Planner {
             types: planned.types.clone(),
             properties: planned.properties.clone(),
             value_map: planned.parameters.clone(),
+            preparation_plan: None,
         }
     }
 }

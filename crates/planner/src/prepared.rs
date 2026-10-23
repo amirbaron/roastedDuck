@@ -69,6 +69,9 @@ pub struct PreparedStatementData {
     pub properties: StatementProperties,
     /// The parameters and their resolved types.
     pub value_map: CaseInsensitiveMap<SharedParameterData>,
+    /// Bound plan awaiting physical-preparation metadata checks. Consumed when the
+    /// client prepares it; execution still binds against current catalog state.
+    pub preparation_plan: Option<crate::LogicalOperator>,
 }
 
 impl PreparedStatementData {

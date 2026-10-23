@@ -20,7 +20,7 @@ use rustdb_types::{DataChunk, LogicalType, Vector};
 
 use crate::data_chunk::{DuckdbDataChunk, DuckdbVector};
 use crate::function::{
-    DuckdbDeleteCallback, DuckdbFunctionInfo, UserData, error_text, is_valid_parameter_type,
+    DuckdbDeleteCallback, DuckdbFunctionInfo, UserData, error_bytes, is_valid_parameter_type,
     is_valid_return_type,
 };
 use crate::helper::{catch, opt_str};
@@ -112,7 +112,7 @@ impl Drop for CAggregateFunctionInfo {
 #[derive(Debug)]
 struct CAggregateExecuteInfo {
     extra_info: *mut c_void,
-    error: Option<String>,
+    error: Option<Vec<u8>>,
 }
 
 /// The function info behind a handle.
@@ -132,7 +132,7 @@ unsafe fn execute_info<'a>(info: DuckdbFunctionInfo) -> Option<&'a mut CAggregat
 #[derive(Debug)]
 struct CAggregateOps {
     info: Arc<CAggregateFunctionInfo>,
-    deferred_error: Mutex<Option<String>>,
+    deferred_error: Mutex<Option<Vec<u8>>>,
 }
 
 impl CAggregateOps {
@@ -144,7 +144,7 @@ impl CAggregateOps {
         };
         call(std::ptr::from_mut(&mut info).cast());
         match info.error {
-            Some(error) => Err(Error::invalid_input(error)),
+            Some(error) => Err(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, error)),
             None => Ok(()),
         }
     }
@@ -155,7 +155,7 @@ impl CAggregateOps {
             self.deferred_error
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
-                .get_or_insert_with(|| error.raw_message().into_owned());
+                .get_or_insert_with(|| error.raw_message_bytes().to_vec());
         }
     }
 
@@ -167,7 +167,7 @@ impl CAggregateOps {
             .unwrap_or_else(PoisonError::into_inner)
             .take()
         {
-            Some(error) => Err(Error::invalid_input(error)),
+            Some(error) => Err(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, error)),
             None => Ok(()),
         }
     }
@@ -180,6 +180,11 @@ fn state_array(states: &[StatePtr]) -> *mut DuckdbAggregateState {
 }
 
 impl AggregateOps for CAggregateOps {
+    fn verify_state_layout(&self) -> Result<()> {
+        let _ = self.state_layout();
+        self.check_deferred()
+    }
+
     /// `CAPIAggregateStateSize`, aligned like DuckDB's states.
     fn state_layout(&self) -> Layout {
         let mut size = 0;
@@ -565,7 +570,7 @@ pub unsafe extern "C" fn duckdb_aggregate_function_set_error(info: DuckdbFunctio
         && !error.is_null()
     {
         // SAFETY: `error` is a C string per the API contract.
-        info.error = Some(unsafe { error_text(error) });
+        info.error = Some(unsafe { error_bytes(error) });
     }
 }
 

@@ -55,7 +55,7 @@ pub struct CastParameters {
     /// Under `TRY_CAST`, a list whose elements fail to convert becomes NULL itself, so
     /// the reader can report the row (the CSV scanner's `nullify_parent`).
     pub nullify_parent: bool,
-    error_message: Option<String>,
+    error_message: Option<Vec<u8>>,
 }
 
 impl CastParameters {
@@ -79,26 +79,35 @@ impl CastParameters {
     }
 
     /// The first conversion error recorded under `TRY_CAST`.
-    pub fn error_message(&self) -> Option<&str> {
+    pub fn error_message(&self) -> Option<&[u8]> {
         self.error_message.as_deref()
     }
 
     /// Takes the recorded `TRY_CAST` error message, leaving none.
-    pub fn take_error_message(&mut self) -> Option<String> {
+    pub fn take_error_message(&mut self) -> Option<Vec<u8>> {
         self.error_message.take()
     }
 
     /// Reports a conversion failure (DuckDB's `HandleCastError::AssignError`): returns the
     /// `Conversion Error` under `CAST`; records the first message under `TRY_CAST`.
     pub fn assign_error(&mut self, message: String) -> Result<()> {
-        let message = match &self.source_column {
-            Some(column) => format!("{message} when casting from source column {column}"),
-            None => message,
-        };
-        if !self.try_cast {
-            return Err(Error::conversion(message));
+        self.assign_error_bytes(message.into_bytes())
+    }
+
+    /// The byte-string variant of `HandleCastError::AssignError`, including messages
+    /// supplied by native callbacks.
+    pub fn assign_error_bytes(&mut self, mut message: Vec<u8>) -> Result<()> {
+        if let Some(column) = &self.source_column {
+            message.extend_from_slice(b" when casting from source column ");
+            message.extend_from_slice(column.as_bytes());
         }
-        self.error_message.get_or_insert(message);
+        if !self.try_cast {
+            return Err(Error::new_bytes(rustdb_common::ErrorKind::Conversion, message));
+        }
+        // DuckDB fills an empty error string; an empty first message can be replaced.
+        if self.error_message.as_ref().is_none_or(Vec::is_empty) {
+            self.error_message = Some(message);
+        }
         Ok(())
     }
 }
@@ -419,6 +428,37 @@ fn aggregate_state_to_blob(source: &LogicalType, target: &LogicalType) -> BoundC
         "Type {source} does not match with {target}. Cannot cast AGGREGATE_STATE to anything but BLOB"
     );
     BoundCastInfo::new(move |_, _, _, _| {
-        Err(Error::new(rustdb_common::ErrorKind::MismatchType, message.clone()))
+        Err(Error::new(
+            rustdb_common::ErrorKind::MismatchType,
+            message.clone(),
+        ))
     })
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::CastParameters;
+    use rustdb_common::ErrorKind;
+
+    #[test]
+    fn byte_cast_error_keeps_source_column_context() {
+        let mut params = CastParameters::new();
+        params.source_column = Some("café".to_owned());
+        let error = params.assign_error_bytes(b"bad \xff".to_vec()).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Conversion);
+        assert_eq!(
+            error.raw_message_bytes(),
+            b"bad \xff when casting from source column caf\xc3\xa9"
+        );
+    }
+
+    #[test]
+    fn try_cast_fills_empty_message_and_retains_first_nonempty_error() {
+        let mut params = CastParameters::try_cast();
+        params.assign_error_bytes(Vec::new()).unwrap();
+        params.assign_error_bytes(b"bad \xff".to_vec()).unwrap();
+        params.assign_error("later".to_owned()).unwrap();
+        assert_eq!(params.take_error_message().unwrap(), b"bad \xff");
+        assert!(params.error_message().is_none());
+    }
 }

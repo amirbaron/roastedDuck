@@ -4055,8 +4055,9 @@ impl Connection {
                 return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::Prepare { name, prepared } => {
-                self.prepared_statements
-                    .insert(name.clone(), Arc::clone(prepared));
+                let mut prepared = Arc::clone(prepared);
+                self.prepare_aggregate_layouts(Arc::make_mut(&mut prepared))?;
+                self.prepared_statements.insert(name.clone(), prepared);
                 return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::Deallocate { name } => {

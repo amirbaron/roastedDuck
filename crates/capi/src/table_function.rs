@@ -23,7 +23,7 @@ use rustdb_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE, Value};
 
 use crate::data_chunk::DuckdbDataChunk;
 use crate::function::{
-    DuckdbBindInfo, DuckdbDeleteCallback, DuckdbFunctionInfo, DuckdbInitInfo, UserData, error_text,
+    DuckdbBindInfo, DuckdbDeleteCallback, DuckdbFunctionInfo, DuckdbInitInfo, UserData, error_bytes,
     is_valid_parameter_type, is_valid_return_type,
 };
 use crate::helper::{catch, opt_str, to_cstring};
@@ -187,7 +187,7 @@ struct CTableInternalBindInfo<'a> {
     bind_data: UserData,
     cardinality: Option<u64>,
     extra_info: *mut c_void,
-    error: Option<String>,
+    error: Option<Vec<u8>>,
 }
 
 /// The bind info behind a handle.
@@ -229,7 +229,7 @@ pub(crate) fn c_table_bind(
     // SAFETY: the client's callback receives the bind info, valid for the call.
     unsafe { bind(std::ptr::from_mut(&mut bind_info).cast()) };
     if let Some(error) = bind_info.error {
-        return Err(Error::binder(error));
+        return Err(Error::new_bytes(rustdb_common::ErrorKind::Binder, error));
     }
     let names = bind_info
         .names
@@ -296,7 +296,7 @@ struct CTableInternalInitInfo<'a> {
     column_ids: &'a [u64],
     init_data: UserData,
     max_threads: u64,
-    error: Option<String>,
+    error: Option<Vec<u8>>,
 }
 
 /// The init info behind a handle.
@@ -316,7 +316,7 @@ struct CTableInternalFunctionInfo {
     bind_data: *mut c_void,
     init_data: *mut c_void,
     local_data: *mut c_void,
-    error: Option<String>,
+    error: Option<Vec<u8>>,
 }
 
 /// The function info behind a handle.
@@ -348,7 +348,7 @@ fn run_init(
     // SAFETY: the client's callback receives the init info, valid for the call.
     unsafe { init(std::ptr::from_mut(&mut init_info).cast()) };
     if let Some(error) = init_info.error {
-        return Err(Error::invalid_input(error));
+        return Err(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, error));
     }
     Ok((init_info.init_data, init_info.max_threads))
 }
@@ -430,7 +430,7 @@ fn c_table_function_scan(projection_pushdown: bool) -> ParallelTableScan {
                 );
             }
             if let Some(error) = function_info.error {
-                return Err(Error::invalid_input(error));
+                return Err(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, error));
             }
             local.batch_index = global.next_batch.fetch_add(1, Ordering::Relaxed);
             Ok(!output.is_empty())
@@ -771,7 +771,7 @@ pub unsafe extern "C" fn duckdb_bind_set_error(info: DuckdbBindInfo, error: *con
         && !error.is_null()
     {
         // SAFETY: `error` is a C string per the API contract.
-        info.error = Some(unsafe { error_text(error) });
+        info.error = Some(unsafe { error_bytes(error) });
     }
 }
 
@@ -846,7 +846,7 @@ pub unsafe extern "C" fn duckdb_init_set_error(info: DuckdbInitInfo, error: *con
         && !error.is_null()
     {
         // SAFETY: `error` is a C string per the API contract.
-        info.error = Some(unsafe { error_text(error) });
+        info.error = Some(unsafe { error_bytes(error) });
     }
 }
 
@@ -918,6 +918,6 @@ pub unsafe extern "C" fn duckdb_function_set_error(info: DuckdbFunctionInfo, err
         && !error.is_null()
     {
         // SAFETY: `error` is a C string per the API contract.
-        info.error = Some(unsafe { error_text(error) });
+        info.error = Some(unsafe { error_bytes(error) });
     }
 }

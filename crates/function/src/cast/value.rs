@@ -67,7 +67,7 @@ impl ValueCast for Value {
         params.strict = strict;
         let value = self.cast_with(set, target, &mut params)?;
         match params.take_error_message() {
-            Some(message) => Err(Error::conversion(message)),
+            Some(message) => Err(Error::new_bytes(rustdb_common::ErrorKind::Conversion, message)),
             None => Ok(value),
         }
     }

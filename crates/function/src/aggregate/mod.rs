@@ -87,6 +87,12 @@ pub trait AggregateOps: Send + Sync + 'static {
     /// Size and alignment of one state.
     fn state_layout(&self) -> Layout;
 
+    /// Resolves fallible state-size metadata during physical preparation, before
+    /// allocating or initializing any states. Built-in state layouts are infallible.
+    fn verify_state_layout(&self) -> Result<()> {
+        Ok(())
+    }
+
     /// Whether states own resources that [`AggregateOps::destroy`] must release.
     fn needs_destructor(&self) -> bool;
 

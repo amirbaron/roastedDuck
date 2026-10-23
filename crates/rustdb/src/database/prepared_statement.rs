@@ -85,7 +85,7 @@ impl Connection {
             .pop()
             .ok_or_else(|| Error::invalid_input("No statement to prepare!"))?;
         self.prepare_statement(statement)
-            .map_err(|error| error.with_query_context(query))
+            .map_err(|error| self.process_error(error, query))
     }
 
     /// The tables the single statement in `query` uses, by name or by qualified name
@@ -116,7 +116,11 @@ impl Connection {
             .set_settings(Arc::new(self.settings_snapshot()));
         let transaction = self.transactions.current();
         let planner = Planner::new(self.client_context(transaction));
-        let prepared = self.in_query_scope(|_| planner.prepare(statement));
+        let prepared = self.in_query_scope(|connection| -> Result<PreparedStatementData> {
+            let mut prepared = planner.prepare(statement)?;
+            connection.prepare_aggregate_layouts(&mut prepared)?;
+            Ok(prepared)
+        });
         let invalidates = prepared
             .as_ref()
             .is_err_and(|error| super::invalidates_transaction(error.kind()));
@@ -133,6 +137,34 @@ impl Connection {
                 Err(self.process_error(error, &query))
             }
         }
+    }
+
+    /// State-size callbacks are physical-planning metadata, not aggregate execution.
+    /// Resolve them after optimization, without initializing states or running a plan.
+    pub(super) fn prepare_aggregate_layouts(&mut self, prepared: &mut PreparedStatementData) -> Result<()> {
+        // Preparing SQL PREPARE also prepares its contained statement. Optimize that
+        // statement separately before resolving its aggregate metadata.
+        fn nested(connection: &mut Connection, plan: &mut rustdb_planner::LogicalOperator) -> Result<()> {
+            for child in &mut plan.children {
+                nested(connection, child)?;
+            }
+            if let rustdb_planner::LogicalKind::Prepare { prepared, .. } = &mut plan.kind {
+                connection.prepare_aggregate_layouts(Arc::make_mut(prepared))?;
+            }
+            Ok(())
+        }
+        let Some(plan) = prepared.preparation_plan.take() else {
+            return Ok(());
+        };
+        if !prepared.properties.bound_all_parameters {
+            return Ok(());
+        }
+        let transaction = self.transactions.current();
+        let client = self.client_context(transaction);
+        let mut optimizer = rustdb_optimizer::Optimizer::new(client, self.settings.optimizer_config());
+        let mut plan = optimizer.optimize(plan)?;
+        nested(self, &mut plan)?;
+        rustdb_execution::verify_aggregate_state_layouts(&mut plan)
     }
 
     /// Starts the prepared statement with `values` for its parameters, by identifier,

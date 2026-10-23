@@ -52,7 +52,7 @@ pub(crate) struct TransformOptions {
     pub(crate) error_unknown_key: bool,
     /// Report errors through the return value instead of raising them.
     pub(crate) delay_error: bool,
-    pub(crate) error_message: String,
+    pub(crate) error_message: Vec<u8>,
     /// The row of the first error.
     pub(crate) object_index: usize,
     pub(crate) date_format_map: Option<Arc<DateFormatMap>>,
@@ -77,7 +77,7 @@ impl TransformOptions {
             error_missing_key,
             error_unknown_key,
             delay_error: false,
-            error_message: String::new(),
+            error_message: Vec::new(),
             object_index: 0,
             date_format_map: None,
             casts,
@@ -87,7 +87,7 @@ impl TransformOptions {
     /// Records the first error (when strict).
     fn fail(&mut self, success: &mut bool, row: usize, message: impl FnOnce() -> String) {
         if *success && self.strict_cast {
-            self.error_message = message();
+            self.error_message = message().into_bytes();
             self.object_index = row;
             *success = false;
         }
@@ -363,8 +363,9 @@ fn transform_from_string(
     if let Some(message) = params.take_error_message()
         && options.strict_cast
     {
-        options.error_message = format!(
-            "{message}\n If this error occurred during read_json, line/object number information is approximate"
+        options.error_message = message;
+        options.error_message.extend_from_slice(
+            b"\n If this error occurred during read_json, line/object number information is approximate",
         );
         options.object_index = 0;
         success = false;
@@ -531,7 +532,8 @@ pub(crate) fn transform_object(
                                 "Object {} has duplicate key \"{}\"",
                                 val_to_string(doc, obj, Some(50)),
                                 String::from_utf8_lossy(key_bytes)
-                            );
+                            )
+                            .into_bytes();
                             options.object_index = i;
                             success = false;
                         }
@@ -547,7 +549,8 @@ pub(crate) fn transform_object(
                             "Object {} has unknown key \"{}\"",
                             val_to_string(doc, obj, Some(50)),
                             String::from_utf8_lossy(key_bytes)
-                        );
+                        )
+                        .into_bytes();
                         options.object_index = i;
                         success = false;
                     }
@@ -564,7 +567,8 @@ pub(crate) fn transform_object(
                         "Object {} does not have key \"{}\"",
                         val_to_string(doc, obj, Some(50)),
                         names[col]
-                    );
+                    )
+                    .into_bytes();
                     options.object_index = i;
                     success = false;
                 }
@@ -578,7 +582,10 @@ pub(crate) fn transform_object(
         vectors.push(vector);
     }
     if !options.delay_error && !success {
-        return Err(Error::invalid_input(options.error_message.clone()));
+        return Err(Error::new_bytes(
+            rustdb_common::ErrorKind::InvalidInput,
+            options.error_message.clone(),
+        ));
     }
     Ok((vectors, success))
 }
@@ -670,7 +677,10 @@ fn transform_list(
         result.set_null(row);
     }
     if !options.delay_error && !success {
-        return Err(Error::invalid_input(options.error_message.clone()));
+        return Err(Error::new_bytes(
+            rustdb_common::ErrorKind::InvalidInput,
+            options.error_message.clone(),
+        ));
     }
     Ok((result, success))
 }
@@ -740,7 +750,10 @@ fn transform_array(
         result.set_null(row);
     }
     if !options.delay_error && !success {
-        return Err(Error::invalid_input(options.error_message.clone()));
+        return Err(Error::new_bytes(
+            rustdb_common::ErrorKind::InvalidInput,
+            options.error_message.clone(),
+        ));
     }
     Ok((result, success))
 }
@@ -788,10 +801,9 @@ fn transform_map(
     }
     let (key_vector, keys_ok) = transform(doc, &keys, &key_type, options)?;
     if !keys_ok {
-        return Err(Error::conversion(format!(
-            "{}. Cannot default to NULL, because map keys cannot be NULL",
-            options.error_message
-        )));
+        let mut message = options.error_message.clone();
+        message.extend_from_slice(b". Cannot default to NULL, because map keys cannot be NULL");
+        return Err(Error::new_bytes(rustdb_common::ErrorKind::Conversion, message));
     }
     let (value_vector, values_ok) = transform(doc, &values, &value_type, options)?;
     success &= values_ok;
@@ -815,7 +827,10 @@ fn transform_map(
         result.set_null(row);
     }
     if !options.delay_error && !success {
-        return Err(Error::invalid_input(options.error_message.clone()));
+        return Err(Error::new_bytes(
+            rustdb_common::ErrorKind::InvalidInput,
+            options.error_message.clone(),
+        ));
     }
     Ok((result, success))
 }
@@ -1263,7 +1278,10 @@ fn transform_rows(
     let (vector, success) =
         transform_function_internal(args.column(0), args.len(), &target, arena, &mut options)?;
     if !success {
-        return Err(Error::invalid_input(options.error_message));
+        return Err(Error::new_bytes(
+            rustdb_common::ErrorKind::InvalidInput,
+            options.error_message,
+        ));
     }
     *result = vector;
     Ok(())
@@ -1308,7 +1326,7 @@ pub(crate) fn json_to_any_cast(casts: &CastFunctionSet) -> BoundCastInfo {
             transform_function_internal(source, count, &target, &mut arena, &mut options)?;
         *result = vector;
         if !success {
-            params.assign_error(options.error_message)?;
+            params.assign_error_bytes(options.error_message)?;
         }
         Ok(success)
     })

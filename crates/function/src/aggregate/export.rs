@@ -18,6 +18,10 @@ struct ExportOps {
 }
 
 impl AggregateOps for ExportOps {
+    fn verify_state_layout(&self) -> Result<()> {
+        self.inner.verify_state_layout()
+    }
+
     fn state_layout(&self) -> Layout {
         self.inner.state_layout()
     }
@@ -68,7 +72,12 @@ impl AggregateOps for ExportOps {
         unsafe { self.inner.update_selection(inputs, input, state, sel) }
     }
 
-    unsafe fn combine(&self, source: &[StatePtr], target: &[StatePtr], input: AggregateInput<'_>) -> Result<()> {
+    unsafe fn combine(
+        &self,
+        source: &[StatePtr],
+        target: &[StatePtr],
+        input: AggregateInput<'_>,
+    ) -> Result<()> {
         // SAFETY: forwarded under the caller's contract.
         unsafe { self.inner.combine(source, target, input) }
     }

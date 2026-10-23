@@ -365,11 +365,8 @@ fn convert_batch(
         (vec![column], success)
     };
     if !success {
-        let message = format!(
-            "{}{}",
-            options.error_message,
-            transform_hint(data.options.auto_detect)
-        );
+        let mut message = options.error_message;
+        message.extend_from_slice(transform_hint(data.options.auto_detect).as_bytes());
         return Err(reader.transform_error(batch, options.object_index, &message)?);
     }
     Ok(columns)

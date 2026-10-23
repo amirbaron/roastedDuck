@@ -437,18 +437,21 @@ impl JsonReader {
         &self,
         batch: &ScanBatch,
         object_index: usize,
-        message: &str,
+        message: &[u8],
     ) -> Result<Error> {
         let line = batch.first_value + object_index as u64 + 1;
         let line = match self.range {
             Some(range) if range.start > 0 => line + count_lines_before(&self.path, range.start)?,
             _ => line,
         };
-        Ok(Error::invalid_input(format!(
-            "JSON transform error in file \"{}\", in {} {line}: {message}",
+        let mut text = format!(
+            "JSON transform error in file \"{}\", in {} {line}: ",
             self.path,
             self.unit()
-        )))
+        )
+        .into_bytes();
+        text.extend_from_slice(message);
+        Ok(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, text))
     }
 
     /// `ThrowObjectSizeError`.

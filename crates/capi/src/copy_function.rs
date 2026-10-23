@@ -15,7 +15,7 @@ use rustdb_planner::ClientContext as BinderContext;
 use rustdb_types::{DataChunk, LogicalType, Value};
 
 use crate::data_chunk::DuckdbDataChunk;
-use crate::function::{DuckdbDeleteCallback, UserData, error_text};
+use crate::function::{DuckdbDeleteCallback, UserData, error_bytes};
 use crate::helper::{catch, opt_str, to_cstring};
 use crate::logical_types::{DuckdbLogicalType, wrap_type};
 use crate::open::{DuckdbClientContext, DuckdbConnection, connection_ref, wrap_client_context};
@@ -139,7 +139,7 @@ struct CCopyToInternalBindInfo<'a> {
     types: &'a [LogicalType],
     extra_info: *mut c_void,
     bind_data: UserData,
-    error: Option<String>,
+    error: Option<Vec<u8>>,
 }
 
 /// What a `duckdb_copy_function_global_init_info` points to (DuckDB's
@@ -148,7 +148,7 @@ struct CCopyToGlobalInitInfo<'a> {
     bind_data: &'a CCopyToBindData,
     file_path: CString,
     global_state: UserData,
-    error: Option<String>,
+    error: Option<Vec<u8>>,
 }
 
 /// What the infos of the sink and finalize callbacks point to (DuckDB's
@@ -156,7 +156,7 @@ struct CCopyToGlobalInitInfo<'a> {
 struct CCopyToExecuteInfo<'a> {
     bind_data: &'a CCopyToBindData,
     global_state: &'a CCopyToGlobalState,
-    error: Option<String>,
+    error: Option<Vec<u8>>,
 }
 
 /// The C API bind data of a write.
@@ -236,7 +236,7 @@ fn c_copy_to_bind(
         unsafe { bind_to(std::ptr::from_mut(&mut bind_info).cast()) };
         bind_data = bind_info.bind_data;
         if let Some(error) = bind_info.error {
-            return Err(Error::binder(error));
+            return Err(Error::new_bytes(rustdb_common::ErrorKind::Binder, error));
         }
     }
     Ok(Arc::new(CCopyToBindData {
@@ -262,7 +262,7 @@ fn c_copy_to_global_init(bind_data: &dyn FunctionData, path: &str) -> Result<Cop
         unsafe { global_init(std::ptr::from_mut(&mut init_info).cast()) };
         global_state = init_info.global_state;
         if let Some(error) = init_info.error {
-            return Err(Error::invalid_input(error));
+            return Err(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, error));
         }
     }
     Ok(Box::new(CCopyToGlobalState { global_state }))
@@ -294,7 +294,7 @@ fn c_copy_to_sink(
     // call.
     unsafe { sink(std::ptr::from_mut(&mut sink_info).cast(), &raw mut input) };
     match sink_info.error {
-        Some(error) => Err(Error::invalid_input(error)),
+        Some(error) => Err(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, error)),
         None => Ok(()),
     }
 }
@@ -315,7 +315,7 @@ fn c_copy_to_finalize(bind_data: &dyn FunctionData, global_state: &CopyGlobalSta
     // SAFETY: the client's callback receives the finalize info, valid for the call.
     unsafe { finalize(std::ptr::from_mut(&mut finalize_info).cast()) };
     match finalize_info.error {
-        Some(error) => Err(Error::invalid_input(error)),
+        Some(error) => Err(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, error)),
         None => Ok(()),
     }
 }
@@ -457,7 +457,7 @@ pub unsafe extern "C" fn duckdb_copy_function_bind_set_error(
         && !error.is_null()
     {
         // SAFETY: `error` is a C string per the API contract.
-        info.error = Some(unsafe { error_text(error) });
+        info.error = Some(unsafe { error_bytes(error) });
     }
 }
 
@@ -559,7 +559,7 @@ pub unsafe extern "C" fn duckdb_copy_function_global_init_set_error(
         && !error.is_null()
     {
         // SAFETY: `error` is a C string per the API contract.
-        info.error = Some(unsafe { error_text(error) });
+        info.error = Some(unsafe { error_bytes(error) });
     }
 }
 
@@ -778,7 +778,7 @@ unsafe fn set_execute_error(info: *mut c_void, error: *const c_char) {
         && !error.is_null()
     {
         // SAFETY: forwarded.
-        info.error = Some(unsafe { error_text(error) });
+        info.error = Some(unsafe { error_bytes(error) });
     }
 }
 

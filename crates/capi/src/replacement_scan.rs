@@ -12,7 +12,7 @@ use rustdb_common::{Error, Result};
 use rustdb_planner::{ReplacementScan, ReplacementScanInput};
 use rustdb_types::Value;
 
-use crate::function::{DuckdbDeleteCallback, error_text};
+use crate::function::{DuckdbDeleteCallback, error_bytes};
 use crate::helper::{opt_str, to_cstring};
 use crate::open::DuckdbDatabase;
 use crate::value::{DuckdbValue, value_ref};
@@ -52,7 +52,7 @@ impl Drop for CReplacementScanData {
 struct CReplacementScanInfo {
     function_name: String,
     parameters: Vec<Value>,
-    error: Option<String>,
+    error: Option<Vec<u8>>,
 }
 
 /// `duckdb_capi_replacement_callback`: asks the client about the table; a function name
@@ -73,7 +73,10 @@ fn capi_replacement_callback(
         );
     }
     if let Some(error) = info.error.filter(|error| !error.is_empty()) {
-        return Err(Error::binder(format!("Error in replacement scan: {error}\n")));
+        let mut message = b"Error in replacement scan: ".to_vec();
+        message.extend_from_slice(&error);
+        message.push(b'\n');
+        return Err(Error::new_bytes(rustdb_common::ErrorKind::Binder, message));
     }
     if info.function_name.is_empty() {
         return Ok(None);
@@ -184,6 +187,6 @@ pub unsafe extern "C" fn duckdb_replacement_scan_set_error(
         && !error.is_null()
     {
         // SAFETY: `error` is a C string per the API contract.
-        info.error = Some(unsafe { error_text(error) });
+        info.error = Some(unsafe { error_bytes(error) });
     }
 }

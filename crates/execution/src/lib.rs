@@ -29,6 +29,6 @@ pub use operator::{
 pub use parallel::{ExecutionStep, Executor, ProgressData, QueryExecution, QueryOptions, TaskScheduler};
 pub use plan_generator::{
     CardinalityEstimates, ExplainOutput, JoinPlanSettings, PhysicalPlan, PlanContext, create_physical_plan,
-    create_physical_plan_with,
+    create_physical_plan_with, verify_aggregate_state_layouts,
 };
 pub use profiler::{OperatorProfile, QueryProfiler, ScanMetrics, operator_key};
