@@ -147,7 +147,7 @@ fn allow_unsigned(shell: &mut Shell, _args: &[String]) -> MetadataResult {
 }
 
 fn show_version_and_exit(_shell: &mut Shell, _args: &[String]) -> MetadataResult {
-    ShellState::printf_stdout(&format!(
+    ShellState::printf_stdout(format!(
         "{} ({}) {}\n",
         rustdb::Database::library_version(),
         rustdb::Database::release_codename(),

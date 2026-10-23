@@ -237,8 +237,8 @@ pub fn set_completion_rendering(enabled: bool) {
 }
 
 /// `linenoiseHistoryAdd`.
-pub fn history_add(line: &str) {
-    history::add(line.as_bytes());
+pub fn history_add(line: impl AsRef<[u8]>) {
+    history::add(line.as_ref());
 }
 
 /// `linenoiseHistorySetMaxLen`.
@@ -1222,7 +1222,7 @@ impl<'a> Linenoise<'a> {
 
     /// `Linenoise::AllWhitespace`: only whitespace and comments.
     fn all_whitespace(z: &[u8]) -> bool {
-        crate::shell::all_whitespace(&String::from_utf8_lossy(z))
+        crate::shell::all_whitespace(z)
     }
 
     /// `Linenoise::HandleTerminalResize`: in multi-line mode, a new terminal size changes

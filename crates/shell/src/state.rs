@@ -425,8 +425,8 @@ impl ShellState {
     }
 
     /// `printf`: to standard output whatever the output is.
-    pub fn printf_stdout(text: &str) {
-        printer::write_stdout(text.as_bytes());
+    pub fn printf_stdout(text: impl AsRef<[u8]>) {
+        printer::write_stdout(text.as_ref());
     }
 
     /// `ShellState::RenderLength`.
@@ -712,13 +712,21 @@ impl ShellState {
     }
 
     /// `PrintDatabaseError`: an error to stderr, highlighted when errors are.
-    pub fn print_database_error(&mut self, error: &str) {
+    pub fn print_database_error(&mut self, error: impl AsRef<[u8]>) {
+        let error = error.as_ref();
         if !self.highlight_errors() {
-            self.print_err(format!("{error}\n"));
+            self.print_err(error);
+            self.print_err(b"\n");
             return;
         }
-        self.detect_dark_light_mode();
-        ShellHighlight::new(&self.out).print_error(error);
+        if let Ok(text) = std::str::from_utf8(error) {
+            self.detect_dark_light_mode();
+            ShellHighlight::new(&self.out).print_error(text);
+        } else {
+            // The text highlighter still requires UTF-8; preserve the original bytes.
+            self.print_err(error);
+            self.print_err(b"\n");
+        }
     }
 
     /// `DetectDarkLightMode`: on a terminal, the color scheme follows its background.
@@ -923,7 +931,7 @@ impl ShellState {
 
     /// Reads the next line of the input (`local_getline` / `OneInputLine` for files and
     /// pipes): the line without its `\n` or `\r\n`, `None` at the end.
-    pub fn read_line(reader: &mut dyn BufRead) -> Option<String> {
+    pub fn read_line(reader: &mut dyn BufRead) -> Option<Vec<u8>> {
         let mut line = Vec::new();
         loop {
             let start = line.len();
@@ -946,7 +954,7 @@ impl ShellState {
             }
             break;
         }
-        Some(String::from_utf8_lossy(&line).into_owned())
+        Some(line)
     }
 
     /// `GetBailOnError`: by default, files and init files stop at the first error.

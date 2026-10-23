@@ -148,8 +148,8 @@ pub fn is_space(c: u8) -> bool {
 }
 
 /// `_all_whitespace`: whether `z` holds only whitespace and comments.
-pub fn all_whitespace(z: &str) -> bool {
-    let z = z.as_bytes();
+pub fn all_whitespace(z: impl AsRef<[u8]>) -> bool {
+    let z = z.as_ref();
     let mut i = 0;
     while i < z.len() {
         if is_space(z[i]) {
@@ -217,8 +217,8 @@ enum SqlParseState {
 
 /// `ShellState::SQLIsComplete`: whether `sql` ends in a semicolon outside strings and
 /// comments.
-pub fn sql_is_complete(sql: &str) -> bool {
-    let z = sql.as_bytes();
+pub fn sql_is_complete(sql: impl AsRef<[u8]>) -> bool {
+    let z = sql.as_ref();
     let mut state = SqlParseState::Normal;
     let mut i = 0;
     while i < z.len() {
@@ -301,8 +301,8 @@ pub fn sql_is_complete(sql: &str) -> bool {
 
 /// `resolve_backslashes`: C escapes (`\n`, `\t`, `\NNN` octal, ...) in a dot command
 /// argument.
-pub fn resolve_backslashes(z: &str) -> String {
-    let bytes = z.as_bytes();
+/// Resolves shell escapes without imposing UTF-8 on the decoded bytes.
+pub fn resolve_backslashes_bytes(bytes: &[u8]) -> Vec<u8> {
     let mut result = Vec::with_capacity(bytes.len());
     let mut pos = 0;
     while pos < bytes.len() {
@@ -338,7 +338,7 @@ pub fn resolve_backslashes(z: &str) -> String {
         result.push(c);
         pos += 1;
     }
-    String::from_utf8_lossy(&result).into_owned()
+    result
 }
 
 /// The time spent by the process in user and system mode, in seconds (`getrusage`).
@@ -379,7 +379,7 @@ impl Timer {
         };
         let real = timer.start.elapsed().as_millis() as f64 * 0.001;
         let (user, system) = resource_usage();
-        ShellState::printf_stdout(&format!(
+        ShellState::printf_stdout(format!(
             "Run Time (s): real {real:.3} user {:.6} sys {:.6}\n",
             user - timer.user,
             system - timer.system
@@ -425,7 +425,7 @@ impl Shell {
     }
 
     /// `PrintDatabaseError`.
-    pub fn print_database_error(&mut self, error: &str) {
+    pub fn print_database_error(&mut self, error: impl AsRef<[u8]>) {
         self.state.print_database_error(error);
     }
 
@@ -461,7 +461,7 @@ impl Shell {
         }
         let filename = self.state.db_filename.clone();
         if let Err(error) = self.connect(&filename) {
-            self.print_database_error(&error.to_string());
+            self.print_database_error(error.to_bytes());
             if flags == ShellOpenFlags::KeepAliveOnFailure {
                 self.connect(":memory:")?;
             } else {
@@ -471,7 +471,7 @@ impl Shell {
         if let (Some(db), Some(conn)) = (&self.db, &mut self.conn)
             && let Err(error) = crate::extension::load_shell_extension(db, conn, &self.state.last_result)
         {
-            self.state.print_database_error(&error.to_string());
+            self.state.print_database_error(error.to_bytes());
         }
         if self.state.safe_mode {
             self.execute_query("SET enable_external_access=false");
@@ -510,7 +510,7 @@ impl Shell {
     }
 
     /// `ShellAddHistory`, with the line editor.
-    fn add_history(&self, line: &str) {
+    fn add_history(&self, line: impl AsRef<[u8]>) {
         if self.state.rl_version == ReadLineVersion::Linenoise {
             crate::linenoise::history_add(line);
         }
@@ -706,7 +706,7 @@ impl Shell {
         let result = match self.send_statement(statement, materialize) {
             Ok(result) => result,
             Err(error) => {
-                self.print_database_error(&error.to_string());
+                self.print_database_error(error.to_bytes());
                 return Ok(SuccessState::Failure);
             }
         };
@@ -758,7 +758,7 @@ impl Shell {
         match self.execute_sql_statements(sql) {
             Ok(state) => state,
             Err(error) => {
-                self.print_database_error(&error.to_string());
+                self.print_database_error(error.to_bytes());
                 SuccessState::Failure
             }
         }
@@ -806,7 +806,7 @@ impl Shell {
         let mut statements = match self.conn()?.parse_statements(query) {
             Ok(statements) => statements,
             Err(error) => {
-                self.print_database_error(&error.to_string());
+                self.print_database_error(error.to_bytes());
                 return Ok(SuccessState::Failure);
             }
         };
@@ -821,7 +821,7 @@ impl Shell {
             Ok(QueryResult::Materialized(result)) => ResultSource::Materialized(ScannedResult::new(result)),
             Ok(QueryResult::Stream(stream)) => ResultSource::Stream(stream),
             Err(error) => {
-                self.print_database_error(&error.to_string());
+                self.print_database_error(error.to_bytes());
                 return Ok(SuccessState::Failure);
             }
         };
@@ -982,10 +982,10 @@ impl Shell {
                 if need_commit {
                     self.query("ROLLBACK")?;
                 }
-                self.print_database_error(&format!(
+                self.print_database_error(format!(
                     "Failed To Import Error: Failed to import from file '{file_name}'\n"
                 ));
-                self.print_database_error(&error.to_string());
+                self.print_database_error(error.to_bytes());
                 Ok(false)
             }
         }
@@ -1196,7 +1196,7 @@ GROUP BY ALL;
         let result = match self.query(&query) {
             Ok(result) => result,
             Err(error) => {
-                self.print_database_error(&error.to_string());
+                self.print_database_error(error.to_bytes());
                 return MetadataResult::Fail;
             }
         };
@@ -1298,7 +1298,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
         let prepared = match self.conn()?.prepare(&query) {
             Ok(prepared) => prepared,
             Err(error) => {
-                self.print_database_error(&error.to_string());
+                self.print_database_error(error.to_bytes());
                 return Ok(MetadataResult::Fail);
             }
         };
@@ -1319,9 +1319,9 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
                         names.push(value_to_string(&result.value(0, row)));
                     }
                 }
-                Err(error) => self.print_database_error(&error.to_string()),
+                Err(error) => self.print_database_error(error.to_bytes()),
             },
-            Err(error) => self.print_database_error(&error.to_string()),
+            Err(error) => self.print_database_error(error.to_bytes()),
         }
         // Pretty-print the names in columns.
         if !names.is_empty() {
@@ -1352,7 +1352,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
         let result = match self.conn()?.query("SELECT name, file FROM pragma_database_list") {
             Ok(result) => result,
             Err(error) => {
-                self.print_database_error(&error.to_string());
+                self.print_database_error(error.to_bytes());
                 return Ok(SuccessState::Failure);
             }
         };
@@ -1378,42 +1378,64 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
 
     /// `DoMetaCommand`: runs a dot command; 1 on error, 2 to exit, 0 otherwise.
     pub fn do_meta_command(&mut self, line: &str) -> i32 {
-        let args = split_meta_command(line);
-        if args.is_empty() {
+        self.do_meta_command_bytes(line.as_bytes())
+    }
+
+    pub fn do_meta_command_bytes(&mut self, line: &[u8]) -> i32 {
+        let raw_args = split_meta_command_bytes(line);
+        if raw_args.is_empty() {
             return 0;
         }
         self.state.clear_temp_file();
-        let rc = match metadata_command::find_metadata_command(&args[0]) {
+        let rc = match metadata_command::find_metadata_command_bytes(&raw_args[0]) {
             Err(error) => {
                 self.print_database_error(&error);
                 1
             }
             Ok(command) => {
-                let result = match command.callback {
-                    None => {
-                        self.state.print_err(format!(
-                            "Command \"{}\" is unsupported in the current version of the CLI\n",
-                            command.command
-                        ));
-                        Ok(MetadataResult::Fail)
+                let result = if let Some(callback) = command.callback_bytes {
+                    if command.argument_count == 0 || command.argument_count == raw_args.len() {
+                        callback(self, &raw_args)
+                    } else {
+                        Ok(MetadataResult::PrintUsage)
                     }
-                    Some(callback) if command.argument_count == 0 || command.argument_count == args.len() => {
-                        callback(self, &args)
+                } else {
+                    match command.callback {
+                        None => {
+                            self.state.print_err(format!(
+                                "Command \"{}\" is unsupported in the current version of the CLI\n",
+                                command.command
+                            ));
+                            Ok(MetadataResult::Fail)
+                        }
+                        Some(callback)
+                            if command.argument_count == 0 || command.argument_count == raw_args.len() =>
+                        {
+                            // Explicit compatibility adapter until this callback's
+                            // state and engine interfaces also own bytes.
+                            let args: Vec<String> = raw_args
+                                .iter()
+                                .map(|arg| String::from_utf8_lossy(arg).into_owned())
+                                .collect();
+                            callback(self, &args)
+                        }
+                        Some(_) => Ok(MetadataResult::PrintUsage),
                     }
-                    Some(_) => Ok(MetadataResult::PrintUsage),
                 };
                 let result = match result {
                     Ok(MetadataResult::PrintUsage) => {
                         let error = format!(
                             "Invalid Command Error: Invalid usage of command '.{}'\n\nUsage: '.{} {}'",
-                            args[0], command.command, command.usage
+                            String::from_utf8_lossy(&raw_args[0]),
+                            command.command,
+                            command.usage
                         );
                         self.print_database_error(&error);
                         MetadataResult::Fail
                     }
                     Ok(result) => result,
                     Err(error) => {
-                        self.print_database_error(&error.to_string());
+                        self.print_database_error(error.to_bytes());
                         MetadataResult::Fail
                     }
                 };
@@ -1430,12 +1452,14 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
     }
 
     /// `RunOneSqlLine`: runs SQL text read from the input; 1 on error.
-    fn run_one_sql_line(&mut self, mode: InputMode, sql: &str) -> usize {
-        if mode == InputMode::Standard && !sql.is_empty() && !sql.starts_with('\x03') {
+    fn run_one_sql_line(&mut self, mode: InputMode, sql: &[u8]) -> usize {
+        if mode == InputMode::Standard && !sql.is_empty() && !sql.starts_with(b"\x03") {
             self.add_history(sql);
         }
         let timer = Timer::begin(self.state.enable_timer);
-        let success = self.execute_sql(sql);
+        // Legacy SQL handoff: parser/AST/name storage is still UTF-8. The input
+        // accumulator retains the original bytes until that boundary is ported.
+        let success = self.execute_sql(&String::from_utf8_lossy(sql));
         Timer::end(timer);
         if success != SuccessState::Success {
             return 1;
@@ -1469,7 +1493,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
 
     /// `OneInputLine`: the next line of input, `None` at the end. Interactive input is
     /// read with the line editor and a prompt.
-    fn one_input_line(&mut self, is_continuation: bool) -> Option<String> {
+    fn one_input_line(&mut self, is_continuation: bool) -> Option<Vec<u8>> {
         match &mut self.state.input {
             Input::Reader(reader) => return ShellState::read_line(reader),
             Input::Stdin => return ShellState::read_line(&mut std::io::stdin().lock()),
@@ -1483,7 +1507,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
             };
             let mut completion = |line: &[u8]| linenoise_completion(self.conn.as_mut(), line);
             let line = crate::linenoise::linenoise(&prompt, Some(&mut completion))?;
-            return Some(String::from_utf8_lossy(&line).into_owned());
+            return Some(line);
         }
         // Without the line editor: print the prompt and read a line.
         if is_continuation {
@@ -1520,7 +1544,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
     /// `ProcessInput`: reads and runs input until its end, an `.exit`, or an error when
     /// bailing; returns 1 if there were errors.
     pub fn process_input(&mut self, mut mode: InputMode) -> i32 {
-        let mut sql = String::new();
+        let mut sql = Vec::new();
         let mut err_count = 0usize;
         let mut num_ctrl_c = 0usize;
         self.state.lineno = 0;
@@ -1543,7 +1567,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
                 }
                 ShellState::clear_interrupt();
             }
-            if line.starts_with('\x03') {
+            if line.starts_with(b"\x03") {
                 // Ctrl-C clears the statement; twice on an empty line shows a hint.
                 if sql.is_empty() && line.len() == 1 && self.state.stdin_is_interactive {
                     num_ctrl_c += 1;
@@ -1555,7 +1579,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
                 continue;
             }
             num_ctrl_c = 0;
-            if mode == InputMode::DuckdbRc && !line.starts_with(".startup_text") {
+            if mode == InputMode::DuckdbRc && !line.starts_with(b".startup_text") {
                 if self.state.startup_text == StartupText::All {
                     self.state.print_highlighted(
                         &format!("-- Loading resources from {}\n", self.state.duckdb_rc_path),
@@ -1569,19 +1593,21 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
             self.state.lineno += 1;
             if sql.is_empty() && all_whitespace(&line) {
                 if self.state.has_flag(ShellFlag::Echo) {
-                    ShellState::printf_stdout(&format!("{line}\n"));
+                    ShellState::printf_stdout(&line);
+                    ShellState::printf_stdout(b"\n");
                 }
                 continue;
             }
-            if sql.is_empty() && (line.starts_with('.') || line.starts_with('#')) {
+            if sql.is_empty() && (line.starts_with(b".") || line.starts_with(b"#")) {
                 if self.state.has_flag(ShellFlag::Echo) {
-                    ShellState::printf_stdout(&format!("{line}\n"));
+                    ShellState::printf_stdout(&line);
+                    ShellState::printf_stdout(b"\n");
                 }
-                if line.starts_with('.') {
+                if line.starts_with(b".") {
                     if mode == InputMode::Standard {
                         self.add_history(&line);
                     }
-                    let rc = self.do_meta_command(&line);
+                    let rc = self.do_meta_command_bytes(&line);
                     if rc == 2 {
                         // Exit requested.
                         break;
@@ -1593,12 +1619,16 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
             }
             let prior_length = sql.len();
             if sql.is_empty() {
-                sql.push_str(line.trim_start_matches(|c: char| c.is_ascii() && is_space(c as u8)));
+                let start = line
+                    .iter()
+                    .position(|&byte| !is_space(byte))
+                    .unwrap_or(line.len());
+                sql.extend_from_slice(&line[start..]);
             } else {
-                sql.push('\n');
-                sql.push_str(&line);
+                sql.push(b'\n');
+                sql.extend_from_slice(&line);
             }
-            if !sql.is_empty() && sql[prior_length..].contains(';') && sql_is_complete(&sql) {
+            if !sql.is_empty() && sql[prior_length..].contains(&b';') && sql_is_complete(&sql) {
                 err_count += self.run_one_sql_line(mode, &sql);
                 sql.clear();
                 if self.state.out_count > 0 {
@@ -1609,7 +1639,8 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
                 }
             } else if !sql.is_empty() && all_whitespace(&sql) {
                 if self.state.has_flag(ShellFlag::Echo) {
-                    ShellState::printf_stdout(&format!("{sql}\n"));
+                    ShellState::printf_stdout(&sql);
+                    ShellState::printf_stdout(b"\n");
                 }
                 sql.clear();
             }
@@ -1635,7 +1666,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
                 rc
             }
             Err(_) if mode != InputMode::DuckdbRc || !default_duckdb_rc => {
-                self.print_database_error(&format!("IO Error: Failed to open file \"{file}\""));
+                self.print_database_error(format!("IO Error: Failed to open file \"{file}\""));
                 1
             }
             Err(_) => 0,
@@ -1962,8 +1993,8 @@ pub fn parse_qualified_name_components(input: &str) -> std::result::Result<Vec<S
 
 /// Splits a dot command into its arguments (`DoMetaCommand`): whitespace-separated, with
 /// quoted arguments, and C escapes resolved outside single quotes.
-pub fn split_meta_command(line: &str) -> Vec<String> {
-    let bytes = line.as_bytes();
+/// The shell tokenizer owns C-string argument bytes, including escape-decoded bytes.
+pub fn split_meta_command_bytes(bytes: &[u8]) -> Vec<Vec<u8>> {
     let mut args = Vec::new();
     // Skip the initial dot.
     let mut pos = 1;
@@ -1991,9 +2022,8 @@ pub fn split_meta_command(line: &str) -> Vec<String> {
             if pos < bytes.len() {
                 pos += 1;
             }
-            let arg = String::from_utf8_lossy(&arg).into_owned();
             args.push(if quote == b'"' {
-                resolve_backslashes(&arg)
+                resolve_backslashes_bytes(&arg)
             } else {
                 arg
             });
@@ -2003,7 +2033,12 @@ pub fn split_meta_command(line: &str) -> Vec<String> {
                 arg.push(bytes[pos]);
                 pos += 1;
             }
-            args.push(resolve_backslashes(&String::from_utf8_lossy(&arg)));
+            args.push(resolve_backslashes_bytes(&arg));
+        }
+    }
+    for arg in &mut args {
+        if let Some(nul) = arg.iter().position(|&byte| byte == 0) {
+            arg.truncate(nul);
         }
     }
     args
@@ -2012,6 +2047,34 @@ pub fn split_meta_command(line: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn raw_meta_arguments_preserve_bytes_and_c_string_termination() {
+        assert_eq!(
+            split_meta_command_bytes(b".print \"caf\xe9\""),
+            vec![b"print".to_vec(), b"caf\xe9".to_vec()]
+        );
+        assert_eq!(
+            split_meta_command_bytes(b".print \"caf\\351\" 'caf\\351' final\\000ignored tail"),
+            vec![
+                b"print".to_vec(),
+                b"caf\xe9".to_vec(),
+                b"caf\\351".to_vec(),
+                b"final".to_vec(),
+                b"tail".to_vec()
+            ]
+        );
+    }
+
+    #[test]
+    fn input_and_completeness_do_not_decode_utf8() {
+        let mut reader = std::io::Cursor::new(b"caf\xe9\r\n".as_slice());
+        assert_eq!(ShellState::read_line(&mut reader), Some(b"caf\xe9".to_vec()));
+        assert_eq!(ShellState::read_line(&mut reader), None);
+        assert!(all_whitespace(b"-- caf\xe9\n"));
+        assert!(sql_is_complete(b"SELECT 1; -- caf\xff"));
+        assert!(!sql_is_complete(b"SELECT $caf\xe9$ unfinished"));
+    }
 
     #[test]
     fn completeness() {
@@ -2025,12 +2088,18 @@ mod tests {
 
     #[test]
     fn meta_command_arguments() {
-        assert_eq!(split_meta_command(".mode csv"), ["mode", "csv"]);
         assert_eq!(
-            split_meta_command(".print 'a b' \"c\\td\""),
-            ["print", "a b", "c\td"]
+            split_meta_command_bytes(b".mode csv"),
+            [b"mode".to_vec(), b"csv".to_vec()]
         );
-        assert_eq!(split_meta_command(".separator \\t"), ["separator", "\t"]);
+        assert_eq!(
+            split_meta_command_bytes(b".print 'a b' \"c\\td\""),
+            [b"print".to_vec(), b"a b".to_vec(), b"c\td".to_vec()]
+        );
+        assert_eq!(
+            split_meta_command_bytes(b".separator \\t"),
+            [b"separator".to_vec(), b"\t".to_vec()]
+        );
     }
 
     #[test]

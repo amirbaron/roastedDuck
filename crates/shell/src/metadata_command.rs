@@ -26,6 +26,8 @@ use crate::state::{
 /// A dot command's callback (`metadata_command_t`); an error is printed like an
 /// exception thrown by the callback.
 pub type MetadataCommandFn = fn(&mut Shell, &[String]) -> Result<MetadataResult>;
+/// A native byte-argument callback, before any legacy text conversion.
+pub type MetadataCommandBytesFn = fn(&mut Shell, &[Vec<u8>]) -> Result<MetadataResult>;
 
 /// A dot command (`MetadataCommand`).
 #[derive(Debug)]
@@ -35,12 +37,20 @@ pub struct MetadataCommand {
     pub argument_count: usize,
     /// `None` for `.edit`, which the line editor runs; as a command it is unsupported.
     pub callback: Option<MetadataCommandFn>,
+    pub callback_bytes: Option<MetadataCommandBytesFn>,
     pub usage: &'static str,
     pub description: &'static str,
     /// The length of the shortest prefix that selects the command; 0 for the full name.
     pub match_size: usize,
     /// The text `.help --all` adds; `None` hides the command from `.help`.
     pub extra_description: Option<&'static str>,
+}
+
+impl MetadataCommand {
+    const fn with_byte_callback(mut self, callback: MetadataCommandBytesFn) -> Self {
+        self.callback_bytes = Some(callback);
+        self
+    }
 }
 
 fn toggle_bail(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
@@ -411,6 +421,17 @@ fn open_database(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
 
 fn print_arguments(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
     shell.state.print(format!("{}\n", args[1..].join(" ")));
+    Ok(MetadataResult::Success)
+}
+
+fn print_argument_bytes(shell: &mut Shell, args: &[Vec<u8>]) -> Result<MetadataResult> {
+    for (index, arg) in args.iter().skip(1).enumerate() {
+        if index > 0 {
+            shell.state.print(b" ");
+        }
+        shell.state.print(arg);
+    }
+    shell.state.print(b"\n");
     Ok(MetadataResult::Success)
 }
 
@@ -901,6 +922,7 @@ const fn command(
         command,
         argument_count,
         callback,
+        callback_bytes: None,
         usage,
         description,
         match_size,
@@ -1326,7 +1348,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Print literal STRING",
         3,
         Some(""),
-    ),
+    )
+    .with_byte_callback(print_argument_bytes),
     command(
         "progress_bar",
         0,
@@ -1657,7 +1680,8 @@ pub fn metadata_completions(line: &str) -> Vec<String> {
 
 /// `ShellState::FindMetadataCommand`: the first command `option` is a long enough
 /// prefix of, or the error with the closest names.
-pub fn find_metadata_command(option: &str) -> std::result::Result<&'static MetadataCommand, String> {
+/// Command lookup and diagnostics retain the original command-name bytes.
+pub fn find_metadata_command_bytes(option: &[u8]) -> std::result::Result<&'static MetadataCommand, Vec<u8>> {
     let n = option.len();
     if let Some(command) = METADATA_COMMANDS.iter().find(|command| {
         let match_size = if command.match_size == 0 {
@@ -1665,7 +1689,7 @@ pub fn find_metadata_command(option: &str) -> std::result::Result<&'static Metad
         } else {
             command.match_size
         };
-        n >= match_size && command.command.as_bytes().starts_with(option.as_bytes())
+        n >= match_size && command.command.as_bytes().starts_with(option)
     }) {
         return Ok(command);
     }
@@ -1673,9 +1697,14 @@ pub fn find_metadata_command(option: &str) -> std::result::Result<&'static Metad
         .iter()
         .map(|command| format!(".{}", command.command))
         .collect();
-    let candidates =
-        rustdb_common::string_util::candidates_error_message(&command_names, option, "Did you mean");
-    Err(format!(
-        "Unknown Command Error: Unrecognized command '{option}'\n{candidates}\nRun '.help' for more information."
-    ))
+    let candidates = rustdb_common::string_util::candidates_message(
+        &rustdb_common::string_util::top_n_levenshtein_bytes(&command_names, option),
+        "Did you mean",
+    );
+    let mut message = b"Unknown Command Error: Unrecognized command '".to_vec();
+    message.extend_from_slice(option);
+    message.extend_from_slice(b"'\n");
+    message.extend_from_slice(candidates.as_bytes());
+    message.extend_from_slice(b"\nRun '.help' for more information.");
+    Err(message)
 }

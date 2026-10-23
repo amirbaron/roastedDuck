@@ -109,7 +109,6 @@ stdin = "SELECT 'café' AS x;\nSELECT 1 AS ok;\n"
 
 [[case]]
 name = "input-latin1-dot-print"
-known = "the shell reads input as UTF-8 (invalid bytes become U+FFFD)"
 encoding = "latin-1"
 stdin = ".print café\n"
 
@@ -182,3 +181,17 @@ name = "argument-latin1"
 known = "the shell reads arguments as UTF-8 (invalid bytes become U+FFFD)"
 encoding = "latin-1"
 args = ["-c", "SELECT 'café' AS x"]
+
+[[case]]
+name = "dot-print-native-escaped-bytes"
+stdin = ".print \"caf\\351\" 'caf\\351' final\\000ignored tail\n.print \"a\\377\\n\\t\\0ignored\" end\n"
+
+[[case]]
+name = "dot-print-native-quotes"
+encoding = "latin-1"
+stdin = ".print \"café\" 'café' café\n"
+
+[[case]]
+name = "dot-command-native-name-error"
+encoding = "latin-1"
+stdin = ".notacafé\n"

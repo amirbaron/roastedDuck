@@ -261,7 +261,7 @@ pub fn load(filename: &str) -> bool {
             continue;
         }
         result.extend_from_slice(&line);
-        if crate::shell::sql_is_complete(&String::from_utf8_lossy(&result)) {
+        if crate::shell::sql_is_complete(&result) {
             add(&result);
             result.clear();
             continue;

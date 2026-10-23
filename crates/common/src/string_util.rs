@@ -155,12 +155,17 @@ pub fn top_n_distances(scores: Vec<(String, usize)>, n: usize, threshold: usize)
 /// The strings closest to `target` by prefix Levenshtein distance
 /// (DuckDB's `StringUtil::TopNLevenshtein` with `n = 5`, `threshold = 5`).
 pub fn top_n_levenshtein(strings: &[String], target: &str) -> Vec<String> {
+    top_n_levenshtein_bytes(strings, target.as_bytes())
+}
+
+/// Prefix Levenshtein suggestions for a native byte string.
+pub fn top_n_levenshtein_bytes(strings: &[String], target: &[u8]) -> Vec<String> {
     let scores = strings
         .iter()
         .map(|candidate| {
             let candidate_bytes = candidate.as_bytes();
             let compared = &candidate_bytes[..target.len().min(candidate_bytes.len())];
-            (candidate.clone(), similarity_score(compared, target.as_bytes()))
+            (candidate.clone(), similarity_score(compared, target))
         })
         .collect();
     top_n_distances(scores, 5, 5)
