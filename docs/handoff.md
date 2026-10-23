@@ -44,7 +44,7 @@ The checkout has an **uncommitted native-identifier migration and does not build
 complete workspace yet**. The planner library now compiles after native renderer and
 SHOW literal integration. The built-in function library also compiles after native
 STRUCT/UNION/ENUM and result-name integration. The latest workspace/all-targets check
-now passes execution, CSV, autocomplete, Parquet, ICU and both TPC generator libraries; the latest workspace check stops at **35 JSON diagnostics**. Runtime and client/result
+now passes execution, CSV, autocomplete, Parquet, ICU, both TPC generator libraries and JSON; the latest workspace check stops at **14 Arrow diagnostics**. Runtime and client/result
 consumers remain unchecked by a successful complete build.
 The corpus, shell and performance results below describe previously accepted binaries;
 they are not validation of this incomplete source. No final public binary or full
@@ -366,6 +366,35 @@ generator-native-checkpoint.json and tpch-native-workspace-check-5.jsonl on the 
 Selected client bindings, full public SQL/shell/corpus/C API/storage/WAL, raw parser/
 filesystem and fallible rendering, and final signed-binary speed-memory acceptance
 remain open. No memory-increasing table cache was restored.
+
+The JSON continuation now compiles all targets and passes scoped JSON/function/planner
+all-target Clippy with warnings denied and codegen --check. **68 signed release tests
+pass**; four pre-existing timing/exhaustive-oracle tests stay ignored. Native scan names,
+STRUCT/UNION transform lookups, VARIANT dictionary keys and error metadata retain bytes.
+JSON create functions and casts validate STRUCT/UNION name constants at the actual C++
+bind-time VARCHAR construction boundary, propagating errors before kernel execution.
+
+**10,482 new C++ comparisons pass**: 5,241 actual relation-query outcomes for STRUCT/
+LIST<STRUCT>/cast-to-JSON (including 420 matched invalid-Unicode rejections), and 5,241
+native COPY projection renderings for integer/date/timestamp inputs. Ninety golden
+records pass. A separate test checks 128 escaped-control/ASCII keys plus two Unicode
+keys through JSON-to-VARIANT dictionary conversion; this test is not a cross-engine
+file or full VARIANT acceptance claim.
+
+COPY plan rewrites now carry native ParsedExpression trees (function crate depends on
+AST), matching the actual C++ copy_json.cpp implementation. Positional references,
+strftime format constants, aliases, struct_pack and to_json are constructed directly.
+An auxiliary experiment parsing generated text exposed empty/NUL syntax errors in the
+old Rust adapter; those are not C++ COPY requirements and are not counted as parity
+failures. The final native C++ matrix includes those names and matches. Raw SQL parser
+ingress remains separately open.
+
+The fresh full-workspace/all-target check now stops at **14 Arrow diagnostics**. Evidence:
+json-native-checkpoint.json, json-name-compare-1.log, json-copy-native-compare-1.log and
+json-native-workspace-check-1.jsonl on the SSD. This verifies native JSON component paths,
+not complete public JSON file/SQL/shell/corpus behavior. Arrow/client APIs, the remaining
+runtime/C API build, full correctness/storage/WAL and documented final performance
+acceptance remain open. The uncached lower-memory baseline is unchanged.
 
 Detailed stage logs, exact limitations, source hashes and resume pointers live in
 `.context/identifier-bytes-progress.md` and the external artifact folder
