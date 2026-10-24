@@ -507,6 +507,55 @@ speed/memory tradeoffs, so suite averaging does not stand in for acceptance. Ini
 rejected, corrected, repeat and final-wheel records are preserved under python-json.
 These development measurements are not final release performance acceptance.
 
+## Polars and replacement retention checkpoint (2026-10-25)
+
+Native eager and lazy Polars conversion/input now use native Arrow and the unchanged
+frozen `polars_io` helper. Lazy relation schema inspection does not execute data;
+LazyFrame input remains deferred and repeatable. Eager inputs retain a single Arrow
+snapshot. Connection lazy results preserve the reference's narrower result-only
+operations and stream-closure diagnostics. No table-block caching is introduced.
+
+The unmodified Polars cohort passes **58 cases with two existing version skips** on
+both engines. The replacement-scan/dependency-leak cohort now passes **68/68** on both,
+up from Rust 42/68. Binding captures injected external calls before scalar subqueries
+and cloned CTE definitions consume their parse trees, and retains these calls in the
+original unbound relation. Generated table references receive a stable location.
+This fixes table/frame ownership, nested/recursive CTEs, CTE shadowing, scalar
+subqueries and later catalog-table creation without retaining whole result data.
+The five existing million-row ownership/leak cases also pass.
+
+Sixteen scoped regression cohorts run 1681 cases: **1668 pass, 3 fail, 10 skip/xfail**,
+with no collection errors. The three failures are unchanged: two held decimal
+reference discrepancies and the shared Parquet timestamp-unit assertion. Spark
+remains 289 pass/4 existing skips/1 existing xfail. These are component executions,
+not a full Python-suite pass; do not add them to older checkpoint counts.
+
+Focused Polars outcomes match **73/74**. The remaining zero-batch eager relation
+case exceeds the 512 MiB C++ process guard; Rust returns a bounded InvalidInputException.
+This is a ninth **unaccepted** discrepancy category. C++ raw exits/RSS and Rust
+outcomes are retained. Composed lazy journeys match 25/26; the same-connection
+self-join remains open. Across 12 repeats C++ consistently reports a closed query
+stream, while Rust returns a busy-connection error 8 times and correct rows 4 times.
+Do not classify this concurrency gap as an accepted skip or silently normalize it.
+
+Coupled fresh-process measurements retain elapsed/CPU time, whole/incremental RSS,
+checksums and thread settings for every case. Eager 1M-row Polars output remains an
+individual outlier: Rust 4.16–4.42 ms/122.5–122.7 MB versus C++ 1.71–1.91 ms/112.3–113.2 MB.
+The Rust generic materialized-result/Arrow path differs from the C++ Arrow collector;
+a future optimization must preserve materialization/error ordering and compare both
+speed and memory. A lazy 1024-row prefix remains bounded when source cardinality grows
+from 1M to 100M (about 117 MB process peak). Noisy first C++ lazy/filter timings remain
+in the raw report alongside the repeats. These development-wheel microbenchmarks do
+not certify final release performance or replace the accepted uncached suite baseline.
+
+Evidence: `.context/artifacts/python-polars-20261024/python-polars-checkpoint.json`,
+`regression-matrix-retention.json`, `remaining-gaps-retention.json`, replacement
+before/intermediate/after receipts, `polars-comparison-current.json`, isolated process
+receipts, lazy/shared-connection repeats, `performance-comparison-retention.json`,
+signed wheels and native compiler/check/test records. Older failed experiments remain
+preserved. Full Python/client/platform and final core/shell/storage/WAL/release gates
+remain open.
+
 ## Remaining gates
 
 Complete relation APIs (including delete, remaining file formats/filesystems, mutation/type/metadata and
@@ -514,7 +563,7 @@ remaining expression overloads), remaining display/error semantics, broader resu
 remaining UDF overload/annotation/concurrency coverage, replacement scans,
 complete native Pandas/NumPy inference, nested conversion and input error semantics,
 complete Arrow registration/protocol/schema/error/pushdown
-coverage, complete reader/capsule/concurrency behavior, Polars/Torch output,
+coverage, complete reader/capsule/concurrency behavior, remaining Polars semantics and Torch output,
 filesystems, helper/function-catalog compatibility and remaining type/metadata/exception
 semantics are still required. The API inventory marks only
 partial implementation/evidence; no surface is declared fully complete yet.
@@ -526,7 +575,7 @@ release performance. Preserve the accepted uncached speed-memory baseline and re
 individual query outliers in final acceptance. No table-cache retention was introduced.
 The other selected language clients remain part of the goal.
 
-Current JSON evidence: `.context/artifacts/python-json-20261024/python-json-checkpoint.json`,
+Previous JSON evidence: `.context/artifacts/python-json-20261024/python-json-checkpoint.json`,
 `json-comparison-final.json`, isolated subprocess receipts, `spark-rust-current/`,
 the thirteen scoped `*-rust-current/` cohorts, signed `wheels-dev-10-signed/`, native
 JSON tests, Clippy/workspace terminal records and all coupled performance experiments.

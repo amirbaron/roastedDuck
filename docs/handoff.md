@@ -1,7 +1,7 @@
 # Handoff
 
 State of the DuckDB 1.5.6 → Rust port ("rustdb") on the main line
-(`amirbaron/rust-duckdb-port`), updated 2026-10-24, to continue the work in a new session.
+(`amirbaron/rust-duckdb-port`), updated 2026-10-25, to continue the work in a new session.
 
 ## Goal
 
@@ -151,11 +151,21 @@ unstable C++ callback errors and one abort, with safe Rust exceptions. This is a
 unaccepted discrepancy category. Eleven signed JSON tests pass, three timing probes
 remain ignored. Bounded scratch reads reduce the 1M-row local JSON peak from about104MB
 to59–60MB; local/prefix speed outliers remain visible. No table cache is added.
-Current JSON evidence is python-json-20261024/python-json-checkpoint.json; current
+Previous JSON evidence is python-json-20261024/python-json-checkpoint.json; current
 profiling/package evidence follows. Unnamed row STRUCT conversion is fixed;
 18 typed row/NumPy/Pandas outcomes match without conflating container types.
 Current profile/package evidence is
 python-profile-20261024/python-profile-checkpoint.json and python-collection-20261024.
+Polars now passes 58 cases with 2 existing version skips on both engines. Replacement
+scans/dependency ownership pass 68/68 on both, closing 26 Rust failures. Relation-only
+shared-binder capture retains external calls before CTE/scalar-subquery ASTs are
+consumed. Sixteen scoped Python cohorts run 1681 cases:1668 pass/3 unchanged failures/
+10 skip-or-xfail, not a full-suite pass. Focused Polars outcomes match 73/74; zero-batch
+C++ memory runaway versus Rust bounded error is a ninth unaccepted discrepancy.
+Same-connection lazy self-join concurrency remains unresolved (25/26 composed matches).
+The 1M eager Polars conversion is a separate development outlier at roughly 2.2–2.6×
+C++ elapsed time and 9–10 MB additional peak. No table cache added. Evidence is
+python-polars-20261024/python-polars-checkpoint.json; earlier JSON/source controls remain.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.
