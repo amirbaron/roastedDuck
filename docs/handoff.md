@@ -44,14 +44,13 @@ The checkout has an **uncommitted native-byte migration and does not build as a
 complete workspace yet**. The native SQL parser now compiles all targets and passes
 73 signed release tests plus 24,499 exact full-AST C++ comparisons. The earlier 700
 pending full-AST byte inputs are resolved, with zero skipped inputs in that matrix.
-The runtime library **compiles successfully** and passes library Clippy with warnings
-denied. The latest workspace/all-target check passes runtime, benchmark and SLT library
-integration, then stops at shell integration; the latest scoped shell check stops at **three
-diagnostics** in duckbox/DESCRIBE native metadata fields. Shell changes are unverified.
-Benchmark/SLT all-target Clippy and 42 signed benchmark unit tests pass. Two-way
-checkpoint plus nonempty WAL replay between Rust/C++ passes for the recorded scenario.
-Broader shell/C API/client/corpus/performance acceptance remains open; earlier scoped
-component results remain tied to their recorded snapshots. Catalog and
+The runtime library and shell **compile successfully**. Shell all-target Clippy and
+15 signed current-source unit tests pass. The latest workspace/all-target check passes
+shell and bindcheck, then stops at **29 C API integration diagnostics**. The canonical
+shell differential suite reports 0 unexpected/768 cases (three existing known) on the
+native-ingress binary before the final width correction; the corrected binary passes
+154 native metadata cases. Full final shell/C API/client/corpus/performance acceptance
+remains open; earlier scoped results remain tied to their recorded snapshots. Catalog and
 storage library compilation passes that check; the newly touched index-type carrier has
 not had a fresh runtime/storage journey. Earlier scoped runtime counts (including 15)
 are historical checkpoints, not a fresh successful runtime build. Downstream execution,
@@ -1363,3 +1362,50 @@ checking to expose C API/client integration. Prompt/progress/native escape behav
 also requires C++ differential verification. The full goal and accepted lower-memory
 policy remain unchanged; no final shell/corpus/storage/WAL/client/performance gate is
 closed by this work-in-progress checkpoint.
+
+
+The shell native metadata continuation (2026-10-24) compiles all shell targets and
+passes all-target Clippy with warnings denied. Duckbox layout/header names and
+DESCRIBE/table/database/schema names retain bytes. Streaming metadata output uses
+native PrintStream/highlight APIs; HTML/C/CSV/JSON/SQL metadata escaping is byte-based.
+Prompt setting/generated/truncated text, progress, linenoise prompt ingress and log
+messages retain bytes. Pivoted names validate where C++ row_chunk.SetValue constructs
+VARCHARs. The batch SQL handoff no longer decodes lossily: new runtime byte statement
+APIs preserve default-parser input and processed error context.
+
+**15 signed current-source shell unit tests pass**, none ignored (development-profile
+executables). The earlier 14 signed release tests passed before native SQL ingress and
+the width correction. A signed release CLI passes **154/154 native metadata cases**
+across list/csv/json/jsonlines/html/quote/tcl/line/column/table/markdown/box/duckbox/insert,
+using Unicode, controls, invalid UTF-8 and long names. Only C++ platform internal stack
+traces are normalized; raw output is retained. The first matrix passed 144/154: aligned
+and duckbox widths used forgiving invalid-byte handling instead of C++ native utf8proc
+traversal. The corrected analysis propagates the native decoder error and matches the
+truncated-sequence width. Failed outputs are preserved.
+
+The **768-case canonical differential suite reports zero unexpected differences**,
+with three existing known differences (internal stack traces, database OIDs and invalid
+argv decoding), on the native SQL-ingress release binary before the final width change.
+It includes PTY cases. Do not describe that as a full final-source rerun. The corrected
+binary has the new 154-case matrix and current-source signed unit tests; repeat the
+complete shell acceptance suite, including upstream pytest, at final integration.
+
+Runtime strict PEG invalid-byte ingress explicitly remains NotImplemented; text PEG
+queries retain existing override behavior, while default raw parsing preserves bytes.
+Existing result-value string_column/numeric/JSON width text helpers, infallible legacy
+width callers and invalid-byte argv still require audit. This checkpoint is metadata
+and tested ingress behavior, not complete shell parity.
+
+Bindcheck's Rust result-name carrier/cache now preserves bytes (UTF-8 remains strings
+in JSON, other names use byte arrays); its text CLI oracle path still requires audit.
+Bindcheck all-target Clippy and codegen --check pass. The fresh workspace check advances
+to 29 C API diagnostics in logging, Arrow, COPY and other native consumers.
+
+Evidence: `shell-native-checkpoint.json`, `shell-native-tests-2-summary.json`,
+`shell-native-cli-diff-summary-2.json`, `shell-native-canonical-diff.log`,
+`shell-native-clippy-6.jsonl`, `shell-native-bindcheck-clippy-1.jsonl`,
+`shell-native-codegen-check.log` and `shell-native-final-workspace-check-2.jsonl` in the
+external `identifier-bytes-20261023` directory. Continue C API/client integration,
+remaining raw codecs/PEG ingress, expanded storage/WAL/corpus, Python/all selected
+clients and final documented speed-memory acceptance. The uncached lower-memory
+policy is unchanged.
