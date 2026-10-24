@@ -556,6 +556,41 @@ signed wheels and native compiler/check/test records. Older failed experiments r
 preserved. Full Python/client/platform and final core/shell/storage/WAL/release gates
 remain open.
 
+## Explicit/default connection and value checkpoint (2026-10-25)
+
+An additional eleven-file upstream cohort now passes **126/126** on both engines,
+closing nine Rust failures. Module-level `df` supports both result fetching and
+DataFrame input; `aggregate` and `limit` honor explicit/default connections. Their
+frozen overload diagnostics retain actual argument order and representations,
+including the reference's duplicate `df` fetch signatures. Empty positional calls
+with keywords now use the reference diagnostic separator.
+
+Closed-result Arrow consumers report the reference's missing-query-result error,
+while row/NumPy consumers keep the closed-result error. Explicit BIT bytes parse
+text bits rather than treating ASCII bytes as binary payload; malformed bytes keep
+the native error bytes through the Python Unicode boundary. Explicit float-to-decimal
+conversion is rejected, typed NaN becomes NULL, and datetime precision/timezone
+behavior follows the frozen conversion dispatch. Decimal and other intrinsically
+typed Python objects preserve that dispatch rather than applying an extra SQL cast.
+Ordinary SQL cast behavior is unchanged.
+
+All **56 focused runtime outcomes** and **84 type outcomes** match, with only live
+connection/relation addresses normalized and raw errors retained. The Polars
+recheck remains 73/74 with its existing held zero-batch resource discrepancy.
+Seventeen current development-wheel cohorts execute 1807 cases: **1794 pass, 3 unchanged
+failures, 10 skip/xfail**, with zero collection errors. The failures remain the two
+held decimal reference discrepancies and shared Parquet timestamp-unit assertion.
+Current Python all-target Clippy with warnings denied and workspace/all-target
+checking pass. This is broader component coverage, not full Python/runtime/platform
+or final release acceptance. No table caching or performance-target change is added;
+previous individual performance outliers remain open.
+
+Evidence: `.context/artifacts/python-runtime-20261025/python-runtime-checkpoint.json`,
+signed `wheels-dev-2-signed/`, `runtime-comparison-2.json`, raw probes,
+`types-comparison-current.json`, `regression-matrix-current.json`,
+`remaining-gaps-current.json`, isolated Polars rechecks and compiler terminal records.
+The complete source archive preserves the still-uncommitted migration and bindings.
+
 ## Remaining gates
 
 Complete relation APIs (including delete, remaining file formats/filesystems, mutation/type/metadata and

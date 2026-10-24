@@ -166,6 +166,14 @@ Same-connection lazy self-join concurrency remains unresolved (25/26 composed ma
 The 1M eager Polars conversion is a separate development outlier at roughly 2.2–2.6×
 C++ elapsed time and 9–10 MB additional peak. No table cache added. Evidence is
 python-polars-20261024/python-polars-checkpoint.json; earlier JSON/source controls remain.
+A further explicit/default connection/result/value cohort now passes 126/126 on both
+engines, closing 9 Rust failures. Module df overloads, aggregate/limit helpers, closed
+Arrow results, BIT byte text, float/decimal rejection, NaN and datetime precision/
+timezone conversion now match 56 focused outcomes; 84 type outcomes still match.
+Seventeen development-wheel cohorts run 1807 cases: 1794 pass/3 unchanged failures/
+10 skip-or-xfail, not a full-suite pass. Current Clippy/workspace checks pass.
+Latest source/wheel evidence is python-runtime-20261025/python-runtime-checkpoint.json;
+Polars performance/concurrency and all final acceptance gates remain open.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.

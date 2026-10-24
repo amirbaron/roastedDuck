@@ -46,7 +46,10 @@ skips on both engines; replacement-scan/ownership cases pass 68/68, closing 26 R
 failures. Focused Polars outcomes match 73/74; same-connection lazy self-join behavior
 remains unresolved. The scoped 16-cohort run records 1668 pass/3 unchanged failures/
 10 skip-or-xfail across 1681 cases. These component counts do not establish full Python
-acceptance. The 1M eager Polars output speed/memory outlier remains documented. R and the other language packages remain
+acceptance. The 1M eager Polars output speed/memory outlier remains documented. The additional explicit/default connection/result/value cohort
+passes 126/126 on both engines after nine fixes; 56 runtime and 84 type focused outcomes
+match. The latest 17-cohort run records 1794 pass/3 unchanged failures/10 skip-or-xfail
+across 1807 cases, with current Clippy/workspace checks passing. R and the other language packages remain
 unimplemented/unverified. The complete workspace/all-target check
 includes the Python crate. See [Python implementation gates](python-bindings.md).
 
