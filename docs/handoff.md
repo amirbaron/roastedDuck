@@ -45,7 +45,7 @@ complete workspace yet**. The native SQL parser now compiles all targets and pas
 73 signed release tests plus 24,499 exact full-AST C++ comparisons. The earlier 700
 pending full-AST byte inputs are resolved, with zero skipped inputs in that matrix.
 The latest workspace/all-target check passes planner, CSV, execution, Parquet, JSON,
-autocomplete and TPC-H/TPC-DS, then stops at **99 rustdb library integration diagnostics** in the latest scoped runtime
+autocomplete and TPC-H/TPC-DS, then stops at **91 rustdb library integration diagnostics** in the latest scoped runtime
 check (the preceding full-workspace check reported 125).
 Scoped autocomplete and generator all-target Clippy pass; 18 signed autocomplete tests
 pass, none ignored, plus 188 direct C++ PEG AST/source/error comparisons. Earlier
@@ -1203,3 +1203,37 @@ Evidence: `query-context-native-checkpoint.json`, `query-context-native-tests-1-
 in the external `identifier-bytes-20261023` directory. The native query-context API is
 not yet wired throughout runtime execution; finish lifecycle/profiler consumers and
 verify actual SQL errors before claiming parity. The lower-memory policy is unchanged.
+
+
+The native query-state continuation (2026-10-24) stores exact bytes in FunctionClient,
+prepared queries and ActiveQuery. Parsed-statement execution, logging and error context
+accept byte inputs while preserving existing text callers. The profiler retains native
+source text and validates QUERY_NAME when C++ assigns its VARCHAR metric; its query
+header remains bytes. These central runtime edits remain **unverified end-to-end**:
+the runtime library does not build yet. The fresh check reports 91 diagnostics in
+database/settings/attachment handling, read_duckdb and secrets; the changed query-state,
+active-query and profiler modules report no type diagnostics in that check.
+
+The shared current_query scalar now returns a checked VARCHAR at C++'s actual Value
+construction. **41 signed builtin-function library tests pass**, none ignored, including
+exact query storage/ID and real scalar-kernel cases. **1,747 C++ SQL outcomes pass**
+through Rust's raw parser, FunctionClient storage and the actual bound current_query
+kernel; 1,602 return query bytes and 145 produce expected parser/value errors. The 72
+frozen regression records pass in an additional signed test. This is parser/SDK/kernel
+component evidence, not a complete Connection::query or shell journey.
+
+The initial oracle matched 1,737/1,747. Ten NUL-comment errors differed because the
+comparison omitted ClientContext's parse-error rethrow and Error::rethrown did not
+sanitize NUL introduced by attached query context. The corrected rethrow reproduces
+C++'s next ErrorData catch; all original cases pass and the failed log remains. Direct
+QueryErrorContext formatting continues to preserve raw bytes before rethrow. A fresh
+33-test signed common suite passes (none ignored), including a NUL rethrow regression.
+Common/function SDK/builtins all-target Clippy and codegen --check pass.
+
+Evidence: `runtime-query-native-checkpoint.json`, `runtime-query-sdk-tests-1-summary.json`,
+`runtime-query-regression-tests-1-summary.json`, `runtime-current-query-comparison-3.log`,
+`runtime-query-final-clippy-1.jsonl` and `runtime-query-native-check-4.jsonl` in the
+external `identifier-bytes-20261023` directory. Full runtime query/profiler, settings,
+attachments/read_duckdb/secrets, shell/corpus/C API/storage/WAL, Python/all selected
+clients and documented final performance acceptance remain open. The uncached
+lower-memory policy is unchanged. `runtime-query-followup.md` records scope limits.
