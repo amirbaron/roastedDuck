@@ -95,14 +95,14 @@ semantics; numeric chunks copy to vectors without whole-row snapshots or Arrow c
 External scan dependencies are copied with AST references and held by bound scans;
 the lookup registry is weak. Native connection ownership is shared with transferred
 readers, so they survive Python connection closure. It matches 49/51 Pandas, 30/30 reader, 32/32 input,
-42/42 foundation, 30/30 relation
+42/42 foundation, 30/30 relation, 36/36 joins/writes
 and 75/76 host C++ outcomes. One Arrow setting-change and two decimal cases are
 unaccepted discrepancies: C++ emits empty text, drops a positive decimal exponent or
 loses an infinity sign where Rust preserves the represented value. Raw evidence is
 retained. Metadata binding preserves existing streams
 and transactions, and relations retain their Python owner. The wider unmodified
-101-test DB-API/cursor/type cohort passes 100/fails 1/skips 0 on Rust, versus 101/101
-on C++; the remaining relation journey now reaches missing join. Native from_df/query_df
+101-test DB-API/cursor/type cohort now passes 101/101 on both engines with zero skips.
+The full dataframe/join/query/create/insert journey passes. Native from_df/query_df
 and NumPy input exist. The selected host cohort passes 37/37 on both engines, while
 the broader object/analyzer cohort passes 75/81 versus C++81/81. Representation/show,
 nested type behavior and the two decimal discrepancies remain in that cohort. The six-file Arrow cohort
@@ -113,14 +113,16 @@ measurements are not final release performance acceptance. A numeric input optim
 reduced the 1M-row scan from 85 ms to 6.8 ms at similar peak RSS; C++ took 3.3 ms.
 Keep this individual development-wheel slowdown visible; do not use a suite average
 or extra caching to declare performance acceptance. All nine
-dataframe-chunk tests pass. The earlier four-file relation cohort passes 65/65 on C++; Rust had 5 passes,
-17 failures and a collection error for missing ColumnExpression. All failures remain
+dataframe-chunk tests pass. The broader five-file relation/join cohort passes 72/72 on
+C++; Rust has 16 passes, six failures and two collection errors. ColumnExpression is
+missing, blocking 50 cases; remaining collectable gaps include describe, insert values,
+representation and default-connection error details. All failures remain
 recorded. No full Python parity or performance claim.
 Root identity checks show the Rust extension as the only loaded DuckDB engine. Native
 Clippy and workspace/all-target checking pass. Full relation/expression APIs, UDFs,
 full native Pandas/NumPy semantics, frame/protocol/pushdown and remaining interchange and
 type/platform/package tests remain open. See docs/python-bindings.md and external
-python-pandas-20261024/python-pandas-checkpoint.json. The foundation checkpoint remains historical; an
+python-relations-20261024/python-relations-checkpoint.json. The foundation checkpoint remains historical; an
 accidental collision in its run 3/4 JSON filenames is documented in the relation
 evidence manifest, with new reports separated and original comparison-4 data restored.
 Use the external CARGO_HOME/PYO3_PYTHON=Python3.13

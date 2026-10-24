@@ -12,19 +12,21 @@ a newer client or documentation update must not silently change the target versi
 ## Current inventory and gates
 
 A native PyO3 Python package is now implemented in `crates/python` and `python/`.
-Its signed current development wheel matches 49/51 native Pandas, 30 reader, 32 input, 42 foundation, 30 relation and 75/76 host
-C++ outcomes. The DB-API cohort passes 100/fails 1 (C++ 101/101); a broader host cohort
+Its signed current development wheel matches 36 join/write, 49/51 native Pandas,
+30 reader, 32 input, 42 foundation, 30 relation and 75/76 host C++ outcomes.
+The DB-API cohort passes 101/101 on both engines; a broader host cohort
 passes 37/37 on both engines; the object/analyzer cohort passes 75/81 (C++81/81).
 The Arrow cohort passes 41/41 on both engines. One Arrow setting-change and two
 decimal discrepancies are unaccepted. A separate relation
-cohort still has 17 failures plus an expression-related collection error, all recorded.
+cohort has 16 passes, six failures and two expression-related collection errors; 50 cases
+remain uncollectable, all recorded.
 This is a partial implementation, not Python completion. R and the other language
 packages remain unimplemented/unverified. The complete workspace/all-target check
 includes the Python crate. See [Python implementation gates](python-bindings.md).
 
 | Surface | Current evidence / remaining work |
 |---|---|
-| Python | Native Pandas/NumPy input plus output and Arrow interchange; 100/101 DB-API, 37/37 host, 41/41 Arrow and 75/81 object cases pass. Complete input semantics, relation/expression/UDF APIs, full interchange/platform/package gates and three unaccepted discrepancies |
+| Python | Native arrays, Arrow interchange and native relation joins/writes; 101/101 DB-API, 37/37 host, 41/41 Arrow and 75/81 object cases pass. Complete expressions, remaining relation/UDF/input APIs, full platform/package gates and three unaccepted discrepancies |
 | R | New bindings/package required; inventory and implement the public API and run upstream tests |
 | C API | Current rebuilt library: all 546 duckdb.h exports; upstream 30-file harness passes; 8,735 native ABI outcomes match. ENUM invalid-value failure semantics remain open; duckdb_adbc_init now exists; scoped ADBC loading/interchange checks pass |
 | CLI | Existing shell implementation and historical differential tests; close remaining engine/name gaps and repeat final shell verification |

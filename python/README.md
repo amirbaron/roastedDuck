@@ -48,3 +48,9 @@ upstream Arrow path. `from_df`/`query_df` and frame replacement share this imple
 Full nested/error/API parity remains unfinished, including two retained C++ decimal
 value/type discrepancies. Individual scan speed/RSS measurements are recorded in the
 Pandas checkpoint; development results do not establish release performance acceptance.
+
+Native relation joins support the six frozen Python join types and cross products;
+table creation/insertion retain the original native query tree. Relation-variable scans
+use subqueries with owned dependencies and connection checks, rather than exporting
+through Arrow on the same connection. The complete 101-test DB-API cohort now passes;
+the larger expression/relation and other Python/platform gates remain incomplete.
