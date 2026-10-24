@@ -44,10 +44,11 @@ The checkout has an **uncommitted native-byte migration and does not build as a
 complete workspace yet**. The native SQL parser now compiles all targets and passes
 73 signed release tests plus 24,499 exact full-AST C++ comparisons. The earlier 700
 pending full-AST byte inputs are resolved, with zero skipped inputs in that matrix.
-The latest workspace/all-target check passes planner, CSV, execution and Parquet, then
-stops at **23 JSON integration diagnostics** in COPY, scan and metadata consumers of
-native paths/file lists. Scoped execution/function SDK/Parquet all-target Clippy passes;
-93 signed function SDK/Parquet release tests pass (three pre-existing ignored tests). Catalog and
+The latest workspace/all-target check passes planner, CSV, execution, Parquet and JSON,
+then stops at **48 autocomplete integration diagnostics** in parser transformer/AST
+consumers. Scoped JSON all-target Clippy and codegen pass; 15 signed JSON release tests
+pass (three pre-existing timing probes ignored). The prior 93 SDK/Parquet plus 12
+execution-library tests also pass at their recorded source snapshot. Catalog and
 storage library compilation passes that check; the newly touched index-type carrier has
 not had a fresh runtime/storage journey. Earlier scoped runtime counts (including 15)
 are historical checkpoints, not a fresh successful runtime build. Downstream execution,
@@ -1109,3 +1110,35 @@ cache-lookup OS boundaries, non-Unix paths, and pre-existing lossy metadata/stat
 rendering remain open (`parquet-native-path-followup.md`). JSON/runtime/client integration,
 full shell/corpus/C API/storage/WAL, Python and every selected client, and documented
 final performance acceptance remain open. The lower-memory baseline is preserved.
+
+
+The JSON native-path continuation (2026-10-24) carries reader paths, pipe-content map
+keys, COPY FROM inputs/options, scan metadata and hive keys as bytes. Reader and COPY
+option names compare ASCII bytes directly; unknown keys and NULL diagnostics preserve
+native bytes rather than using an ASCII/UTF-8 adapter. Filename values use the actual
+checked VARCHAR construction boundary. OS file/metadata calls convert native path
+bytes at their filesystem boundary; no lossy path decoder was added.
+
+**15 signed JSON release tests pass**, zero failures, with three existing timing probes
+ignored. The public read_ndjson bind/scan journey reads a Unicode SSD path and column,
+returns exact filename/hive metadata and values [42, 7], then exercises the JSON COPY
+FROM bind/scan callbacks with INTEGER target data. A signed C++ CLI journey confirms
+matching filename/hive rows and COPY FROM values on the SSD. This is JSON SDK/component
+verification, not complete runtime SQL or shell acceptance.
+
+**12,262 exact C++ comparisons pass**: 7,021 new actual JSONMultiFileInfo reader/COPY
+option state/error outcomes and 5,241 rerun native COPY projection cases. Option cases
+cover raw unknown keys, NULL errors, ASCII case variants and COPY argument cardinality;
+82 frozen option records are in source. All-target JSON Clippy with warnings denied
+and codegen --check pass. A fresh workspace check passes JSON and reaches 48
+autocomplete parser-transformer/AST diagnostics.
+
+Evidence: `json-native-path-checkpoint.json`, `json-native-path-tests-2-summary.json`,
+`json-native-option-comparison-1.log`, `json-native-copy-plan-comparison-1.log`,
+`json-native-cpp-journey.json`, `json-native-path-clippy-2.jsonl`,
+`json-native-path-codegen-check.log` and `json-native-path-workspace-check-1.jsonl`
+in the external `identifier-bytes-20261023` directory. Embedded-NUL/errno OS handling,
+FIFO and parallel-range journeys, non-Unix paths, and option-value text boundaries
+remain open (`json-native-path-followup.md`). Autocomplete/runtime/client integration,
+full shell/corpus/C API/storage/WAL, Python/all selected clients and final documented
+performance acceptance remain open. No table caching or memory policy changed.
