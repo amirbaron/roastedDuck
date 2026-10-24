@@ -62,6 +62,15 @@ correction; the corrected binary passes 154 native metadata cases. Two-way check
 plus nonempty WAL replay passes for the recorded INTEGER/VARCHAR/NULL/Unicode scenario.
 These remain scoped evidence, not full final shell/corpus/storage/WAL acceptance.
 
+The ADBC core is now staged internally: database/connection/statement lifecycle,
+transactions, streaming queries, schema inspection and Arrow parameter binding compile
+and pass six new signed ADBC tests plus the existing Arrow test (seven total, none
+ignored). A signed C++ public-ABI probe passes three matching journey families. C API
+all-target Clippy and complete workspace/all-target checking pass at this snapshot.
+The initializer remains unexported; ingestion/metadata/options/error details, upstream
+ADBC conformance and actual driver-manager/client loading remain open. See
+`docs/adbc.md` and `adbc-core-checkpoint.json` on the external SSD.
+
 Historical corpus and benchmark figures below describe previously accepted binaries.
 The new migration still needs the full unit/corpus/shell/storage/WAL/client verification
 and documented speed-memory acceptance. Strict PEG raw ingress, remaining text/value
@@ -1455,3 +1464,28 @@ directory. Existing text-only callback definitions, remaining Arrow/query/value 
 ENUM failure semantics, ADBC, strict PEG native ingress, final unit/corpus/shell/storage/WAL,
 Python/all selected clients and final performance acceptance remain open. No table
 caching or memory policy changed.
+
+
+The ADBC core continuation (2026-10-24) adds the frozen C structures with 13 measured
+layout assertions, database/connection lifecycle and options, manual transactions,
+statement prepare/execute/result/parameter schemas, streaming-result ownership and
+Arrow batch/stream parameter binding. Preparing/executing another query or releasing
+the connection buffers unread result batches; starting a query does not eagerly buffer
+its results. Single-batch streams transfer input ownership and return independent schema
+copies, preserving nested fields, dictionaries, native names and binary metadata.
+
+**Seven signed C API library tests pass**, none ignored (six new ADBC regressions plus
+one existing Arrow test), using real engine queries. Three corresponding C++ public-ABI
+journey families pass. The legacy error-prefix canary, short option buffers, manual
+commit/rollback, parameter row limit and exact interrupt-message classification are
+covered. C API all-target Clippy with warnings denied, complete workspace/all-target
+checking and codegen checking pass. These are scoped internal-core results.
+
+**duckdb_adbc_init remains unexported.** Initializer wiring/version-prefix bounds,
+ingestion and statement options, connection metadata/statistics, 1.1 error details,
+deferred stream errors, upstream ADBC tests and actual driver-manager loading are still
+required. No generic unsupported callbacks were published to claim a complete driver.
+Python and every selected client, the existing ENUM failure gap and final full
+unit/corpus/shell/storage/WAL/performance acceptance remain open. The uncached memory
+policy is unchanged. Evidence and source hashes: `adbc-core-checkpoint.json` in external
+`identifier-bytes-20261023`; detailed inventory: `docs/adbc.md`.

@@ -29,7 +29,7 @@ packages load or pass their APIs. The native-byte migration now compiles across 
 | Java/JDBC | Audit native adapter and package; port dependencies on engine internals and pass JDBC/client tests |
 | ODBC | Complete driver/adapter, packaging and upstream conformance/client tests |
 | WebAssembly | Build the Rust engine for the client runtime; verify browser/worker and supported host/package journeys, without a bundled C++ engine |
-| ADBC/Arrow | Already required by the original C API goal; implement the missing entry point and verify driver-manager/interchange behavior |
+| ADBC/Arrow | Internal lifecycle/query/parameter-stream core passes scoped signed tests; initializer, ingestion, metadata, error details and driver-manager acceptance remain pending. See [ADBC inventory](adbc.md) |
 | C#/.NET | Pin the client; verify its complete API/tests and native-library loading/packaging |
 | Swift | Pin the client; verify its complete API/tests, native loading and ownership behavior |
 | Julia | Pin the client; verify its complete API/tests, native loading and ownership behavior |
