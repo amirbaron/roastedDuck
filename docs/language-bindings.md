@@ -20,7 +20,7 @@ packages load or pass their APIs. The native-byte migration now compiles across 
 |---|---|
 | Python | New bindings/package required; inventory and implement the public API, then run upstream tests and installable-package journeys |
 | R | New bindings/package required; inventory and implement the public API and run upstream tests |
-| C API | Current rebuilt library: all 546 duckdb.h exports; upstream 30-file harness passes; 8,735 native ABI outcomes match. ENUM invalid-value failure semantics remain open; duckdb_adbc_init is still missing |
+| C API | Current rebuilt library: all 546 duckdb.h exports; upstream 30-file harness passes; 8,735 native ABI outcomes match. ENUM invalid-value failure semantics remain open; duckdb_adbc_init now exists; scoped ADBC loading/interchange checks pass |
 | CLI | Existing shell implementation and historical differential tests; close remaining engine/name gaps and repeat final shell verification |
 | Native Rust | API exists; complete API review, byte-name integration and resource/error semantics |
 | Rust client (`duckdb-rs`) | Pin client revision; build/link against this library and pass its upstream API/tests |
@@ -29,7 +29,7 @@ packages load or pass their APIs. The native-byte migration now compiles across 
 | Java/JDBC | Audit native adapter and package; port dependencies on engine internals and pass JDBC/client tests |
 | ODBC | Complete driver/adapter, packaging and upstream conformance/client tests |
 | WebAssembly | Build the Rust engine for the client runtime; verify browser/worker and supported host/package journeys, without a bundled C++ engine |
-| ADBC/Arrow | Internal lifecycle/query/parameter-stream/ingestion and typed-option core passes scoped signed tests; initializer, metadata, error details and driver-manager acceptance remain pending. See [ADBC inventory](adbc.md) |
+| ADBC/Arrow | All frozen initializer callbacks exist; scoped native C++, real Python ADBC driver-manager and PyArrow comparisons pass. Full upstream ADBC conformance, packaging and selected DuckDB client acceptance remain pending. See [ADBC inventory](adbc.md) |
 | C#/.NET | Pin the client; verify its complete API/tests and native-library loading/packaging |
 | Swift | Pin the client; verify its complete API/tests, native loading and ownership behavior |
 | Julia | Pin the client; verify its complete API/tests, native loading and ownership behavior |

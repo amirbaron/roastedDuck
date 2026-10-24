@@ -62,20 +62,26 @@ correction; the corrected binary passes 154 native metadata cases. Two-way check
 plus nonempty WAL replay passes for the recorded INTEGER/VARCHAR/NULL/Unicode scenario.
 These remain scoped evidence, not full final shell/corpus/storage/WAL acceptance.
 
-The ADBC core is staged internally: lifecycle, transactions, streaming queries,
-result/parameter schemas, Arrow binding, all typed options and four ingestion modes.
-Eleven signed library tests pass (nine C API and two optimizer; none ignored), five
-C++ driver-ABI journey families pass, and 1,747 complete native public-C-ABI appender
-journeys match C++, all producing sum 49. The expanded seven-name C journey passes
-both libraries; three affected upstream C API files pass 16 cases/615,708 assertions.
-The selected-column journey exposed a join-statistics to_string panic; native byte
-comparison fixes it and is regression tested. Failed evidence remains preserved.
+ADBC now exports the frozen 1.0/1.1 initializer and implements all 54 callbacks C++
+assigns. Export sets match: 547 duckdb_ symbols with none missing/additional. Thirteen
+signed C API unit tests pass, seven public-C++-ABI probe families pass on both engines,
+and legacy driver/error mmap guard pages pass. Separate cross-thread connection and
+statement cancellation probes match C++ and recover for the next query.
 
-The initializer remains unexported; metadata/statistics, rich/deferred errors,
-catalog/schema option Value boundaries, upstream ADBC conformance and actual
-initializer/driver-manager/client loading remain open. C API/runtime/optimizer
-all-target Clippy passes. See `docs/adbc.md`, `adbc-core-checkpoint.json` and the
-newer `adbc-ingest-checkpoint.json` on the external SSD. Performance policy is unchanged.
+Actual pinned Apache Python ADBC driver-manager loading and PyArrow full validation
+pass: 12 client journey comparisons and 13 dense metadata cases match C++. Only own
+library version labels are normalized after checking them independently: reference
+v0.0.1 vs Rust v1.5.6. Raw initial/normalized reports are retained. The rebuilt library
+passes all 30 upstream C API files, 155 cases and 814,544 assertions in this run, with
+the existing private-C++ exclusions. C API all-target Clippy and workspace/all-target
+checking pass. This is not the full 64-case upstream ADBC suite or DuckDB Python API.
+
+Native table description/appender/selected-column/query-appender operations also have
+1,747 matching C ABI journeys (all sum 49) and maintained seven-name C tests at the
+preceding ingestion snapshot. Full ADBC upstream/native/lifetime/package coverage,
+Python and every selected client, ENUM semantics, and final engine/storage/WAL/shell/
+corpus/performance gates remain required. See `docs/adbc.md` and the latest external
+`adbc-metadata-checkpoint.json`. The accepted uncached memory policy is unchanged.
 
 Historical corpus and benchmark figures below describe previously accepted binaries.
 The new migration still needs the full unit/corpus/shell/storage/WAL/client verification
@@ -1452,7 +1458,7 @@ callback. Three invalid native path cases are rejected by both C APIs, preserve 
 name bytes in errors, and never return an in-memory handle. C API/planner all-target
 Clippy with warnings denied and codegen --check pass. Export inspection finds all
 **546 duckdb.h functions** and no missing header exports; C++ has 547 duckdb_ exports,
-with **duckdb_adbc_init** the missing additional entry point.
+with **duckdb_adbc_init** the missing additional entry point at that recorded snapshot (implemented in the later metadata checkpoint).
 
 The original raw ABI collector aborted in C++ while reading an invalid ENUM dictionary
 value: duckdb_enum_dictionary_value materializes a Value and throws across the C ABI.
@@ -1520,3 +1526,25 @@ loading remain open; duckdb_adbc_init is still unexported. Python/all selected c
 ENUM failure semantics and final unit/corpus/shell/storage/WAL/performance acceptance
 remain required. No table caching/memory policy changed. Evidence and exact source
 hashes are in `adbc-ingest-checkpoint.json`, with scope in `docs/adbc.md`.
+
+
+The ADBC metadata/initializer continuation (2026-10-24) implements object/table metadata,
+dense-union info/statistics, typed rich errors and ErrorFromArrayStream. Catalog/schema
+option reads now use C++'s query/Value boundary. All 54 frozen callbacks are wired into
+versioned duckdb_adbc_init; legacy prefix canaries/guard pages and untouched slots pass.
+Export sets now match 547/547. Thirteen signed C API tests, seven C++-ABI probe families
+on both libraries, and both cancellation/recovery cases pass. Actual Apache Python ADBC
+driver-manager loading passes 12 journey comparisons; 13 direct metadata/PyArrow cases
+also match with full Arrow validation. The C++ reference build reports v0.0.1 and Rust
+v1.5.6: each info version matches its own core callback, and only those verified labels
+are normalized. Initial failed version/deferred-error comparisons remain preserved.
+
+The current rebuilt library passes all 30 upstream C API files (155 cases, 814,544
+assertions in this run, unchanged private-C++ exclusions). C API all-target Clippy and
+workspace/all-target compilation pass. The 64-case upstream ADBC suite is still unrun;
+complete its helper adaptation through Rust/native public APIs without a C++ engine
+fallback. Broaden native metadata/errors and lifetime/type/interchange cases, then
+continue Python-first and all selected clients. ADBC client probes are not the DuckDB
+Python package. Final full engine/corpus/shell/storage/WAL/performance acceptance and
+the existing ENUM gap remain open. No table caching policy changed. Exact evidence and
+source hashes are in external `adbc-metadata-checkpoint.json`; scope: `docs/adbc.md`.

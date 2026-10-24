@@ -2,9 +2,10 @@
 
 The target is DuckDB 1.5.6's frozen `src/common/adbc/adbc.cpp` and its vendored
 ADBC 1.0/1.1 header, not the latest Arrow driver API. The Rust implementation is
-**in progress**. `duckdb_adbc_init` is still unexported: the internal core below is
-compiled and tested, but it is not an installable or driver-manager-ready driver.
-Python ctypes oracle scripts are not Python language bindings.
+**in progress**. The initializer is now exported and all 54 callbacks assigned by the
+frozen C++ initializer are wired. Real driver-manager loading and scoped client journeys
+pass. Full upstream ADBC conformance remains open, as does the separate DuckDB Python
+API/package goal. The oracle scripts and Apache ADBC client are not that Python package.
 
 ## Implementation inventory
 
@@ -14,9 +15,9 @@ Python ctypes oracle scripts are not Python language bindings.
 | Database lifecycle | New, configuration/path/URI options, Init, Release staged internally |
 | Database option API | All typed callbacks staged; finite/NaN/infinity/negative-zero string conversion and representative error/buffer semantics verified |
 | Connection lifecycle | New, Init, Release staged; unread streams materialize before disconnect |
-| Connection options | All typed callbacks staged, including frozen unsupported operations; queued autocommit and current catalog/schema staged. Native catalog/schema Value-boundary audit remains open |
+| Connection options | All typed callbacks staged, including frozen unsupported operations; queued autocommit and current catalog/schema staged. Catalog/schema reads now use the frozen query/Value boundary; broader native option/error coverage remains open |
 | Transactions | Commit/Rollback with continued manual transaction mode staged |
-| Cancellation | Connection/statement interrupt callbacks staged; concurrent cancellation journeys and full status/detail verification pending |
+| Cancellation | Signed cross-thread connection/statement cancellation and subsequent query recovery match C++; stream status/details are checked |
 | Statement lifecycle | New, Release, Prepare, SetSqlQuery staged; multiple SQL statements execute before preparing the last |
 | Query execution | Streaming execution, rows affected, empty/comment query handling staged |
 | Result schema / parameter schema | ExecuteSchema and GetParameterSchema staged |
@@ -24,16 +25,16 @@ Python ctypes oracle scripts are not Python language bindings.
 | Arrow result stream | Schema, batch, last-error and release callbacks staged; reuse/release buffers unread batches without eager buffering at query start |
 | Arrow single-batch stream | Independent schema copy including raw names, flags, nested fields, dictionaries and binary metadata staged |
 | Statement option API / ingestion | All typed callbacks and four ingestion modes staged; scoped native-name/temporary-shadow/row-count/error journeys pass. Remaining nested-type, failure and concurrency cases require upstream conformance |
-| Connection metadata | GetInfo, GetObjects, GetTableTypes, GetTableSchema, GetStatistics and GetStatisticNames pending |
+| Connection metadata | All six callbacks implemented; frozen object-list SQL retained, prescribed dense unions/NOT NULL metadata validated by PyArrow and C++ comparisons |
 | Partitions / Substrait | Exact frozen unsupported partition callbacks staged; initializer must preserve C++'s untouched Substrait slot |
-| ADBC 1.1 error API | Error details, ErrorFromArrayStream and detail ownership pending |
-| Initializer | Pending callback wiring and version-prefix bounds verification; do not write a full 1.1 struct into a 1.0 allocation |
-| Packaging / driver manager | Pending actual upstream driver-manager and selected-client journeys |
+| ADBC 1.1 error API | Detail count/get/from-stream implemented; owned/borrowed message lifetimes, deferred errors and cancellation type details verified in scoped journeys |
+| Initializer | Exported; 1.0/1.1 callback wiring matches frozen C++; unsupported versions, untouched slots, legacy driver/error prefix canaries and guard pages pass |
+| Packaging / driver manager | Pinned Apache Python ADBC driver manager loads the release library; full upstream ADBC suite, packaging and all selected DuckDB clients remain open |
 
-The module temporarily allows dead code because staged callbacks are intentionally
-not published as a partial driver. Remove that allowance as initializer integration
-makes the callbacks reachable. Production code in this directory is Rust; C++ in
-`crates/capi/tests/adbc_core.cpp` is a reference verification probe only.
+The temporary dead-code allowance was removed when initializer wiring made all callbacks
+reachable. Production implementation is Rust. The C++ files in `crates/capi/tests/` are
+public-ABI reference probes, not shipped engine dependencies. Checkpoints below describe
+their recorded snapshots; the newest checkpoint supersedes old pending statuses.
 
 ## Verified core checkpoint, 2026-10-24
 
@@ -126,3 +127,66 @@ New evidence under the same external SSD directory: `adbc-ingest-checkpoint.json
 `adbc-ingest-names-rust-2.log`, `adbc-ingest-names-cpp.log`,
 `adbc-ingest-upstream-tests-2.log`, `adbc-ingest-clippy-6.jsonl` and
 `adbc-ingest-workspace-check-3.jsonl`.
+
+## Metadata, initializer and real client checkpoint, 2026-10-24
+
+The initializer now exposes the complete frozen callback table for ADBC 1.0 and 1.1.
+Only slots present in the negotiated version are written; the same private/release/
+Substrait slots C++ leaves untouched remain untouched. Export inspection now finds
+**547 duckdb_ symbols**, matching the reference with no missing or additional symbols.
+The Rust dylib still has no C++ DuckDB engine dependency.
+
+Object metadata retains the four exact frozen SQL templates and byte-preserving filter
+substitution. Table schemas/types use the same query path. Catalog/schema option reads
+now query the engine, preserving the C++ VARCHAR validation boundary. GetInfo/statistics
+build the required owned dense-union arrays, nullable and NOT NULL flags, empty children,
+list/map offsets and all-NULL column-name buffers. Statistic names are the prescribed
+empty result; approximate row estimates remain approximate even when exact is requested,
+as in C++. Error details retain native messages and copy the frozen 43 error type names.
+A stream owns its borrowed error message and rich detail payload until release.
+
+**13 signed C API library tests pass**, none ignored. Both signed public-ABI probes pass
+seven journey families, including metadata/rich/deferred errors and mmap guard pages
+that make the legacy 1.0 driver/error tails inaccessible. Separate signed connection
+and statement cancellation probes pass on both engines, then execute a new query;
+both report stream status 9 and detail type Interrupt for this frozen error path.
+
+A native arm64 Python 3.13 environment on the SSD pins adbc-driver-manager 1.4.0,
+PyArrow 19.0.1 and typing-extensions 4.16.0. The actual Apache driver manager loads the
+requested library and passes **12 client journey comparisons**: parameters, nested/
+decimal/temporal/blob/NULL data, full Arrow validation, ingestion, schema/types/object
+metadata at every depth, rich errors, and commit/rollback. Loaded-image checks show
+exactly the requested DuckDB library for each process; there is no alternate engine.
+This is ADBC Python-client evidence, not implementation of DuckDB's full Python API.
+
+A further **13 direct ADBC-to-PyArrow metadata cases match C++** with full Arrow
+validation: default/empty/unknown/repeated info codes, catalog/schema/table-filtered
+statistics across multiple catalogs and schemas, no-match results, exact/approximate
+requests and empty statistic names. The older Python ADBC package does not expose
+statistics methods, so those cases use the public driver function table and import its
+Arrow C stream into PyArrow.
+
+The reference build reports v0.0.1, while Rust reports its declared v1.5.6. Both GetInfo
+version fields are independently checked against each library's own core version.
+Only these verified build-identity strings are normalized in comparisons; raw reports
+and the initial 11/12 comparison are preserved. No functional mismatch is hidden.
+The first deferred-error test also failed because its query errored before returning
+a stream. The nonconstant late-error query now verifies buffered batches precede the
+error; the same query passes against C++ through the public ABI.
+
+The current release library passes **all 30 upstream C API harness files**, 155 test
+cases and 814,544 assertions in this run. Existing C++-internal exclusions are unchanged.
+C API all-target Clippy with warnings denied and full workspace/all-target compilation
+pass. These do not substitute for the still-unrun 64-case upstream ADBC suite, fuller
+native filter/error and lifetime matrices, client packaging, Python/all selected DuckDB
+clients, existing ENUM failure semantics, or final corpus/shell/storage/WAL/performance
+acceptance. No table-cache retention or accepted speed-memory policy changed.
+
+Evidence on the external SSD: `adbc-metadata-checkpoint.json`,
+`adbc-metadata-tests-5-summary.json`, `adbc-metadata-{rust,cpp}.log`,
+`adbc-cancel-{rust,cpp}.log`, `adbc-python-comparison-2.json`,
+`adbc-arrow-metadata-summary.json`, `adbc-python-requirements.txt`,
+`adbc-metadata-upstream-capi-summary.json`, `adbc-metadata-clippy-2.jsonl`,
+`adbc-metadata-workspace-check-1.jsonl`, `adbc-metadata-exports.json`.
+Client behavior is exercised using Apache's [ADBC Python API](https://arrow.apache.org/adbc/main/python/api/adbc_driver_manager.html),
+with the installed pinned API inspected locally rather than assuming current docs match it.
