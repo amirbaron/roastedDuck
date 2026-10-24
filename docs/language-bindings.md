@@ -63,6 +63,13 @@ are implemented; batch execution follows frozen preparation/result semantics.
 Bidirectional enum-pickle protocols 2–5 pass; legacy C++ protocol 0/1 aborts remain
 unaccepted. Current 19 cohorts record 1882 pass/3 unchanged failures/10 skip-or-xfail across
 1895 cases; 1325 collected cases in 130 files and the dependency/platform matrices remain.
+ All-types 205 and timedelta/offset 342 cases now pass on both engines;
+dictionary/pushdown matches 155 pass/2 existing skips/2existing xfails after five fixes.
+Producer projection/predicates and factory ownership are implemented; 20 focused
+journeys include actual partition pruning. Polars pushdown/refeed/deprecation pass 72
+cases after four warning/alias fixes. Current 23 cohorts record 2656 pass/3 unchanged
+failures/14 skip-or-xfail across 2673 cases; 547 collected cases in 122 files and additional
+environment/platform gates remain. 17 signed Arrow/SDK tests and compiler checks pass.
  R and the other language packages remain
 unimplemented/unverified. The complete workspace/all-target check
 includes the Python crate. See [Python implementation gates](python-bindings.md).

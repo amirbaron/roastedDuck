@@ -200,6 +200,18 @@ workspace/all-target checks pass. 1325 collected cases in 130 files remain outsi
 cohorts, plus missing-dependency/platform matrices. Result-checked 1000-operation
 microbenchmarks retain coupled time/RSS; they are not final release acceptance.
 Latest evidence: python-connection-20261025/python-connection-checkpoint.json.
+All-types 205/205 and timedelta/Arrow offsets 342/342 now pass on both engines. Native
+Arrow producer projection/filtering closes five dictionary/pushdown failures; the
+cohort matches C++ 155 pass/2 existing skips/2existing xfails. Four missing Arrow warning/
+alias cases are fixed; Polars pushdown/refeed/deprecation pass 72/72. Correct fallback
+column mapping, supported-filter gates, retained factory ownership and real producer
+scanning are implemented; an excluded invalid-Parquet partition proves actual pruning.
+Twenty focused producer journeys match. Current 23 cohorts run 2673 cases: 2656 pass/
+3 unchanged failures/14 skip-or-xfail. 17 signed Arrow/SDK tests and Clippy/workspace checks
+pass. 547 collected cases in 122 files remain, plus environment/version/platform gates.
+Coupled Arrow microbenchmarks retain a slower first dataset sample and all RSS/time;
+no result/table cache is added. Latest evidence:
+python-all-types-20261025/python-all-types-checkpoint.json. Final gates remain open.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.

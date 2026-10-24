@@ -701,6 +701,58 @@ current signed SDK tests, `regression-matrix-final.json`, `remaining-runtime-cov
 `performance-comparison.json`, compiler terminal records and the complete source archive.
 Broader argument/enum/packaging/version/platform and other selected client gates remain.
 
+## All-types and Arrow producer checkpoint (2026-10-25)
+
+The previously unexecuted all-types suite passes **205/205** on both engines;
+timedelta and Arrow offsets pass another **342/342**. Dictionary/filter pushdown now
+matches C++ with **155 passed, 2 existing skips, 2 existing xfails**, closing five Rust
+failures. Polars filter pushdown/refeed/deprecation cases pass **72/72** after four
+missing warning/alias cases are corrected. Deprecated Arrow aliases now warn before
+using the actual native reader/table operations; preferred APIs do not warn.
+
+The fallback Arrow scanner now returns its complete source schema and lets execution
+project original column IDs. Previously it advertised projected output but returned
+source-order columns, causing incorrect values and cross-type comparison errors.
+The producer-aware path now sends actual projections and translated predicates into
+Arrow Dataset/Scanner APIs, preserving datasets until scanner construction so fragment/
+row-group pruning occurs before I/O. Polars lazy filters are applied before collect;
+no unfiltered materialized-result cache is added.
+
+A table-function filter-support callback leaves unsupported predicates in SQL,
+including expression filters and unsupported Arrow layouts/types. Native comparison,
+NULL, conjunction, nested-struct, IN, optional and NaN predicates translate to producer
+expressions. Factory ownership now resides in cloned Arrow bind data, so filter rewrites
+retain external inputs instead of losing their owner wrapper.
+
+All **20 focused producer journeys** match C++, including projections, filtered
+capsules/readers/datasets/scanners, owner lifetime and actual partition pruning. The
+partition fixture includes an invalid Parquet file in an excluded partition; the query
+succeeds by avoiding that file. This verifies source pruning, not just EXPLAIN text.
+The nine signed Arrow tests and eight signed SDK metadata/type/profile tests pass.
+Arrow/optimizer/function/Python all-target Clippy with warnings denied and whole-
+workspace/all-target checks pass.
+
+Twenty-three current development-wheel cohorts run **2673 cases: 2656 pass, 3 unchanged
+failures, 14 skip/xfail**, with zero collection errors. Existing failures remain the two
+held decimal reference discrepancies and shared Parquet timestamp-unit assertion.
+The current cohorts leave **547 collected cases in 122 files**, plus the missing-
+dependency/version/platform matrix. This is not full Python acceptance or final
+core/client/shell/storage/WAL/release acceptance.
+
+Coupled result-checked 1M-row/eight-column probes retain full and incremental RSS.
+Table projection takes Rust 5.64–5.91 ms/257–258 MB versus C++ 5.49–6.37 ms/about 255 MB;
+filtered-table scans are about 1.1 ms/192 MB versus C++ 1.1–1.2 ms/191 MB. Dataset filtering
+records Rust 2.76 ms on the first run and 1.58 ms on repeat, versus C++ 1.61–1.63 ms;
+whole peaks are about 132 MB versus 130–131 MB. The first-run slowdown remains visible.
+These are development measurements, not final release acceptance. The accepted
+uncached baseline and prior query outliers remain unchanged; no table cache is added.
+
+Evidence: `.context/artifacts/python-all-types-20261025/python-all-types-checkpoint.json`,
+current regression/coverage receipts, producer comparisons and partition fixture,
+`performance-comparison.json`, signed wheel/tests, compiler records and source archive.
+Further C API/native Arrow stream projection/filtering and broader producer/platform
+matrices remain part of final verification.
+
 ## Remaining gates
 
 Complete relation APIs (including delete, remaining file formats/filesystems, mutation/type/metadata and
