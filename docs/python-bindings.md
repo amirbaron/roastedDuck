@@ -51,6 +51,16 @@ late name lookup behavior. Arrow readers/capsules are single-use where the produ
 single-use. Schema extraction prefers the schema protocol or exposed schema; protocol
 objects without a schema need fresh streams as in C++.
 
+Arrow reader/capsule output (`to_arrow_reader`, `arrow`, `fetch_record_batch`,
+`__arrow_c_stream__`) exports a lazy native C stream. It owns its result cursor and a
+shared native connection independently of the Python connection wrapper. Closing or
+deleting that wrapper preserves transferred readers, while another query on the same
+connection invalidates its previous active stream. Only a pending native chunk and the
+requested Arrow batch are assembled. Materialized results use the existing Arrow
+conversion path, as C++ does. Transfer preserves description metadata and distinct
+closed-result errors. Reader release closes its own query; C callbacks catch native
+panics rather than unwinding across the ABI.
+
 Conversions currently cover scalar/nested values, 128-bit integers, decimals, strings,
 blobs, dates/times/timestamps, intervals, UUIDs, lists, structs and ordinary hashable-key
 maps, plus maps with unhashable keys represented as key/value lists and fixed arrays
@@ -76,8 +86,19 @@ engine names and queries keep their native representation.
 - Input and ownership comparisons match **32/32 exact C++ outcomes**, including Arrow
   input types, live-buffer changes, repeated/single-use reads, producer exception class
   and stack text, views/registration, objects leaving their Python frame, and frame-search
-  settings. The unmodified six-file Arrow cohort passes **39/41** on Rust versus
-  **41/41** on C++; its two remaining failures need Arrow reader output APIs.
+  settings. The unmodified six-file Arrow cohort now passes **41/41** on both engines
+  (previously 15, then 39 on Rust). This does not establish full Arrow API coverage.
+- Reader comparisons match **30/30 exact C++ outcomes**: lazy/materialized batch sizes,
+  deletion/closure of the connection, transfer, metadata and subsequent-fetch errors,
+  aliases/deprecation warning, cross-connection scanning, connection reuse, deferred
+  errors, interrupt/recovery, early release and a real background-thread read.
+  Full concurrency, error and protocol matrices remain open.
+- Four separate first-batch processes consume 1,024 rows from ranges of 1 million and
+  100 million rows. Rust development-wheel whole-process peaks are 68.57/67.99 MB,
+  versus C++ release-wheel 71.61/71.68 MB; incremental peaks after warmed imports are
+  1.80/1.80 MB versus 1.59/1.57 MB. This is bounded first-batch scaling evidence,
+  **not full-query or final release performance acceptance**. Individual timings and
+  RSS values are retained in `memory-comparison.json`.
 - The unmodified 101-test DB-API/cursor/type cohort passes **100, fails 1, skips none**
   on Rust (previously 51, then 88). C++ passes **101/101**. Dataframe import is the
   remaining failure; no assertions were removed.
@@ -129,7 +150,7 @@ and Arrow properties and does not deliberately replace valid data with empty str
 Complete relation APIs (including joins, query/create/insert and expression
 arguments), representation, broader result lifetimes, expressions, UDFs, replacement scans,
 native Pandas/NumPy input, complete Arrow registration/protocol/schema/error/pushdown
-coverage, Arrow reader/capsule output, Polars/Torch output,
+coverage, complete reader/capsule/concurrency behavior, Polars/Torch output,
 filesystems, helper/function-catalog compatibility and remaining type/metadata/exception
 semantics are still required. The API inventory marks only
 partial implementation/evidence; no surface is declared fully complete yet.
@@ -141,7 +162,13 @@ release performance. Preserve the accepted uncached speed-memory baseline and re
 individual query outliers in final acceptance. No table-cache retention was introduced.
 The other selected language clients remain part of the goal.
 
-Current evidence: `.context/artifacts/python-input-20261024/python-input-checkpoint.json`,
+Current evidence: `.context/artifacts/python-reader-20261024/python-reader-checkpoint.json`,
+`comparison-{reader,input,host,relations,foundation}-7.json`,
+`{arrow-upstream,dbapi,host-expanded}-rust-7/`, signed `wheels-dev-7-signed/`,
+`reader-clippy-7.jsonl`, `reader-workspace-check-7.jsonl` and `memory-comparison.json`.
+Earlier input source and all failed/intermediate runs remain on the SSD.
+
+Earlier input evidence: `.context/artifacts/python-input-20261024/python-input-checkpoint.json`,
 `comparison-{input,host,relations,foundation}-final.json`, `arrow-upstream-rust-final/`,
 `dbapi-rust-final/`, `host-expanded-rust-final/`, signed final development wheel,
 AST regression/unit logs, affected-crate Clippy, workspace/all-target and generator

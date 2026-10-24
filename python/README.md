@@ -34,3 +34,9 @@ owned external dependency copied into query trees. The identity registry is weak
 does not keep abandoned Python producers alive. Schema/protocol/single-use behavior,
 live buffers, relation/view ownership and frame options have exact C++ comparison
 evidence. Native Pandas/NumPy input and the complete Arrow surface remain unfinished.
+
+Arrow readers/capsules own the native connection and result, survive closure of the
+Python connection wrapper, and assemble requested batches lazily. Metadata survives
+transfer; another query on the same connection invalidates the old active stream.
+Exact C++ comparisons include release, cancellation/recovery and a background-thread
+read. Full concurrency/protocol matrices and release performance acceptance remain open.

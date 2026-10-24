@@ -114,16 +114,18 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "arrow",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 205
+      "line": 205,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "to_arrow_reader",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 208
+      "line": 208,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -267,9 +269,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "fetch_record_batch",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 256
+      "line": 256,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -635,9 +638,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "__arrow_c_stream__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 471
+      "line": 471,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -709,16 +713,18 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "arrow",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 494
+      "line": 494,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "to_arrow_reader",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 497
+      "line": 497,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -907,9 +913,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "fetch_record_batch",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 553
+      "line": 553,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1776,16 +1783,18 @@
     {
       "surface": "_duckdb",
       "name": "arrow",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 888
+      "line": 888,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
     },
     {
       "surface": "_duckdb",
       "name": "to_arrow_reader",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 889
+      "line": 889,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
     },
     {
       "surface": "_duckdb",
@@ -1962,9 +1971,10 @@
     {
       "surface": "_duckdb",
       "name": "fetch_record_batch",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 978
+      "line": 978,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
     },
     {
       "surface": "_duckdb",
