@@ -45,7 +45,7 @@ complete workspace yet**. The native SQL parser now compiles all targets and pas
 73 signed release tests plus 24,499 exact full-AST C++ comparisons. The earlier 700
 pending full-AST byte inputs are resolved, with zero skipped inputs in that matrix.
 The latest workspace/all-target check passes planner, CSV, execution, Parquet, JSON,
-autocomplete and TPC-H/TPC-DS, then stops at **91 rustdb library integration diagnostics** in the latest scoped runtime
+autocomplete and TPC-H/TPC-DS, then stops at **14 rustdb library integration diagnostics** in the latest scoped runtime
 check (the preceding full-workspace check reported 125).
 Scoped autocomplete and generator all-target Clippy pass; 18 signed autocomplete tests
 pass, none ignored, plus 188 direct C++ PEG AST/source/error comparisons. Earlier
@@ -1237,3 +1237,30 @@ external `identifier-bytes-20261023` directory. Full runtime query/profiler, set
 attachments/read_duckdb/secrets, shell/corpus/C API/storage/WAL, Python/all selected
 clients and documented final performance acceptance remain open. The uncached
 lower-memory policy is unchanged. `runtime-query-followup.md` records scope limits.
+
+
+The runtime settings/pragma continuation (2026-10-24) resolves built-in option names
+from native bytes to canonical static table entries, preserving unknown names and
+candidate/error metadata as bytes. Extension option matching and pragma dispatch use
+byte comparisons. COPY DATABASE generated SQL and IMPORT DATABASE source/path assembly
+now remain native; secret option/storage dispatch also retains native names. These
+runtime edits are **not functionally accepted**: the library still fails compilation.
+The latest scoped check reports 14 diagnostics, all at attachment/read_duckdb path
+interfaces; no byte-name-to-text adapter was added to bypass those storage boundaries.
+
+The separately buildable native extension-install hint helper is verified against
+**13,976 actual C++ ExtensionHelper outputs**, covering 1,747 native base strings,
+autoload/autoinstall combinations, and httpfs/custom extension hints. The helper keeps
+the base bytes and appends the same static hint as the existing text function. SDK
+all-target Clippy passes. Native-byte/text-contract and frozen C++ fixture tests are
+recorded in the signed test evidence. This helper evidence does not validate runtime
+SET/RESET errors, settings aliases, locking/scopes, pragma SQL or secret operations;
+those require a built engine and actual SQL journeys.
+
+Evidence: `settings-native-checkpoint.json`, `settings-hint-native-comparison-1.log`,
+`settings-native-sdk-tests-2-summary.json`, `settings-native-sdk-clippy-2.jsonl` and
+`settings-native-check-8.jsonl` in the external `identifier-bytes-20261023` directory.
+Continue with a coherent attachment/storage/WAL/native path migration, then run runtime
+settings/pragma/secret/import/COPY journeys. Full shell/corpus/C API/storage/WAL,
+Python/all selected clients and final performance acceptance remain open. The accepted
+uncached lower-memory policy is unchanged.
