@@ -45,7 +45,8 @@ complete workspace yet**. The native SQL parser now compiles all targets and pas
 73 signed release tests plus 24,499 exact full-AST C++ comparisons. The earlier 700
 pending full-AST byte inputs are resolved, with zero skipped inputs in that matrix.
 The latest workspace/all-target check passes planner, CSV, execution, Parquet, JSON,
-autocomplete and TPC-H/TPC-DS, then stops at **125 rustdb runtime integration diagnostics**.
+autocomplete and TPC-H/TPC-DS, then stops at **99 rustdb library integration diagnostics** in the latest scoped runtime
+check (the preceding full-workspace check reported 125).
 Scoped autocomplete and generator all-target Clippy pass; 18 signed autocomplete tests
 pass, none ignored, plus 188 direct C++ PEG AST/source/error comparisons. Earlier
 SDK/Parquet/execution/JSON test counts remain scoped to their recorded snapshots. Catalog and
@@ -1174,3 +1175,31 @@ in the external `identifier-bytes-20261023` directory. Raw-byte PEG ingress, kno
 fallible-rendering boundaries, complete runtime/shell/corpus/C API/storage/WAL, Python
 and all selected clients, and final documented performance acceptance remain open.
 The uncached lower-memory policy is unchanged; `peg-native-followup.md` records limits.
+
+
+The runtime continuation's native error-context foundation (2026-10-24) exposes
+`Error::with_query_context_bytes` and preserves original query bytes in displayed
+source lines. Valid UTF-8 uses the frozen utf8proc grapheme/width data already used by
+the native tree renderer. C++'s invalid-UTF-8 line fallback assigns width one to every
+byte; no replacement decoder is used. The text Error API delegates to this boundary.
+
+**32 signed common release tests pass**, zero failures and none ignored. **6,348 exact
+C++ QueryErrorContext outputs pass**, covering byte names, invalid UTF-8, multiline
+CR/LF, long-line truncation, combining marks, emoji and positions inside sequences.
+There are 104 frozen regression records. Common all-target Clippy with warnings denied
+and codegen --check pass. This verifies the common boundary, not full runtime errors.
+
+The same continuation began native runtime attachment option metadata, appender SQL
+construction and read_file paths/hive metadata. Those runtime edits are **unverified**:
+the library still stops at 99 integration diagnostics (query lifecycle/profiling,
+settings, attachment paths, read_duckdb and secrets). Do not treat reduced diagnostic
+counts as engine acceptance. Attached-info option maps now hold bytes; appender-generated
+SQL parses bytes and its failure prefix retains native error bytes. Full public SQL,
+appender/file, storage/WAL, shell, clients and performance remain pending.
+
+Evidence: `query-context-native-checkpoint.json`, `query-context-native-tests-1-summary.json`,
+`query-context-native-comparison-1.log`, `query-context-native-clippy-2.jsonl`,
+`query-context-native-codegen-check.log` and `runtime-native-integration-check-4.jsonl`
+in the external `identifier-bytes-20261023` directory. The native query-context API is
+not yet wired throughout runtime execution; finish lifecycle/profiler consumers and
+verify actual SQL errors before claiming parity. The lower-memory policy is unchanged.
