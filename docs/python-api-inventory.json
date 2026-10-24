@@ -333,9 +333,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "from_csv_auto",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 266
+      "line": 266,
+      "evidence": "python-csv-20261024: 98 pinned upstream CSV cases pass with one existing skip; 56 focused outcomes (only generated object-store URI identifiers normalized, raw errors retained); native COPY/scanner and snapshot ownership; broader filesystem/platform/API coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -459,9 +460,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "read_csv",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 360
+      "line": 360,
+      "evidence": "python-csv-20261024: 98 pinned upstream CSV cases pass with one existing skip; 56 focused outcomes (only generated object-store URI identifiers normalized, raw errors retained); native COPY/scanner and snapshot ownership; broader filesystem/platform/API coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -1338,9 +1340,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "to_csv",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 706
+      "line": 706,
+      "evidence": "python-csv-20261024: 98 pinned upstream CSV cases pass with one existing skip; 56 focused outcomes (only generated object-store URI identifiers normalized, raw errors retained); native COPY/scanner and snapshot ownership; broader filesystem/platform/API coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1441,9 +1444,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "write_csv",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 763
+      "line": 763,
+      "evidence": "python-csv-20261024: 98 pinned upstream CSV cases pass with one existing skip; 56 focused outcomes (only generated object-store URI identifiers normalized, raw errors retained); native COPY/scanner and snapshot ownership; broader filesystem/platform/API coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -2074,9 +2078,10 @@
     {
       "surface": "_duckdb",
       "name": "from_csv_auto",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1005
+      "line": 1005,
+      "evidence": "python-csv-20261024: 98 pinned upstream CSV cases pass with one existing skip; 56 focused outcomes (only generated object-store URI identifiers normalized, raw errors retained); native COPY/scanner and snapshot ownership; broader filesystem/platform/API coverage remains open"
     },
     {
       "surface": "_duckdb",
@@ -2229,9 +2234,10 @@
     {
       "surface": "_duckdb",
       "name": "read_csv",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1147
+      "line": 1147,
+      "evidence": "python-csv-20261024: 98 pinned upstream CSV cases pass with one existing skip; 56 focused outcomes (only generated object-store URI identifiers normalized, raw errors retained); native COPY/scanner and snapshot ownership; broader filesystem/platform/API coverage remains open"
     },
     {
       "surface": "_duckdb",
@@ -2419,9 +2425,10 @@
     {
       "surface": "_duckdb",
       "name": "write_csv",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1271
+      "line": 1271,
+      "evidence": "python-csv-20261024: 98 pinned upstream CSV cases pass with one existing skip; 56 focused outcomes (only generated object-store URI identifiers normalized, raw errors retained); native COPY/scanner and snapshot ownership; broader filesystem/platform/API coverage remains open"
     },
     {
       "surface": "_duckdb._enums",
@@ -2503,9 +2510,10 @@
     {
       "surface": "_duckdb._enums",
       "name": "CSVLineTerminator",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_enums.pyi",
-      "line": 24
+      "line": 24,
+      "evidence": "python-csv-20261024: 98 pinned upstream CSV cases pass with one existing skip; 56 focused outcomes (only generated object-store URI identifiers normalized, raw errors retained); native COPY/scanner and snapshot ownership; broader filesystem/platform/API coverage remains open"
     },
     {
       "surface": "_duckdb._enums",

@@ -115,6 +115,26 @@ original relation with its retained external inputs. No Python row snapshot exec
 these operations. Missing update-column hints now use the native Levenshtein candidate
 helper, preserving name bytes and C++'s newline/ranking behavior.
 
+CSV reading (`read_csv`/`from_csv_auto`) now adapts the frozen Python options into
+native table functions. A metadata bind sniffs the files once, retains the resulting
+schema/dialect and turns off later auto-detection, matching the native relation contract.
+Strings, bytes paths, PathLike values, lists/globs and file-like objects are supported.
+File-like objects are read once at their current position into immutable native bytes,
+as in the frozen object-store snapshot; they do not become Python row snapshots or
+internal-disk temporary files. A database-local registry holds weak file names, while
+relation copies own snapshots and open buffers retain bytes independently. Catalog
+views retain the file names, matching C++'s failure once an ephemeral CSV relation dies;
+this differs from Arrow view ownership. Native metadata binding activates the connection's
+file-opener settings and preserves its active result. External-access/disabled-filesystem
+checks match, and an unregistered private scheme keeps the ordinary local-file behavior.
+
+`to_csv`/`write_csv`, including the dataframe convenience wrapper, execute native COPY
+ASTs over the original relation. Options include quoting/NULL/date/time/compression and
+partition/overwrite/thread/temp-file behavior. Python argument checks follow the frozen
+wrapper. Physical relation metadata also matches C++ when `filename` is requested:
+fetched rows can include the extra field while the relation's metadata omits it.
+`CSVLineTerminator` values and invalid/foreign enum inputs are handled explicitly.
+
 Conversions currently cover scalar/nested values, 128-bit integers, decimals, strings,
 blobs, dates/times/timestamps, intervals, UUIDs, lists, structs and ordinary hashable-key
 maps, plus maps with unhashable keys represented as key/value lists and fixed arrays
@@ -179,10 +199,17 @@ engine names and queries keep their native representation.
   incremental dataframe chunks. This includes 5,000-row boundaries; it is not a full
   conversion/platform acceptance matrix.
 - The seven-file relation/join/expression cohort now **collects all 123 cases**: Rust
-  passes **116**, fails **7**, skips none, versus C++ **123/123**. The previously blocked
+  passes **119**, fails **4**, skips none, versus C++ **123/123**. The previously blocked
   50 cases run without collection errors. Of the 51 expression/SQL-expression cases,
-  all **51 pass**. Other failures require file APIs,
-  closed-owner API coverage and argument-error details. All failures remain; no assertions or collection errors were removed.
+  all **51 pass**. Other failures require argument-error details and
+  closed-owner API coverage. All failures remain; no assertions or collection errors were removed.
+- The two unmodified CSV files pass **98 cases**, with **one existing skip**, on both
+  engines. **56 focused outcomes** cover path/file-like input, bytes, options/errors,
+  compressed snapshots, exact output bytes, live paths versus captured data, derived/
+  view/query lifetimes, metadata/SQL round trips, virtual filename metadata and access
+  controls. Only generated object-store URI identifiers are normalized; raw errors are
+  retained beside each normalized outcome. The native ownership/namespace test passes
+  as a signed binary. No upstream assertions were weakened and no skips were added.
 - **30/30 exact values/insertion outcomes**, **14/14 describe outcomes** and **23/23
   update outcomes** match C++. Coverage includes literal/expression/tuple rows, row
   shape/types/names/errors, nested values, defaults, constraints/recovery, transaction
@@ -259,9 +286,23 @@ accepted as final release performance. Raw before/after timings, checksums and m
 are in `performance-comparison{,-optimized}.json`. The storage table-cache policy is
 unchanged; no residency increase was used to close the callback speed gap.
 
+CSV speed and memory were measured in separate fresh processes at one engine thread,
+including relation construction/sniffing plus aggregation. Three runs remain visible;
+these are Rust **development** versus C++ **release** measurements, not final acceptance.
+For 1M rows, path reads took Rust **76.0–78.4 ms** versus C++ **57.0–59.8 ms**; file-like
+reads took **75.8–78.7 ms** versus **57.3–58.2 ms**. These individual slowdowns remain open.
+Path whole-process peaks were Rust **102.7–106.7 MB** versus C++ **75.0–75.5 MB**; the warmed
+pre-query baselines were about **91 MB** versus **60 MB**. Path query increments varied
+from **12.0–15.7 MB** versus **14.7–14.9 MB**. For file-like input, peaks were **131.4–131.7
+MB** versus **118.0–121.6 MB**, with increments **26.4 MB** versus **43.5–47.1 MB** after
+preparing the caller's BytesIO. Whole-process memory is higher despite the lower
+file-like query increment; neither metric is hidden. All four size/mode cases, CPU
+measurements and checksums are retained in `performance-comparison{,-final,-current}.json`.
+The accepted TPC-H/ClickBench baseline and table-cache policy remain unchanged.
+
 ## Remaining gates
 
-Complete relation APIs (including delete, file APIs, remaining mutation/type/metadata and
+Complete relation APIs (including delete, remaining file formats/filesystems, mutation/type/metadata and
 remaining expression overloads), remaining display/error semantics, broader result lifetimes,
 remaining UDF overload/annotation/concurrency coverage, replacement scans,
 complete native Pandas/NumPy inference, nested conversion and input error semantics,
@@ -278,7 +319,13 @@ release performance. Preserve the accepted uncached speed-memory baseline and re
 individual query outliers in final acceptance. No table-cache retention was introduced.
 The other selected language clients remain part of the goal.
 
-Current evidence: `.context/artifacts/python-values-20261024/python-values-checkpoint.json`,
+Current evidence: `.context/artifacts/python-csv-20261024/python-csv-checkpoint.json`,
+`{csv,values,describe,update,udf,render,expression,joins-writes,pandas,reader,input,host,relations,foundation}-comparison-current.json`,
+`{csv,udf,dbapi,host-expanded,arrow,pandas-object,relation-expression}-rust-current/`,
+signed `wheels-dev-verified-signed/`, `object-store-test-final.log`,
+`clippy-verified.jsonl` and `workspace-check-verified.jsonl`.
+
+Previous values evidence: `.context/artifacts/python-values-20261024/python-values-checkpoint.json`,
 `{values,describe,update,udf,render,expression,joins-writes,pandas,reader,input,host,relations,foundation}-comparison-verified.json`,
 `{udf,dbapi,host-expanded,arrow,pandas-object,relation-expression}-rust-final/`, signed
 `wheels-dev-8-signed/`, `clippy-final.jsonl` and `workspace-check-final.jsonl`.
