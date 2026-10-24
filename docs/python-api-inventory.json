@@ -1119,9 +1119,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "map",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 599
+      "line": 599,
+      "evidence": "python-map-20261024: native bounded dataframe callbacks, 11 upstream cases pass; 82/84 isolated outcomes match; reference numeric-buffer and mapped-view lifetime discrepancies held unaccepted; persistent callbacks/platform/concurrency coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",

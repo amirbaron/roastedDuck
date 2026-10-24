@@ -115,7 +115,7 @@ reduced the 1M-row scan from 85 ms to 6.8 ms at similar peak RSS; C++ took 3.3 m
 Keep this individual development-wheel slowdown visible; do not use a suite average
 or extra caching to declare performance acceptance. All nine
 dataframe-chunk tests pass. The seven-file relation/join/expression cohort now collects
-all 123 cases: Rust passes 122/fails 1/skips 0 versus C++123/123. The 50 formerly blocked
+all 123 cases: Rust passes 123/skips 0, matching C++. The 50 formerly blocked
 cases run. Native expression construction, immutable operators, cases/lambdas, column
 attributes, type projection and EXPLAIN work; all 51 expression-only cases pass. Native/Arrow UDFs now pass all seven frozen
 files: 559 passed, one existing xfail, with 26 focused C++ outcomes matching. Values/insertion, describe and update match 30, 14 and 23 focused C++ outcomes.
@@ -132,8 +132,15 @@ internal UDF removal and ordinary-drop protection. Parquet read/write now pass 5
 59/60 on both engines with a shared timestamp-unit assertion failure. Fifty scoped
 Parquet comparisons and 19 call diagnostics match (documented nondeterminism only
 normalized, raw errors retained). Native function/cache tests pass 37/37 signed.
-The remaining relation-cohort case now reaches the missing map method after the
-closed aggregation check; open relation APIs still need implementation. Aggregate/window convenience families now pass 108 upstream cases with one existing
+The complete closed-owner relation case now passes after native dataframe-map support
+and set-operation owner validation. Map passes 11/11 upstream cases and matches 82/84
+focused outcomes; two reference lifetime defects remain unaccepted (unstable numeric
+sums and a mapped-view callback crash). Bounded native numeric conversion reduces
+1M-row identity mapping from about 60 ms to about 42.5 ms at about 117 MB peak RSS,
+versus C++ about 38–39 ms/127 MB. Both engines retain only the latest output frame
+for checked measurements; the original failing reference journeys remain preserved.
+The source/archive manifest and raw evidence are under python-map-20261024. Remaining
+relation APIs, callback persistence/platform behavior and other client gates stay open. Aggregate/window convenience families now pass 108 upstream cases with one existing
 skip; 79/81 focused outcomes match. A fifth unaccepted discrepancy is C++
 RTrim removing trailing UTF-8 bytes and sometimes aggregating the wrong column.
 Rust preserves the identifier. Grouping/window microbenchmarks retain individual

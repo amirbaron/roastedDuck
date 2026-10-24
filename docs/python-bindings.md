@@ -72,6 +72,19 @@ Pandas dtypes use C++'s Arrow path. `from_df`, NumPy frame replacement and `quer
 exist; relation `query` creates a temporary view and enforces its one-statement contract.
 This is partial Pandas parity, with the wider object and API gaps below still open.
 
+Relation `map` now executes a native table-in/table-out function over at most 2048
+input rows per call. It constructs the frozen client's NumPy-backed Pandas input,
+infers output names/types with a zero-row callback or honors an explicit schema, then
+checks each returned dataframe's column count, exact types/names and row bound.
+The existing Pandas scanner binds and copies the returned batch into owned native
+vectors; it does not execute a second SQL query or snapshot the entire relation.
+Primitive inputs copy numeric buffers directly, including validity masks; other types
+reuse the bounded host converter. ENUM codes, SQLNULL rejection, masked nested values
+and bytearray BLOBs have dedicated reference journeys. Callback exceptions print the
+traceback and set Python's last-exception attributes like the frozen client. The query
+tree and bind data retain the callable/schema; the identity lookup remains weak.
+Persistent callback-view and wider packaging/concurrency behavior still need review.
+
 Relation joins now build native join trees for the six frozen Python join types,
 USING strings/lists and predicate strings, plus cross products. Join-derived projections,
 filters and aggregates preserve C++'s qualifier visibility; ordering creates the same
@@ -162,7 +175,8 @@ so trailing ORDER BY/HAVING/LIMIT clauses have the same ignored behavior as C++.
 Table-function SQL rendering now preserves C++'s omitted alias while retaining the
 public function alias. Parameter iterables/mappings follow the frozen ABC checks.
 Implemented relation methods reject closed owners before parsing; missing APIs remain
-visible (the broad closed-owner case now reaches `map`).
+visible. Set operations and cross products now validate both relation owners before
+reporting a connection mismatch; the broad closed-owner case passes.
 
 Conversions currently cover scalar/nested values, 128-bit integers, decimals, strings,
 blobs, dates/times/timestamps, intervals, UUIDs, lists, structs and ordinary hashable-key
@@ -228,10 +242,20 @@ engine names and queries keep their native representation.
   incremental dataframe chunks. This includes 5,000-row boundaries; it is not a full
   conversion/platform acceptance matrix.
 - The seven-file relation/join/expression cohort now **collects all 123 cases**: Rust
-  passes **122**, fails **1**, skips none, versus C++ **123/123**. The previously blocked
-  50 cases run without collection errors. Of the 51 expression/SQL-expression cases,
-  all **51 pass**. The remaining closed-owner case progresses through the implemented methods
-  to the unimplemented `map` method; it still fails and is not skipped. All failures remain; no assertions or collection errors were removed.
+  passes **123/123**, skips none, matching C++. The previously blocked 50 cases run
+  without collection errors. All 51 expression/SQL-expression cases pass; the full
+  closed-owner journey now passes after implementing map and correcting set-operation
+  owner validation. No assertion or collection error was removed.
+- The unmodified dataframe-map file passes **11/11** on both engines. **82/84** focused
+  map outcomes match (80 exact, two with internal native stack traces excluded).
+  Cases run in separate processes, with every error/process outcome retained. The two
+  remaining differences are held unaccepted: the reference produces unstable incorrect
+  sums after unretained numeric callback output, and crashes after a mapped view loses
+  its original relation/callable owner. Rust returns the expected values and releases
+  owners after dropping the view. Keeping only the latest output dataframe alive on
+  both engines gives matching multi-batch results and permits checked measurements.
+  Raw crash evidence and the frozen numeric scan/map source support a buffer-lifetime
+  explanation; this is not a claim that all callback lifetime behavior is complete.
 - The four unmodified aggregate/window/grouping/function files pass **108 cases**
   with **one existing skip** on both engines. Focused comparisons match **79/81**
   outcomes; both mismatches are the same unaccepted UTF-8 trim defect described below.
@@ -373,6 +397,19 @@ slower; all four size/mode cases and checksums are retained in
 `performance-comparison{,-current,-sql}.json`. No cache retention or memory increase
 was used to close these gaps; they remain open for final performance acceptance.
 
+Dataframe-map speed and memory were checked in two fresh processes per size/mode,
+one engine thread (Rust development, C++ release). The first 1M-row identity path took
+Rust about **60 ms**; bounded direct numeric conversion reduced it to about **42.5 ms**,
+with C++ about **38–39 ms**. Adding one column took Rust about **68 ms** versus C++
+**62–63 ms** after the change. Whole-process peaks remained about **117 MB** Rust versus
+**126–128 MB** C++, with only a bounded output frame retained on both engines to avoid
+the reference's observed numeric-output lifetime defect. The 100k-row timings and all
+repetitions remain in `performance-comparison{,-optimized,-current}.json`. These scoped
+measurements do not certify final release performance; no table-cache policy changed.
+A three-row prefix consumes one 2048-row input batch for both 1M and 100M declared
+rows, at about 117 MB peak RSS on both engines. Python all-target Clippy with warnings
+denied and the complete workspace/all-target check pass on the signed-wheel source.
+
 ## Remaining gates
 
 Complete relation APIs (including delete, remaining file formats/filesystems, mutation/type/metadata and
@@ -392,7 +429,14 @@ release performance. Preserve the accepted uncached speed-memory baseline and re
 individual query outliers in final acceptance. No table-cache retention was introduced.
 The other selected language clients remain part of the goal.
 
-Current evidence: `.context/artifacts/python-aggregates-20261024/python-aggregates-checkpoint.json`,
+Current map evidence: `.context/artifacts/python-map-20261024/python-map-checkpoint.json`,
+`map-comparison-verified.json`, `isolated-{cpp,rust}-verified/`, `upstream-rust-final/`,
+`{table-function,aggregates,parquet,csv,udf,dbapi,host-expanded,arrow,pandas-object,relation-expression}-rust-final/`,
+`performance-comparison{,-optimized,-current}.json`, `prefix-memory-comparison.json`,
+`clippy-final.jsonl`, `workspace-check-final.jsonl` and signed `wheels-dev-8-signed/`.
+The source archive and SHA manifest include the still-uncommitted native-byte migration.
+
+Previous aggregate evidence: `.context/artifacts/python-aggregates-20261024/python-aggregates-checkpoint.json`,
 `{aggregation,parquet,arguments,csv,values,describe,update,udf,render,expression,joins-writes,pandas,reader,input,host,relations,foundation}-comparison-current.json`,
 `{table-function,aggregates,parquet,csv,udf,dbapi,host-expanded,arrow,pandas-object,relation-expression}-rust-current/`,
 signed `wheels-dev-6-signed/`, `clippy-3.jsonl` and `workspace-check-current.jsonl`.
