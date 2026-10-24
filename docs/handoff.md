@@ -44,11 +44,11 @@ The checkout has an **uncommitted native-byte migration and does not build as a
 complete workspace yet**. The native SQL parser now compiles all targets and passes
 73 signed release tests plus 24,499 exact full-AST C++ comparisons. The earlier 700
 pending full-AST byte inputs are resolved, with zero skipped inputs in that matrix.
-The latest workspace/all-target check passes planner, CSV, execution, Parquet and JSON,
-then stops at **48 autocomplete integration diagnostics** in parser transformer/AST
-consumers. Scoped JSON all-target Clippy and codegen pass; 15 signed JSON release tests
-pass (three pre-existing timing probes ignored). The prior 93 SDK/Parquet plus 12
-execution-library tests also pass at their recorded source snapshot. Catalog and
+The latest workspace/all-target check passes planner, CSV, execution, Parquet, JSON,
+autocomplete and TPC-H/TPC-DS, then stops at **125 rustdb runtime integration diagnostics**.
+Scoped autocomplete and generator all-target Clippy pass; 18 signed autocomplete tests
+pass, none ignored, plus 188 direct C++ PEG AST/source/error comparisons. Earlier
+SDK/Parquet/execution/JSON test counts remain scoped to their recorded snapshots. Catalog and
 storage library compilation passes that check; the newly touched index-type carrier has
 not had a fresh runtime/storage journey. Earlier scoped runtime counts (including 15)
 are historical checkpoints, not a fresh successful runtime build. Downstream execution,
@@ -1142,3 +1142,35 @@ FIFO and parallel-range journeys, non-Unix paths, and option-value text boundari
 remain open (`json-native-path-followup.md`). Autocomplete/runtime/client integration,
 full shell/corpus/C API/storage/WAL, Python/all selected clients and final documented
 performance acceptance remain open. No table caching or memory policy changed.
+
+
+The PEG/autocomplete integration continuation (2026-10-24) carries new AST option maps,
+COPY/EXPORT format/path fields, parameter metadata, attach/secret/index/setting names
+and statement source through native carriers. Existing Unicode token strings encode
+into byte names at the current PEG text ingress; this does not establish raw-byte PEG
+tokenization. Statement source slicing no longer uses a lossy UTF-8 decoder. PIVOT
+statement helper output stays native rather than decoding generated SQL into text.
+COPY path/format Values and partition column references use native value bytes.
+
+**18 signed autocomplete release tests pass**, zero failures and none ignored. **188
+direct C++ PEG comparisons pass**: 182 actual PEGTransformerFactory AST binary/source
+records and six exact caught-error JSON outcomes. Cases cover Unicode/control names,
+COPY paths/format inference/options, table/index option maps, SELECT parameters and
+CTEs; errors cover duplicate/invalid options and mixed named/positional parameters.
+All 188 records are frozen as regression fixtures. All-target autocomplete Clippy with
+warnings denied and codegen --check pass.
+
+The fresh integration check also exposed one empty SQL-source carrier in each of
+TPC-H/TPC-DS, now encoded as an empty ByteString. Generator all-target Clippy and both signed native-name scale-zero tests pass.
+These are schema/identity journeys, not full data or performance acceptance.
+A new workspace check passes these components and stops at 125 runtime diagnostics;
+this is not complete source/build or public binary acceptance.
+
+Evidence: `peg-native-checkpoint.json`, `peg-native-tests-2-summary.json`,
+`peg-native-statement-comparison-1.log`, `peg-native-error-comparison-1.log`,
+`peg-native-clippy-3.jsonl`, `peg-native-codegen-check.log`,
+`peg-native-generator-clippy-1.jsonl` and `peg-native-workspace-check-3.jsonl`
+in the external `identifier-bytes-20261023` directory. Raw-byte PEG ingress, known
+fallible-rendering boundaries, complete runtime/shell/corpus/C API/storage/WAL, Python
+and all selected clients, and final documented performance acceptance remain open.
+The uncached lower-memory policy is unchanged; `peg-native-followup.md` records limits.
