@@ -44,13 +44,13 @@ The checkout has an **uncommitted native-byte migration and does not build as a
 complete workspace yet**. The native SQL parser now compiles all targets and passes
 73 signed release tests plus 24,499 exact full-AST C++ comparisons. The earlier 700
 pending full-AST byte inputs are resolved, with zero skipped inputs in that matrix.
-The runtime library now **compiles successfully** (`attachment-path-native-check-4`).
-The latest workspace/all-target check passes the runtime library and stops at one
-benchmark adapter result-column metadata diagnostic; shell/C API and other downstream
-all-target completion remain unverified beyond that boundary. Eight signed persistence
-tests and one Unicode attachment/checkpoint/WAL journey pass. Storage/buffer library
-Clippy passes; runtime Clippy remains open with 71 diagnostics. Earlier scoped component
-results remain tied to their recorded snapshots. Catalog and
+The runtime library **compiles successfully** and passes library Clippy with warnings
+denied. The latest workspace/all-target check passes runtime, benchmark and SLT library
+integration, then stops at **eight shell diagnostics** in native name/logging interfaces.
+Benchmark/SLT all-target Clippy and 42 signed benchmark unit tests pass. Two-way
+checkpoint plus nonempty WAL replay between Rust/C++ passes for the recorded scenario.
+Broader shell/C API/client/corpus/performance acceptance remains open; earlier scoped
+component results remain tied to their recorded snapshots. Catalog and
 storage library compilation passes that check; the newly touched index-type carrier has
 not had a fresh runtime/storage journey. Earlier scoped runtime counts (including 15)
 are historical checkpoints, not a fresh successful runtime build. Downstream execution,
@@ -1300,3 +1300,39 @@ in the external `identifier-bytes-20261023` directory. Finish runtime lint/all-t
 integration and actual cross-engine storage/WAL, then verify settings/pragma/secrets,
 shell/corpus/C API, Python/all selected clients and final documented performance.
 Existing temp-file display/non-Unix path behavior remains subject to audit.
+
+
+The runtime lint/interchange continuation (2026-10-24) closes all 71 prior runtime
+library Clippy diagnostics. Most changes are exact compiler-suggested borrow/conversion
+cleanup. Profiler private map entries now store text after the existing checked VARCHAR
+construction at CreateTree/MergeOperatorExtraInfo, removing unchecked Value downcasts
+without moving that validation boundary. Runtime library Clippy with warnings denied
+and codegen --check pass. Full runtime all-target tests and remaining fallible rendering
+behavior still need verification.
+
+A signed Rust runtime probe and signed C++ CLI verify **two-way checkpoint plus WAL
+replay** on Unicode SSD database paths: C++ creates a checkpoint and nonempty WAL read
+by Rust; Rust creates the same scenario read by C++. Both readers report count 3,
+sum 58 and two non-NULL strings. Each source WAL is 131 bytes; the two WAL SHA-256 hashes
+are identical for this scenario. Verification uses copies; original database/WAL hashes
+are unchanged. This is actual cross-engine evidence for this data/schema/transaction,
+not a complete storage/WAL compatibility matrix. Integer/VARCHAR/NULL and Unicode
+column/data names are covered; other types/recovery/encryption scenarios remain open.
+
+Benchmark result-column names now retain bytes in Rust and C++ adapters; its JSON
+metadata keeps strings for UTF-8 and uses byte arrays otherwise. SLT result names are
+native on both backends. Human-readable previews are presentation text. Existing
+benchmark result_query / SLT result-file SQL still require UTF-8 names and explicitly
+report unsupported metadata instead of replacing bytes. These harness limits remain
+open for native-name coverage. **42 signed benchmark unit tests pass**, none ignored,
+including the name metadata regression. Benchmark/SLT all-target Clippy passes. The
+fresh workspace check advances to eight shell integration diagnostics.
+
+Evidence: `runtime-lint-checkpoint.json`, `runtime-storage-interop.json`, source/copy
+files under `runtime-storage-interop/`, `runtime-lint-bench-tests-1-summary.json`,
+`runtime-lint-final-lib-1.jsonl`, `runtime-lint-harness-check-1.jsonl`,
+`runtime-lint-codegen-check.log` and `runtime-lint-workspace-check-3.jsonl` in the external
+`identifier-bytes-20261023` directory. Continue shell/C API/all-target integration,
+actual runtime settings/pragma/secret/import/COPY verification, expanded cross-engine
+storage/WAL, corpus, Python/all selected clients and documented final speed-memory
+acceptance. The uncached lower-memory policy is unchanged.
