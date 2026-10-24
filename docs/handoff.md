@@ -106,7 +106,7 @@ and transactions, and relations retain their Python owner. The wider unmodified
 101-test DB-API/cursor/type cohort now passes 101/101 on both engines with zero skips.
 The full dataframe/join/query/create/insert journey passes. Native from_df/query_df
 and NumPy input exist. The selected host cohort passes 37/37 on both engines, while
-the broader object/analyzer cohort passes 77/81 versus C++81/81. Nested type behavior and the two decimal discrepancies remain in that cohort. The six-file Arrow cohort
+the broader object/analyzer cohort passes 79/81 versus C++81/81. Nested MAP promotion and typed STRUCT shape checks now pass; only the two decimal discrepancies remain in that cohort. The six-file Arrow cohort
 passes 41/41 on both engines. Reader checks include cancellation/recovery, early release,
 cross-connection scanning and an actual background thread. First-batch memory stays
 bounded when declared row count grows from 1M to 100M; these development-wheel
@@ -132,6 +132,15 @@ internal UDF removal and ordinary-drop protection. Parquet read/write now pass 5
 59/60 on both engines with a shared timestamp-unit assertion failure. Fifty scoped
 Parquet comparisons and 19 call diagnostics match (documented nondeterminism only
 normalized, raw errors retained). Native function/cache tests pass 37/37 signed.
+Type constructors/metadata and recursive target conversion now pass 34/34 upstream
+cases and 84/84 focused outcomes. Python UNION conversion chooses the first exact or
+convertible member, while SQL CAST keeps its ambiguity errors; five SQL controls match.
+Two signed SDK tests verify native type-name lookup during streaming, failed lookups,
+uncommitted enum types and rollback. Python/SDK Clippy and whole-workspace checks pass.
+Default/explicit connection and catalog-name type coverage still need broader review.
+Current evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
+source archive, complete scoped regressions and repeated coupled UDF timings. The
+native UDF slowdown remains an individual outlier; a noisy C++ run is retained.
 The complete closed-owner relation case now passes after native dataframe-map support
 and set-operation owner validation. Map passes 11/11 upstream cases and matches 82/84
 focused outcomes; two reference lifetime defects remain unaccepted (unstable numeric

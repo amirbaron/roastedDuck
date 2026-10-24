@@ -1871,7 +1871,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 877,
-      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
     },
     {
       "surface": "_duckdb",
@@ -1998,7 +1998,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 943,
-      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
     },
     {
       "surface": "_duckdb",
@@ -2227,7 +2227,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1100,
-      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
     },
     {
       "surface": "_duckdb",
@@ -2242,7 +2242,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1102,
-      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
     },
     {
       "surface": "_duckdb",
@@ -2349,7 +2349,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1242,
-      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
     },
     {
       "surface": "_duckdb",
@@ -2381,14 +2381,15 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1252,
-      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
     },
     {
       "surface": "_duckdb",
       "name": "string_type",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1253
+      "line": 1253,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
     },
     {
       "surface": "_duckdb",
@@ -2396,7 +2397,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1254,
-      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
     },
     {
       "surface": "_duckdb",
@@ -2438,9 +2439,10 @@
     {
       "surface": "_duckdb",
       "name": "type",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1265
+      "line": 1265,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
     },
     {
       "surface": "_duckdb",
@@ -2448,7 +2450,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1266,
-      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
     },
     {
       "surface": "_duckdb",
@@ -3005,9 +3007,10 @@
     {
       "surface": "_duckdb._sqltypes",
       "name": "DuckDBPyType",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_sqltypes.pyi",
-      "line": 37
+      "line": 37,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
     },
     {
       "surface": "_duckdb._sqltypes.DuckDBPyType",
@@ -3015,21 +3018,23 @@
       "status": "partial",
       "source": "_duckdb-stubs/_sqltypes.pyi",
       "line": 38,
-      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
     },
     {
       "surface": "_duckdb._sqltypes.DuckDBPyType",
       "name": "__getattr__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_sqltypes.pyi",
-      "line": 39
+      "line": 39,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
     },
     {
       "surface": "_duckdb._sqltypes.DuckDBPyType",
       "name": "__getitem__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_sqltypes.pyi",
-      "line": 40
+      "line": 40,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
     },
     {
       "surface": "_duckdb._sqltypes.DuckDBPyType",
@@ -3037,7 +3042,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/_sqltypes.pyi",
       "line": 41,
-      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
     },
     {
       "surface": "_duckdb._sqltypes.DuckDBPyType",
@@ -3045,7 +3050,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/_sqltypes.pyi",
       "line": 45,
-      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
     },
     {
       "surface": "_duckdb._sqltypes.DuckDBPyType",
@@ -3053,7 +3058,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/_sqltypes.pyi",
       "line": 47,
-      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
     },
     {
       "surface": "_duckdb._sqltypes.DuckDBPyType",
@@ -3061,7 +3066,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/_sqltypes.pyi",
       "line": 49,
-      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
     },
     {
       "surface": "_duckdb._typing",

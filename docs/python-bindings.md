@@ -85,6 +85,21 @@ traceback and set Python's last-exception attributes like the frozen client. The
 tree and bind data retain the callable/schema; the identity lookup remains weak.
 Persistent callback-view and wider packaging/concurrency behavior still need review.
 
+Type construction now accepts builtin/NumPy types, dictionaries, GenericAlias list/map
+specifications and nullable/Union forms. Nested child access, ENUM/ARRAY/MAP metadata,
+string collations and Python-string hashing follow the frozen client. Type names use
+the native type-name parser without a synthetic SELECT. The SDK lookup preserves an
+active stream and explicit transaction, and sees uncommitted catalog types. The Python
+constructor still needs broader default/explicit connection and catalog-name coverage.
+
+Python-target conversion now recurses through declared lists, maps, structs and arrays
+before incompatible Python values can be coerced to a common inferred type. Typed
+STRUCT shape errors and tuple positions follow the client. Python conversion selects
+the first exact or convertible UNION member; the SQL cast engine retains ambiguity
+errors. Native UDF integer conversion starts with BIGINT, while parameter conversion
+sniffs the integer type, preserving the client's distinct UNION choices. Boolean UDF
+returns enforce the declared BOOLEAN output. These remain scoped implementation gates.
+
 Relation joins now build native join trees for the six frozen Python join types,
 USING strings/lists and predicate strings, plus cross products. Join-derived projections,
 filters and aggregates preserve C++'s qualifier visibility; ordering creates the same
@@ -232,10 +247,10 @@ engine names and queries keep their native representation.
   **49/51 focused C++ outcomes**; the two disagreements are the decimal cases below.
   Coverage includes numeric widths, nullable types, live/replaced buffers, stable names,
   categories, nested values, sampling fallback, timestamp units and object ownership.
-- A broader five-file object/analyzer/category/stride cohort passes **77/81** on Rust,
-  versus **81/81** on C++. Four failures remain: nested map/type
-  comparison behavior and the two decimal discrepancies. All failures remain
-  in `python-udf-20261024/pandas-object-rust-optimized/remaining-gaps.json`; none was skipped or normalized.
+- A broader five-file object/analyzer/category/stride cohort passes **79/81** on Rust,
+  versus **81/81** on C++. Only the two decimal discrepancies remain. Nested MAP
+  promotion and typed STRUCT shape checks now pass; all remaining failures are retained
+  in `python-nested-20261024/remaining-gaps.json`, without skips or normalization.
 - Focused host conversion matches **75/76 exact C++ outcomes**, including native widths,
   nullable types, nested values, categorical/empty ENUMs, date/interval overflow errors,
   timestamp precision, buffer lifetime after close, requested Arrow batch sizes and
@@ -246,6 +261,12 @@ engine names and queries keep their native representation.
   without collection errors. All 51 expression/SQL-expression cases pass; the full
   closed-owner journey now passes after implementing map and correcting set-operation
   owner validation. No assertion or collection error was removed.
+- Three unmodified type/conversion files pass **34/34** on both engines. **84/84**
+  focused type outcomes match exactly, including constructors, errors, metadata,
+  attributes, hashing, typed tuple/STRUCT parameters and duplicate-member UNION UDFs.
+  Five direct SQL UNION controls also match; Python's conversion rule was applied only
+  at the Python boundary. Two signed SDK tests cover live-stream lookup, failed lookup,
+  uncommitted enum types and rollback, without closing an active result.
 - The unmodified dataframe-map file passes **11/11** on both engines. **82/84** focused
   map outcomes match (80 exact, two with internal native stack traces excluded).
   Cases run in separate processes, with every error/process outcome retained. The two
@@ -410,6 +431,15 @@ A three-row prefix consumes one 2048-row input batch for both 1M and 100M declar
 rows, at about 117 MB peak RSS on both engines. Python all-target Clippy with warnings
 denied and the complete workspace/all-target check pass on the signed-wheel source.
 
+Fresh UDF controls after the type/conversion work retain individual speed-memory
+outliers: native 1M-row Rust took **83.2–86.0 ms** versus C++ **57.3–57.7 ms** in the
+repeat controls, at about **116–117 MB** for both. One noisy C++ run took **102.4 ms**;
+that raw run remains visible and is not used to imply a speed advantage. Arrow took
+Rust **54.6–58.8 ms** versus **42.2–46.4 ms**, at about **119 MB** versus **125–126 MB**.
+All checksums passed. These are development/release microbenchmarks, not final release
+acceptance or proof of a new regression against the earlier development wheel. No
+memory retention was introduced to close these individual speed gaps.
+
 ## Remaining gates
 
 Complete relation APIs (including delete, remaining file formats/filesystems, mutation/type/metadata and
@@ -429,7 +459,12 @@ release performance. Preserve the accepted uncached speed-memory baseline and re
 individual query outliers in final acceptance. No table-cache retention was introduced.
 The other selected language clients remain part of the goal.
 
-Current map evidence: `.context/artifacts/python-map-20261024/python-map-checkpoint.json`,
+Current nested/type evidence: `.context/artifacts/python-nested-20261024/python-nested-checkpoint.json`,
+`types-comparison-final.json`, the twelve `*-rust-final/` cohort directories,
+`type-tests.log`, signed `wheels-dev-9-signed/`, Clippy/workspace terminal records and
+coupled UDF performance repeats. The source archive includes the uncommitted migration.
+
+Previous map evidence: `.context/artifacts/python-map-20261024/python-map-checkpoint.json`,
 `map-comparison-verified.json`, `isolated-{cpp,rust}-verified/`, `upstream-rust-final/`,
 `{table-function,aggregates,parquet,csv,udf,dbapi,host-expanded,arrow,pandas-object,relation-expression}-rust-final/`,
 `performance-comparison{,-optimized,-current}.json`, `prefix-memory-comparison.json`,
