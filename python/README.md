@@ -3,7 +3,7 @@
 Native PyO3 bindings to this repository's Rust engine, targeting the pinned DuckDB
 Python 1.5.6 contract in upstream.json. This package is under active implementation;
 docs/python-api-inventory.json records the native API baseline. It is not complete
-Python parity yet. Relations, expressions, UDFs, replacement scans, host interchange
+Python parity yet. Full relation/expression APIs, UDFs, replacement scans, host interchange
 and additional conversions/packaging remain required.
 
 Build from this directory with maturin 1.9.6 and a native Python interpreter. Keep
@@ -18,5 +18,6 @@ The upstream pure-Python SQL type/value/DB-API helper code retains its MIT licen
 LICENSE-UPSTREAM. The native implementation links Rust directly and has no dependency
 on the C++ duckdb package or the generic Apache ADBC Python client. Cursor fetching
 consumes native chunks lazily; database instance reuse holds weak references and does
-not retain table blocks. Final release speed/memory acceptance remains separate from
+not retain table blocks. Relation composition uses native query trees, owns the Python
+connection, and binds metadata without closing an existing result. Final release speed/memory acceptance remains separate from
 development-wheel correctness evidence.

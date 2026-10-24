@@ -342,9 +342,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "from_query",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 329
+      "line": 329,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -427,9 +428,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "query",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 358
+      "line": 358,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -499,9 +501,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "sql",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 451
+      "line": 451,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -527,9 +530,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "table",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 455
+      "line": 455,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -590,9 +594,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "view",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 464
+      "line": 464,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -627,9 +632,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "__contains__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 472
+      "line": 472,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -641,23 +647,26 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "__getitem__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 474
+      "line": 474,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "__len__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 475
+      "line": 475,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "aggregate",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 476
+      "line": 476,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -760,9 +769,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "close",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 526
+      "line": 526,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -823,23 +833,26 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "distinct",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 537
+      "line": 537,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "except_",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 538
+      "line": 538,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "execute",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 539
+      "line": 539,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -886,9 +899,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "fetchall",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 556
+      "line": 556,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -900,9 +914,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "fetchmany",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 558
+      "line": 558,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -914,16 +929,18 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "fetchone",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 560
+      "line": 560,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "filter",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 561
+      "line": 561,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -977,9 +994,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "intersect",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 573
+      "line": 573,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1019,9 +1037,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "limit",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 595
+      "line": 595,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1089,9 +1108,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "order",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 628
+      "line": 628,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1117,9 +1137,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "project",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 643
+      "line": 643,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1194,9 +1215,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "set_alias",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 675
+      "line": 675,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1215,9 +1237,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "sql_query",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 686
+      "line": 686,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1313,9 +1336,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "union",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 747
+      "line": 747,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1383,51 +1407,58 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "alias",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 801
+      "line": 801,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "columns",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 803
+      "line": 803,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "description",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 805
+      "line": 805,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "dtypes",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 807
+      "line": 807,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "shape",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 809
+      "line": 809,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "type",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 811
+      "line": 811,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "types",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 813
+      "line": 813,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb",
@@ -1995,9 +2026,10 @@
     {
       "surface": "_duckdb",
       "name": "from_query",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1067
+      "line": 1067,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb",
@@ -2103,9 +2135,10 @@
     {
       "surface": "_duckdb",
       "name": "query",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1132
+      "line": 1132,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb",
@@ -2199,9 +2232,10 @@
     {
       "surface": "_duckdb",
       "name": "sql",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1245
+      "line": 1245,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb",
@@ -2229,9 +2263,10 @@
     {
       "surface": "_duckdb",
       "name": "table",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1255
+      "line": 1255,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb",
@@ -2300,9 +2335,10 @@
     {
       "surface": "_duckdb",
       "name": "view",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1270
+      "line": 1270,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
     },
     {
       "surface": "_duckdb",

@@ -50,7 +50,7 @@ The rebuilt Rust C API passes the existing upstream 30-file harness (155 test ca
 outcomes match across query/result names, prepared parameter identities/execution,
 STRUCT names, UNION names and aliases. A further seven-name C journey, including a real
 C table callback, passes against both libraries. All 546 frozen duckdb.h functions are
-exported; C++'s additional duckdb_adbc_init remains missing. The separate ENUM accessor
+exported, along with duckdb_adbc_init. The separate ENUM accessor
 audit finds 1,613 matching returns and 134 C++-exception/Rust-return gaps. Do not claim
 complete native C API correctness or ADBC/client completion.
 
@@ -88,14 +88,21 @@ WAL/performance gates remain required. See `docs/adbc.md` and external
 Python binding work now has a pinned 1.5.6 source/API inventory (414 native surfaces)
 and a real PyO3 package in crates/python + python/. The signed initial release wheel
 installs and passes seven upstream tests. The current development wheel includes later
-conversion/lifecycle corrections and matches 42/42 focused C++ outcomes. The wider
-unmodified 101-test DB-API/cursor/type cohort passes 51/fails 50/skips 0 on Rust, versus
-101/101 on C++; all failures are retained. No full Python parity or performance claim.
+conversion/lifecycle corrections and native AST relation composition; it matches 42/42
+foundation and 30/30 relation C++ outcomes. Metadata binding preserves existing streams
+and transactions, and relations retain their Python owner. The wider unmodified
+101-test DB-API/cursor/type cohort passes 88/fails 13/skips 0 on Rust, versus 101/101
+on C++. A broader four-file relation cohort passes 65/65 on C++; Rust has 5 passes,
+17 failures and a collection error for missing ColumnExpression. All failures remain
+recorded. No full Python parity or performance claim.
 Root identity checks show the Rust extension as the only loaded DuckDB engine. Native
-Clippy and workspace checks pass. Relations/sql/table composition, expressions, UDFs,
+Clippy passes; workspace check status is in the current relation checkpoint. Full relation/expression APIs, UDFs,
 replacement scans, Arrow/NumPy/Pandas/etc and remaining type/platform/package tests
 remain open. See docs/python-bindings.md and external python-bindings-20261024/
-python-foundation-checkpoint.json. Use its external CARGO_HOME/PYO3_PYTHON=Python3.13
+python-relation-checkpoint.json. The foundation checkpoint remains historical; an
+accidental collision in its run 3/4 JSON filenames is documented in the relation
+evidence manifest, with new reports separated and original comparison-4 data restored.
+Use the external CARGO_HOME/PYO3_PYTHON=Python3.13
 for subsequent Python/workspace builds; keep builds/tests serial and sign wheels.
 
 Historical corpus and benchmark figures below describe previously accepted binaries.
