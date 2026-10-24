@@ -753,6 +753,59 @@ current regression/coverage receipts, producer comparisons and partition fixture
 Further C API/native Arrow stream projection/filtering and broader producer/platform
 matrices remain part of final verification.
 
+## Filesystems, VARIANT and lifecycle checkpoint (2026-10-25)
+
+The new five-file protocol cohort matches C++ with **65 passed, one existing httpfs
+fixture skip and three existing VARIANT/Arrow xfails**, closing 40 Rust failures.
+VARIANT host output now decodes native variant data recursively into the existing
+scalar/nested converters for rows, NumPy and Pandas. Public VARIANT child metadata
+rejects the internal storage structure. Registration errors include the user view name,
+and connection APIs validate closure before relation construction/input binding.
+
+Connection/module filesystem registration, removal, enumeration and lookup now use a
+database-local native registry retaining fsspec backends. Native CSV/JSON readers,
+Parquet positional reads, CSV/JSON/Parquet writers, globbing, COPY directory operations
+and temporary-file moves route through streaming callbacks. Buffers and serialization
+remain native; files are not converted to whole-file object-store snapshots. The
+handle mutex is acquired before the GIL; seek/read or seek/write execute under one
+attachment and one handle lock. Open handles retain their backend independently of
+registry removal. Current external-access/disabled-filesystem checks precede callbacks.
+General registered-filesystem database storage and broader backend/flag/error/platform
+matrices still need explicit verification; the passing local `file://` ATTACH journey
+does not establish arbitrary remote database storage.
+
+All **85 focused VARIANT outcomes** match. Filesystem comparisons match **15/16**:
+the C++ overwrite case fails after turning `memory://` into `memory:/tmp_x.csv`, while
+Rust completes the overwrite. This is a **twelfth unaccepted reference discrepancy**;
+raw outputs remain preserved. Do not emulate the malformed URI or call it accepted.
+
+The streamed synthetic source generates bytes only on requested reads. A logical
+200 MB/100M-row source returns a one-row prefix with 64 MB total bytes read across sniffing
+and execution, demonstrating bounded reads. Initial small-source measurements exposed
+a 32 MB CSV allocation/request for a 2 MB file and about 94 MB peak versus C++ 66 MB. Native
+CSV reads now cap known-size, seekable, uncompressed UTF-8 buffers by remaining bytes;
+compressed/transcoded and unknown-size sources retain their original handling.
+
+Coupled repeats after the correction record Rust 64–71 MB/7.3–7.8 ms versus C++ 66–74 MB/
+9.5–10.5 ms for the 2 MB source. For the 200 MB logical source, Rust is about 156 MB/
+15–16 ms versus C++ 157–160 MB/17–18.5 ms; both read 64 MB. The original outlier and all
+request/read counters are retained. These are development measurements, not final
+release acceptance. The accepted uncached suite baseline and prior query outliers
+remain intact; no result/table cache is added.
+
+Twenty-four current development-wheel cohorts run **2742 cases: 2721 pass, 3 unchanged
+failures, 18 skip/xfail**, with zero collection errors. Existing failures remain the two
+held decimal reference cases and shared Parquet timestamp-unit assertion. Current
+format and producer suites pass, including compressed/transcoded inputs and positional
+read atomicity. All 23 signed CSV/JSON/SDK tests pass; three existing JSON timing probes
+remain ignored. Warnings-denied all-target Clippy and workspace/all-target checking pass. The coverage receipt leaves **478 collected cases in 117 files**, plus
+shared dependency/version skips and platform/package matrices. Full Python, other
+selected clients and final core/shell/storage/WAL/release/performance gates remain open.
+
+Evidence: `.context/artifacts/python-protocols-20261025/python-protocols-checkpoint.json`,
+current regression/coverage receipts, VARIANT/filesystem comparisons, streamed-source
+before/after measurements, signed native test logs/compiler records and source archive.
+
 ## Remaining gates
 
 Complete relation APIs (including delete, remaining file formats/filesystems, mutation/type/metadata and

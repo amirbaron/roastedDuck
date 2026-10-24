@@ -212,6 +212,17 @@ pass. 547 collected cases in 122 files remain, plus environment/version/platform
 Coupled Arrow microbenchmarks retain a slower first dataset sample and all RSS/time;
 no result/table cache is added. Latest evidence:
 python-all-types-20261025/python-all-types-checkpoint.json. Final gates remain open.
+Native filesystem registration/streaming I/O and recursive VARIANT output close 40 more
+failures. The protocol cohort matches C++ 65 pass/1 existing skip/3 existing xfails;
+85 focused VARIANT outcomes match, filesystem 15/16 with a retained C++ temporary-URI
+overwrite defect (twelfth unaccepted category). Native format reads/writes, globbing,
+partitioned COPY and atomic positional callbacks are implemented without file snapshots.
+Known-size uncompressed UTF-8 CSV buffer allocation is bounded by remaining file bytes,
+removing a measured 28 MB small-file peak outlier; compressed/transcoded paths still pass.
+Current 24 cohorts run 2742 cases: 2721 pass/3 unchanged failures/18 skip-or-xfail. 478 collected
+cases in 117 files plus environment/platform/package/client gates remain. Latest evidence:
+python-protocols-20261025/python-protocols-checkpoint.json. Arbitrary registered-backend
+database storage and final core/shell/WAL/release/performance acceptance remain open.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.
