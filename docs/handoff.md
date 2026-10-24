@@ -44,12 +44,13 @@ The checkout has an **uncommitted native-byte migration and does not build as a
 complete workspace yet**. The native SQL parser now compiles all targets and passes
 73 signed release tests plus 24,499 exact full-AST C++ comparisons. The earlier 700
 pending full-AST byte inputs are resolved, with zero skipped inputs in that matrix.
-The latest workspace/all-target check passes planner, CSV, execution, Parquet, JSON,
-autocomplete and TPC-H/TPC-DS, then stops at **14 rustdb library integration diagnostics** in the latest scoped runtime
-check (the preceding full-workspace check reported 125).
-Scoped autocomplete and generator all-target Clippy pass; 18 signed autocomplete tests
-pass, none ignored, plus 188 direct C++ PEG AST/source/error comparisons. Earlier
-SDK/Parquet/execution/JSON test counts remain scoped to their recorded snapshots. Catalog and
+The runtime library now **compiles successfully** (`attachment-path-native-check-4`).
+The latest workspace/all-target check passes the runtime library and stops at one
+benchmark adapter result-column metadata diagnostic; shell/C API and other downstream
+all-target completion remain unverified beyond that boundary. Eight signed persistence
+tests and one Unicode attachment/checkpoint/WAL journey pass. Storage/buffer library
+Clippy passes; runtime Clippy remains open with 71 diagnostics. Earlier scoped component
+results remain tied to their recorded snapshots. Catalog and
 storage library compilation passes that check; the newly touched index-type carrier has
 not had a fresh runtime/storage journey. Earlier scoped runtime counts (including 15)
 are historical checkpoints, not a fresh successful runtime build. Downstream execution,
@@ -1264,3 +1265,38 @@ Continue with a coherent attachment/storage/WAL/native path migration, then run 
 settings/pragma/secret/import/COPY journeys. Full shell/corpus/C API/storage/WAL,
 Python/all selected clients and final performance acceptance remain open. The accepted
 uncached lower-memory policy is unchanged.
+
+
+The native attachment/storage path continuation (2026-10-24) now compiles rustdb --lib.
+Database/AttachedDatabase/AttachedInfo, read_duckdb paths/file lists and storage block
+handles/WAL paths retain bytes. Common native_file_path converts at OS calls, using
+C-string NUL termination while retaining full bytes in carriers and diagnostics.
+Runtime WAL replay, checkpoint-WAL merge/removal/rename and storage opens use native
+OS paths. BufferManager's temporary directory retains PathBuf internally; settings
+metadata builds a checked VARCHAR at its Value boundary. No table-cache retention or
+memory policy changed.
+
+**Eight signed release persistence tests pass**, none ignored: checkpoint restart,
+committed WAL replay, torn-tail recovery, checkpoint WAL cleanup, persisted indexes,
+bulk insert/rollback and checkpoint-skipping commits. **One additional signed runtime
+journey passes** with Unicode SSD database/attachment/column names, ATTACH/DETACH,
+checkpoint, disabled checkpoint-on-close and WAL reopen. Reopened sums are [58, 49].
+A signed C++ CLI performs the same journey and reports [58, 49], with a nonempty WAL
+before replay. These are separate engine journeys; this checkpoint does **not** yet
+prove final cross-engine checkpoint/WAL replay compatibility or raw-name public SQL.
+
+Storage and buffer library Clippy with warnings denied and codegen --check pass.
+Runtime library Clippy reports 71 diagnostics, predominantly borrow/conversion cleanup,
+items-after-statements and existing fallible rendering expectations; keep it open.
+The workspace all-target check stops at one benchmark Rust adapter column-name String
+mismatch. New runtime source changes made after the signed journeys are documentation
+and redundant PathBuf conversion cleanup; exact test snapshots/logs remain preserved.
+
+Evidence: `attachment-native-checkpoint.json`, `attachment-native-persistence-tests-1-summary.json`,
+`attachment-native-path-tests-1-summary.json`, `attachment-native-cpp-journey.json`,
+`attachment-native-storage-clippy-1.jsonl`, `attachment-native-clippy-diagnostics-3.json`,
+`attachment-path-native-check-4.jsonl` and `attachment-path-native-workspace-check-1.jsonl`
+in the external `identifier-bytes-20261023` directory. Finish runtime lint/all-target
+integration and actual cross-engine storage/WAL, then verify settings/pragma/secrets,
+shell/corpus/C API, Python/all selected clients and final documented performance.
+Existing temp-file display/non-Unix path behavior remains subject to audit.
