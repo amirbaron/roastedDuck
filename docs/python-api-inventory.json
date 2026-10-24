@@ -128,9 +128,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "to_arrow_table",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 209
+      "line": 209,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -189,9 +190,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "df",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 242
+      "line": 242,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -241,23 +243,26 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "fetch_arrow_table",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 249
+      "line": 249,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "fetch_df",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 252
+      "line": 252,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "fetch_df_chunk",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 253
+      "line": 253,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -277,9 +282,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "fetchdf",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 260
+      "line": 260,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -292,9 +298,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "fetchnumpy",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 262
+      "line": 262,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -713,9 +720,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "to_arrow_table",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 498
+      "line": 498,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -826,9 +834,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "df",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 536
+      "line": 536,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -878,16 +887,18 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "fetch_arrow_table",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 547
+      "line": 547,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "fetch_df_chunk",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 550
+      "line": 550,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -907,9 +918,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "fetchdf",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 557
+      "line": 557,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -922,9 +934,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "fetchnumpy",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 559
+      "line": 559,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1772,9 +1785,10 @@
     {
       "surface": "_duckdb",
       "name": "to_arrow_table",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 892
+      "line": 892,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb",
@@ -1858,9 +1872,10 @@
     {
       "surface": "_duckdb",
       "name": "df",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 941
+      "line": 941,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb",
@@ -1918,23 +1933,26 @@
     {
       "surface": "_duckdb",
       "name": "fetch_arrow_table",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 965
+      "line": 965,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb",
       "name": "fetch_df",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 971
+      "line": 971,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb",
       "name": "fetch_df_chunk",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 972
+      "line": 972,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb",
@@ -1954,9 +1972,10 @@
     {
       "surface": "_duckdb",
       "name": "fetchdf",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 985
+      "line": 985,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb",
@@ -1969,9 +1988,10 @@
     {
       "surface": "_duckdb",
       "name": "fetchnumpy",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 989
+      "line": 989,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
     },
     {
       "surface": "_duckdb",

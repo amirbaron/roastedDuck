@@ -21,3 +21,10 @@ consumes native chunks lazily; database instance reuse holds weak references and
 not retain table blocks. Relation composition uses native query trees, owns the Python
 connection, and binds metadata without closing an existing result. Final release speed/memory acceptance remains separate from
 development-wheel correctness evidence.
+
+NumPy/Pandas output converts native chunks into owned columns without a full Python row
+snapshot. Dataframe chunks consume the requested native vectors. Arrow table output
+uses the native Rust C data exporter and transfers buffer ownership to PyArrow; requested
+batch sizes and buffers surviving connection closure have comparison evidence. Import,
+replacement scans, Arrow readers/capsules and full conversion parity remain unfinished.
+See docs/python-bindings.md for the retained setting-change discrepancy against C++.

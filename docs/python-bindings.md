@@ -28,6 +28,14 @@ Results consume native chunks lazily. Database instance reuse holds weak referen
 it does not retain table blocks. Closing a parent explicitly closes its cursors;
 closing the default connection permits a fresh default while the old object stays closed.
 
+NumPy/Pandas output (`fetchnumpy`, `fetchdf`/`fetch_df`/`df`, `fetch_df_chunk`) converts
+bounded native chunks into owned, writable columns. Numeric conversion does not build
+a full Python row list. Dtypes, masks, nested arrays, categorical ENUMs, timestamp units,
+timezone snapshots and duplicate names follow the frozen client. Arrow table output
+(`to_arrow_table`/`fetch_arrow_table`) uses the Rust Arrow C data exporter and requested
+batch sizes; ownership passes to PyArrow with release guards on failures. Completed
+materialized bulk results release their native rows. Neither path retains table blocks.
+
 Conversions currently cover scalar/nested values, 128-bit integers, decimals, strings,
 blobs, dates/times/timestamps, intervals, UUIDs, lists, structs and ordinary hashable-key
 maps, plus maps with unhashable keys represented as key/value lists and fixed arrays
@@ -41,7 +49,7 @@ engine names and queries keep their native representation.
 - A signed arm64 CPython 3.13 **release wheel** installs and passes the first seven
   upstream lifecycle/transaction/parameter/multi-statement tests. This was the initial
   source snapshot, before the later corrections below.
-- The **current signed relation development wheel** matches **42/42 actual C++ Python outcomes**
+- The **current signed host-conversion development wheel** matches **42/42 actual C++ Python outcomes**
   in isolated environments. These cover native scalar/nested and temporal conversions,
   integer boundaries, typed parameters, metadata/errors, incremental fetching,
   parent/cursor closure, default recreation and timezone representation. No comparison
@@ -50,10 +58,17 @@ engine names and queries keep their native representation.
   duplicates, qualified-name parsing/errors, maps/arrays, retained/closed owners,
   repeat/closed fetching and interleaved results. Both successful and failed metadata
   binding preserve a 5,000-row stream, including rows beyond the first native chunk.
-- The broader unmodified 101-test DB-API/cursor/type cohort passes **88, fails 13, skips
-  none** on Rust (previously 51/101). The matching C++ environment passes **101/101**.
-  Remaining failures require NumPy/Pandas/Arrow output and dataframe import. They are
-  retained in `relations-dbapi-rust-4/remaining-gaps.json`; no assertions were removed.
+- The unmodified 101-test DB-API/cursor/type cohort passes **100, fails 1, skips none**
+  on Rust (previously 51, then 88). C++ passes **101/101**. Dataframe import is the
+  remaining failure; no assertions were removed.
+- A separate five-file NumPy/Pandas cohort passes **23/37** on Rust, versus **37/37**
+  on C++. All nine dataframe-chunk tests pass. The 14 remaining failures require
+  `from_df`, `query_df`, NumPy/dataframe input scanning and replacement scans.
+- Focused host conversion matches **75/76 exact C++ outcomes**, including native widths,
+  nullable types, nested values, categorical/empty ENUMs, date/interval overflow errors,
+  timestamp precision, buffer lifetime after close, requested Arrow batch sizes and
+  incremental dataframe chunks. This includes 5,000-row boundaries; it is not a full
+  conversion/platform acceptance matrix.
 - A separate four-file relation cohort passes **65/65** on C++. Rust reports **5 passes,
   17 failures and one collection error**; `ColumnExpression` is missing, preventing the
   43-test `test_relation.py` file from collecting. All other collectable cases run;
@@ -64,7 +79,7 @@ engine names and queries keep their native representation.
   DuckDB engine. The C++ oracle is in a separate environment. Exact dependency freezes
   are preserved; source, wheels, environments, caches and logs all live on the SSD.
 - Native Python all-target Clippy with warnings denied passes. Workspace/all-target
-  compilation status is recorded in the relation checkpoint. Development-wheel
+  compilation status is recorded in the host checkpoint. Development-wheel
   correctness is not final release or performance acceptance.
 
 The oracle caught negative TIMESTAMP_NS conversion: C++ truncates to microseconds
@@ -73,11 +88,22 @@ InvalidInputException instead of silently changing type. The wider suite exposed
 parent/cursor closure, default recreation, session-timezone/pytz representation and
 fetch-after-close error selection; these are corrected and have real outcome evidence.
 
+One focused host case remains an **unaccepted parity discrepancy**: materialize a
+relation containing a nonempty string, change `arrow_large_buffer_size` before fetching,
+then request an Arrow table. C++ 1.5.6 returns an empty string; Rust preserves the original
+SQL value. The C++ row/dataframe control paths preserve the string. The frozen source
+creates the Arrow schema before promoting the materialized result through a new
+collector; a schema/array layout disagreement after the setting change is the likely
+cause. Raw outcomes and source location are retained; this case has not been normalized,
+removed, marked passing, or approved as a divergence. Rust snapshots query-time timezone
+and Arrow properties and does not deliberately replace valid data with empty strings.
+
 ## Remaining gates
 
 Complete relation APIs (including joins, query/view/create/insert and expression
-arguments), representation, broader result lifetimes, expressions, UDFs, replacement scans, registration/Arrow import,
-Arrow/NumPy/Pandas/Polars/Torch output, filesystems and remaining type/metadata/exception
+arguments), representation, broader result lifetimes, expressions, UDFs, replacement scans,
+registration/Arrow/dataframe/NumPy input, Arrow readers/capsules, Polars/Torch output,
+filesystems and remaining type/metadata/exception
 semantics are still required. The API inventory marks only
 partial implementation/evidence; no surface is declared fully complete yet.
 
@@ -88,7 +114,14 @@ release performance. Preserve the accepted uncached speed-memory baseline and re
 individual query outliers in final acceptance. No table-cache retention was introduced.
 The other selected language clients remain part of the goal.
 
-Current evidence: `.context/artifacts/python-bindings-20261024/python-relation-checkpoint.json`,
+Current evidence: `.context/artifacts/python-host-20261024/python-host-checkpoint.json`,
+`comparison-{host,relations,foundation}-6.json`, `dbapi-rust-6/`,
+`host-expanded-{cpp-5,rust-6}/`, signed `wheels-dev-6-signed/`,
+`host-clippy-6.jsonl`, and `host-workspace-check-6.jsonl`. The original pinned source and
+isolated environments remain under `python-bindings-20261024/`. Source/archive identities,
+all failures and the unaccepted Arrow discrepancy are recorded in the host checkpoint.
+
+Earlier relation evidence: `.context/artifacts/python-bindings-20261024/python-relation-checkpoint.json`,
 `relations-comparison-4.json`, `relation-foundation-comparison-4.json`,
 `relations-dbapi-rust-4/`, `relation-expanded-{cpp-3,rust-4}/`, signed
 `relation-wheels-dev-4-signed/`, `relation-clippy-4.jsonl` and workspace check logs.

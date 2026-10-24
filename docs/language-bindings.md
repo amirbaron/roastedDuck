@@ -12,8 +12,9 @@ a newer client or documentation update must not silently change the target versi
 ## Current inventory and gates
 
 A native PyO3 Python package is now implemented in `crates/python` and `python/`.
-Its signed current development wheel matches 42 foundation and 30 relation C++ outcomes;
-the broader 101-test DB-API cohort passes 88/fails 13 (C++ 101/101). A separate relation
+Its signed current development wheel matches 42 foundation, 30 relation and 75/76 host
+C++ outcomes. The DB-API cohort passes 100/fails 1 (C++ 101/101); a broader host cohort
+passes 23/37 (C++ 37/37). One Arrow setting-change discrepancy is unaccepted. A separate relation
 cohort still has 17 failures plus an expression-related collection error, all recorded.
 This is a partial implementation, not Python completion. R and the other language
 packages remain unimplemented/unverified. The complete workspace/all-target check
@@ -21,7 +22,7 @@ includes the Python crate. See [Python implementation gates](python-bindings.md)
 
 | Surface | Current evidence / remaining work |
 |---|---|
-| Python | Native Rust/PyO3 package and signed wheels exist; 42 foundation and 30 relation comparisons match, 88/101 DB-API tests pass. Complete relation/expression APIs, UDF/replacement scans, host interchange and remaining tests/platform/packaging gates |
+| Python | Native package with native NumPy/Pandas/chunked dataframe/Arrow table output; 100/101 DB-API tests and 23/37 broader host tests pass. Complete input scans, relation/expression APIs, UDFs, remaining interchange and tests/platform/packaging gates; resolve one unaccepted Arrow discrepancy |
 | R | New bindings/package required; inventory and implement the public API and run upstream tests |
 | C API | Current rebuilt library: all 546 duckdb.h exports; upstream 30-file harness passes; 8,735 native ABI outcomes match. ENUM invalid-value failure semantics remain open; duckdb_adbc_init now exists; scoped ADBC loading/interchange checks pass |
 | CLI | Existing shell implementation and historical differential tests; close remaining engine/name gaps and repeat final shell verification |
