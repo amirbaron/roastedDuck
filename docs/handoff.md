@@ -44,9 +44,10 @@ The checkout has an **uncommitted native-byte migration and does not build as a
 complete workspace yet**. The native SQL parser now compiles all targets and passes
 73 signed release tests plus 24,499 exact full-AST C++ comparisons. The earlier 700
 pending full-AST byte inputs are resolved, with zero skipped inputs in that matrix.
-The latest workspace/all-target check passes planner, CSV and execution, then stops at
-**20 Parquet integration diagnostics** in COPY, scan and metadata consumers of native
-paths/file lists. Scoped execution/planner/AST Clippy and release verification pass. Catalog and
+The latest workspace/all-target check passes planner, CSV, execution and Parquet, then
+stops at **23 JSON integration diagnostics** in COPY, scan and metadata consumers of
+native paths/file lists. Scoped execution/function SDK/Parquet all-target Clippy passes;
+93 signed function SDK/Parquet release tests pass (three pre-existing ignored tests). Catalog and
 storage library compilation passes that check; the newly touched index-type carrier has
 not had a fresh runtime/storage journey. Earlier scoped runtime counts (including 15)
 are historical checkpoints, not a fresh successful runtime build. Downstream execution,
@@ -1073,3 +1074,38 @@ full shell/corpus/C API/storage/WAL verification, all selected language bindings
 final documented performance acceptance remain open. Other OS/NUL/extension/value and
 fallible rendering boundaries remain subject to their recorded audits. The uncached
 lower-memory policy is unchanged.
+
+
+The Parquet native-path continuation (2026-10-24) carries paths through reader/writer,
+scan file lists, COPY callbacks, metadata-cache keys and shared external-cache entries
+as bytes. Operator-log info retains bytes until its actual checked VARCHAR construction.
+Parallel scan source parameters now retain bytes through execution profiling. Cache
+sizing, enablement, eviction and table-block retention policies are unchanged.
+
+**93 signed function SDK/Parquet release tests pass**, zero failures; three existing
+tests remain ignored (Snappy tool/benchmark and full cast grid). The four new tests
+cover all 256 cache-key bytes, a Unicode-path Parquet write/read/reopen with metadata
+reuse, frozen native open error JSON/errno, and a real embedded-NUL OS read while
+retaining the complete native key. **1,756 exact C++ open comparisons pass**: 1,747
+byte-path cases plus nine real filesystem edges. The initial matrix failed all 1,747
+cases because errno was omitted and NUL open behavior differed; its failed log remains.
+The corrected native open copies thread-safe OS error bytes, includes errno and uses
+C++'s C-string OS boundary while keeping full paths in diagnostics and cache keys.
+Directory opens succeed like C++ (later read behavior is a separate boundary).
+
+The signed cross-engine SSD journey creates a Unicode file/column in C++, reads it in
+Rust, rewrites/reopens it in Rust, and reads the rewrite in C++. Both directions return
+[42, 7] with column 値; the original SHA-256 is unchanged. This is Parquet SDK/file
+component evidence, not final runtime SQL COPY/read_parquet or storage/WAL acceptance.
+All-target execution/function SDK/Parquet Clippy with warnings denied and codegen
+--check pass. A fresh workspace check passes these crates and stops at 23 JSON errors.
+
+Evidence is in `parquet-native-path-checkpoint.json`, `parquet-native-path-tests-2-summary.json`,
+`parquet-native-open-final.log`, `parquet-native-open-edge-final.log`,
+`parquet-native-path-cross-engine.json`, `parquet-native-path-clippy-3.jsonl`,
+`parquet-native-path-codegen-check-2.log` and `parquet-native-path-workspace-check-2.jsonl`
+in the external `identifier-bytes-20261023` directory. Other writer/create/NUL and
+cache-lookup OS boundaries, non-Unix paths, and pre-existing lossy metadata/statistics
+rendering remain open (`parquet-native-path-followup.md`). JSON/runtime/client integration,
+full shell/corpus/C API/storage/WAL, Python and every selected client, and documented
+final performance acceptance remain open. The lower-memory baseline is preserved.
