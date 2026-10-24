@@ -321,9 +321,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "from_arrow",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 265
+      "line": 265,
+      "evidence": "python-input-20261024/python-input-checkpoint.json; 32 exact C++ input outcomes and 39/41 upstream Arrow cases; native Pandas/NumPy, full protocols/frame/pushdown/platform coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -472,9 +473,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "register",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 446
+      "line": 446,
+      "evidence": "python-input-20261024/python-input-checkpoint.json; 32 exact C++ input outcomes and 39/41 upstream Arrow cases; native Pandas/NumPy, full protocols/frame/pushdown/platform coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -580,9 +582,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "unregister",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 461
+      "line": 461,
+      "evidence": "python-input-20261024/python-input-checkpoint.json; 32 exact C++ input outcomes and 39/41 upstream Arrow cases; native Pandas/NumPy, full protocols/frame/pushdown/platform coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -799,9 +802,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "create_view",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 531
+      "line": 531,
+      "evidence": "python-input-20261024/python-input-checkpoint.json; 32 exact C++ input outcomes and 39/41 upstream Arrow cases; native Pandas/NumPy, full protocols/frame/pushdown/platform coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1335,9 +1339,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "to_view",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 745
+      "line": 745,
+      "evidence": "python-input-20261024/python-input-checkpoint.json; 32 exact C++ input outcomes and 39/41 upstream Arrow cases; native Pandas/NumPy, full protocols/frame/pushdown/platform coverage pending"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -2018,9 +2023,10 @@
     {
       "surface": "_duckdb",
       "name": "from_arrow",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1000
+      "line": 1000,
+      "evidence": "python-input-20261024/python-input-checkpoint.json; 32 exact C++ input outcomes and 39/41 upstream Arrow cases; native Pandas/NumPy, full protocols/frame/pushdown/platform coverage pending"
     },
     {
       "surface": "_duckdb",
@@ -2199,9 +2205,10 @@
     {
       "surface": "_duckdb",
       "name": "register",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1231
+      "line": 1231,
+      "evidence": "python-input-20261024/python-input-checkpoint.json; 32 exact C++ input outcomes and 39/41 upstream Arrow cases; native Pandas/NumPy, full protocols/frame/pushdown/platform coverage pending"
     },
     {
       "surface": "_duckdb",
@@ -2334,9 +2341,10 @@
     {
       "surface": "_duckdb",
       "name": "unregister",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1267
+      "line": 1267,
+      "evidence": "python-input-20261024/python-input-checkpoint.json; 32 exact C++ input outcomes and 39/41 upstream Arrow cases; native Pandas/NumPy, full protocols/frame/pushdown/platform coverage pending"
     },
     {
       "surface": "_duckdb",

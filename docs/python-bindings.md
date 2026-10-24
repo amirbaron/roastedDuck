@@ -36,6 +36,21 @@ timezone snapshots and duplicate names follow the frozen client. Arrow table out
 batch sizes; ownership passes to PyArrow with release guards on failures. Completed
 materialized bulk results release their native rows. Neither path retains table blocks.
 
+Arrow input (`from_arrow`, Arrow registration/unregistration and Python frame replacement
+scans) now feeds the Rust Arrow scanner through the C stream protocol. Tables, batches,
+readers, datasets, scanners, protocol objects and bare stream capsules have scoped
+evidence. AST table references now copy an external owner without serializing it; bound
+scans retain the producer while executing. The identity registry holds weak references
+only. Live Arrow buffers remain live, and relation copies/views retain their inputs.
+Replacement scans respect catalog precedence, enabled/external-access settings and
+the frame-search option. They retain injected input calls before binding consumes their
+arguments, while preserving original expressions/sampling for later rebinding.
+
+Relation-created views retain their external input; raw SQL-created views retain C++'s
+late name lookup behavior. Arrow readers/capsules are single-use where the producer is
+single-use. Schema extraction prefers the schema protocol or exposed schema; protocol
+objects without a schema need fresh streams as in C++.
+
 Conversions currently cover scalar/nested values, 128-bit integers, decimals, strings,
 blobs, dates/times/timestamps, intervals, UUIDs, lists, structs and ordinary hashable-key
 maps, plus maps with unhashable keys represented as key/value lists and fixed arrays
@@ -58,12 +73,21 @@ engine names and queries keep their native representation.
   duplicates, qualified-name parsing/errors, maps/arrays, retained/closed owners,
   repeat/closed fetching and interleaved results. Both successful and failed metadata
   binding preserve a 5,000-row stream, including rows beyond the first native chunk.
+- Input and ownership comparisons match **32/32 exact C++ outcomes**, including Arrow
+  input types, live-buffer changes, repeated/single-use reads, producer exception class
+  and stack text, views/registration, objects leaving their Python frame, and frame-search
+  settings. The unmodified six-file Arrow cohort passes **39/41** on Rust versus
+  **41/41** on C++; its two remaining failures need Arrow reader output APIs.
 - The unmodified 101-test DB-API/cursor/type cohort passes **100, fails 1, skips none**
   on Rust (previously 51, then 88). C++ passes **101/101**. Dataframe import is the
   remaining failure; no assertions were removed.
-- A separate five-file NumPy/Pandas cohort passes **23/37** on Rust, versus **37/37**
-  on C++. All nine dataframe-chunk tests pass. The 14 remaining failures require
-  `from_df`, `query_df`, NumPy/dataframe input scanning and replacement scans.
+- A separate five-file NumPy/Pandas cohort passes **26/37** on Rust, versus **37/37**
+  on C++. All nine dataframe-chunk tests pass. The 11 remaining failures require
+  `from_df`, `query_df`, and NumPy input scanning. DataFrames exposing the Arrow stream
+  protocol can currently use that protocol path. This is **not native Pandas scan
+  parity**: C++ prioritizes its Pandas scanner, including dtype/sample and live-array
+  semantics. Implement and verify that path rather than treating these passing cases
+  as full dataframe-input completion.
 - Focused host conversion matches **75/76 exact C++ outcomes**, including native widths,
   nullable types, nested values, categorical/empty ENUMs, date/interval overflow errors,
   timestamp precision, buffer lifetime after close, requested Arrow batch sizes and
@@ -78,8 +102,10 @@ engine names and queries keep their native representation.
   image inspection prove the Rust environment loads the Rust extension as its only
   DuckDB engine. The C++ oracle is in a separate environment. Exact dependency freezes
   are preserved; source, wheels, environments, caches and logs all live on the SSD.
-- Native Python all-target Clippy with warnings denied passes. Workspace/all-target
-  compilation status is recorded in the host checkpoint. Development-wheel
+- All-target Clippy with warnings denied passes for AST, parser, planner, Python and
+  generator crates. Workspace/all-target compilation and the generator consistency
+  check pass. All seven signed AST unit tests pass, including external-owner lifetime,
+  omitted serialization and preservation of unbound expressions/sampling. Development-wheel
   correctness is not final release or performance acceptance.
 
 The oracle caught negative TIMESTAMP_NS conversion: C++ truncates to microseconds
@@ -100,10 +126,11 @@ and Arrow properties and does not deliberately replace valid data with empty str
 
 ## Remaining gates
 
-Complete relation APIs (including joins, query/view/create/insert and expression
+Complete relation APIs (including joins, query/create/insert and expression
 arguments), representation, broader result lifetimes, expressions, UDFs, replacement scans,
-registration/Arrow/dataframe/NumPy input, Arrow readers/capsules, Polars/Torch output,
-filesystems and remaining type/metadata/exception
+native Pandas/NumPy input, complete Arrow registration/protocol/schema/error/pushdown
+coverage, Arrow reader/capsule output, Polars/Torch output,
+filesystems, helper/function-catalog compatibility and remaining type/metadata/exception
 semantics are still required. The API inventory marks only
 partial implementation/evidence; no surface is declared fully complete yet.
 
@@ -114,7 +141,13 @@ release performance. Preserve the accepted uncached speed-memory baseline and re
 individual query outliers in final acceptance. No table-cache retention was introduced.
 The other selected language clients remain part of the goal.
 
-Current evidence: `.context/artifacts/python-host-20261024/python-host-checkpoint.json`,
+Current evidence: `.context/artifacts/python-input-20261024/python-input-checkpoint.json`,
+`comparison-{input,host,relations,foundation}-final.json`, `arrow-upstream-rust-final/`,
+`dbapi-rust-final/`, `host-expanded-rust-final/`, signed final development wheel,
+AST regression/unit logs, affected-crate Clippy, workspace/all-target and generator
+checks. Earlier Arrow foundation source/wheel evidence and all failed runs are retained.
+
+Earlier output evidence: `.context/artifacts/python-host-20261024/python-host-checkpoint.json`,
 `comparison-{host,relations,foundation}-6.json`, `dbapi-rust-6/`,
 `host-expanded-{cpp-5,rust-6}/`, signed `wheels-dev-6-signed/`,
 `host-clippy-6.jsonl`, and `host-workspace-check-6.jsonl`. The original pinned source and

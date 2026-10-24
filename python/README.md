@@ -28,3 +28,9 @@ uses the native Rust C data exporter and transfers buffer ownership to PyArrow; 
 batch sizes and buffers surviving connection closure have comparison evidence. Import,
 replacement scans, Arrow readers/capsules and full conversion parity remain unfinished.
 See docs/python-bindings.md for the retained setting-change discrepancy against C++.
+
+Arrow input, registration and frame scans use the native Rust Arrow scanner with an
+owned external dependency copied into query trees. The identity registry is weak and
+does not keep abandoned Python producers alive. Schema/protocol/single-use behavior,
+live buffers, relation/view ownership and frame options have exact C++ comparison
+evidence. Native Pandas/NumPy input and the complete Arrow surface remain unfinished.
