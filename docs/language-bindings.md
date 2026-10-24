@@ -11,14 +11,16 @@ a newer client or documentation update must not silently change the target versi
 
 ## Current inventory and gates
 
-No standalone Python, R or other language-package implementation was found in the
-tracked repository inventory. The existing Rust engine/C ABI is not proof that upstream
-packages load or pass their APIs. The native-byte migration now compiles across the complete workspace/all-target check
-(2026-10-24). Current scoped C API evidence below does not prove final client acceptance.
+A native PyO3 Python package is now implemented in `crates/python` and `python/`.
+Its signed current development wheel matches 42 focused C++ outcomes; the broader
+101-test DB-API cohort passes 51/fails 50 (C++ 101/101), with all failures recorded.
+This is a partial implementation, not Python completion. R and the other language
+packages remain unimplemented/unverified. The complete workspace/all-target check
+includes the Python crate. See [Python implementation gates](python-bindings.md).
 
 | Surface | Current evidence / remaining work |
 |---|---|
-| Python | New bindings/package required; inventory and implement the public API, then run upstream tests and installable-package journeys |
+| Python | Native Rust/PyO3 package and signed wheels exist; 42 focused comparisons match, 51/101 broader tests pass. Complete relations, expressions, UDF/replacement scans, host interchange and remaining API/tests/platform/packaging gates |
 | R | New bindings/package required; inventory and implement the public API and run upstream tests |
 | C API | Current rebuilt library: all 546 duckdb.h exports; upstream 30-file harness passes; 8,735 native ABI outcomes match. ENUM invalid-value failure semantics remain open; duckdb_adbc_init now exists; scoped ADBC loading/interchange checks pass |
 | CLI | Existing shell implementation and historical differential tests; close remaining engine/name gaps and repeat final shell verification |

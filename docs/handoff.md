@@ -85,6 +85,19 @@ native/type/fuzz/package matrices, ENUM semantics and final unit/corpus/shell/st
 WAL/performance gates remain required. See `docs/adbc.md` and external
 `adbc-upstream-checkpoint.json`. The uncached lower-memory policy is unchanged.
 
+Python binding work now has a pinned 1.5.6 source/API inventory (414 native surfaces)
+and a real PyO3 package in crates/python + python/. The signed initial release wheel
+installs and passes seven upstream tests. The current development wheel includes later
+conversion/lifecycle corrections and matches 42/42 focused C++ outcomes. The wider
+unmodified 101-test DB-API/cursor/type cohort passes 51/fails 50/skips 0 on Rust, versus
+101/101 on C++; all failures are retained. No full Python parity or performance claim.
+Root identity checks show the Rust extension as the only loaded DuckDB engine. Native
+Clippy and workspace checks pass. Relations/sql/table composition, expressions, UDFs,
+replacement scans, Arrow/NumPy/Pandas/etc and remaining type/platform/package tests
+remain open. See docs/python-bindings.md and external python-bindings-20261024/
+python-foundation-checkpoint.json. Use its external CARGO_HOME/PYO3_PYTHON=Python3.13
+for subsequent Python/workspace builds; keep builds/tests serial and sign wheels.
+
 Historical corpus and benchmark figures below describe previously accepted binaries.
 The new migration still needs the full unit/corpus/shell/storage/WAL/client verification
 and documented speed-memory acceptance. Strict PEG raw ingress, remaining text/value
@@ -1572,3 +1585,22 @@ on the SSD; runner documentation: `scripts/adbc-tests/README.md`. Continue Pytho
 and all selected language clients, broad core/native/fuzz/lifetime coverage, ENUM/PEG/
 codec gaps and final engine/corpus/shell/storage/WAL/performance acceptance. No table
 caching or accepted speed-memory policy changed.
+
+
+The Python foundation continuation (2026-10-24) pins duckdb-python v1.5.6 commit
+802a345bb627435d2a05d63cb74454fa98b60b5e and inventories 414 native stub surfaces plus
+frontend/value/packaging requirements. A real Rust/PyO3 extension and installable duckdb
+wheel now exist, linking the Rust runtime directly. The initial signed release wheel
+passes seven upstream tests; current signed development-wheel evidence is 42/42 strict
+C++ outcomes and 51 passed/50 failed in the full selected 101-test cohort (C++101/101,
+no skips). No failed test was removed or normalized. Fixes include >128-bit integer
+errors, negative timestamp-ns truncation, aware TIME, session/pytz timezone conversion,
+parent/cursor closure, default recreation and fetch-after-close errors. Database pooling
+uses weak references and cursor fetching remains chunk-based; no table cache introduced.
+
+All failures and initial artifacts are preserved. The next Python priority is relations
+(sql/query/table and lifetimes), which currently block many dictionary tests, followed
+by host interchange, expressions, UDF/replacement scans and the rest of the inventory.
+Full upstream Python, remaining clients and final core/native/storage/WAL/shell/corpus/
+performance acceptance remain open. Evidence: python-bindings-20261024/
+python-foundation-checkpoint.json; implementation scope: docs/python-bindings.md.

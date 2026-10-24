@@ -1,0 +1,2965 @@
+{
+  "target": "DuckDB Python 1.5.6",
+  "commit": "802a345bb627435d2a05d63cb74454fa98b60b5e",
+  "stub_sha256": {
+    "_duckdb-stubs/__init__.pyi": "635861d25b401a6ecddb1274a38f5194b736bdec049585824e7d86a53eff9471",
+    "_duckdb-stubs/_enums.pyi": "af7e1f596a2b88f587a26dac6a33ceb3343ab08a424f3fad653150aaa091d62e",
+    "_duckdb-stubs/_expression.pyi": "96aa71deac67bd793bd81bd768a848ac63ca10fed4779bb91d88b1a1d6ed7a94",
+    "_duckdb-stubs/_func.pyi": "223f3d865fbb0e28ed76d3e2643f90d7e9f3042585028b6e726b8631541d0355",
+    "_duckdb-stubs/_sqltypes.pyi": "bda4d8aefd59c5dadedcf846967505e77f72d33e66f9eeb36ee873fd43bc8ae5",
+    "_duckdb-stubs/_typing.pyi": "a7e53def01fcb5ca9597890ab2c7095c552b346f4c5e34d93c60de354ee7f5a8"
+  },
+  "surfaces": [
+    {
+      "surface": "_duckdb",
+      "name": "BinderException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 190
+    },
+    {
+      "surface": "_duckdb",
+      "name": "CatalogException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 191
+    },
+    {
+      "surface": "_duckdb",
+      "name": "ConnectionException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 192
+    },
+    {
+      "surface": "_duckdb",
+      "name": "ConstraintException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 193
+    },
+    {
+      "surface": "_duckdb",
+      "name": "ConversionException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 194
+    },
+    {
+      "surface": "_duckdb",
+      "name": "DataError",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 195
+    },
+    {
+      "surface": "_duckdb",
+      "name": "DatabaseError",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 196
+    },
+    {
+      "surface": "_duckdb",
+      "name": "DependencyException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 197
+    },
+    {
+      "surface": "_duckdb",
+      "name": "DuckDBPyConnection",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 199,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "__del__",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 200
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "__enter__",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 201,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "__exit__",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 202,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "append",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 203
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "array_type",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 204
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "arrow",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 205
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "to_arrow_reader",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 208
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "to_arrow_table",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 209
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "begin",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 210,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "checkpoint",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 211,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "close",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 212,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "commit",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 213,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "create_function",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 228
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "cursor",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 240,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "decimal_type",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 241
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "df",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 242
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "dtype",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 243
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "duplicate",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 244,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "enum_type",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 245
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "execute",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 246,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "executemany",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 247,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "extract_statements",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 248
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "fetch_arrow_table",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 249
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "fetch_df",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 252
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "fetch_df_chunk",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 253
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "fetch_record_batch",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 256
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "fetchall",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 259,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "fetchdf",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 260
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "fetchmany",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 261,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "fetchnumpy",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 262
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "fetchone",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 263,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "filesystem_is_registered",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 264
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "from_arrow",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 265
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "from_csv_auto",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 266
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "from_df",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 311
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "from_parquet",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 312
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "from_query",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 329
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "get_table_names",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 330
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "install_extension",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 331
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "get_profiling_information",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 340
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "enable_profiling",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 341
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "disable_profiling",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 342
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "interrupt",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 343,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "list_filesystems",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 344
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "list_type",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 345
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "load_extension",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 346
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "map_type",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 347
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "pl",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 355
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "query",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 358
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "query_progress",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 359,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "read_csv",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 360
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "read_json",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 405
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "read_parquet",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 429
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "register",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 446
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "register_filesystem",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 447
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "remove_function",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 448
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "rollback",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 449,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "row_type",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 450
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "sql",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 451
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "sqltype",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 452
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "string_type",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 453
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "struct_type",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 454
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "table",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 455
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "table_function",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 456
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "tf",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 457
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "torch",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 458
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "type",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 459
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "union_type",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 460
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "unregister",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 461
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "unregister_filesystem",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 462
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "values",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 463
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "view",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 464
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "description",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 466,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "rowcount",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 468,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "DuckDBPyRelation",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 470
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "__arrow_c_stream__",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 471
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "__contains__",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 472
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "__getattr__",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 473
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "__getitem__",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 474
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "__len__",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 475
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "aggregate",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 476
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "any_value",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 477
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "apply",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 480
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "arg_max",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 488
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "arg_min",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 491
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "arrow",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 494
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "to_arrow_reader",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 497
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "to_arrow_table",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 498
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "avg",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 499
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "bit_and",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 502
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "bit_or",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 505
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "bit_xor",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 508
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "bitstring_agg",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 511
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "bool_and",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 520
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "bool_or",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 523
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "close",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 526
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "count",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 527
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "create",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 530
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "create_view",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 531
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "cross",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 532
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "cume_dist",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 533
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "dense_rank",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 534
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "describe",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 535
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "df",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 536
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "distinct",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 537
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "except_",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 538
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "execute",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 539
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "explain",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 540
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "favg",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 541
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fetch_arrow_reader",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 544
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fetch_arrow_table",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 547
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fetch_df_chunk",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 550
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fetch_record_batch",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 553
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fetchall",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 556
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fetchdf",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 557
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fetchmany",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 558
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fetchnumpy",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 559
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fetchone",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 560
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "filter",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 561
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "first",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 562
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "first_value",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 563
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fsum",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 564
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "geomean",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 567
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "histogram",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 568
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "insert",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 571
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "insert_into",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 572
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "intersect",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 573
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "join",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 574
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "lag",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 575
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "last",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 584
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "last_value",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 585
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "lead",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 586
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "limit",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 595
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "list",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 596
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "map",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 599
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "max",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 602
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "mean",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 605
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "median",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 608
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "min",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 611
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "mode",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 614
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "n_tile",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 617
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "nth_value",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 620
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "order",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 628
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "percent_rank",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 629
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "pl",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 637
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "product",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 640
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "project",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 643
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "quantile",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 644
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "quantile_cont",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 652
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "quantile_disc",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 660
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "query",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 668
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "rank",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 669
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "rank_dense",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 670
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "row_number",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 671
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "select",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 672
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "select_dtypes",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 673
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "select_types",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 674
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "set_alias",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 675
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "show",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 676
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "sort",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 685
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "sql_query",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 686
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "std",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 687
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "stddev",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 690
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "stddev_pop",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 693
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "stddev_samp",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 696
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "string_agg",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 699
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "sum",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 702
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "tf",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 705
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "to_csv",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 706
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "to_df",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 726
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "to_parquet",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 727
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "to_table",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 744
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "to_view",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 745
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "torch",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 746
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "union",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 747
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "unique",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 748
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "update",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 749
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "value_counts",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 750
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "var",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 751
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "var_pop",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 754
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "var_samp",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 757
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "variance",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 760
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "write_csv",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 763
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "write_parquet",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 783
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "alias",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 801
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "columns",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 803
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "description",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 805
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "dtypes",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 807
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "shape",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 809
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "type",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 811
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "types",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 813
+    },
+    {
+      "surface": "_duckdb",
+      "name": "Error",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 815
+    },
+    {
+      "surface": "_duckdb",
+      "name": "FatalException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 816
+    },
+    {
+      "surface": "_duckdb",
+      "name": "HTTPException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 818
+    },
+    {
+      "surface": "_duckdb",
+      "name": "IOException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 824
+    },
+    {
+      "surface": "_duckdb",
+      "name": "IntegrityError",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 825
+    },
+    {
+      "surface": "_duckdb",
+      "name": "InternalError",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 826
+    },
+    {
+      "surface": "_duckdb",
+      "name": "InternalException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 827
+    },
+    {
+      "surface": "_duckdb",
+      "name": "InterruptException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 828
+    },
+    {
+      "surface": "_duckdb",
+      "name": "InvalidInputException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 829
+    },
+    {
+      "surface": "_duckdb",
+      "name": "InvalidTypeException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 830
+    },
+    {
+      "surface": "_duckdb",
+      "name": "NotImplementedException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 831
+    },
+    {
+      "surface": "_duckdb",
+      "name": "NotSupportedError",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 832
+    },
+    {
+      "surface": "_duckdb",
+      "name": "OperationalError",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 833
+    },
+    {
+      "surface": "_duckdb",
+      "name": "OutOfMemoryException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 834
+    },
+    {
+      "surface": "_duckdb",
+      "name": "OutOfRangeException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 835
+    },
+    {
+      "surface": "_duckdb",
+      "name": "ParserException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 836
+    },
+    {
+      "surface": "_duckdb",
+      "name": "PermissionException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 837
+    },
+    {
+      "surface": "_duckdb",
+      "name": "ProgrammingError",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 838
+    },
+    {
+      "surface": "_duckdb",
+      "name": "SequenceException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 839
+    },
+    {
+      "surface": "_duckdb",
+      "name": "SerializationException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 840
+    },
+    {
+      "surface": "_duckdb",
+      "name": "Statement",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 842
+    },
+    {
+      "surface": "_duckdb.Statement",
+      "name": "expected_result_type",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 844
+    },
+    {
+      "surface": "_duckdb.Statement",
+      "name": "named_parameters",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 846
+    },
+    {
+      "surface": "_duckdb.Statement",
+      "name": "query",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 848
+    },
+    {
+      "surface": "_duckdb.Statement",
+      "name": "type",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 850
+    },
+    {
+      "surface": "_duckdb",
+      "name": "SyntaxException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 852
+    },
+    {
+      "surface": "_duckdb",
+      "name": "TransactionException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 853
+    },
+    {
+      "surface": "_duckdb",
+      "name": "TypeMismatchException",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 854
+    },
+    {
+      "surface": "_duckdb",
+      "name": "Warning",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 855
+    },
+    {
+      "surface": "_duckdb",
+      "name": "CaseExpression",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 857
+    },
+    {
+      "surface": "_duckdb",
+      "name": "CoalesceOperator",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 858
+    },
+    {
+      "surface": "_duckdb",
+      "name": "ColumnExpression",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 859
+    },
+    {
+      "surface": "_duckdb",
+      "name": "ConstantExpression",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 860
+    },
+    {
+      "surface": "_duckdb",
+      "name": "DefaultExpression",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 861
+    },
+    {
+      "surface": "_duckdb",
+      "name": "FunctionExpression",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 862
+    },
+    {
+      "surface": "_duckdb",
+      "name": "LambdaExpression",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 863
+    },
+    {
+      "surface": "_duckdb",
+      "name": "SQLExpression",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 864
+    },
+    {
+      "surface": "_duckdb",
+      "name": "StarExpression",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 865
+    },
+    {
+      "surface": "_duckdb",
+      "name": "aggregate",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 866
+    },
+    {
+      "surface": "_duckdb",
+      "name": "alias",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 873
+    },
+    {
+      "surface": "_duckdb",
+      "name": "append",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 874
+    },
+    {
+      "surface": "_duckdb",
+      "name": "array_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 877,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "arrow",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 888
+    },
+    {
+      "surface": "_duckdb",
+      "name": "to_arrow_reader",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 889
+    },
+    {
+      "surface": "_duckdb",
+      "name": "to_arrow_table",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 892
+    },
+    {
+      "surface": "_duckdb",
+      "name": "begin",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 895,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "checkpoint",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 896,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "close",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 897,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "commit",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 898,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "connect",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 899,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "create_function",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 918
+    },
+    {
+      "surface": "_duckdb",
+      "name": "cursor",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 930,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "decimal_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 931,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "default_connection",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 934,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "description",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 935,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "df",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 941
+    },
+    {
+      "surface": "_duckdb",
+      "name": "distinct",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 942
+    },
+    {
+      "surface": "_duckdb",
+      "name": "dtype",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 943,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "duplicate",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 944,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "enum_type",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 945
+    },
+    {
+      "surface": "_duckdb",
+      "name": "execute",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 952,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "executemany",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 958,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "extract_statements",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 964
+    },
+    {
+      "surface": "_duckdb",
+      "name": "fetch_arrow_table",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 965
+    },
+    {
+      "surface": "_duckdb",
+      "name": "fetch_df",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 971
+    },
+    {
+      "surface": "_duckdb",
+      "name": "fetch_df_chunk",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 972
+    },
+    {
+      "surface": "_duckdb",
+      "name": "fetch_record_batch",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 978
+    },
+    {
+      "surface": "_duckdb",
+      "name": "fetchall",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 984,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "fetchdf",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 985
+    },
+    {
+      "surface": "_duckdb",
+      "name": "fetchmany",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 986,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "fetchnumpy",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 989
+    },
+    {
+      "surface": "_duckdb",
+      "name": "fetchone",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 992,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "filesystem_is_registered",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 993
+    },
+    {
+      "surface": "_duckdb",
+      "name": "filter",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 994
+    },
+    {
+      "surface": "_duckdb",
+      "name": "from_arrow",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1000
+    },
+    {
+      "surface": "_duckdb",
+      "name": "from_csv_auto",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1005
+    },
+    {
+      "surface": "_duckdb",
+      "name": "from_df",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1049
+    },
+    {
+      "surface": "_duckdb",
+      "name": "from_parquet",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1050
+    },
+    {
+      "surface": "_duckdb",
+      "name": "from_query",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1067
+    },
+    {
+      "surface": "_duckdb",
+      "name": "get_table_names",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1074
+    },
+    {
+      "surface": "_duckdb",
+      "name": "install_extension",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1077
+    },
+    {
+      "surface": "_duckdb",
+      "name": "interrupt",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1086,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "limit",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1087
+    },
+    {
+      "surface": "_duckdb",
+      "name": "get_profiling_information",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1094
+    },
+    {
+      "surface": "_duckdb",
+      "name": "enable_profiling",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1097
+    },
+    {
+      "surface": "_duckdb",
+      "name": "disable_profiling",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1098
+    },
+    {
+      "surface": "_duckdb",
+      "name": "list_filesystems",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1099
+    },
+    {
+      "surface": "_duckdb",
+      "name": "list_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1100,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "load_extension",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1101
+    },
+    {
+      "surface": "_duckdb",
+      "name": "map_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1102,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "order",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1105
+    },
+    {
+      "surface": "_duckdb",
+      "name": "pl",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1123
+    },
+    {
+      "surface": "_duckdb",
+      "name": "project",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1129
+    },
+    {
+      "surface": "_duckdb",
+      "name": "query",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1132
+    },
+    {
+      "surface": "_duckdb",
+      "name": "query_df",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1139
+    },
+    {
+      "surface": "_duckdb",
+      "name": "query_progress",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1146,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "read_csv",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1147
+    },
+    {
+      "surface": "_duckdb",
+      "name": "read_json",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1191
+    },
+    {
+      "surface": "_duckdb",
+      "name": "read_parquet",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1214
+    },
+    {
+      "surface": "_duckdb",
+      "name": "register",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1231
+    },
+    {
+      "surface": "_duckdb",
+      "name": "register_filesystem",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1237
+    },
+    {
+      "surface": "_duckdb",
+      "name": "remove_function",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1240
+    },
+    {
+      "surface": "_duckdb",
+      "name": "rollback",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1241,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "row_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1242,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "rowcount",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1243,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "set_default_connection",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1244,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "sql",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1245
+    },
+    {
+      "surface": "_duckdb",
+      "name": "sqltype",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1252,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "string_type",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1253
+    },
+    {
+      "surface": "_duckdb",
+      "name": "struct_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1254,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "table",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1255
+    },
+    {
+      "surface": "_duckdb",
+      "name": "table_function",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1256
+    },
+    {
+      "surface": "_duckdb",
+      "name": "tf",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1262
+    },
+    {
+      "surface": "_duckdb",
+      "name": "tokenize",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1263
+    },
+    {
+      "surface": "_duckdb",
+      "name": "torch",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1264
+    },
+    {
+      "surface": "_duckdb",
+      "name": "type",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1265
+    },
+    {
+      "surface": "_duckdb",
+      "name": "union_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1266,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "unregister",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1267
+    },
+    {
+      "surface": "_duckdb",
+      "name": "unregister_filesystem",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1268
+    },
+    {
+      "surface": "_duckdb",
+      "name": "values",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1269
+    },
+    {
+      "surface": "_duckdb",
+      "name": "view",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1270
+    },
+    {
+      "surface": "_duckdb",
+      "name": "write_csv",
+      "status": "pending",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1271
+    },
+    {
+      "surface": "_duckdb._enums",
+      "name": "CppEnum",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 3
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "__eq__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 11
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "__getstate__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 12
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "__hash__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 13
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "__index__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 14
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "__init__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 15
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "__int__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 16
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "__ne__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 17
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "__setstate__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 18
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "name",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 20
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "value",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 22
+    },
+    {
+      "surface": "_duckdb._enums",
+      "name": "CSVLineTerminator",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 24
+    },
+    {
+      "surface": "_duckdb._enums",
+      "name": "ExpectedResultType",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 31
+    },
+    {
+      "surface": "_duckdb._enums",
+      "name": "ExplainType",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 39
+    },
+    {
+      "surface": "_duckdb._enums",
+      "name": "PythonExceptionHandling",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 48
+    },
+    {
+      "surface": "_duckdb._enums",
+      "name": "RenderMode",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 55
+    },
+    {
+      "surface": "_duckdb._enums",
+      "name": "StatementType",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 64
+    },
+    {
+      "surface": "_duckdb._enums",
+      "name": "token_type",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 99
+    },
+    {
+      "surface": "_duckdb._expression",
+      "name": "Expression",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 6
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__add__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 7
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__and__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 8
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__div__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 9
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__eq__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 10
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__floordiv__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 11
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__ge__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 12
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__gt__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 13
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__init__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 17
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__invert__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 18
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__le__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 19
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__lt__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 20
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__mod__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 21
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__mul__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 22
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__ne__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 23
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__neg__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 24
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__or__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 25
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__pow__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 26
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__radd__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 27
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__rand__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 28
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__rdiv__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 29
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__rfloordiv__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 30
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__rmod__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 31
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__rmul__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 32
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__ror__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 33
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__rpow__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 34
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__rsub__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 35
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__rtruediv__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 36
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__sub__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 37
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__truediv__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 38
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "alias",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 39
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "asc",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 40
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "between",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 41
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "cast",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 42
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "collate",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 43
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "desc",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 44
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "get_name",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 45
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "isin",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 46
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "isnotin",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 47
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "isnotnull",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 48
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "isnull",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 49
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "nulls_first",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 50
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "nulls_last",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 51
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "otherwise",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 52
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "show",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 53
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "when",
+      "status": "pending",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 54
+    },
+    {
+      "surface": "_duckdb._func",
+      "name": "FunctionNullHandling",
+      "status": "pending",
+      "source": "_duckdb-stubs/_func.pyi",
+      "line": 6
+    },
+    {
+      "surface": "_duckdb._func",
+      "name": "PythonUDFType",
+      "status": "pending",
+      "source": "_duckdb-stubs/_func.pyi",
+      "line": 13
+    },
+    {
+      "surface": "_duckdb._sqltypes",
+      "name": "DuckDBPyType",
+      "status": "pending",
+      "source": "_duckdb-stubs/_sqltypes.pyi",
+      "line": 37
+    },
+    {
+      "surface": "_duckdb._sqltypes.DuckDBPyType",
+      "name": "__eq__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_sqltypes.pyi",
+      "line": 38,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb._sqltypes.DuckDBPyType",
+      "name": "__getattr__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_sqltypes.pyi",
+      "line": 39
+    },
+    {
+      "surface": "_duckdb._sqltypes.DuckDBPyType",
+      "name": "__getitem__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_sqltypes.pyi",
+      "line": 40
+    },
+    {
+      "surface": "_duckdb._sqltypes.DuckDBPyType",
+      "name": "__hash__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_sqltypes.pyi",
+      "line": 41,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb._sqltypes.DuckDBPyType",
+      "name": "__init__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_sqltypes.pyi",
+      "line": 45,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb._sqltypes.DuckDBPyType",
+      "name": "children",
+      "status": "partial",
+      "source": "_duckdb-stubs/_sqltypes.pyi",
+      "line": 47,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb._sqltypes.DuckDBPyType",
+      "name": "id",
+      "status": "partial",
+      "source": "_duckdb-stubs/_sqltypes.pyi",
+      "line": 49,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb._typing",
+      "name": "NPProtocol",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 19
+    },
+    {
+      "surface": "_duckdb._typing.NPProtocol",
+      "name": "dtype",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 22
+    },
+    {
+      "surface": "_duckdb._typing.NPProtocol",
+      "name": "ndim",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 24
+    },
+    {
+      "surface": "_duckdb._typing.NPProtocol",
+      "name": "__array__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 25
+    },
+    {
+      "surface": "_duckdb._typing.NPProtocol",
+      "name": "__array_wrap__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 26
+    },
+    {
+      "surface": "_duckdb._typing.NPProtocol",
+      "name": "__array_interface__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 28
+    },
+    {
+      "surface": "_duckdb._typing.NPProtocol",
+      "name": "__array_priority__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 30
+    },
+    {
+      "surface": "_duckdb._typing",
+      "name": "NPScalarTypeLike",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 32
+    },
+    {
+      "surface": "_duckdb._typing.NPScalarTypeLike",
+      "name": "itemsize",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 34
+    },
+    {
+      "surface": "_duckdb._typing",
+      "name": "NPArrayLike",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 36
+    },
+    {
+      "surface": "_duckdb._typing.NPArrayLike",
+      "name": "__len__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 44
+    },
+    {
+      "surface": "_duckdb._typing.NPArrayLike",
+      "name": "__contains__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 45
+    },
+    {
+      "surface": "_duckdb._typing.NPArrayLike",
+      "name": "__iter__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 46
+    },
+    {
+      "surface": "_duckdb._typing.NPArrayLike",
+      "name": "__array_finalize__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 47
+    },
+    {
+      "surface": "_duckdb._typing.NPArrayLike",
+      "name": "__getitem__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 48
+    },
+    {
+      "surface": "_duckdb._typing.NPArrayLike",
+      "name": "__setitem__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 49
+    },
+    {
+      "surface": "_duckdb._typing.NPArrayLike",
+      "name": "shape",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 51
+    },
+    {
+      "surface": "_duckdb._typing.NPArrayLike",
+      "name": "size",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 53
+    }
+  ],
+  "note": "414 native module/class/member surfaces across the pinned stubs, overloads deduplicated. Partial marks implementation with scoped evidence, never complete parity. Pure-Python value/frontend/packaging surfaces are additional requirements."
+}
