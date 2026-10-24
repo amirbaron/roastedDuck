@@ -135,6 +135,22 @@ wrapper. Physical relation metadata also matches C++ when `filename` is requeste
 fetched rows can include the extra field while the relation's metadata omits it.
 `CSVLineTerminator` values and invalid/foreign enum inputs are handled explicitly.
 
+Parquet reading (`read_parquet`/`from_parquet`) and writing (`to_parquet`/`write_parquet`)
+now use native table scans and COPY. Path conversion and file-like snapshots share the
+CSV adapter. Native range reads hold immutable snapshot bytes without local-disk copies;
+physical file handles keep their original path/version/cache behavior. Options include
+binary strings, row numbers, filename/hive/union fields, compression, nested field IDs,
+row-group/file sizes, partitions, overwrite/append/thread/temp-file controls and filename
+patterns. The COPY size option now uses the shared DuckDB-compatible byte parser;
+`1k`, `1G`, binary units and invalid unlimited/sentinel values follow C++.
+
+The explicit Parquet call parser preserves C++ numeric/None boolean conversion and
+formats the actual positional/keyword invocation. Relation query/execute and the
+frontend's default-connection type validation share the same diagnostic formatter.
+Query byte strings remain native through temporary view creation and SQL parsing.
+Closed aggregation rejects its closed connection before parsing expressions; many
+other relation methods still need implementation, including the next `any_value` failure.
+
 Conversions currently cover scalar/nested values, 128-bit integers, decimals, strings,
 blobs, dates/times/timestamps, intervals, UUIDs, lists, structs and ordinary hashable-key
 maps, plus maps with unhashable keys represented as key/value lists and fixed arrays
@@ -199,10 +215,19 @@ engine names and queries keep their native representation.
   incremental dataframe chunks. This includes 5,000-row boundaries; it is not a full
   conversion/platform acceptance matrix.
 - The seven-file relation/join/expression cohort now **collects all 123 cases**: Rust
-  passes **119**, fails **4**, skips none, versus C++ **123/123**. The previously blocked
+  passes **122**, fails **1**, skips none, versus C++ **123/123**. The previously blocked
   50 cases run without collection errors. Of the 51 expression/SQL-expression cases,
-  all **51 pass**. Other failures require argument-error details and
-  closed-owner API coverage. All failures remain; no assertions or collection errors were removed.
+  all **51 pass**. The remaining closed-owner case progresses through aggregation
+  to the unimplemented `any_value` method; it still fails and is not skipped. All failures remain; no assertions or collection errors were removed.
+- The three primary Parquet files pass **57/57** on both engines. With the Arrow
+  Parquet round-trip file included, both engines pass **59/60**, skipping none. The
+  shared failure compares Pandas datetime64[ms] from PyArrow with datetime64[us] from
+  DuckDB's TIMESTAMP reader; values match. Millisecond/nanosecond/microsecond/second
+  diagnostics are retained; no assertion was modified, removed or marked xfail.
+  **50 Parquet outcomes** and **19 calling-contract outcomes** match. Normalization
+  is limited to independently generated object-store identifiers, object addresses,
+  output work directories and language-specific internal-error stack traces, with all
+  raw text retained. Internal error classes/stable diagnostic text remain compared.
 - The two unmodified CSV files pass **98 cases**, with **one existing skip**, on both
   engines. **56 focused outcomes** cover path/file-like input, bytes, options/errors,
   compressed snapshots, exact output bytes, live paths versus captured data, derived/
@@ -300,6 +325,16 @@ file-like query increment; neither metric is hidden. All four size/mode cases, C
 measurements and checksums are retained in `performance-comparison{,-final,-current}.json`.
 The accepted TPC-H/ClickBench baseline and table-cache policy remain unchanged.
 
+Parquet speed and memory were also checked in two fresh-process runs at one engine
+thread (Rust development versus C++ release), including relation construction and
+aggregation. For 1M rows, paths took Rust **14.1–14.4 ms** versus C++ **12.6–13.1 ms**;
+file-like input took **14.7–14.9 ms** versus **13.9–14.1 ms**. Path peaks varied **133.9–134.0
+MB** versus **131.7–137.0 MB**; file-like peaks were **157.8–157.9 MB** versus **170.2–170.7
+MB**. File-like query increments were **18.1–18.2 MB** versus **31.5–31.6 MB**. The 100k-row
+path case varied from Rust 27% shorter to 21% longer elapsed time across these small measurements;
+raw individual cases/CPU/checksums/peaks remain in `performance-comparison{,-verified}.json`.
+This is not final release acceptance and does not change the accepted engine baseline.
+
 ## Remaining gates
 
 Complete relation APIs (including delete, remaining file formats/filesystems, mutation/type/metadata and
@@ -319,7 +354,13 @@ release performance. Preserve the accepted uncached speed-memory baseline and re
 individual query outliers in final acceptance. No table-cache retention was introduced.
 The other selected language clients remain part of the goal.
 
-Current evidence: `.context/artifacts/python-csv-20261024/python-csv-checkpoint.json`,
+Current evidence: `.context/artifacts/python-parquet-20261024/python-parquet-checkpoint.json`,
+`{parquet,arguments,csv,values,describe,update,udf,render,expression,joins-writes,pandas,reader,input,host,relations,foundation}-comparison-verified.json`,
+`{parquet,csv,udf,dbapi,host-expanded,arrow,pandas-object,relation-expression}-rust-verified/`,
+signed `wheels-dev-verified-signed/`, `function-tests.log` (37 signed tests, zero failures),
+`clippy-verified.jsonl` and `workspace-check-verified.jsonl`.
+
+Previous CSV evidence: `.context/artifacts/python-csv-20261024/python-csv-checkpoint.json`,
 `{csv,values,describe,update,udf,render,expression,joins-writes,pandas,reader,input,host,relations,foundation}-comparison-current.json`,
 `{csv,udf,dbapi,host-expanded,arrow,pandas-object,relation-expression}-rust-current/`,
 signed `wheels-dev-verified-signed/`, `object-store-test-final.log`,

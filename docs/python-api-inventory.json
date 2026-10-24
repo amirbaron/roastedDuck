@@ -349,9 +349,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "from_parquet",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 312
+      "line": 312,
+      "evidence": "python-parquet-20261024: primary three-file Parquet cohort 57/57; broader Parquet/Arrow cohort 59/60 with same timestamp-unit failure on C++; 50 focused Parquet and 19 calling-contract outcomes, with generated identifiers/addresses/work paths/internal stack traces normalized and raw text retained; broader metadata/platform/protocol coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -475,9 +476,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "read_parquet",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 429
+      "line": 429,
+      "evidence": "python-parquet-20261024: primary three-file Parquet cohort 57/57; broader Parquet/Arrow cohort 59/60 with same timestamp-unit failure on C++; 50 focused Parquet and 19 calling-contract outcomes, with generated identifiers/addresses/work paths/internal stack traces normalized and raw text retained; broader metadata/platform/protocol coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -883,7 +885,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 539,
-      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+      "evidence": "python-parquet-20261024: primary three-file Parquet cohort 57/57; broader Parquet/Arrow cohort 59/60 with same timestamp-unit failure on C++; 50 focused Parquet and 19 calling-contract outcomes, with generated identifiers/addresses/work paths/internal stack traces normalized and raw text retained; broader metadata/platform/protocol coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1209,7 +1211,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 668,
-      "evidence": "python-pandas-20261024/python-pandas-checkpoint.json; direct native Pandas/NumPy arrays, query_df and relation query; 37/37 host and 75/81 object tests; full API/nested/error/performance/platform acceptance remains open"
+      "evidence": "python-parquet-20261024: primary three-file Parquet cohort 57/57; broader Parquet/Arrow cohort 59/60 with same timestamp-unit failure on C++; 50 focused Parquet and 19 calling-contract outcomes, with generated identifiers/addresses/work paths/internal stack traces normalized and raw text retained; broader metadata/platform/protocol coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1356,9 +1358,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "to_parquet",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 727
+      "line": 727,
+      "evidence": "python-parquet-20261024: primary three-file Parquet cohort 57/57; broader Parquet/Arrow cohort 59/60 with same timestamp-unit failure on C++; 50 focused Parquet and 19 calling-contract outcomes, with generated identifiers/addresses/work paths/internal stack traces normalized and raw text retained; broader metadata/platform/protocol coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1452,9 +1455,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "write_parquet",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 783
+      "line": 783,
+      "evidence": "python-parquet-20261024: primary three-file Parquet cohort 57/57; broader Parquet/Arrow cohort 59/60 with same timestamp-unit failure on C++; 50 focused Parquet and 19 calling-contract outcomes, with generated identifiers/addresses/work paths/internal stack traces normalized and raw text retained; broader metadata/platform/protocol coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -2094,9 +2098,10 @@
     {
       "surface": "_duckdb",
       "name": "from_parquet",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1050
+      "line": 1050,
+      "evidence": "python-parquet-20261024: primary three-file Parquet cohort 57/57; broader Parquet/Arrow cohort 59/60 with same timestamp-unit failure on C++; 50 focused Parquet and 19 calling-contract outcomes, with generated identifiers/addresses/work paths/internal stack traces normalized and raw text retained; broader metadata/platform/protocol coverage remains open"
     },
     {
       "surface": "_duckdb",
@@ -2249,9 +2254,10 @@
     {
       "surface": "_duckdb",
       "name": "read_parquet",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1214
+      "line": 1214,
+      "evidence": "python-parquet-20261024: primary three-file Parquet cohort 57/57; broader Parquet/Arrow cohort 59/60 with same timestamp-unit failure on C++; 50 focused Parquet and 19 calling-contract outcomes, with generated identifiers/addresses/work paths/internal stack traces normalized and raw text retained; broader metadata/platform/protocol coverage remains open"
     },
     {
       "surface": "_duckdb",
@@ -2306,7 +2312,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1244,
-      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+      "evidence": "python-parquet-20261024: primary three-file Parquet cohort 57/57; broader Parquet/Arrow cohort 59/60 with same timestamp-unit failure on C++; 50 focused Parquet and 19 calling-contract outcomes, with generated identifiers/addresses/work paths/internal stack traces normalized and raw text retained; broader metadata/platform/protocol coverage remains open"
     },
     {
       "surface": "_duckdb",
