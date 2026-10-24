@@ -119,6 +119,23 @@ Profiler metadata uses planner cardinality estimates. Unread stream closure keep
 cancellation path and does not finish the remaining query. Disabled/empty states,
 errors, closed-owner priority and enable/disable transitions follow the frozen client.
 
+Python `read_json` now builds native JSON scan relations for paths, path-like objects,
+path lists and file-like snapshots. All 19 frozen options have ordered validation,
+including explicit schemas, format/record modes, temporal formats, compression,
+sampling/inference thresholds and multi-file/hive settings. Metadata binding preserves
+a live stream and transaction; derived queries retain their input owners. Catalog views
+preserve the frozen file-like lifetime rules. JSON handles use database-local immutable
+file bytes through the existing weak object registry, with real sizes, independent
+range cursors and native gzip/zstd decoding. No Python JSON parser or SQL row snapshot
+is used. Uncompressed 2M-row path/memory scans cross the native parallel range boundary
+with checked counts/sums at four threads.
+
+JSON scratch reads now reserve space for actual file data and padding, then append
+only bytes read from a bounded temporary window. This avoids zeroing or reallocating
+large Vec tails on an EOF probe. The first attempted buffer change worsened large-file
+memory; its raw runs are retained as a rejected experiment. Persistent table-block
+retention is unchanged.
+
 Relation joins now build native join trees for the six frozen Python join types,
 USING strings/lists and predicate strings, plus cross products. Join-derived projections,
 filters and aggregates preserve C++'s qualifier visibility; ordering creates the same
@@ -280,12 +297,20 @@ engine names and queries keep their native representation.
   without collection errors. All 51 expression/SQL-expression cases pass; the full
   closed-owner journey now passes after implementing map and correcting set-operation
   owner validation. No assertion or collection error was removed.
-- The full restored Spark compatibility directory runs **294 cases**: Rust **288 pass,
-  1 fail, 4 existing skips and 1 existing xfail**, versus C++ **289 pass** with the same
-  skips/xfail. The remaining failure is the missing native Python `read_json` method.
+- The full restored Spark compatibility directory runs **294 cases** on both engines:
+  **289 pass, 4 existing skips and 1 existing xfail**. The JSON reader closes the last
+  failure in this cohort; this is not complete Spark/platform acceptance.
   Unnamed STRUCTs now return positional tuples for row fetching, fixing arrays_zip;
   NumPy/Pandas retain their separate frozen mapping conversion. **18/18** typed tuple
   comparisons preserve container identity and every field. No Spark test was edited.
+- JSON matches **105/109** isolated outcomes; every case and process exit remains in
+  the denominator. Four oversized-integer/file-like combinations expose the reference's
+  pending Python error: callback diagnostics vary, and one case aborts. Rust clears the
+  pending state and returns exceptions safely. This eighth discrepancy category remains
+  unaccepted; no crash, error or assertion was hidden. Binding-descriptor addresses,
+  callback/internal stack frames and generated URI identifiers are the documented
+  diagnostic normalization, with raw errors retained. Eleven signed native JSON tests
+  pass, with three pre-existing timing probes ignored.
 - The unmodified profiling helper file passes **2/2** on both engines; **37/37** focused
   profiling outcomes match after timing/resource fields are excluded from functional
   comparisons. Complete raw profiles retain every timing/resource measurement. Two
@@ -471,6 +496,17 @@ All checksums passed. These are development/release microbenchmarks, not final r
 acceptance or proof of a new regression against the earlier development wheel. No
 memory retention was introduced to close these individual speed gaps.
 
+JSON measurements keep speed and memory paired, one fresh process per case (Rust
+development versus C++ release). Before the scratch fix, the 1M-row local scan took
+about **45 ms / 104 MB** peak RSS. The corrected runs took roughly **39–43 ms / 59–60
+MB**; C++ varied about **33–40 ms / 62–63 MB**. The 2M-row four-thread path and memory
+scans and prefix cases retain every result checksum, elapsed/CPU time and RSS value.
+The local prefix scan remains a substantial individual slowdown (roughly 16–20 ms
+versus 9–11 ms); the 100k local case is also slower. File-like paths show different
+speed/memory tradeoffs, so suite averaging does not stand in for acceptance. Initial,
+rejected, corrected, repeat and final-wheel records are preserved under python-json.
+These development measurements are not final release performance acceptance.
+
 ## Remaining gates
 
 Complete relation APIs (including delete, remaining file formats/filesystems, mutation/type/metadata and
@@ -490,7 +526,12 @@ release performance. Preserve the accepted uncached speed-memory baseline and re
 individual query outliers in final acceptance. No table-cache retention was introduced.
 The other selected language clients remain part of the goal.
 
-Current profiling/package evidence: `.context/artifacts/python-profile-20261024/python-profile-checkpoint.json`,
+Current JSON evidence: `.context/artifacts/python-json-20261024/python-json-checkpoint.json`,
+`json-comparison-final.json`, isolated subprocess receipts, `spark-rust-current/`,
+the thirteen scoped `*-rust-current/` cohorts, signed `wheels-dev-10-signed/`, native
+JSON tests, Clippy/workspace terminal records and all coupled performance experiments.
+
+Previous profiling/package evidence: `.context/artifacts/python-profile-20261024/python-profile-checkpoint.json`,
 `profile-comparison-current.json`, raw `probes-{cpp-1,rust-current}.json`, signed
 `wheels-dev-6-signed/`, the thirteen `*-rust-current/` cohorts, typed tuple comparisons, four signed SDK tests and
 compiler terminal records. Full collection/dependency receipts are under

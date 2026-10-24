@@ -472,9 +472,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "read_json",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 405
+      "line": 405,
+      "evidence": "python-json-20261024: native JSON scans, 19 ordered options, retained file-like snapshots, compression and parallel ranges; Spark289 pass with existing4 skips/1xfail; JSON105/109 isolated outcomes with four unsafe C++ pending-error cases held unaccepted; native tests11pass+3existing ignored timing probes; broader platform/API coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -2306,9 +2307,10 @@
     {
       "surface": "_duckdb",
       "name": "read_json",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1191
+      "line": 1191,
+      "evidence": "python-json-20261024: native JSON scans, 19 ordered options, retained file-like snapshots, compression and parallel ranges; Spark289 pass with existing4 skips/1xfail; JSON105/109 isolated outcomes with four unsafe C++ pending-error cases held unaccepted; native tests11pass+3existing ignored timing probes; broader platform/API coverage remains open"
     },
     {
       "surface": "_duckdb",

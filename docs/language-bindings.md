@@ -16,9 +16,9 @@ Its signed current development wheel matches 64 expression, 36 join/write, 49/51
 30 reader, 32 input, 42 foundation, 30 relation and 75/76 host C++ outcomes.
 The DB-API cohort passes 101/101 on both engines; a broader host cohort
 passes 37/37 on both engines; the object/analyzer cohort passes 79/81 (C++81/81).
-The Arrow cohort passes 41/41 on both engines. Seven discrepancy categories remain unaccepted: one Arrow setting change, two decimal cases,
+The Arrow cohort passes 41/41 on both engines. Eight discrepancy categories remain unaccepted: one Arrow setting change, two decimal cases,
 string render mode, trailing UTF-8 aggregate/window identifiers, unstable numeric map
-output and a mapped-view callback lifetime crash in the reference. A separate relation
+output, a mapped-view callback lifetime crash and JSON overflow/file-like pending-error failures in the reference. A separate relation
 cohort now passes all 123 cases, matching C++. The 50
 previously blocked cases now run; remaining failures are recorded.
 This is a partial implementation, not Python completion. Native/Arrow UDFs pass all
@@ -37,15 +37,17 @@ improves map timings without retaining table blocks. Profiling passes 2 upstream
 counters and four signed SDK stream/type tests. Frozen auxiliary Python modules and
 licenses are packaged; both engines collect 3212 fast-suite cases without errors,
 with nine shared dependency/version file skips still open. Collection does not prove
-runtime parity. Spark runs 294 cases: 288 pass, one missing read_json failure, four
-existing skips and one existing xfail (C++289 pass with the same skips/xfail). Eighteen
+runtime parity. Native JSON input closes the remaining Spark failure: both engines
+run 294 cases with 289 pass, four existing skips and one existing xfail. JSON has 105/109
+isolated outcomes matching, with four unsafe reference error-state cases held unaccepted.
+Eleven signed native JSON tests pass; three existing timing probes are ignored. Eighteen
 row/NumPy/Pandas tuple comparisons match. R and the other language packages remain
 unimplemented/unverified. The complete workspace/all-target check
 includes the Python crate. See [Python implementation gates](python-bindings.md).
 
 | Surface | Current evidence / remaining work |
 |---|---|
-| Python | Native arrays, Arrow, joins/writes and expression trees; 101/101 DB-API, 37/37 host, 41/41 Arrow, 79/81 object and 123/123 relation/expression cases pass. 559 UDF cases pass plus one existing xfail; complete remaining relation/input/expression and UDF overload APIs, platform/package gates and seven unaccepted discrepancy categories |
+| Python | Native arrays, Arrow, joins/writes and expression trees; 101/101 DB-API, 37/37 host, 41/41 Arrow, 79/81 object and 123/123 relation/expression cases pass. 559 UDF cases pass plus one existing xfail; complete remaining relation/input/expression and UDF overload APIs, platform/package gates and eight unaccepted discrepancy categories |
 | R | New bindings/package required; inventory and implement the public API and run upstream tests |
 | C API | Current rebuilt library: all 546 duckdb.h exports; upstream 30-file harness passes; 8,735 native ABI outcomes match. ENUM invalid-value failure semantics remain open; duckdb_adbc_init now exists; scoped ADBC loading/interchange checks pass |
 | CLI | Existing shell implementation and historical differential tests; close remaining engine/name gaps and repeat final shell verification |

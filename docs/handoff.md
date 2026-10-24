@@ -144,8 +144,15 @@ Streaming EOF now flushes executor metrics before query termination; planner est
 are included. Four signed SDK stream/type tests pass. Both packages collect 3212 fast
 cases without collection errors; nine shared dependency/version file skips remain.
 This is collection, not a full execution pass. All 3212 case node IDs match. Spark
-runs 294 cases: Rust288 pass/1 missing read_json failure/4 skips/1 xfail, versus C++289
-pass with the same existing skips/xfail. Unnamed row STRUCT conversion is fixed;
+runs 294 cases on both engines: 289 pass/4 existing skips/1 existing xfail. Native
+read_json is implemented with all frozen options and native file-like/range/compression
+support. JSON matches105/109 isolated outcomes; four overflow/file-like cases retain
+unstable C++ callback errors and one abort, with safe Rust exceptions. This is an eighth
+unaccepted discrepancy category. Eleven signed JSON tests pass, three timing probes
+remain ignored. Bounded scratch reads reduce the 1M-row local JSON peak from about104MB
+to59–60MB; local/prefix speed outliers remain visible. No table cache is added.
+Current JSON evidence is python-json-20261024/python-json-checkpoint.json; current
+profiling/package evidence follows. Unnamed row STRUCT conversion is fixed;
 18 typed row/NumPy/Pandas outcomes match without conflating container types.
 Current profile/package evidence is
 python-profile-20261024/python-profile-checkpoint.json and python-collection-20261024.
