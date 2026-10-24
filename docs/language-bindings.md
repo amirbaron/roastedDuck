@@ -77,7 +77,13 @@ URI defect as unaccepted. Current 24 cohorts record 2721 pass/3 unchanged failur
 xfail across 2742 cases; 478 collected cases in 117 files and environment/platform matrices
 remain. Known-size CSV buffer clamping removes a measured small-file memory outlier;
 no table/result cache is added. General registered-backend database storage remains open.
- R and the other language packages remain
+ Native GEOMETRY WKB output and memoryview BLOB input close six more scalar failures;
+the cohort is C++ 79/79, Rust 78/79, with the existing decimal-exponent discrepancy.
+Focused scalar outcomes match 35/36; C++ ignores memoryview strides (thirteenth
+unaccepted category). Current 25 nonoverlapping cohorts record 2793 pass/four held
+failure assertions/18 skip-or-xfail across 2815 cases; 405 collected cases in 104 files
+remain, plus dependency/platform matrices. Python Clippy and workspace checks pass;
+no table cache is added. R and the other language packages remain
 unimplemented/unverified. The complete workspace/all-target check
 includes the Python crate. See [Python implementation gates](python-bindings.md).
 

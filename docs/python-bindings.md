@@ -806,6 +806,37 @@ Evidence: `.context/artifacts/python-protocols-20261025/python-protocols-checkpo
 current regression/coverage receipts, VARIANT/filesystem comparisons, streamed-source
 before/after measurements, signed native test logs/compiler records and source archive.
 
+## Scalar conversion checkpoint (2026-10-25)
+
+GEOMETRY now returns its native WKB as Python `bytes` for rows and `bytearray` for
+NumPy/Pandas, including nested values and NULLs. Memoryview parameters now convert to
+owned BLOB values, honoring shape and strides. Mutation/release of the original buffer
+after insertion does not alter stored data. This closes six failures in the unmodified
+scalar/SQLite-style cohort: C++ passes 79/79, Rust 78/79. The remaining positive decimal
+exponent assertion is another instance of the already documented reference discrepancy.
+
+The focused real-engine comparison matches **35/36 outcomes** across WKB dimensions,
+empty/nested geometries, writable/read-only/offset/multidimensional/typed buffers and
+ownership. The remaining case is a **thirteenth unaccepted reference discrepancy**:
+C++ converts `memoryview(b'abcdef')[::2]` to `b'abc'` by ignoring strides; Rust returns
+the logical bytes `b'ace'`. No unsafe contiguous read from a reversed view is introduced.
+This difference remains visible; it is not an accepted parity exclusion.
+
+The signed development wheel runs **2815 distinct scoped cases: 2793 pass, four
+unchanged failures, 18 skip/xfail**, with zero collection errors. Six overlapping scalar
+cases are removed from this total; the new nonoverlapping cohort is 72/73. The four
+failure assertions represent the existing two decimal categories and shared Parquet
+timestamp-unit issue, with the positive-exponent category exercised twice. Warnings-denied
+Python all-target Clippy and workspace/all-target checking pass. **405 normally collected
+cases in 104 files** remain, plus dependency/version/platform and other-client gates.
+No table cache or performance policy is changed; final signed performance acceptance
+is still required.
+
+Evidence: `.context/artifacts/python-scalars-20261025/python-scalars-checkpoint.json`,
+unmodified before/after JUnit records, exact focused outputs, deduplicated coverage,
+signed wheel, compiler records and source archive. Full Python and the overall port
+remain incomplete.
+
 ## Remaining gates
 
 Complete relation APIs (including delete, remaining file formats/filesystems, mutation/type/metadata and

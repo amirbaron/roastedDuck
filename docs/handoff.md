@@ -223,6 +223,17 @@ Current 24 cohorts run 2742 cases: 2721 pass/3 unchanged failures/18 skip-or-xfa
 cases in 117 files plus environment/platform/package/client gates remain. Latest evidence:
 python-protocols-20261025/python-protocols-checkpoint.json. Arbitrary registered-backend
 database storage and final core/shell/WAL/release/performance acceptance remain open.
+Native GEOMETRY WKB host output and memoryview BLOB input close six scalar failures.
+The complete scalar/SQLite cohort is C++ 79/79 and Rust 78/79, retaining the existing
+positive-decimal-exponent discrepancy. Focused scalar journeys match 35/36: C++ ignores
+memoryview strides and returns incorrect logical bytes; Rust honors them. This is the
+thirteenth unaccepted category. Current 25 nonoverlapping cohorts run 2815 cases:
+2793 pass/four held failure assertions/18 skip-or-xfail, with no collection errors.
+The positive-exponent category is asserted in two cohorts. 405 collected cases in
+104 files remain, plus environment/platform/package/client gates. Python Clippy and
+workspace checks pass. Latest signed development wheel/source snapshot evidence:
+python-scalars-20261025/python-scalars-checkpoint.json. Cache and performance policy
+are unchanged; full final verification and documented performance acceptance remain open.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.
