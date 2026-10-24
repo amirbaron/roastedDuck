@@ -591,6 +591,65 @@ signed `wheels-dev-2-signed/`, `runtime-comparison-2.json`, raw probes,
 `remaining-gaps-current.json`, isolated Polars rechecks and compiler terminal records.
 The complete source archive preserves the still-uncommitted migration and bindings.
 
+## Append, threading and Python persistence checkpoint (2026-10-25)
+
+Native connection/module `append` now registers the dataframe as `__append_df` and
+executes a native INSERT. It preserves the frozen registration after success or
+failure, the live shallow dataframe snapshot, explicit/default connection ownership,
+column ordering/by-name defaults, return cursor and overload diagnostics. Unicode,
+quoted and dotted literal table names remain identifiers. It does not convert the
+whole dataframe to Python rows or call the C++ engine.
+
+A shared atomic closed flag makes interrupt/progress reject closed handles, including
+children closed by their parent, without acquiring the connection's execution mutex.
+An active query can still be interrupted from another thread. The six-file scoped
+threading/lifecycle/default-append cohort passes **41/41 on both engines**, closing
+the two failures in the preceding 40-case run. All **52 focused append/lifecycle
+outcomes** match, with live object addresses alone normalized and raw errors retained.
+Current Python all-target Clippy with warnings denied and workspace/all-target checks
+pass. Eighteen current development-wheel cohorts run **1848 cases: 1835 pass,
+3 unchanged failures, 10 skip/xfail**. The three failures remain the two held decimal
+reference cases and shared Parquet timestamp-unit assertion.
+
+The actual Python append persistence journey passes in both directions for checkpoint
+and crash-left nonempty WAL files. It covers 15 columns: integer, Unicode/NUL string,
+blob, decimal, timestamp, boolean, date, LIST, ARRAY, STRUCT, MAP, UUID, BIT, INTERVAL
+and ENUM. Initial data matches the C++ control; the opposite engine replays/reads it,
+inserts a fourth row, checkpoints, and the original engine reads that row back.
+Both WAL controls are 999 bytes; their hashes and pre-recovery files are retained.
+Do not call the files byte-identical or extrapolate this journey to every type,
+corruption/recovery, encryption or version/platform combination.
+
+The larger Polars concurrency audit corrects the earlier 12-repeat observation. In 100
+runs sharing one relation, C++ returns 73 closed-stream errors, 14 closed-pending errors
+and 13 incorrect results. Two relations sharing a connection return 81 closed-stream
+errors, 10 closed-pending errors and 9 incorrect results. Rust returns busy errors or
+correct rows in these shared-context probes. Both engines return correct results in
+all 100 independent-connection and 100 sequential-concat runs. Raw incorrect-row outputs
+and compact count/hash receipts are preserved. This becomes a **tenth unaccepted
+reference discrepancy category**, not a reason to fabricate failures or reproduce
+corruption. The shared-context concurrency acceptance question remains open; stream
+locking was not changed merely to force a particular raced outcome.
+
+Coupled result-checked append benchmarks retain time and RSS for every case. A 1M-row
+positional append takes Rust 5.84–5.88 ms/145.6–145.8 MB versus C++ 3.04–3.72 ms/
+143.2–143.8 MB. By-name timings and the noisy 100k case are retained separately. These
+are development measurements, not final release acceptance or changes to the accepted
+uncached TPC-H/ClickBench baseline. No table cache is added.
+
+The coverage receipt identifies **1372 collected cases in 131 files** outside the
+current component cohorts. Some scoped cases are explicitly run from a file outside
+the normal collection pattern, so do not subtract 1848 from 3212 to infer coverage.
+The nine shared dependency/version file skips and missing-environment matrix remain
+additional coverage gates. Earlier focused/custom checks do not establish execution
+of these unmodified upstream cases.
+
+Evidence: `.context/artifacts/python-streams-20261025/python-streams-checkpoint.json`,
+`append-comparison-current.json`, current regression/coverage receipts,
+`controls-summary-verified.json`, raw concurrency receipts, `persistence-current/`,
+`performance-comparison.json`, signed wheels, compiler terminal records and the complete
+source archive. Previous runtime and Polars controls remain preserved.
+
 ## Remaining gates
 
 Complete relation APIs (including delete, remaining file formats/filesystems, mutation/type/metadata and

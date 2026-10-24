@@ -174,6 +174,20 @@ Seventeen development-wheel cohorts run 1807 cases: 1794 pass/3 unchanged failur
 10 skip-or-xfail, not a full-suite pass. Current Clippy/workspace checks pass.
 Latest source/wheel evidence is python-runtime-20261025/python-runtime-checkpoint.json;
 Polars performance/concurrency and all final acceptance gates remain open.
+Native dataframe append and nonblocking closed-handle interrupt/progress checks now
+pass the 41-case upstream threading/lifecycle/default-append cohort on both engines;
+52 focused append outcomes match. The 18-cohort current run is 1848 total: 1835 pass/
+3 unchanged failures/10 skip-or-xfail. Cross-engine Python append/checkpoint and
+crash-left 999-byte WAL replay/read-write/readback pass in both directions over 15 columns,
+including nested types, BIT and ENUM; pre-recovery files and hashes are retained.
+The larger 100-repeat Polars audit finds 22 incorrect C++ results across 200 shared-context
+runs, alongside varied closed-stream/pending errors; both engines pass all independent
+and sequential controls. This is a tenth unaccepted category, not an accepted skip.
+No stream-locking or table-cache workaround is added. Append 1M remains a separate
+development speed outlier at 5.84–5.88 ms vs C++ 3.04–3.72 ms, with roughly 2–3 MB extra peak.
+Coverage reconciliation leaves 1372 collected cases in 131 files outside current cohorts,
+plus the missing-dependency/platform matrix. Latest evidence is
+python-streams-20261025/python-streams-checkpoint.json. Final gates stay open.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.
