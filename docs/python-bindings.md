@@ -81,6 +81,15 @@ inputs and avoiding SQL-rendered data copies. Qualified-name parsing is shared w
 lookup. Python relation variables resolve to retained native subqueries before considering
 Arrow protocol export, with C++'s rejection of another connection's relation.
 
+`Expression` now owns a native parsed expression plus sort/null-order modifiers.
+Column/constant/default/function/SQL/star/case/coalesce/lambda factories, arithmetic,
+comparisons, boolean operations, membership, casts, aliases and case/order modifiers
+compose native trees without rendering operands back to SQL. Relations accept these
+trees in selection/projection, filters, aggregates, sorts and join predicates. Column
+attribute access, type-based selection, native AST EXPLAIN and the dataframe convenience
+projection/filter/order/alias/distinct functions are implemented. Full overload, parser
+option, constructor/error and remaining expression/UDF coverage still need verification.
+
 Conversions currently cover scalar/nested values, 128-bit integers, decimals, strings,
 blobs, dates/times/timestamps, intervals, UUIDs, lists, structs and ordinary hashable-key
 maps, plus maps with unhashable keys represented as key/value lists and fixed arrays
@@ -127,6 +136,9 @@ engine names and queries keep their native representation.
   lists/predicates, negative limits/offsets, qualifier visibility, schema/literal names,
   retained inputs, native relation-variable registration, cross-connection rejection,
   duplicate/missing targets and rollback after a primary-key violation.
+- **64/64 exact C++ expression outcomes match**, covering native SQL text/name/repr,
+  immutable composition, arithmetic/boolean evaluation, cases/lambdas, casts including
+  keyword calls, errors, sorting, filtering and aggregation.
 - The five-file NumPy/Pandas cohort now passes **37/37** on both engines (previously
   26, then 33 on Rust), including all dataframe-chunk tests. Native scanning matches
   **49/51 focused C++ outcomes**; the two disagreements are the decimal cases below.
@@ -141,11 +153,12 @@ engine names and queries keep their native representation.
   timestamp precision, buffer lifetime after close, requested Arrow batch sizes and
   incremental dataframe chunks. This includes 5,000-row boundaries; it is not a full
   conversion/platform acceptance matrix.
-- The wider five-file relation/join cohort passes **72/72** on C++. Rust runs 22 cases:
-  **16 pass, six fail, plus two collection errors**. Missing `ColumnExpression` blocks
-  50 cases in `test_relation.py`/`test_joins.py`. Collectable failures require describe,
-  insert-value APIs, closed-owner representation and default-connection error details.
-  All errors still fail the run; no assertions or collection errors were removed.
+- The seven-file relation/join/expression cohort now **collects all 123 cases**: Rust
+  passes **101**, fails **22**, skips none, versus C++ **123/123**. The previously blocked
+  50 cases run without collection errors. Of the 51 expression/SQL-expression cases,
+  50 pass; the remaining case requires `create_function`. Other failures require
+  values/insert/update, files, UDF registration, rendering/describe and argument-error
+  details. All failures remain; no assertions or collection errors were removed.
 - Installed-extension hashes, wheel RECORD regeneration, signature steps and loaded
   image inspection prove the Rust environment loads the Rust extension as its only
   DuckDB engine. The C++ oracle is in a separate environment. Exact dependency freezes
@@ -190,8 +203,8 @@ caching was added to obtain the speedup.
 
 ## Remaining gates
 
-Complete relation APIs (including expression joins, insert/update/delete and expression
-arguments), representation, broader result lifetimes, expressions, UDFs, replacement scans,
+Complete relation APIs (including values/insert/update/delete, files, describe and
+remaining expression overloads), representation, broader result lifetimes, UDFs, replacement scans,
 complete native Pandas/NumPy inference, nested conversion and input error semantics,
 complete Arrow registration/protocol/schema/error/pushdown
 coverage, complete reader/capsule/concurrency behavior, Polars/Torch output,
@@ -206,7 +219,14 @@ release performance. Preserve the accepted uncached speed-memory baseline and re
 individual query outliers in final acceptance. No table-cache retention was introduced.
 The other selected language clients remain part of the goal.
 
-Current evidence: `.context/artifacts/python-relations-20261024/python-relations-checkpoint.json`,
+Current evidence: `.context/artifacts/python-expression-20261024/python-expression-checkpoint.json`,
+`comparison-{expression,joins-writes,pandas,reader,input,host,relations,foundation}-final.json`,
+`{dbapi,host-expanded,arrow-upstream,pandas-object,expression-upstream}-rust-final/`,
+`expression-upstream-cpp-3/`, signed `wheels-dev-final-signed/`,
+`expression-clippy-final.jsonl` and workspace checks. Current failures are indexed in
+each cohort's `remaining-gaps.json`; initial collection/error evidence is retained.
+
+Earlier join/write evidence: `.context/artifacts/python-relations-20261024/python-relations-checkpoint.json`,
 `comparison-{joins-writes,pandas,reader,input,host,relations,foundation}-final-2.json`,
 `{dbapi,host-expanded,arrow-upstream,pandas-object}-rust-final-2/`,
 `relation-expanded-{cpp,rust}-final-2/`, signed `wheels-dev-final-2-signed/`,

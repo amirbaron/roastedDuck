@@ -95,7 +95,7 @@ semantics; numeric chunks copy to vectors without whole-row snapshots or Arrow c
 External scan dependencies are copied with AST references and held by bound scans;
 the lookup registry is weak. Native connection ownership is shared with transferred
 readers, so they survive Python connection closure. It matches 49/51 Pandas, 30/30 reader, 32/32 input,
-42/42 foundation, 30/30 relation, 36/36 joins/writes
+42/42 foundation, 30/30 relation, 36/36 joins/writes, 64/64 expression
 and 75/76 host C++ outcomes. One Arrow setting-change and two decimal cases are
 unaccepted discrepancies: C++ emits empty text, drops a positive decimal exponent or
 loses an infinity sign where Rust preserves the represented value. Raw evidence is
@@ -113,16 +113,18 @@ measurements are not final release performance acceptance. A numeric input optim
 reduced the 1M-row scan from 85 ms to 6.8 ms at similar peak RSS; C++ took 3.3 ms.
 Keep this individual development-wheel slowdown visible; do not use a suite average
 or extra caching to declare performance acceptance. All nine
-dataframe-chunk tests pass. The broader five-file relation/join cohort passes 72/72 on
-C++; Rust has 16 passes, six failures and two collection errors. ColumnExpression is
-missing, blocking 50 cases; remaining collectable gaps include describe, insert values,
-representation and default-connection error details. All failures remain
+dataframe-chunk tests pass. The seven-file relation/join/expression cohort now collects
+all 123 cases: Rust passes 101/fails 22/skips 0 versus C++123/123. The 50 formerly blocked
+cases run. Native expression construction, immutable operators, cases/lambdas, column
+attributes, type projection and EXPLAIN work; 50/51 expression-only cases pass, with UDF
+registration still missing. Remaining gaps include values/insert/update, files,
+representation/describe and argument-error details. All failures remain
 recorded. No full Python parity or performance claim.
 Root identity checks show the Rust extension as the only loaded DuckDB engine. Native
 Clippy and workspace/all-target checking pass. Full relation/expression APIs, UDFs,
 full native Pandas/NumPy semantics, frame/protocol/pushdown and remaining interchange and
 type/platform/package tests remain open. See docs/python-bindings.md and external
-python-relations-20261024/python-relations-checkpoint.json. The foundation checkpoint remains historical; an
+python-expression-20261024/python-expression-checkpoint.json. The foundation checkpoint remains historical; an
 accidental collision in its run 3/4 JSON filenames is documented in the relation
 evidence manifest, with new reports separated and original comparison-4 data restored.
 Use the external CARGO_HOME/PYO3_PYTHON=Python3.13

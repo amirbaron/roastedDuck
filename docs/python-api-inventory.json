@@ -681,7 +681,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 476,
-      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -879,9 +879,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "explain",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 540
+      "line": 540,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -967,7 +968,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 561,
-      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1033,7 +1034,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 574,
-      "evidence": "python-relations-20261024/python-relations-checkpoint.json; 36 exact C++ join/write outcomes and 101/101 selected DB-API tests; expression overloads/full type/error/platform/SQL coverage remain open"
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1169,7 +1170,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 643,
-      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1224,23 +1225,26 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "select",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 672
+      "line": 672,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "select_dtypes",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 673
+      "line": 673,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "select_types",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 674
+      "line": 674,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1260,9 +1264,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "sort",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 685
+      "line": 685,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1698,65 +1703,74 @@
     {
       "surface": "_duckdb",
       "name": "CaseExpression",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 857
+      "line": 857,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb",
       "name": "CoalesceOperator",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 858
+      "line": 858,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb",
       "name": "ColumnExpression",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 859
+      "line": 859,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb",
       "name": "ConstantExpression",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 860
+      "line": 860,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb",
       "name": "DefaultExpression",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 861
+      "line": 861,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb",
       "name": "FunctionExpression",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 862
+      "line": 862,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb",
       "name": "LambdaExpression",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 863
+      "line": 863,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb",
       "name": "SQLExpression",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 864
+      "line": 864,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb",
       "name": "StarExpression",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 865
+      "line": 865,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb",
@@ -2523,324 +2537,370 @@
     {
       "surface": "_duckdb._expression",
       "name": "Expression",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 6
+      "line": 6,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__add__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 7
+      "line": 7,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__and__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 8
+      "line": 8,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__div__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 9
+      "line": 9,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__eq__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 10
+      "line": 10,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__floordiv__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 11
+      "line": 11,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__ge__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 12
+      "line": 12,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__gt__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 13
+      "line": 13,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__init__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 17
+      "line": 17,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__invert__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 18
+      "line": 18,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__le__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 19
+      "line": 19,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__lt__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 20
+      "line": 20,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__mod__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 21
+      "line": 21,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__mul__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 22
+      "line": 22,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__ne__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 23
+      "line": 23,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__neg__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 24
+      "line": 24,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__or__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 25
+      "line": 25,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__pow__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 26
+      "line": 26,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__radd__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 27
+      "line": 27,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__rand__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 28
+      "line": 28,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__rdiv__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 29
+      "line": 29,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__rfloordiv__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 30
+      "line": 30,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__rmod__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 31
+      "line": 31,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__rmul__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 32
+      "line": 32,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__ror__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 33
+      "line": 33,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__rpow__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 34
+      "line": 34,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__rsub__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 35
+      "line": 35,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__rtruediv__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 36
+      "line": 36,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__sub__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 37
+      "line": 37,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "__truediv__",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 38
+      "line": 38,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "alias",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 39
+      "line": 39,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "asc",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 40
+      "line": 40,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "between",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 41
+      "line": 41,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "cast",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 42
+      "line": 42,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "collate",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 43
+      "line": 43,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "desc",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 44
+      "line": 44,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "get_name",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 45
+      "line": 45,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "isin",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 46
+      "line": 46,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "isnotin",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 47
+      "line": 47,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "isnotnull",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 48
+      "line": 48,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "isnull",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 49
+      "line": 49,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "nulls_first",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 50
+      "line": 50,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "nulls_last",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 51
+      "line": 51,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "otherwise",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 52
+      "line": 52,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "show",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 53
+      "line": 53,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._expression.Expression",
       "name": "when",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_expression.pyi",
-      "line": 54
+      "line": 54,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
     },
     {
       "surface": "_duckdb._func",

@@ -54,3 +54,9 @@ table creation/insertion retain the original native query tree. Relation-variabl
 use subqueries with owned dependencies and connection checks, rather than exporting
 through Arrow on the same connection. The complete 101-test DB-API cohort now passes;
 the larger expression/relation and other Python/platform gates remain incomplete.
+
+Python expressions now compose native ASTs for columns/constants/functions, arithmetic,
+boolean/membership operations, casts, cases, lambdas and sort modifiers. Relation
+selection/filtering/aggregation/sorting/joins consume those trees directly. All formerly
+blocked relation/join tests collect; full UDF, remaining relation, error/overload and
+platform/package parity are still required.
