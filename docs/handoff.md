@@ -46,7 +46,8 @@ complete workspace yet**. The native SQL parser now compiles all targets and pas
 pending full-AST byte inputs are resolved, with zero skipped inputs in that matrix.
 The runtime library **compiles successfully** and passes library Clippy with warnings
 denied. The latest workspace/all-target check passes runtime, benchmark and SLT library
-integration, then stops at **eight shell diagnostics** in native name/logging interfaces.
+integration, then stops at shell integration; the latest scoped shell check stops at **three
+diagnostics** in duckbox/DESCRIBE native metadata fields. Shell changes are unverified.
 Benchmark/SLT all-target Clippy and 42 signed benchmark unit tests pass. Two-way
 checkpoint plus nonempty WAL replay between Rust/C++ passes for the recorded scenario.
 Broader shell/C API/client/corpus/performance acceptance remains open; earlier scoped
@@ -1336,3 +1337,29 @@ files under `runtime-storage-interop/`, `runtime-lint-bench-tests-1-summary.json
 actual runtime settings/pragma/secret/import/COPY verification, expanded cross-engine
 storage/WAL, corpus, Python/all selected clients and documented final speed-memory
 acceptance. The uncached lower-memory policy is unchanged.
+
+
+The shell native-byte continuation (2026-10-24) is **work in progress and does not build**.
+The latest shell/all-target check reports three errors: BoxRendererState still expects
+String column names, and describe_table_name still returns String for two native AST
+names. This count only describes compiler progress; no shell behavioral acceptance is
+established. The prior verified runtime/harness/interchange checkpoint remains scoped
+to its source snapshot.
+
+Current unverified edits carry result metadata names as ByteString, add PrintStream
+native-byte output for the existing layout renderers, use byte-oriented metadata
+HTML/C/CSV/JSON/SQL escapes, and preserve native shell log bytes with ASCII-folded
+deduplication. Prompt settings/generated text/truncation/highlight output, linenoise
+prompt ingress and progress text also now retain bytes. Remaining duckbox internal
+name/value/layout carriers and DESCRIBE/table metadata must be migrated coherently;
+do not decode names into String to satisfy the compiler. Existing result VARCHAR
+conversion still uses a lossy string_column helper and remains an open audit.
+
+Evidence: `shell-native-wip-checkpoint.json`, `shell-native-integration-check-8.jsonl`
+and `shell-native-integration-diagnostics-8.json` in external `identifier-bytes-20261023`.
+Next finish duckbox/DESCRIBE native carriers, compile all shell targets, run signed shell
+unit tests and exact C++ raw-output/PTY comparisons, then repeat workspace all-target
+checking to expose C API/client integration. Prompt/progress/native escape behavior
+also requires C++ differential verification. The full goal and accepted lower-memory
+policy remain unchanged; no final shell/corpus/storage/WAL/client/performance gate is
+closed by this work-in-progress checkpoint.
