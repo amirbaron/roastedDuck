@@ -339,9 +339,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "from_df",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 311
+      "line": 311,
+      "evidence": "python-pandas-20261024/python-pandas-checkpoint.json; direct native Pandas/NumPy arrays, query_df and relation query; 37/37 host and 75/81 object tests; full API/nested/error/performance/platform acceptance remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -442,7 +443,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 358,
-      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+      "evidence": "python-pandas-20261024/python-pandas-checkpoint.json; direct native Pandas/NumPy arrays, query_df and relation query; 37/37 host and 75/81 object tests; full API/nested/error/performance/platform acceptance remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -479,7 +480,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 446,
-      "evidence": "python-input-20261024/python-input-checkpoint.json; 32 exact C++ input outcomes and 39/41 upstream Arrow cases; native Pandas/NumPy, full protocols/frame/pushdown/platform coverage pending"
+      "evidence": "python-pandas-20261024/python-pandas-checkpoint.json; direct native Pandas/NumPy arrays, query_df and relation query; 37/37 host and 75/81 object tests; full API/nested/error/performance/platform acceptance remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -1190,9 +1191,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "query",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 668
+      "line": 668,
+      "evidence": "python-pandas-20261024/python-pandas-checkpoint.json; direct native Pandas/NumPy arrays, query_df and relation query; 37/37 host and 75/81 object tests; full API/nested/error/performance/platform acceptance remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -2048,9 +2050,10 @@
     {
       "surface": "_duckdb",
       "name": "from_df",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1049
+      "line": 1049,
+      "evidence": "python-pandas-20261024/python-pandas-checkpoint.json; direct native Pandas/NumPy arrays, query_df and relation query; 37/37 host and 75/81 object tests; full API/nested/error/performance/platform acceptance remains open"
     },
     {
       "surface": "_duckdb",
@@ -2174,14 +2177,15 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1132,
-      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+      "evidence": "python-pandas-20261024/python-pandas-checkpoint.json; direct native Pandas/NumPy arrays, query_df and relation query; 37/37 host and 75/81 object tests; full API/nested/error/performance/platform acceptance remains open"
     },
     {
       "surface": "_duckdb",
       "name": "query_df",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1139
+      "line": 1139,
+      "evidence": "python-pandas-20261024/python-pandas-checkpoint.json; direct native Pandas/NumPy arrays, query_df and relation query; 37/37 host and 75/81 object tests; full API/nested/error/performance/platform acceptance remains open"
     },
     {
       "surface": "_duckdb",
@@ -2218,7 +2222,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1231,
-      "evidence": "python-input-20261024/python-input-checkpoint.json; 32 exact C++ input outcomes and 39/41 upstream Arrow cases; native Pandas/NumPy, full protocols/frame/pushdown/platform coverage pending"
+      "evidence": "python-pandas-20261024/python-pandas-checkpoint.json; direct native Pandas/NumPy arrays, query_df and relation query; 37/37 host and 75/81 object tests; full API/nested/error/performance/platform acceptance remains open"
     },
     {
       "surface": "_duckdb",

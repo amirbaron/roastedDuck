@@ -89,31 +89,38 @@ Python binding work now has a pinned 1.5.6 source/API inventory (414 native surf
 and a real PyO3 package in crates/python + python/. The signed initial release wheel
 installs and passes seven upstream tests. The current development wheel includes later
 conversion/lifecycle corrections, native AST relations, bounded NumPy/Pandas output,
-dataframe chunks, native Arrow input/output/readers/capsules, registration and frame replacement scans.
+dataframe chunks, native Arrow interchange, registration/frame scans and direct native
+Pandas/NumPy array scanning. Shallow dataframe copies preserve names and live-array
+semantics; numeric chunks copy to vectors without whole-row snapshots or Arrow conversion.
 External scan dependencies are copied with AST references and held by bound scans;
 the lookup registry is weak. Native connection ownership is shared with transferred
-readers, so they survive Python connection closure. It matches 30/30 reader, 32/32 input,
+readers, so they survive Python connection closure. It matches 49/51 Pandas, 30/30 reader, 32/32 input,
 42/42 foundation, 30/30 relation
-and 75/76 host C++ outcomes. One Arrow setting-change case is an unaccepted
-discrepancy: C++ returns empty text where Rust preserves the SQL value; raw evidence is
+and 75/76 host C++ outcomes. One Arrow setting-change and two decimal cases are
+unaccepted discrepancies: C++ emits empty text, drops a positive decimal exponent or
+loses an infinity sign where Rust preserves the represented value. Raw evidence is
 retained. Metadata binding preserves existing streams
 and transactions, and relations retain their Python owner. The wider unmodified
 101-test DB-API/cursor/type cohort passes 100/fails 1/skips 0 on Rust, versus 101/101
-on C++; from_df remains missing. A separate NumPy/Pandas cohort passes 26/37
-versus C++ 37/37; its failures require NumPy input/from_df/query_df. Arrow-protocol
-fallback for DataFrames is not native Pandas scan parity. The six-file Arrow cohort
+on C++; the remaining relation journey now reaches missing join. Native from_df/query_df
+and NumPy input exist. The selected host cohort passes 37/37 on both engines, while
+the broader object/analyzer cohort passes 75/81 versus C++81/81. Representation/show,
+nested type behavior and the two decimal discrepancies remain in that cohort. The six-file Arrow cohort
 passes 41/41 on both engines. Reader checks include cancellation/recovery, early release,
 cross-connection scanning and an actual background thread. First-batch memory stays
 bounded when declared row count grows from 1M to 100M; these development-wheel
-measurements are not final release performance acceptance. All nine
+measurements are not final release performance acceptance. A numeric input optimization
+reduced the 1M-row scan from 85 ms to 6.8 ms at similar peak RSS; C++ took 3.3 ms.
+Keep this individual development-wheel slowdown visible; do not use a suite average
+or extra caching to declare performance acceptance. All nine
 dataframe-chunk tests pass. The earlier four-file relation cohort passes 65/65 on C++; Rust had 5 passes,
 17 failures and a collection error for missing ColumnExpression. All failures remain
 recorded. No full Python parity or performance claim.
 Root identity checks show the Rust extension as the only loaded DuckDB engine. Native
 Clippy and workspace/all-target checking pass. Full relation/expression APIs, UDFs,
-native Pandas/NumPy input, full frame/protocol/pushdown and remaining interchange and
+full native Pandas/NumPy semantics, frame/protocol/pushdown and remaining interchange and
 type/platform/package tests remain open. See docs/python-bindings.md and external
-python-reader-20261024/python-reader-checkpoint.json. The foundation checkpoint remains historical; an
+python-pandas-20261024/python-pandas-checkpoint.json. The foundation checkpoint remains historical; an
 accidental collision in its run 3/4 JSON filenames is documented in the relation
 evidence manifest, with new reports separated and original comparison-4 data restored.
 Use the external CARGO_HOME/PYO3_PYTHON=Python3.13

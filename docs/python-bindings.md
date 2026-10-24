@@ -61,6 +61,17 @@ conversion path, as C++ does. Transfer preserves description metadata and distin
 closed-result errors. Reader release closes its own query; C callbacks catch native
 panics rather than unwinding across the ABI.
 
+Native Pandas/NumPy input now has its own `pandas_scan` implementation. It retains the
+original object and C++-style shallow dataframe copy with deduplicated column names;
+bind data captures underlying arrays, masks, categories and timestamp units. Scanning
+converts only projected native chunks. Compatible numeric buffers copy directly into
+native vectors with null/NaN/NaT validity handling; object types use sampled inference
+and typed conversion, including nested structs/maps/lists. Native dataframe detection
+does not import optional libraries just to inspect unrelated objects. Arrow-backed
+Pandas dtypes use C++'s Arrow path. `from_df`, NumPy frame replacement and `query_df`
+exist; relation `query` creates a temporary view and enforces its one-statement contract.
+This is partial Pandas parity, with the wider object and API gaps below still open.
+
 Conversions currently cover scalar/nested values, 128-bit integers, decimals, strings,
 blobs, dates/times/timestamps, intervals, UUIDs, lists, structs and ordinary hashable-key
 maps, plus maps with unhashable keys represented as key/value lists and fixed arrays
@@ -100,15 +111,18 @@ engine names and queries keep their native representation.
   **not full-query or final release performance acceptance**. Individual timings and
   RSS values are retained in `memory-comparison.json`.
 - The unmodified 101-test DB-API/cursor/type cohort passes **100, fails 1, skips none**
-  on Rust (previously 51, then 88). C++ passes **101/101**. Dataframe import is the
-  remaining failure; no assertions were removed.
-- A separate five-file NumPy/Pandas cohort passes **26/37** on Rust, versus **37/37**
-  on C++. All nine dataframe-chunk tests pass. The 11 remaining failures require
-  `from_df`, `query_df`, and NumPy input scanning. DataFrames exposing the Arrow stream
-  protocol can currently use that protocol path. This is **not native Pandas scan
-  parity**: C++ prioritizes its Pandas scanner, including dtype/sample and live-array
-  semantics. Implement and verify that path rather than treating these passing cases
-  as full dataframe-input completion.
+  on Rust (previously 51, then 88). C++ passes **101/101**. The remaining readonly
+  relation journey now reaches missing `join`; `from_df` itself works. No assertions
+  were removed.
+- The five-file NumPy/Pandas cohort now passes **37/37** on both engines (previously
+  26, then 33 on Rust), including all dataframe-chunk tests. Native scanning matches
+  **49/51 focused C++ outcomes**; the two disagreements are the decimal cases below.
+  Coverage includes numeric widths, nullable types, live/replaced buffers, stable names,
+  categories, nested values, sampling fallback, timestamp units and object ownership.
+- A broader five-file object/analyzer/category/stride cohort passes **75/81** on Rust,
+  versus **81/81** on C++. Six failures remain: relation representation/`show`, nested
+  map/type comparison behavior and the two decimal discrepancies. All failures remain
+  in `pandas-object-rust-final/remaining-gaps.json`; none was skipped or normalized.
 - Focused host conversion matches **75/76 exact C++ outcomes**, including native widths,
   nullable types, nested values, categorical/empty ENUMs, date/interval overflow errors,
   timestamp precision, buffer lifetime after close, requested Arrow batch sizes and
@@ -145,11 +159,28 @@ cause. Raw outcomes and source location are retained; this case has not been nor
 removed, marked passing, or approved as a divergence. Rust snapshots query-time timezone
 and Arrow properties and does not deliberately replace valid data with empty strings.
 
+Two more **unaccepted numerical/type discrepancies** are retained in the Pandas audit.
+For `Decimal('1E5')`, C++ produces DECIMAL(6,5) value 1.00000; Rust produces DECIMAL(6,0)
+value 100000. For `Decimal('-Infinity')`, C++ returns positive infinity/FLOAT; Rust returns
+negative infinity/DOUBLE. The frozen upstream assertions also encode these C++ results.
+Rust currently preserves the represented values. These cases have not been changed into
+passes or approved as divergences; raw outcomes and the failing upstream cases remain.
+
+The numeric scan optimization was measured for speed **and** memory. For 100k/1M rows,
+Rust development-wheel elapsed times fell from 7.90/85.03 ms to 1.31/6.83 ms. Whole-process
+peaks stayed about 122/167 MB, dominated by the existing input/imports; query increments
+were about 0.23/0.20 MB. C++ release-wheel times were 0.99/3.29 ms with similar peaks.
+The 1M-row Rust case remains roughly 2.1 times slower in this individual microbenchmark;
+the improvement does not certify final release acceptance. Every fresh-process result,
+checksum and RSS value is retained; no average hides this outlier and no table-block
+caching was added to obtain the speedup.
+
 ## Remaining gates
 
 Complete relation APIs (including joins, query/create/insert and expression
 arguments), representation, broader result lifetimes, expressions, UDFs, replacement scans,
-native Pandas/NumPy input, complete Arrow registration/protocol/schema/error/pushdown
+complete native Pandas/NumPy inference, nested conversion and input error semantics,
+complete Arrow registration/protocol/schema/error/pushdown
 coverage, complete reader/capsule/concurrency behavior, Polars/Torch output,
 filesystems, helper/function-catalog compatibility and remaining type/metadata/exception
 semantics are still required. The API inventory marks only
@@ -162,7 +193,13 @@ release performance. Preserve the accepted uncached speed-memory baseline and re
 individual query outliers in final acceptance. No table-cache retention was introduced.
 The other selected language clients remain part of the goal.
 
-Current evidence: `.context/artifacts/python-reader-20261024/python-reader-checkpoint.json`,
+Current evidence: `.context/artifacts/python-pandas-20261024/python-pandas-checkpoint.json`,
+`comparison-pandas-decimal-audit.json`, `comparison-{pandas,reader,input,host,relations,foundation}-final.json`,
+`{dbapi,host-expanded,arrow-upstream,pandas-object}-rust-final/`, signed
+`wheels-dev-final-signed/`, `pandas-clippy-10.jsonl`, workspace check and individual
+`measure-*.json` records. Initial and vectorized scan wheels/results are retained.
+
+Earlier reader evidence: `.context/artifacts/python-reader-20261024/python-reader-checkpoint.json`,
 `comparison-{reader,input,host,relations,foundation}-7.json`,
 `{arrow-upstream,dbapi,host-expanded}-rust-7/`, signed `wheels-dev-7-signed/`,
 `reader-clippy-7.jsonl`, `reader-workspace-check-7.jsonl` and `memory-comparison.json`.

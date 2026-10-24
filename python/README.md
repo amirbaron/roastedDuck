@@ -40,3 +40,11 @@ Python connection wrapper, and assemble requested batches lazily. Metadata survi
 transfer; another query on the same connection invalidates the old active stream.
 Exact C++ comparisons include release, cancellation/recovery and a background-thread
 read. Full concurrency/protocol matrices and release performance acceptance remain open.
+
+Pandas/NumPy inputs now scan retained arrays directly with masks, categories, timestamp
+units and sampled object inference. Numeric chunks copy into native vectors without a
+full Python row snapshot or an Arrow conversion; Arrow-backed Pandas dtypes follow the
+upstream Arrow path. `from_df`/`query_df` and frame replacement share this implementation.
+Full nested/error/API parity remains unfinished, including two retained C++ decimal
+value/type discrepancies. Individual scan speed/RSS measurements are recorded in the
+Pandas checkpoint; development results do not establish release performance acceptance.
