@@ -16,9 +16,9 @@ Its signed current development wheel matches 64 expression, 36 join/write, 49/51
 30 reader, 32 input, 42 foundation, 30 relation and 75/76 host C++ outcomes.
 The DB-API cohort passes 101/101 on both engines; a broader host cohort
 passes 37/37 on both engines; the object/analyzer cohort passes 79/81 (C++81/81).
-The Arrow cohort passes 41/41 on both engines. Ten discrepancy categories remain unaccepted: one Arrow setting change, two decimal cases,
+The Arrow cohort passes 41/41 on both engines. Eleven discrepancy categories remain unaccepted: one Arrow setting change, two decimal cases,
 string render mode, trailing UTF-8 aggregate/window identifiers, unstable numeric map
-output, a mapped-view callback lifetime crash and JSON overflow/file-like pending-error failures and zero-batch Polars resource runaway and raced shared-context Polars corruption in the reference. A separate relation
+output, a mapped-view callback lifetime crash and JSON overflow/file-like pending-error failures and zero-batch Polars resource runaway and raced shared-context Polars corruption and legacy enum-pickle aborts in the reference. A separate relation
 cohort now passes all 123 cases, matching C++. The 50
 previously blocked cases now run; remaining failures are recorded.
 This is a partial implementation, not Python completion. Native/Arrow UDFs pass all
@@ -56,13 +56,20 @@ Python append persistence journey passes cross-engine checkpoint and nonempty WA
 replay/read-write/readback in both directions. The 100-repeat Polars shared-context
 probe adds an unaccepted reference corruption category; independent/sequential controls
 pass. The runtime coverage receipt still lists 1372 collected cases in 131 files outside
-current cohorts, plus missing-dependency/platform gates. R and the other language packages remain
+current cohorts, plus missing-dependency/platform gates. The complete connection API file now passes 48/48 on both engines,
+with 131 focused statement/metadata outcomes matching and eight signed SDK tests passing.
+Native AST statements, discovery/load/install wrappers and default/path validation
+are implemented; batch execution follows frozen preparation/result semantics.
+Bidirectional enum-pickle protocols 2–5 pass; legacy C++ protocol 0/1 aborts remain
+unaccepted. Current 19 cohorts record 1882 pass/3 unchanged failures/10 skip-or-xfail across
+1895 cases; 1325 collected cases in 130 files and the dependency/platform matrices remain.
+ R and the other language packages remain
 unimplemented/unverified. The complete workspace/all-target check
 includes the Python crate. See [Python implementation gates](python-bindings.md).
 
 | Surface | Current evidence / remaining work |
 |---|---|
-| Python | Native arrays, Arrow, joins/writes and expression trees; 101/101 DB-API, 37/37 host, 41/41 Arrow, 79/81 object and 123/123 relation/expression cases pass. 559 UDF cases pass plus one existing xfail; complete remaining relation/input/expression and UDF overload APIs, platform/package gates and ten unaccepted discrepancy categories |
+| Python | Native arrays, Arrow, joins/writes and expression trees; 101/101 DB-API, 37/37 host, 41/41 Arrow, 79/81 object and 123/123 relation/expression cases pass. 559 UDF cases pass plus one existing xfail; complete remaining relation/input/expression and UDF overload APIs, platform/package gates and eleven unaccepted discrepancy categories |
 | R | New bindings/package required; inventory and implement the public API and run upstream tests |
 | C API | Current rebuilt library: all 546 duckdb.h exports; upstream 30-file harness passes; 8,735 native ABI outcomes match. ENUM invalid-value failure semantics remain open; duckdb_adbc_init now exists; scoped ADBC loading/interchange checks pass |
 | CLI | Existing shell implementation and historical differential tests; close remaining engine/name gaps and repeat final shell verification |

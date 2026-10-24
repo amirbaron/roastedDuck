@@ -650,6 +650,57 @@ Evidence: `.context/artifacts/python-streams-20261025/python-streams-checkpoint.
 `performance-comparison.json`, signed wheels, compiler terminal records and the complete
 source archive. Previous runtime and Polars controls remain preserved.
 
+## Parsed statements and connection metadata checkpoint (2026-10-25)
+
+The complete upstream connection API file passes **48/48 on both engines**, closing
+six Rust failures. Native `Statement` objects own immutable parsed ASTs and expose the
+frozen query/type/parameter/result metadata. Execution, query and batch APIs accept
+these objects without serializing/reparsing their ASTs. Shared native preprocessing
+handles PRAGMA/PIVOT expansion. Table-name discovery and extension install/load APIs
+use the SDK; connection construction now follows the frozen path/default-option and
+boolean rules. Invalid/empty query handling and diagnostics match the scoped controls.
+
+`executemany` prepares its final statement once, executes preceding statements once,
+materializes the outer parameter iterable before execution, and retains the final
+result. This matches the frozen client, including generator-failure ordering. No
+cross-call prepared cache or table-block retention is introduced.
+
+All **131 focused statement/metadata outcomes** match, with raw diagnostics preserved;
+only live object addresses and internal backtrace text are normalized. Eight signed
+SDK tests pass, including four new metadata tests. They cover active stream survival,
+explicit transactions/rollback, owned PRAGMA preprocessing and external-access
+configuration in direct loading. The native load helper snapshots current settings;
+metadata preprocessing preserves an existing automatic stream transaction.
+
+Statement/result enums use the frozen unsigned-byte domain, unknown-value spelling,
+strict type equality, member dictionaries and allocation/state initialization rules.
+Eight cross-engine pickle journeys pass for protocols 2–5, each carrying 36 declared or
+unknown enum values. C++ protocol 0/1 probes abort with exit -6; Rust safely round-trips
+those protocols. Raw process exits are retained as an **eleventh unaccepted reference
+category**, not an accepted skip or a reason to reproduce an abort.
+
+Nineteen current development-wheel cohorts run **1895 cases: 1882 pass, 3 unchanged
+failures, 10 skip/xfail**, with zero collection errors. Existing failures remain two
+held decimal reference discrepancies and the shared Parquet timestamp-unit assertion.
+The overlapping append node was removed from the threading cohort. Python/SDK
+all-target Clippy with warnings denied and workspace/all-target checking pass.
+The coverage receipt leaves **1325 collected cases in 130 files**, plus the shared
+missing-dependency/version skips and platform matrix. Full Python/client completion
+is not established.
+
+Fresh-process result-checked 1000-operation probes retain elapsed/CPU time and whole/
+incremental RSS. Batch insertion takes Rust 31–32 ms/46–47 MB versus C++ 219–247 ms/
+117 MB; extracted/text query loops take Rust 71–73 ms/about 46 MB versus C++ 212–242 ms/
+about 115–116 MB. These are development measurements with one engine thread, not final
+release acceptance. Earlier individual outliers and the accepted uncached baseline
+remain unchanged.
+
+Evidence: `.context/artifacts/python-connection-20261025/python-connection-checkpoint.json`,
+`statements-comparison-4.json`, `enum-pickle-current/`, isolated legacy-protocol receipts,
+current signed SDK tests, `regression-matrix-final.json`, `remaining-runtime-coverage.json`,
+`performance-comparison.json`, compiler terminal records and the complete source archive.
+Broader argument/enum/packaging/version/platform and other selected client gates remain.
+
 ## Remaining gates
 
 Complete relation APIs (including delete, remaining file formats/filesystems, mutation/type/metadata and

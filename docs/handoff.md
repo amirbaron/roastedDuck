@@ -188,6 +188,18 @@ development speed outlier at 5.84–5.88 ms vs C++ 3.04–3.72 ms, with roughly 
 Coverage reconciliation leaves 1372 collected cases in 131 files outside current cohorts,
 plus the missing-dependency/platform matrix. Latest evidence is
 python-streams-20261025/python-streams-checkpoint.json. Final gates stay open.
+Parsed statement objects, native discovery/load/install wrappers and connection-option
+validation close six more failures: the complete connection API file now passes 48/48
+on both engines; 131 focused outcomes match. Statement ASTs are retained natively;
+batch execution prepares once and preserves last results/generator error ordering.
+Eight signed SDK metadata/type/profile tests pass, including stream/rollback and
+external-access checks. Eight bidirectional enum-pickle journeys over protocols 2–5
+pass; C++ protocols 0/1 abort while Rust returns safely, an eleventh unaccepted category.
+Current 19 cohorts run 1895 cases: 1882 pass/3 unchanged failures/10 skip-or-xfail. Clippy and
+workspace/all-target checks pass. 1325 collected cases in 130 files remain outside these
+cohorts, plus missing-dependency/platform matrices. Result-checked 1000-operation
+microbenchmarks retain coupled time/RSS; they are not final release acceptance.
+Latest evidence: python-connection-20261025/python-connection-checkpoint.json.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.
