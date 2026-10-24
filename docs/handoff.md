@@ -44,9 +44,9 @@ The checkout has an **uncommitted native-byte migration and does not build as a
 complete workspace yet**. The native SQL parser now compiles all targets and passes
 73 signed release tests plus 24,499 exact full-AST C++ comparisons. The earlier 700
 pending full-AST byte inputs are resolved, with zero skipped inputs in that matrix.
-The latest workspace/all-target check passes the planner and CSV, then stops at
-**14 execution-layer integration diagnostics**, mainly COPY/export paths and plan
-generation. Planner/SDK and CSV all-target compilation and scoped Clippy pass. Catalog and
+The latest workspace/all-target check passes planner, CSV and execution, then stops at
+**20 Parquet integration diagnostics** in COPY, scan and metadata consumers of native
+paths/file lists. Scoped execution/planner/AST Clippy and release verification pass. Catalog and
 storage library compilation passes that check; the newly touched index-type carrier has
 not had a fresh runtime/storage journey. Earlier scoped runtime counts (including 15)
 are historical checkpoints, not a fresh successful runtime build. Downstream execution,
@@ -1034,3 +1034,42 @@ directory. The fresh workspace check stops at 14 execution diagnostics; downstre
 JSON/Parquet/runtime/client consumers remain unchecked by a complete build. Final
 shell/corpus/C API/storage/WAL, Python/all selected clients and documented performance
 acceptance remain open. The uncached block-release policy is unchanged.
+
+
+The execution native COPY/export-path continuation (2026-10-24) compiles execution
+all targets and passes all-target execution/planner/AST Clippy with warnings denied and
+codegen --check. **36 signed release tests pass**, none ignored, covering window,
+storage-backed operators, pipelines, native physical metadata, bound parameters,
+filename fixtures and the new physical COPY/export journeys. Physical COPY state,
+partition directories, returned filenames, cleanup and temporary-file rename retain
+bytes. Filename-pattern literals and generated paths are native; numeric/UUID text
+remains text. Generated pattern properties still write STRING bytes.
+
+**12,229 exact C++ comparisons pass**: 10,482 filename-pattern metadata/deterministic
+path cases and 1,747 export path SQL literals. UUID pattern metadata and UUID presence
+are compared; random UUID values are not asserted byte-identical. There are 174 frozen
+filename records plus 38 export-literal records in source. The first pattern comparison
+exposed eight empty/slash-only parent path differences; C++ JoinPath always adds a
+separator for a nonempty parent, even if it already ends in one. The correction matches
+all cases. The initial failed log is preserved.
+
+A signed Rust physical COPY pipeline writes a Unicode SSD path, renames its temporary
+file, returns the final path/row count and produces BLOB bytes 610062ff. A signed C++
+CLI journey confirms row count 1, the final returned filename, identical BLOB bytes and
+no temporary file. A separate physical export source test writes exact schema.sql and
+load.sql bytes with raw table/path metadata. C++'s export uses SQLString directly, so
+raw export file literals are quoted without an artificial VARCHAR constructor check;
+not-null column constants and returned COPY file Values retain their actual checked
+construction boundary. This is physical-operator/component evidence, **not complete
+runtime SQL COPY/EXPORT or storage/WAL acceptance**.
+
+Evidence: `execution-native-path-checkpoint.json`, `execution-native-path-tests-2-summary.json`,
+`filename-native-comparison-2.log`, `export-path-literal-comparison-1.log`,
+`execution-native-copy-cpp.json`, `execution-native-path-clippy-4.jsonl`,
+`execution-native-codegen-check.log` and `execution-native-path-workspace-check-1.jsonl`
+in the external `identifier-bytes-20261023` directory. The latest workspace check
+reaches Parquet and stops at 20 diagnostics. Parquet/JSON/runtime/client propagation,
+full shell/corpus/C API/storage/WAL verification, all selected language bindings and
+final documented performance acceptance remain open. Other OS/NUL/extension/value and
+fallible rendering boundaries remain subject to their recorded audits. The uncached
+lower-memory policy is unchanged.
