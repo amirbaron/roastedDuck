@@ -40,33 +40,35 @@ Complete Python bindings first and all primary clients plus C#/.NET, Swift and J
 
 ## Current source integration (2026-10-24)
 
-The checkout has an **uncommitted native-byte migration and does not build as a
-complete workspace yet**. The native SQL parser now compiles all targets and passes
-73 signed release tests plus 24,499 exact full-AST C++ comparisons. The earlier 700
-pending full-AST byte inputs are resolved, with zero skipped inputs in that matrix.
-The runtime library and shell **compile successfully**. Shell all-target Clippy and
-15 signed current-source unit tests pass. The latest workspace/all-target check passes
-shell and bindcheck, then stops at **29 C API integration diagnostics**. The canonical
-shell differential suite reports 0 unexpected/768 cases (three existing known) on the
-native-ingress binary before the final width correction; the corrected binary passes
-154 native metadata cases. Full final shell/C API/client/corpus/performance acceptance
-remains open; earlier scoped results remain tied to their recorded snapshots. Catalog and
-storage library compilation passes that check; the newly touched index-type carrier has
-not had a fresh runtime/storage journey. Earlier scoped runtime counts (including 15)
-are historical checkpoints, not a fresh successful runtime build. Downstream execution,
-extensions, shell, C API and selected-client consumers remain unchecked by a complete
-build. Existing component evidence remains scoped to its recorded source snapshot.
+The checkout still has an **uncommitted native-byte migration**, but the **entire
+workspace now compiles across all targets** (`capi-native-final-workspace-check-7`).
+The check used one worker and keep-going; its terminal build-finished record is success.
+Compilation is an integration gate, not final functionality or release acceptance.
 
-The corpus, shell and performance results below describe previously accepted binaries;
-they are not validation of this incomplete source. No final public binary or full
-corpus/file/WAL run has been made for the migration.
+The rebuilt Rust C API passes the existing upstream 30-file harness (155 test cases,
+795,736 assertions; existing C++-internal test exclusions remain). All 8,735 native C ABI
+outcomes match across query/result names, prepared parameter identities/execution,
+STRUCT names, UNION names and aliases. A further seven-name C journey, including a real
+C table callback, passes against both libraries. All 546 frozen duckdb.h functions are
+exported; C++'s additional duckdb_adbc_init remains missing. The separate ENUM accessor
+audit finds 1,613 matching returns and 134 C++-exception/Rust-return gaps. Do not claim
+complete native C API correctness or ADBC/client completion.
 
-Names now retain bytes through AST/type/value codecs, parser transformations, casts,
-storage filters/statistics/index descriptors and parts of planner name resolution.
-The remaining work includes native expression/value rendering integration,
-downstream result/execution integration and raw SQL parser ingress. Catalog SDK raw-name
-file round trips pass, but public SQL/shell and WAL replay remain unverified. Client
-packages and final performance acceptance also remain open; keep the uncached lower-memory controls unchanged.
+C API/planner all-target Clippy with warnings denied and codegen pass; the prepared-name
+panic fix has two signed release regression tests. Shell all-target Clippy and 15 signed
+current-source tests pass at the preceding snapshot. The canonical shell differential
+suite reports 0 unexpected/768 cases (three existing known) before the final width
+correction; the corrected binary passes 154 native metadata cases. Two-way checkpoint
+plus nonempty WAL replay passes for the recorded INTEGER/VARCHAR/NULL/Unicode scenario.
+These remain scoped evidence, not full final shell/corpus/storage/WAL acceptance.
+
+Historical corpus and benchmark figures below describe previously accepted binaries.
+The new migration still needs the full unit/corpus/shell/storage/WAL/client verification
+and documented speed-memory acceptance. Strict PEG raw ingress, remaining text/value
+codecs and fallible-rendering boundaries are open. Python and every selected language
+client remain required; preserve the uncached lower-memory controls. The following
+migration notes are a chronological checkpoint journal; old diagnostic counts and
+pending statuses describe those snapshots and are superseded by the current state above.
 
 New focused evidence includes 5,241 C++ index descriptor cases, 6,988 CTE/macro/lambda
 codec cases, 3,494 native exception metadata cases, and 8,050 parser AST/rendering
@@ -1409,3 +1411,47 @@ external `identifier-bytes-20261023` directory. Continue C API/client integratio
 remaining raw codecs/PEG ingress, expanded storage/WAL/corpus, Python/all selected
 clients and final documented speed-memory acceptance. The uncached lower-memory
 policy is unchanged.
+
+
+The C API native-byte continuation (2026-10-24) closes its 29 integration diagnostics
+and reaches successful workspace/all-target compilation. Query/extract/prepare paths
+now read native C-string bytes. Prepared parameter maps/lookup/execution retain native
+identities through generic runtime maps. Logical STRUCT/UNION/ENUM member names and
+aliases, C result names, Arrow schema names, table bind output names, COPY paths/options,
+replacement callback names and callback log messages retain bytes. Instance cache keys
+retain OS path bytes and use ASCII case folding. Remaining text-only definition/option
+interfaces, Arrow view/query paths and value codecs remain audited separately.
+
+The signed rebuilt library passes **all 30 upstream C API harness files**, with **155
+test cases and 795,736 assertions**; the harness keeps its documented C++-internal
+exclusions. This run used library build1. The prepared suite rerun on build2 passes
+1,235 assertions in nine cases. **8,735 actual C++ C ABI outcomes match** (1,747 inputs
+for each of five surfaces: query/result names, prepare/parameter/bind/execute, STRUCT,
+UNION and alias). The first completed comparison passed 8,601/8,735; all 134 failures
+were raw prepared names hitting BoundExpression bookkeeping's bound.to_string(). Native
+bound.to_bytes() fixes the panic. **Two signed planner release regression tests pass**.
+
+A maintained duckdb.h C test (`crates/capi/tests/native_names.c`) passes seven name
+journeys on both libraries, including native result names from a real table-function
+callback. Three invalid native path cases are rejected by both C APIs, preserve original
+name bytes in errors, and never return an in-memory handle. C API/planner all-target
+Clippy with warnings denied and codegen --check pass. Export inspection finds all
+**546 duckdb.h functions** and no missing header exports; C++ has 547 duckdb_ exports,
+with **duckdb_adbc_init** the missing additional entry point.
+
+The original raw ABI collector aborted in C++ while reading an invalid ENUM dictionary
+value: duckdb_enum_dictionary_value materializes a Value and throws across the C ABI.
+An exception-aware C++ probe plus Rust accessor audit records **1,613 matching returns
+and 134 real C++-exception/Rust-return gaps**. These are not counted as passing ABI
+outcomes. Their public failure semantics remain unresolved; do not hide them or label
+complete parity. The Python ctypes scripts are verification tools, not Python bindings.
+
+Evidence: `capi-native-checkpoint.json`, `capi-native-upstream-summary.json`,
+`capi-native-abi-summary.json`, `capi-native-enum-audit.json`, `capi-native-exports.json`,
+`capi-native-invalid-paths-summary.json`, `capi-native-planner-tests-1-summary.json`,
+`capi-native-final-clippy-1.jsonl`, `capi-native-codegen-check.log` and
+`capi-native-final-workspace-check-7.jsonl` in the external `identifier-bytes-20261023`
+directory. Existing text-only callback definitions, remaining Arrow/query/value codecs,
+ENUM failure semantics, ADBC, strict PEG native ingress, final unit/corpus/shell/storage/WAL,
+Python/all selected clients and final performance acceptance remain open. No table
+caching or memory policy changed.

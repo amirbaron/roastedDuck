@@ -13,14 +13,14 @@ a newer client or documentation update must not silently change the target versi
 
 No standalone Python, R or other language-package implementation was found in the
 tracked repository inventory. The existing Rust engine/C ABI is not proof that upstream
-packages load or pass their APIs. Current source is mid-name-migration and does not
-build as a complete workspace; accepted historical tests below are not final verification.
+packages load or pass their APIs. The native-byte migration now compiles across the complete workspace/all-target check
+(2026-10-24). Current scoped C API evidence below does not prove final client acceptance.
 
 | Surface | Current evidence / remaining work |
 |---|---|
 | Python | New bindings/package required; inventory and implement the public API, then run upstream tests and installable-package journeys |
 | R | New bindings/package required; inventory and implement the public API and run upstream tests |
-| C API | Last accepted baseline: 546/547 exports and 30 C API files pass; finish ADBC and verify the final library |
+| C API | Current rebuilt library: all 546 duckdb.h exports; upstream 30-file harness passes; 8,735 native ABI outcomes match. ENUM invalid-value failure semantics remain open; duckdb_adbc_init is still missing |
 | CLI | Existing shell implementation and historical differential tests; close remaining engine/name gaps and repeat final shell verification |
 | Native Rust | API exists; complete API review, byte-name integration and resource/error semantics |
 | Rust client (`duckdb-rs`) | Pin client revision; build/link against this library and pass its upstream API/tests |
