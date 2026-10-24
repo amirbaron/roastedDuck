@@ -96,7 +96,9 @@ External scan dependencies are copied with AST references and held by bound scan
 the lookup registry is weak. Native connection ownership is shared with transferred
 readers, so they survive Python connection closure. It matches 49/51 Pandas, 30/30 reader, 32/32 input,
 42/42 foundation, 30/30 relation, 36/36 joins/writes, 64/64 expression
-and 75/76 host C++ outcomes. One Arrow setting-change and two decimal cases are
+and 75/76 host C++ outcomes. A fourth unaccepted case is string `render_mode="columns"`: C++
+prints rows (its converter leaves a dangling pointer), while Rust prints columns.
+Integer/enum column-mode rendering matches. One Arrow setting-change and two decimal cases are
 unaccepted discrepancies: C++ emits empty text, drops a positive decimal exponent or
 loses an infinity sign where Rust preserves the represented value. Raw evidence is
 retained. Metadata binding preserves existing streams
@@ -104,8 +106,7 @@ and transactions, and relations retain their Python owner. The wider unmodified
 101-test DB-API/cursor/type cohort now passes 101/101 on both engines with zero skips.
 The full dataframe/join/query/create/insert journey passes. Native from_df/query_df
 and NumPy input exist. The selected host cohort passes 37/37 on both engines, while
-the broader object/analyzer cohort passes 75/81 versus C++81/81. Representation/show,
-nested type behavior and the two decimal discrepancies remain in that cohort. The six-file Arrow cohort
+the broader object/analyzer cohort passes 77/81 versus C++81/81. Nested type behavior and the two decimal discrepancies remain in that cohort. The six-file Arrow cohort
 passes 41/41 on both engines. Reader checks include cancellation/recovery, early release,
 cross-connection scanning and an actual background thread. First-batch memory stays
 bounded when declared row count grows from 1M to 100M; these development-wheel
@@ -114,17 +115,19 @@ reduced the 1M-row scan from 85 ms to 6.8 ms at similar peak RSS; C++ took 3.3 m
 Keep this individual development-wheel slowdown visible; do not use a suite average
 or extra caching to declare performance acceptance. All nine
 dataframe-chunk tests pass. The seven-file relation/join/expression cohort now collects
-all 123 cases: Rust passes 101/fails 22/skips 0 versus C++123/123. The 50 formerly blocked
+all 123 cases: Rust passes 104/fails 19/skips 0 versus C++123/123. The 50 formerly blocked
 cases run. Native expression construction, immutable operators, cases/lambdas, column
-attributes, type projection and EXPLAIN work; 50/51 expression-only cases pass, with UDF
-registration still missing. Remaining gaps include values/insert/update, files,
-representation/describe and argument-error details. All failures remain
+attributes, type projection and EXPLAIN work; all 51 expression-only cases pass. Native/Arrow UDFs now pass all seven frozen
+files: 559 passed, one existing xfail, with 26 focused C++ outcomes matching. Remaining gaps include values/insert/update, files,
+describe, closed-owner API coverage and argument-error details. All failures remain
 recorded. No full Python parity or performance claim.
-Root identity checks show the Rust extension as the only loaded DuckDB engine. Native
-Clippy and workspace/all-target checking pass. Full relation/expression APIs, UDFs,
+Relation show/str/repr share the native shell box renderer; 18/19 display outcomes
+match, including cache/fetch independence. Nine signed catalog tests cover transactional
+internal UDF removal and ordinary-drop protection. Root identity checks show the Rust extension as the only loaded DuckDB engine. Native
+Clippy and workspace/all-target checking pass. Full relation/expression APIs, remaining UDF overload/annotation/concurrency coverage,
 full native Pandas/NumPy semantics, frame/protocol/pushdown and remaining interchange and
 type/platform/package tests remain open. See docs/python-bindings.md and external
-python-expression-20261024/python-expression-checkpoint.json. The foundation checkpoint remains historical; an
+python-udf-20261024/python-udf-checkpoint.json. The foundation checkpoint remains historical; an
 accidental collision in its run 3/4 JSON filenames is documented in the relation
 evidence manifest, with new reports separated and original comparison-4 data restored.
 Use the external CARGO_HOME/PYO3_PYTHON=Python3.13

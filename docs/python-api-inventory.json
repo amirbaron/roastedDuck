@@ -170,9 +170,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "create_function",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 228
+      "line": 228,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -412,9 +413,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "list_type",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 345
+      "line": 345,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -426,9 +428,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "map_type",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 347
+      "line": 347,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -492,9 +495,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "remove_function",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 448
+      "line": 448,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -551,9 +555,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "table_function",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 456
+      "line": 456,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -1257,9 +1262,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "show",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 676
+      "line": 676,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1351,9 +1357,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "to_table",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 744
+      "line": 744,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1868,9 +1875,10 @@
     {
       "surface": "_duckdb",
       "name": "create_function",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 918
+      "line": 918,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
     },
     {
       "surface": "_duckdb",
@@ -2152,7 +2160,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1100,
-      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
     },
     {
       "surface": "_duckdb",
@@ -2167,7 +2175,7 @@
       "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1102,
-      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
     },
     {
       "surface": "_duckdb",
@@ -2253,9 +2261,10 @@
     {
       "surface": "_duckdb",
       "name": "remove_function",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1240
+      "line": 1240,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
     },
     {
       "surface": "_duckdb",
@@ -2331,9 +2340,10 @@
     {
       "surface": "_duckdb",
       "name": "table_function",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1256
+      "line": 1256,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
     },
     {
       "surface": "_duckdb",
@@ -2509,16 +2519,18 @@
     {
       "surface": "_duckdb._enums",
       "name": "PythonExceptionHandling",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_enums.pyi",
-      "line": 48
+      "line": 48,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
     },
     {
       "surface": "_duckdb._enums",
       "name": "RenderMode",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_enums.pyi",
-      "line": 55
+      "line": 55,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
     },
     {
       "surface": "_duckdb._enums",
@@ -2905,16 +2917,18 @@
     {
       "surface": "_duckdb._func",
       "name": "FunctionNullHandling",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_func.pyi",
-      "line": 6
+      "line": 6,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
     },
     {
       "surface": "_duckdb._func",
       "name": "PythonUDFType",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_func.pyi",
-      "line": 13
+      "line": 13,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
     },
     {
       "surface": "_duckdb._sqltypes",

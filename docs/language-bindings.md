@@ -15,18 +15,20 @@ A native PyO3 Python package is now implemented in `crates/python` and `python/`
 Its signed current development wheel matches 64 expression, 36 join/write, 49/51 native Pandas,
 30 reader, 32 input, 42 foundation, 30 relation and 75/76 host C++ outcomes.
 The DB-API cohort passes 101/101 on both engines; a broader host cohort
-passes 37/37 on both engines; the object/analyzer cohort passes 75/81 (C++81/81).
-The Arrow cohort passes 41/41 on both engines. One Arrow setting-change and two
-decimal discrepancies are unaccepted. A separate relation
-cohort now collects all 123 cases: 101 pass and 22 fail, versus C++123/123. The 50
+passes 37/37 on both engines; the object/analyzer cohort passes 77/81 (C++81/81).
+The Arrow cohort passes 41/41 on both engines. Four discrepancies remain unaccepted: one Arrow setting change, two decimal cases
+and string render mode. A separate relation
+cohort now collects all 123 cases: 104 pass and 19 fail, versus C++123/123. The 50
 previously blocked cases now run; remaining failures are recorded.
-This is a partial implementation, not Python completion. R and the other language
+This is a partial implementation, not Python completion. Native/Arrow UDFs pass all
+seven frozen files (559 passed, one existing xfail),
+with 26 focused outcomes matching C++. R and the other language
 packages remain unimplemented/unverified. The complete workspace/all-target check
 includes the Python crate. See [Python implementation gates](python-bindings.md).
 
 | Surface | Current evidence / remaining work |
 |---|---|
-| Python | Native arrays, Arrow, joins/writes and expression trees; 101/101 DB-API, 37/37 host, 41/41 Arrow, 75/81 object and 101/123 relation/expression cases pass. Complete remaining relation/UDF/input/expression APIs, platform/package gates and three unaccepted discrepancies |
+| Python | Native arrays, Arrow, joins/writes and expression trees; 101/101 DB-API, 37/37 host, 41/41 Arrow, 77/81 object and 104/123 relation/expression cases pass. 559 UDF cases pass plus one existing xfail; complete remaining relation/input/expression and UDF overload APIs, platform/package gates and four unaccepted discrepancies |
 | R | New bindings/package required; inventory and implement the public API and run upstream tests |
 | C API | Current rebuilt library: all 546 duckdb.h exports; upstream 30-file harness passes; 8,735 native ABI outcomes match. ENUM invalid-value failure semantics remain open; duckdb_adbc_init now exists; scoped ADBC loading/interchange checks pass |
 | CLI | Existing shell implementation and historical differential tests; close remaining engine/name gaps and repeat final shell verification |

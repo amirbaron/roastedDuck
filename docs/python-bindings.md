@@ -88,7 +88,20 @@ compose native trees without rendering operands back to SQL. Relations accept th
 trees in selection/projection, filters, aggregates, sorts and join predicates. Column
 attribute access, type-based selection, native AST EXPLAIN and the dataframe convenience
 projection/filter/order/alias/distinct functions are implemented. Full overload, parser
-option, constructor/error and remaining expression/UDF coverage still need verification.
+option, constructor/error and remaining expression and UDF overload coverage still need verification.
+
+Python scalar UDFs now register native expression kernels with inferred/explicit types,
+variadic arguments, stability/side effects, NULL handling and exception handling. Native
+callbacks receive typed Python values; Arrow callbacks receive bounded ChunkedArray
+batches exported/imported through the native C data interface. Registration closes an
+active result but preserves explicit transactions. Function removal uses transactional
+catalog removal with an explicit internal-entry permission; normal SQL drops retain
+internal-entry protection. Callable owners remain live through the native kernel and
+are released after removal. Duplicate names/signatures follow the frozen client.
+`table_function`, connection list/map type helpers and `to_table` are implemented.
+Relation `show`/`str`/`repr` share the shell's native box renderer and cache the bounded
+10,000-row display independently of fetching. Display options invalidate that cache.
+The string `render_mode="columns"` discrepancy below remains unaccepted.
 
 Conversions currently cover scalar/nested values, 128-bit integers, decimals, strings,
 blobs, dates/times/timestamps, intervals, UUIDs, lists, structs and ordinary hashable-key
@@ -144,21 +157,30 @@ engine names and queries keep their native representation.
   **49/51 focused C++ outcomes**; the two disagreements are the decimal cases below.
   Coverage includes numeric widths, nullable types, live/replaced buffers, stable names,
   categories, nested values, sampling fallback, timestamp units and object ownership.
-- A broader five-file object/analyzer/category/stride cohort passes **75/81** on Rust,
-  versus **81/81** on C++. Six failures remain: relation representation/`show`, nested
-  map/type comparison behavior and the two decimal discrepancies. All failures remain
-  in `pandas-object-rust-final/remaining-gaps.json`; none was skipped or normalized.
+- A broader five-file object/analyzer/category/stride cohort passes **77/81** on Rust,
+  versus **81/81** on C++. Four failures remain: nested map/type
+  comparison behavior and the two decimal discrepancies. All failures remain
+  in `python-udf-20261024/pandas-object-rust-optimized/remaining-gaps.json`; none was skipped or normalized.
 - Focused host conversion matches **75/76 exact C++ outcomes**, including native widths,
   nullable types, nested values, categorical/empty ENUMs, date/interval overflow errors,
   timestamp precision, buffer lifetime after close, requested Arrow batch sizes and
   incremental dataframe chunks. This includes 5,000-row boundaries; it is not a full
   conversion/platform acceptance matrix.
 - The seven-file relation/join/expression cohort now **collects all 123 cases**: Rust
-  passes **101**, fails **22**, skips none, versus C++ **123/123**. The previously blocked
+  passes **104**, fails **19**, skips none, versus C++ **123/123**. The previously blocked
   50 cases run without collection errors. Of the 51 expression/SQL-expression cases,
-  50 pass; the remaining case requires `create_function`. Other failures require
-  values/insert/update, files, UDF registration, rendering/describe and argument-error
-  details. All failures remain; no assertions or collection errors were removed.
+  all **51 pass**. Other failures require values/insert/update, files, describe,
+  closed-owner API coverage and argument-error details. All failures remain; no assertions or collection errors were removed.
+- All **seven pinned upstream UDF files** now match C++: **559 pass, one existing xfail,
+  zero failures/collection errors**. This includes native/Arrow type coverage, 400 mixed
+  NULL-layout cases, exceptions/side effects, removal and return-value refcount leakage.
+  **26/26 focused C++ outcomes** also match: callable ownership/release, bounded Arrow
+  batch sizes, annotations/varargs, errors, duplicate signatures across connections,
+  explicit transaction rollback and Arrow property changes.
+- Native relation rendering matches **18/19 focused C++ outcomes**. Values, Unicode,
+  nested/empty results, truncation, configurable NULL text, cache/fetch independence,
+  closed owners and integer/enum column mode match. One string-mode disagreement is
+  retained below. No failing case was excluded from the denominator.
 - Installed-extension hashes, wheel RECORD regeneration, signature steps and loaded
   image inspection prove the Rust environment loads the Rust extension as its only
   DuckDB engine. The C++ oracle is in a separate environment. Exact dependency freezes
@@ -192,6 +214,13 @@ negative infinity/DOUBLE. The frozen upstream assertions also encode these C++ r
 Rust currently preserves the represented values. These cases have not been changed into
 passes or approved as divergences; raw outcomes and the failing upstream cases remain.
 
+A fourth **unaccepted parity discrepancy** is recorded in relation display. C++ renders
+rows when `show(render_mode="columns")` receives a string, while Rust renders columns;
+integer `1` and `RenderMode.COLUMNS` agree. The frozen Python `render_mode_enum.hpp`
+converter stores a pointer to a local enum in its string branch, leaving a dangling
+pointer before extraction. Rust uses the parsed enum. `render-comparison-optimized.json`
+retains the exact outputs; this has not been accepted as a divergence.
+
 The numeric scan optimization was measured for speed **and** memory. For 100k/1M rows,
 Rust development-wheel elapsed times fell from 7.90/85.03 ms to 1.31/6.83 ms. Whole-process
 peaks stayed about 122/167 MB, dominated by the existing input/imports; query increments
@@ -201,10 +230,23 @@ the improvement does not certify final release acceptance. Every fresh-process r
 checksum and RSS value is retained; no average hides this outlier and no table-block
 caching was added to obtain the speedup.
 
+The UDF microbenchmarks also retain speed and memory together, one fresh process per
+case and one engine thread, with a Rust development wheel versus C++ release. A native
+primitive-return optimization removes intermediate vector casts and reuses only bounded
+argument buffers. Native 100k/1M execution fell from 27.9/271.9 ms to **8.3/80.0 ms**;
+C++ took **6.5/57.4 ms** in the repeat controls. Whole-process peaks stayed about
+116–117 MB for both engines. Arrow 100k/1M took **5.3/50.0 ms** versus **5.1/35.9 ms**,
+with about 118.5 MB Rust versus 125.5 MB C++ peak RSS. The 1M native and Arrow cases
+remain about **39% longer** individually; they are not hidden in a suite average or
+accepted as final release performance. Raw before/after timings, checksums and memory
+are in `performance-comparison{,-optimized}.json`. The storage table-cache policy is
+unchanged; no residency increase was used to close the callback speed gap.
+
 ## Remaining gates
 
 Complete relation APIs (including values/insert/update/delete, files, describe and
-remaining expression overloads), representation, broader result lifetimes, UDFs, replacement scans,
+remaining expression overloads), remaining display/error semantics, broader result lifetimes,
+remaining UDF overload/annotation/concurrency coverage, replacement scans,
 complete native Pandas/NumPy inference, nested conversion and input error semantics,
 complete Arrow registration/protocol/schema/error/pushdown
 coverage, complete reader/capsule/concurrency behavior, Polars/Torch output,
@@ -219,7 +261,16 @@ release performance. Preserve the accepted uncached speed-memory baseline and re
 individual query outliers in final acceptance. No table-cache retention was introduced.
 The other selected language clients remain part of the goal.
 
-Current evidence: `.context/artifacts/python-expression-20261024/python-expression-checkpoint.json`,
+Current evidence: `.context/artifacts/python-udf-20261024/python-udf-checkpoint.json`,
+`{udf,dbapi,host-expanded,arrow,pandas-object,relation-expression}-rust-optimized/`,
+`{udf,render}-comparison-optimized.json`, signed `wheels-dev-optimized-signed/`,
+`catalog-tests.log`, `clippy-final.jsonl` and `workspace-check-final.jsonl`.
+The catalog regression suite passes 9/9 signed tests, including opt-in internal function
+removal, rollback/commit and builtin type protection. Python/shell all-target Clippy with
+warnings denied and the workspace/all-target compilation pass. These are development
+checkpoint gates; full shell/corpus/client/release/performance gates remain open.
+
+Previous expression evidence: `.context/artifacts/python-expression-20261024/python-expression-checkpoint.json`,
 `comparison-{expression,joins-writes,pandas,reader,input,host,relations,foundation}-final.json`,
 `{dbapi,host-expanded,arrow-upstream,pandas-object,expression-upstream}-rust-final/`,
 `expression-upstream-cpp-3/`, signed `wheels-dev-final-signed/`,
