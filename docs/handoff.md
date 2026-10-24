@@ -132,12 +132,16 @@ internal UDF removal and ordinary-drop protection. Parquet read/write now pass 5
 59/60 on both engines with a shared timestamp-unit assertion failure. Fifty scoped
 Parquet comparisons and 19 call diagnostics match (documented nondeterminism only
 normalized, raw errors retained). Native function/cache tests pass 37/37 signed.
-The remaining relation-cohort case now reaches the missing any_value method after the
-closed aggregation check; open relation APIs still need implementation. Root identity checks show the Rust extension as the only loaded DuckDB engine. Native
+The remaining relation-cohort case now reaches the missing map method after the
+closed aggregation check; open relation APIs still need implementation. Aggregate/window convenience families now pass 108 upstream cases with one existing
+skip; 79/81 focused outcomes match. A fifth unaccepted discrepancy is C++
+RTrim removing trailing UTF-8 bytes and sometimes aggregating the wrong column.
+Rust preserves the identifier. Grouping/window microbenchmarks retain individual
+slowdowns and lower peaks; direct SQL reproduces them. Root identity checks show the Rust extension as the only loaded DuckDB engine. Native
 Clippy and workspace/all-target checking pass. Full relation/expression APIs, remaining UDF overload/annotation/concurrency coverage,
 full native Pandas/NumPy semantics, frame/protocol/pushdown and remaining interchange and
 type/platform/package tests remain open. See docs/python-bindings.md and external
-python-parquet-20261024/python-parquet-checkpoint.json. The foundation checkpoint remains historical; an
+python-aggregates-20261024/python-aggregates-checkpoint.json. The foundation checkpoint remains historical; an
 accidental collision in its run 3/4 JSON filenames is documented in the relation
 evidence manifest, with new reports separated and original comparison-4 data restored.
 Use the external CARGO_HOME/PYO3_PYTHON=Python3.13

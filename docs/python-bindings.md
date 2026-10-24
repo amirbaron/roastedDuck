@@ -151,6 +151,19 @@ Query byte strings remain native through temporary view creation and SQL parsing
 Closed aggregation rejects its closed connection before parsing expressions; many
 other relation methods still need implementation, including the next `any_value` failure.
 
+The relational aggregate/window convenience families now build native query trees for
+aggregation, grouping sets/cubes/rollups, projected columns and windows. Methods include
+scalar/statistical/boolean/bitwise/list/string/arg aggregates, quantiles, `apply`,
+`value_counts`/`unique`, ranks, ntile, first/last/nth values and lag/lead. The expression
+adapter follows frozen argument splitting, quoting fallback, separators, quantile
+precision, offset/default handling and IGNORE NULLS; it does not materialize Python
+rows or re-enter the SQL execution API. GROUP BY parsing copies only the group node,
+so trailing ORDER BY/HAVING/LIMIT clauses have the same ignored behavior as C++.
+Table-function SQL rendering now preserves C++'s omitted alias while retaining the
+public function alias. Parameter iterables/mappings follow the frozen ABC checks.
+Implemented relation methods reject closed owners before parsing; missing APIs remain
+visible (the broad closed-owner case now reaches `map`).
+
 Conversions currently cover scalar/nested values, 128-bit integers, decimals, strings,
 blobs, dates/times/timestamps, intervals, UUIDs, lists, structs and ordinary hashable-key
 maps, plus maps with unhashable keys represented as key/value lists and fixed arrays
@@ -217,8 +230,13 @@ engine names and queries keep their native representation.
 - The seven-file relation/join/expression cohort now **collects all 123 cases**: Rust
   passes **122**, fails **1**, skips none, versus C++ **123/123**. The previously blocked
   50 cases run without collection errors. Of the 51 expression/SQL-expression cases,
-  all **51 pass**. The remaining closed-owner case progresses through aggregation
-  to the unimplemented `any_value` method; it still fails and is not skipped. All failures remain; no assertions or collection errors were removed.
+  all **51 pass**. The remaining closed-owner case progresses through the implemented methods
+  to the unimplemented `map` method; it still fails and is not skipped. All failures remain; no assertions or collection errors were removed.
+- The four unmodified aggregate/window/grouping/function files pass **108 cases**
+  with **one existing skip** on both engines. Focused comparisons match **79/81**
+  outcomes; both mismatches are the same unaccepted UTF-8 trim defect described below.
+  The standalone table-function suite passes 1/1, and ten closed-state/unknown-attribute
+  outcomes match C++ without stubbing missing methods or changing unknown attributes.
 - The three primary Parquet files pass **57/57** on both engines. With the Arrow
   Parquet round-trip file included, both engines pass **59/60**, skipping none. The
   shared failure compares Pandas datetime64[ms] from PyArrow with datetime64[us] from
@@ -290,6 +308,15 @@ converter stores a pointer to a local enum in its string branch, leaving a dangl
 pointer before extraction. Rust uses the parsed enum. `render-comparison-optimized.json`
 retains the exact outputs; this has not been accepted as a divergence.
 
+A fifth **unaccepted parity discrepancy** affects aggregate/window column strings.
+The frozen C++ `StringUtil::RTrim` tests signed bytes with `ch > 0`, so it removes
+trailing UTF-8 bytes. `sum("雪")` becomes an empty quoted identifier and raises a parser
+error. With columns `prefix=11` and `prefix雪=99`, `sum("prefix雪")` returns **11** on C++
+and **99** on Rust. Rust trims ASCII whitespace and preserves the requested identifier.
+Explicitly quoted Unicode columns match both engines. Raw results remain in
+`aggregation-comparison-current.json`; no case was normalized, excluded or accepted
+as a divergence. This has not been converted into a passing comparison.
+
 The numeric scan optimization was measured for speed **and** memory. For 100k/1M rows,
 Rust development-wheel elapsed times fell from 7.90/85.03 ms to 1.31/6.83 ms. Whole-process
 peaks stayed about 122/167 MB, dominated by the existing input/imports; query increments
@@ -335,6 +362,17 @@ path case varied from Rust 27% shorter to 21% longer elapsed time across these s
 raw individual cases/CPU/checksums/peaks remain in `performance-comparison{,-verified}.json`.
 This is not final release acceptance and does not change the accepted engine baseline.
 
+The grouping/window wrapper measurements also report speed and memory together,
+one fresh process per query at one engine thread (Rust development, C++ release).
+For 1M generated rows and 100 groups, grouping took Rust **11.4–11.6 ms** versus C++
+**5.4–5.5 ms**, at **44.4–44.5 MB** versus **48.6–48.9 MB** peak RSS. The window query took
+**121.9–123.6 ms** versus **90.3–91.1 ms**, at **75.2–75.9 MB** versus **80.7–82.1 MB**.
+Direct SQL reproduces the same individual slowdowns (11.4 vs 5.4 ms and 121.6 vs 89.7 ms),
+so the wrapper is not responsible. The 100k-row window case remains about 1.7–1.8 times
+slower; all four size/mode cases and checksums are retained in
+`performance-comparison{,-current,-sql}.json`. No cache retention or memory increase
+was used to close these gaps; they remain open for final performance acceptance.
+
 ## Remaining gates
 
 Complete relation APIs (including delete, remaining file formats/filesystems, mutation/type/metadata and
@@ -354,7 +392,12 @@ release performance. Preserve the accepted uncached speed-memory baseline and re
 individual query outliers in final acceptance. No table-cache retention was introduced.
 The other selected language clients remain part of the goal.
 
-Current evidence: `.context/artifacts/python-parquet-20261024/python-parquet-checkpoint.json`,
+Current evidence: `.context/artifacts/python-aggregates-20261024/python-aggregates-checkpoint.json`,
+`{aggregation,parquet,arguments,csv,values,describe,update,udf,render,expression,joins-writes,pandas,reader,input,host,relations,foundation}-comparison-current.json`,
+`{table-function,aggregates,parquet,csv,udf,dbapi,host-expanded,arrow,pandas-object,relation-expression}-rust-current/`,
+signed `wheels-dev-6-signed/`, `clippy-3.jsonl` and `workspace-check-current.jsonl`.
+
+Previous Parquet evidence: `.context/artifacts/python-parquet-20261024/python-parquet-checkpoint.json`,
 `{parquet,arguments,csv,values,describe,update,udf,render,expression,joins-writes,pandas,reader,input,host,relations,foundation}-comparison-verified.json`,
 `{parquet,csv,udf,dbapi,host-expanded,arrow,pandas-object,relation-expression}-rust-verified/`,
 signed `wheels-dev-verified-signed/`, `function-tests.log` (37 signed tests, zero failures),

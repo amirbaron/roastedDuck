@@ -16,8 +16,8 @@ Its signed current development wheel matches 64 expression, 36 join/write, 49/51
 30 reader, 32 input, 42 foundation, 30 relation and 75/76 host C++ outcomes.
 The DB-API cohort passes 101/101 on both engines; a broader host cohort
 passes 37/37 on both engines; the object/analyzer cohort passes 77/81 (C++81/81).
-The Arrow cohort passes 41/41 on both engines. Four discrepancies remain unaccepted: one Arrow setting change, two decimal cases
-and string render mode. A separate relation
+The Arrow cohort passes 41/41 on both engines. Five discrepancies remain unaccepted: one Arrow setting change, two decimal cases,
+string render mode and trailing UTF-8 aggregate/window identifiers. A separate relation
 cohort now collects all 123 cases: 122 pass and 1 fail, versus C++123/123. The 50
 previously blocked cases now run; remaining failures are recorded.
 This is a partial implementation, not Python completion. Native/Arrow UDFs pass all
@@ -26,13 +26,15 @@ with 26 focused outcomes matching C++. CSV read/write pass 98 cases with one exi
 skip and 56 scoped outcomes; broad filesystem/platform coverage remains open.
 Parquet read/write pass 57 primary cases; the broader cohort is 59/60 with a shared
 C++ timestamp-unit failure. Fifty Parquet and 19 call-contract outcomes match with
-documented nondeterminism normalized and raw text retained. R and the other language
+documented nondeterminism normalized and raw text retained. Aggregate/window families pass 108 cases plus one existing skip; 79/81 focused
+outcomes match, with two UTF-8 trim outcomes held as one unaccepted discrepancy.
+R and the other language
 packages remain unimplemented/unverified. The complete workspace/all-target check
 includes the Python crate. See [Python implementation gates](python-bindings.md).
 
 | Surface | Current evidence / remaining work |
 |---|---|
-| Python | Native arrays, Arrow, joins/writes and expression trees; 101/101 DB-API, 37/37 host, 41/41 Arrow, 77/81 object and 122/123 relation/expression cases pass. 559 UDF cases pass plus one existing xfail; complete remaining relation/input/expression and UDF overload APIs, platform/package gates and four unaccepted discrepancies |
+| Python | Native arrays, Arrow, joins/writes and expression trees; 101/101 DB-API, 37/37 host, 41/41 Arrow, 77/81 object and 122/123 relation/expression cases pass. 559 UDF cases pass plus one existing xfail; complete remaining relation/input/expression and UDF overload APIs, platform/package gates and five unaccepted discrepancies |
 | R | New bindings/package required; inventory and implement the public API and run upstream tests |
 | C API | Current rebuilt library: all 546 duckdb.h exports; upstream 30-file harness passes; 8,735 native ABI outcomes match. ENUM invalid-value failure semantics remain open; duckdb_adbc_init now exists; scoped ADBC loading/interchange checks pass |
 | CLI | Existing shell implementation and historical differential tests; close remaining engine/name gaps and repeat final shell verification |

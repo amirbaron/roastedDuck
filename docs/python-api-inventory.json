@@ -696,30 +696,34 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "any_value",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 477
+      "line": 477,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "apply",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 480
+      "line": 480,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "arg_max",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 488
+      "line": 488,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "arg_min",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 491
+      "line": 491,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -748,51 +752,58 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "avg",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 499
+      "line": 499,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "bit_and",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 502
+      "line": 502,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "bit_or",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 505
+      "line": 505,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "bit_xor",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 508
+      "line": 508,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "bitstring_agg",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 511
+      "line": 511,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "bool_and",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 520
+      "line": 520,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "bool_or",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 523
+      "line": 523,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -805,9 +816,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "count",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 527
+      "line": 527,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -836,16 +848,18 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "cume_dist",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 533
+      "line": 533,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "dense_rank",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 534
+      "line": 534,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -898,9 +912,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "favg",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 541
+      "line": 541,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -984,37 +999,42 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "first",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 562
+      "line": 562,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "first_value",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 563
+      "line": 563,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "fsum",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 564
+      "line": 564,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "geomean",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 567
+      "line": 567,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "histogram",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 568
+      "line": 568,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1051,30 +1071,34 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "lag",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 575
+      "line": 575,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "last",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 584
+      "line": 584,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "last_value",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 585
+      "line": 585,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "lead",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 586
+      "line": 586,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1087,9 +1111,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "list",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 596
+      "line": 596,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1101,51 +1126,58 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "max",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 602
+      "line": 602,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "mean",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 605
+      "line": 605,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "median",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 608
+      "line": 608,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "min",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 611
+      "line": 611,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "mode",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 614
+      "line": 614,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "n_tile",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 617
+      "line": 617,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "nth_value",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 620
+      "line": 620,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1158,9 +1190,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "percent_rank",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 629
+      "line": 629,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1172,9 +1205,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "product",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 640
+      "line": 640,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1187,23 +1221,26 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "quantile",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 644
+      "line": 644,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "quantile_cont",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 652
+      "line": 652,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "quantile_disc",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 660
+      "line": 660,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1216,23 +1253,26 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "rank",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 669
+      "line": 669,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "rank_dense",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 670
+      "line": 670,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "row_number",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 671
+      "line": 671,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1293,44 +1333,50 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "std",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 687
+      "line": 687,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "stddev",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 690
+      "line": 690,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "stddev_pop",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 693
+      "line": 693,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "stddev_samp",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 696
+      "line": 696,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "string_agg",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 699
+      "line": 699,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "sum",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 702
+      "line": 702,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1397,9 +1443,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "unique",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 748
+      "line": 748,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1412,37 +1459,42 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "value_counts",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 750
+      "line": 750,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "var",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 751
+      "line": 751,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "var_pop",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 754
+      "line": 754,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "var_samp",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 757
+      "line": 757,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "variance",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 760
+      "line": 760,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
