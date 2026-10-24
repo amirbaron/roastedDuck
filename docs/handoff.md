@@ -115,11 +115,11 @@ reduced the 1M-row scan from 85 ms to 6.8 ms at similar peak RSS; C++ took 3.3 m
 Keep this individual development-wheel slowdown visible; do not use a suite average
 or extra caching to declare performance acceptance. All nine
 dataframe-chunk tests pass. The seven-file relation/join/expression cohort now collects
-all 123 cases: Rust passes 104/fails 19/skips 0 versus C++123/123. The 50 formerly blocked
+all 123 cases: Rust passes 116/fails 7/skips 0 versus C++123/123. The 50 formerly blocked
 cases run. Native expression construction, immutable operators, cases/lambdas, column
 attributes, type projection and EXPLAIN work; all 51 expression-only cases pass. Native/Arrow UDFs now pass all seven frozen
-files: 559 passed, one existing xfail, with 26 focused C++ outcomes matching. Remaining gaps include values/insert/update, files,
-describe, closed-owner API coverage and argument-error details. All failures remain
+files: 559 passed, one existing xfail, with 26 focused C++ outcomes matching. Values/insertion, describe and update match 30, 14 and 23 focused C++ outcomes.
+Remaining gaps include file APIs, closed-owner API coverage and argument-error details. All failures remain
 recorded. No full Python parity or performance claim.
 Relation show/str/repr share the native shell box renderer; 18/19 display outcomes
 match, including cache/fetch independence. Nine signed catalog tests cover transactional
@@ -127,7 +127,7 @@ internal UDF removal and ordinary-drop protection. Root identity checks show the
 Clippy and workspace/all-target checking pass. Full relation/expression APIs, remaining UDF overload/annotation/concurrency coverage,
 full native Pandas/NumPy semantics, frame/protocol/pushdown and remaining interchange and
 type/platform/package tests remain open. See docs/python-bindings.md and external
-python-udf-20261024/python-udf-checkpoint.json. The foundation checkpoint remains historical; an
+python-values-20261024/python-values-checkpoint.json. The foundation checkpoint remains historical; an
 accidental collision in its run 3/4 JSON filenames is documented in the relation
 evidence manifest, with new reports separated and original comparison-4 data restored.
 Use the external CARGO_HOME/PYO3_PYTHON=Python3.13

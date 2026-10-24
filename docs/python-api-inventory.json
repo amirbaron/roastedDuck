@@ -606,9 +606,10 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "values",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 463
+      "line": 463,
+      "evidence": "python-values-20261024: 30 values/insertion, 14 describe and 23 update exact C++ outcomes; relation/expression cohort 116/123; full overload/platform/ownership coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -845,9 +846,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "describe",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 535
+      "line": 535,
+      "evidence": "python-values-20261024: 30 values/insertion, 14 describe and 23 update exact C++ outcomes; relation/expression cohort 116/123; full overload/platform/ownership coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1013,9 +1015,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "insert",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 571
+      "line": 571,
+      "evidence": "python-values-20261024: 30 values/insertion, 14 describe and 23 update exact C++ outcomes; relation/expression cohort 116/123; full overload/platform/ownership coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -1395,9 +1398,10 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "update",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 749
+      "line": 749,
+      "evidence": "python-values-20261024: 30 values/insertion, 14 describe and 23 update exact C++ outcomes; relation/expression cohort 116/123; full overload/platform/ownership coverage remains open"
     },
     {
       "surface": "_duckdb.DuckDBPyRelation",
@@ -2399,9 +2403,10 @@
     {
       "surface": "_duckdb",
       "name": "values",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1269
+      "line": 1269,
+      "evidence": "python-values-20261024: 30 values/insertion, 14 describe and 23 update exact C++ outcomes; relation/expression cohort 116/123; full overload/platform/ownership coverage remains open"
     },
     {
       "surface": "_duckdb",

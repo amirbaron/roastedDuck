@@ -103,6 +103,18 @@ Relation `show`/`str`/`repr` share the shell's native box renderer and cache the
 10,000-row display independently of fetching. Display options invalidate that cache.
 The string `render_mode="columns"` discrepancy below remains unaccepted.
 
+Values now construct native expression-list relations from literal lists or variadic
+expression/tuple rows, preserving inferred types, expression names and aliases.
+Table `insert` keeps bind and execution errors distinct, matches the frozen execution
+prefix and uses the native transaction/constraint path. `update` builds native update
+statements from dictionary expressions/defaults/conditions. The frozen wrapper exposes
+bind failures but discards execution results: native runtime failures still roll back
+or abort the transaction, matching the C++ behavior verified by explicit journeys.
+`describe` builds the same six aggregate/UNNEST rows as C++, remaining lazy over the
+original relation with its retained external inputs. No Python row snapshot executes
+these operations. Missing update-column hints now use the native Levenshtein candidate
+helper, preserving name bytes and C++'s newline/ranking behavior.
+
 Conversions currently cover scalar/nested values, 128-bit integers, decimals, strings,
 blobs, dates/times/timestamps, intervals, UUIDs, lists, structs and ordinary hashable-key
 maps, plus maps with unhashable keys represented as key/value lists and fixed arrays
@@ -167,10 +179,15 @@ engine names and queries keep their native representation.
   incremental dataframe chunks. This includes 5,000-row boundaries; it is not a full
   conversion/platform acceptance matrix.
 - The seven-file relation/join/expression cohort now **collects all 123 cases**: Rust
-  passes **104**, fails **19**, skips none, versus C++ **123/123**. The previously blocked
+  passes **116**, fails **7**, skips none, versus C++ **123/123**. The previously blocked
   50 cases run without collection errors. Of the 51 expression/SQL-expression cases,
-  all **51 pass**. Other failures require values/insert/update, files, describe,
+  all **51 pass**. Other failures require file APIs,
   closed-owner API coverage and argument-error details. All failures remain; no assertions or collection errors were removed.
+- **30/30 exact values/insertion outcomes**, **14/14 describe outcomes** and **23/23
+  update outcomes** match C++. Coverage includes literal/expression/tuple rows, row
+  shape/types/names/errors, nested values, defaults, constraints/recovery, transaction
+  rollback/abort, catalog/search-path target behavior, lazy aggregates, empty/nested/
+  temporal results, retained Arrow inputs, and byte-preserving candidate suggestions.
 - All **seven pinned upstream UDF files** now match C++: **559 pass, one existing xfail,
   zero failures/collection errors**. This includes native/Arrow type coverage, 400 mixed
   NULL-layout cases, exceptions/side effects, removal and return-value refcount leakage.
@@ -244,7 +261,7 @@ unchanged; no residency increase was used to close the callback speed gap.
 
 ## Remaining gates
 
-Complete relation APIs (including values/insert/update/delete, files, describe and
+Complete relation APIs (including delete, file APIs, remaining mutation/type/metadata and
 remaining expression overloads), remaining display/error semantics, broader result lifetimes,
 remaining UDF overload/annotation/concurrency coverage, replacement scans,
 complete native Pandas/NumPy inference, nested conversion and input error semantics,
@@ -261,7 +278,12 @@ release performance. Preserve the accepted uncached speed-memory baseline and re
 individual query outliers in final acceptance. No table-cache retention was introduced.
 The other selected language clients remain part of the goal.
 
-Current evidence: `.context/artifacts/python-udf-20261024/python-udf-checkpoint.json`,
+Current evidence: `.context/artifacts/python-values-20261024/python-values-checkpoint.json`,
+`{values,describe,update,udf,render,expression,joins-writes,pandas,reader,input,host,relations,foundation}-comparison-verified.json`,
+`{udf,dbapi,host-expanded,arrow,pandas-object,relation-expression}-rust-final/`, signed
+`wheels-dev-8-signed/`, `clippy-final.jsonl` and `workspace-check-final.jsonl`.
+
+Previous UDF evidence: `.context/artifacts/python-udf-20261024/python-udf-checkpoint.json`,
 `{udf,dbapi,host-expanded,arrow,pandas-object,relation-expression}-rust-optimized/`,
 `{udf,render}-comparison-optimized.json`, signed `wheels-dev-optimized-signed/`,
 `catalog-tests.log`, `clippy-final.jsonl` and `workspace-check-final.jsonl`.

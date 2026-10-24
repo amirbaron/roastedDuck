@@ -18,7 +18,7 @@ The DB-API cohort passes 101/101 on both engines; a broader host cohort
 passes 37/37 on both engines; the object/analyzer cohort passes 77/81 (C++81/81).
 The Arrow cohort passes 41/41 on both engines. Four discrepancies remain unaccepted: one Arrow setting change, two decimal cases
 and string render mode. A separate relation
-cohort now collects all 123 cases: 104 pass and 19 fail, versus C++123/123. The 50
+cohort now collects all 123 cases: 116 pass and 7 fail, versus C++123/123. The 50
 previously blocked cases now run; remaining failures are recorded.
 This is a partial implementation, not Python completion. Native/Arrow UDFs pass all
 seven frozen files (559 passed, one existing xfail),
@@ -28,7 +28,7 @@ includes the Python crate. See [Python implementation gates](python-bindings.md)
 
 | Surface | Current evidence / remaining work |
 |---|---|
-| Python | Native arrays, Arrow, joins/writes and expression trees; 101/101 DB-API, 37/37 host, 41/41 Arrow, 77/81 object and 104/123 relation/expression cases pass. 559 UDF cases pass plus one existing xfail; complete remaining relation/input/expression and UDF overload APIs, platform/package gates and four unaccepted discrepancies |
+| Python | Native arrays, Arrow, joins/writes and expression trees; 101/101 DB-API, 37/37 host, 41/41 Arrow, 77/81 object and 116/123 relation/expression cases pass. 559 UDF cases pass plus one existing xfail; complete remaining relation/input/expression and UDF overload APIs, platform/package gates and four unaccepted discrepancies |
 | R | New bindings/package required; inventory and implement the public API and run upstream tests |
 | C API | Current rebuilt library: all 546 duckdb.h exports; upstream 30-file harness passes; 8,735 native ABI outcomes match. ENUM invalid-value failure semantics remain open; duckdb_adbc_init now exists; scoped ADBC loading/interchange checks pass |
 | CLI | Existing shell implementation and historical differential tests; close remaining engine/name gaps and repeat final shell verification |
