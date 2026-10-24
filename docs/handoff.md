@@ -62,14 +62,20 @@ correction; the corrected binary passes 154 native metadata cases. Two-way check
 plus nonempty WAL replay passes for the recorded INTEGER/VARCHAR/NULL/Unicode scenario.
 These remain scoped evidence, not full final shell/corpus/storage/WAL acceptance.
 
-The ADBC core is now staged internally: database/connection/statement lifecycle,
-transactions, streaming queries, schema inspection and Arrow parameter binding compile
-and pass six new signed ADBC tests plus the existing Arrow test (seven total, none
-ignored). A signed C++ public-ABI probe passes three matching journey families. C API
-all-target Clippy and complete workspace/all-target checking pass at this snapshot.
-The initializer remains unexported; ingestion/metadata/options/error details, upstream
-ADBC conformance and actual driver-manager/client loading remain open. See
-`docs/adbc.md` and `adbc-core-checkpoint.json` on the external SSD.
+The ADBC core is staged internally: lifecycle, transactions, streaming queries,
+result/parameter schemas, Arrow binding, all typed options and four ingestion modes.
+Eleven signed library tests pass (nine C API and two optimizer; none ignored), five
+C++ driver-ABI journey families pass, and 1,747 complete native public-C-ABI appender
+journeys match C++, all producing sum 49. The expanded seven-name C journey passes
+both libraries; three affected upstream C API files pass 16 cases/615,708 assertions.
+The selected-column journey exposed a join-statistics to_string panic; native byte
+comparison fixes it and is regression tested. Failed evidence remains preserved.
+
+The initializer remains unexported; metadata/statistics, rich/deferred errors,
+catalog/schema option Value boundaries, upstream ADBC conformance and actual
+initializer/driver-manager/client loading remain open. C API/runtime/optimizer
+all-target Clippy passes. See `docs/adbc.md`, `adbc-core-checkpoint.json` and the
+newer `adbc-ingest-checkpoint.json` on the external SSD. Performance policy is unchanged.
 
 Historical corpus and benchmark figures below describe previously accepted binaries.
 The new migration still needs the full unit/corpus/shell/storage/WAL/client verification
@@ -1489,3 +1495,28 @@ Python and every selected client, the existing ENUM failure gap and final full
 unit/corpus/shell/storage/WAL/performance acceptance remain open. The uncached memory
 policy is unchanged. Evidence and source hashes: `adbc-core-checkpoint.json` in external
 `identifier-bytes-20261023`; detailed inventory: `docs/adbc.md`.
+
+
+The ADBC ingestion/native appender continuation (2026-10-24) stages typed options and
+all four ingestion modes, including temporary targets, explicit catalog/schema lookup,
+affected rows and representative frozen error cases. Native table description, appender
+lookup, selected columns and query-appender SQL/name/CTE input retain bytes. The first
+expanded public C test exposed a join-statistics expression.to_string() panic during
+selected-column flush; native to_bytes comparison fixes it. The optimizer regression,
+seven-name C journey on both libraries and 1,747 complete C ABI journeys pass. Every
+matrix journey exercises native catalog/schema/table/column/CTE names and returns 49.
+
+Eleven signed library tests pass, none ignored (nine C API, two optimizer), and five
+C++ driver-ABI journey families pass. Three affected upstream C API files pass 16 test
+cases and 615,708 assertions against the rebuilt release library. C API/runtime/optimizer
+all-target Clippy with warnings denied and workspace/all-target compilation pass. A C++
+option comparison caught Mac negative-NaN spelling; native %f formatting now matches
+C++ for both NaN signs, finite numbers, infinity and negative zero. Failed comparison
+and appender backtrace evidence are preserved. No failing assertion was removed.
+
+ADBC metadata/statistics, 1.1 error details/deferred stream errors, catalog/schema option
+Value boundaries, initializer prefix bounds, full upstream ADBC and actual driver-manager
+loading remain open; duckdb_adbc_init is still unexported. Python/all selected clients,
+ENUM failure semantics and final unit/corpus/shell/storage/WAL/performance acceptance
+remain required. No table caching/memory policy changed. Evidence and exact source
+hashes are in `adbc-ingest-checkpoint.json`, with scope in `docs/adbc.md`.

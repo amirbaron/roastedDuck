@@ -12,9 +12,9 @@ Python ctypes oracle scripts are not Python language bindings.
 |---|---|
 | Public C structures and all 56 callback slots | Rust declarations; 13 size/offset assertions match an independently compiled, signed frozen-header probe on arm64 macOS |
 | Database lifecycle | New, configuration/path/URI options, Init, Release staged internally |
-| Database option API | String Get, string/int/double Set staged; remaining typed callbacks pending |
+| Database option API | All typed callbacks staged; finite/NaN/infinity/negative-zero string conversion and representative error/buffer semantics verified |
 | Connection lifecycle | New, Init, Release staged; unread streams materialize before disconnect |
-| Connection options | String Get/Set, integer Get/Set, queued autocommit, current catalog/schema staged; remaining typed callbacks pending |
+| Connection options | All typed callbacks staged, including frozen unsupported operations; queued autocommit and current catalog/schema staged. Native catalog/schema Value-boundary audit remains open |
 | Transactions | Commit/Rollback with continued manual transaction mode staged |
 | Cancellation | Connection/statement interrupt callbacks staged; concurrent cancellation journeys and full status/detail verification pending |
 | Statement lifecycle | New, Release, Prepare, SetSqlQuery staged; multiple SQL statements execute before preparing the last |
@@ -23,9 +23,9 @@ Python ctypes oracle scripts are not Python language bindings.
 | Arrow Bind / BindStream | Ownership transfer and per-batch parameter binding staged; C++'s one-row limit is retained |
 | Arrow result stream | Schema, batch, last-error and release callbacks staged; reuse/release buffers unread batches without eager buffering at query start |
 | Arrow single-batch stream | Independent schema copy including raw names, flags, nested fields, dictionaries and binary metadata staged |
-| Statement option API / ingestion | Pending, including create/append/replace/create_append, temporary tables, catalog/schema selection and affected-row/error semantics |
+| Statement option API / ingestion | All typed callbacks and four ingestion modes staged; scoped native-name/temporary-shadow/row-count/error journeys pass. Remaining nested-type, failure and concurrency cases require upstream conformance |
 | Connection metadata | GetInfo, GetObjects, GetTableTypes, GetTableSchema, GetStatistics and GetStatisticNames pending |
-| Partitions / Substrait | Port exact frozen unsupported behavior and callback population; no generic placeholder implementation accepted |
+| Partitions / Substrait | Exact frozen unsupported partition callbacks staged; initializer must preserve C++'s untouched Substrait slot |
 | ADBC 1.1 error API | Error details, ErrorFromArrayStream and detail ownership pending |
 | Initializer | Pending callback wiring and version-prefix bounds verification; do not write a full 1.1 struct into a 1.0 allocation |
 | Packaging / driver manager | Pending actual upstream driver-manager and selected-client journeys |
@@ -73,3 +73,56 @@ Evidence lives on the external SSD under `.context/artifacts/identifier-bytes-20
 `adbc-core-checkpoint.json`. The checkpoint records exact source and evidence hashes.
 The accepted uncached speed-memory policy is unchanged; no table-cache retention was
 introduced. No new final performance claim follows from these functional tests.
+
+## Ingestion and native appender checkpoint, 2026-10-24
+
+The continuation implements all typed option callbacks and stream ingestion in create,
+append, replace and create_append modes, including temporary target handling, explicit
+catalog/schema resolution, affected-row counts and frozen failure statuses. Ingestion
+uses the Rust engine's C appender. Native byte names now also cross table description,
+selected appender column and query-appender SQL/name/CTE interfaces. Existing text Rust
+QueryAppender callers retain their API; native clients use `for_query_bytes`.
+
+**Eleven signed development-profile library tests pass**, none ignored: nine C API
+library tests and two optimizer tests. The C API count includes eight ADBC regressions
+and the existing Arrow test. Five C++ public-driver-ABI journey families pass: stream
+lifetime, transactions/parameters, bound parameters, ingestion modes and typed options.
+Both engines pass the expanded maintained seven-name duckdb.h journey, now including
+table descriptions, selected-column appending and query appending.
+
+**1,747/1,747 full public C ABI appender journeys match C++**, all producing sum 49.
+Each exercises catalog/schema/table/column/CTE names, description metadata, selected
+column append and query appending. Names are derived from the existing native-byte
+corpus using C-string NUL termination and nonempty prefixes. This verifies actual
+in-memory catalog and appender operations, not filesystem names or arbitrary VARCHAR
+values. Python ctypes is the comparison harness, not a shipped language binding.
+
+The first expanded C test failed in the direct selected-column append path. Join
+statistics still compared `expression.to_string()` to `count_star()`, panicking when a
+bound name contained invalid UTF-8. Comparing native `to_bytes()` preserves the frozen
+C++ comparison and fixes the failure; the new optimizer regression and full ABI matrix
+pass. The failed output and backtrace are retained. A separate C++ double-option
+comparison rejected an assumed signed NaN spelling: this Mac's C++ returns `nan` for
+both signs. The Rust setter now uses the same native `%f` conversion, including the
+finite, infinity and negative-zero cases. The failed comparison/diagnostic are retained.
+
+The rebuilt release library passes three affected upstream C API files, 16 test cases
+and 615,708 assertions; existing C++-internal harness exclusions are unchanged. Final
+C API/runtime/optimizer all-target Clippy with warnings denied and workspace compilation
+are tracked in the checkpoint. Runtime test cleanup removes redundant generic borrows;
+the native-path fixture now builds SQL/path suffixes from OS bytes rather than decoding
+its paths into String. No assertion was removed to obtain acceptance.
+
+The initializer is still unexported. Metadata/statistics, error details/deferred stream
+errors, catalog/schema option Value-boundary semantics, complete upstream ADBC tests,
+initializer prefix bounds and real driver-manager/client loading remain open. These
+results do not complete Python or any other selected language package, the existing
+ENUM exception gap, or final corpus/shell/storage/WAL/performance acceptance. Table-block
+release-on-unpin and the accepted lower-memory policy remain unchanged.
+
+New evidence under the same external SSD directory: `adbc-ingest-checkpoint.json`,
+`adbc-ingest-tests-3-summary.json`, `adbc-ingest-cpp-3.log`,
+`capi-native-appender-summary.json`, `capi-native-appender-{cpp,rust}.json`,
+`adbc-ingest-names-rust-2.log`, `adbc-ingest-names-cpp.log`,
+`adbc-ingest-upstream-tests-2.log`, `adbc-ingest-clippy-6.jsonl` and
+`adbc-ingest-workspace-check-3.jsonl`.
