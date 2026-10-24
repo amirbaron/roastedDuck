@@ -100,6 +100,25 @@ errors. Native UDF integer conversion starts with BIGINT, while parameter conver
 sniffs the integer type, preserving the client's distinct UNION choices. Boolean UDF
 returns enforce the declared BOOLEAN output. These remain scoped implementation gates.
 
+The remaining frozen Python auxiliary modules are now packaged with their original
+licenses: experimental Spark SQL, query-graph output, filesystem/BytesIO utilities,
+Polars I/O, UDF helpers, version reporting and the typing marker. Existing Rust
+frontend/type/value modules are retained. These helpers still require native method
+coverage; copying them is not evidence that their complete runtime journeys pass.
+With matching lightweight test dependencies, both packages collect **3212 fast-suite
+cases with zero collection errors**, with identical case node IDs. Nine file-level skips remain shared dependency or
+version gates (ADBC manager, PyArrow features, Torch, TensorFlow and build tooling);
+they are coverage gaps, not new accepted exclusions. NumPy/Pandas/PyArrow baseline
+versions were not upgraded; exact before/after dependencies are retained.
+
+Connection/module profiling APIs now enable/disable profiling and return six frozen
+formats using the native profiler/renderers. Retrieval preserves the query result and
+configuration. Exhausted streams now finish their executor and flush actual operator
+counters before query termination; previously streaming profiles reported zeros.
+Profiler metadata uses planner cardinality estimates. Unread stream closure keeps its
+cancellation path and does not finish the remaining query. Disabled/empty states,
+errors, closed-owner priority and enable/disable transitions follow the frozen client.
+
 Relation joins now build native join trees for the six frozen Python join types,
 USING strings/lists and predicate strings, plus cross products. Join-derived projections,
 filters and aggregates preserve C++'s qualifier visibility; ordering creates the same
@@ -261,6 +280,18 @@ engine names and queries keep their native representation.
   without collection errors. All 51 expression/SQL-expression cases pass; the full
   closed-owner journey now passes after implementing map and correcting set-operation
   owner validation. No assertion or collection error was removed.
+- The full restored Spark compatibility directory runs **294 cases**: Rust **288 pass,
+  1 fail, 4 existing skips and 1 existing xfail**, versus C++ **289 pass** with the same
+  skips/xfail. The remaining failure is the missing native Python `read_json` method.
+  Unnamed STRUCTs now return positional tuples for row fetching, fixing arrays_zip;
+  NumPy/Pandas retain their separate frozen mapping conversion. **18/18** typed tuple
+  comparisons preserve container identity and every field. No Spark test was edited.
+- The unmodified profiling helper file passes **2/2** on both engines; **37/37** focused
+  profiling outcomes match after timing/resource fields are excluded from functional
+  comparisons. Complete raw profiles retain every timing/resource measurement. Two
+  signed streaming tests verify actual row/byte/scan counters and early cancellation;
+  the two signed type-lookup tests also pass on this source. Full workspace checking
+  and Python/SDK Clippy with warnings denied pass.
 - Three unmodified type/conversion files pass **34/34** on both engines. **84/84**
   focused type outcomes match exactly, including constructors, errors, metadata,
   attributes, hashing, typed tuple/STRUCT parameters and duplicate-member UNION UDFs.
@@ -459,7 +490,13 @@ release performance. Preserve the accepted uncached speed-memory baseline and re
 individual query outliers in final acceptance. No table-cache retention was introduced.
 The other selected language clients remain part of the goal.
 
-Current nested/type evidence: `.context/artifacts/python-nested-20261024/python-nested-checkpoint.json`,
+Current profiling/package evidence: `.context/artifacts/python-profile-20261024/python-profile-checkpoint.json`,
+`profile-comparison-current.json`, raw `probes-{cpp-1,rust-current}.json`, signed
+`wheels-dev-6-signed/`, the thirteen `*-rust-current/` cohorts, typed tuple comparisons, four signed SDK tests and
+compiler terminal records. Full collection/dependency receipts are under
+`.context/artifacts/python-collection-20261024/`; collection is not test execution.
+
+Previous nested/type evidence: `.context/artifacts/python-nested-20261024/python-nested-checkpoint.json`,
 `types-comparison-final.json`, the twelve `*-rust-final/` cohort directories,
 `type-tests.log`, signed `wheels-dev-9-signed/`, Clippy/workspace terminal records and
 coupled UDF performance repeats. The source archive includes the uncommitted migration.

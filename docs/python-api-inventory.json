@@ -379,23 +379,26 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "get_profiling_information",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 340
+      "line": 340,
+      "evidence": "python-profile-20261024: native formats and real streaming counters; 2 upstream cases, 37 normalized functional comparisons, raw timing/resource profiles retained; 4 signed SDK stream/type tests; broader custom metrics/error/concurrency/platform coverage open"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "enable_profiling",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 341
+      "line": 341,
+      "evidence": "python-profile-20261024: native formats and real streaming counters; 2 upstream cases, 37 normalized functional comparisons, raw timing/resource profiles retained; 4 signed SDK stream/type tests; broader custom metrics/error/concurrency/platform coverage open"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "disable_profiling",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 342
+      "line": 342,
+      "evidence": "python-profile-20261024: native formats and real streaming counters; 2 upstream cases, 37 normalized functional comparisons, raw timing/resource profiles retained; 4 signed SDK stream/type tests; broader custom metrics/error/concurrency/platform coverage open"
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
@@ -2196,23 +2199,26 @@
     {
       "surface": "_duckdb",
       "name": "get_profiling_information",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1094
+      "line": 1094,
+      "evidence": "python-profile-20261024: native formats and real streaming counters; 2 upstream cases, 37 normalized functional comparisons, raw timing/resource profiles retained; 4 signed SDK stream/type tests; broader custom metrics/error/concurrency/platform coverage open"
     },
     {
       "surface": "_duckdb",
       "name": "enable_profiling",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1097
+      "line": 1097,
+      "evidence": "python-profile-20261024: native formats and real streaming counters; 2 upstream cases, 37 normalized functional comparisons, raw timing/resource profiles retained; 4 signed SDK stream/type tests; broader custom metrics/error/concurrency/platform coverage open"
     },
     {
       "surface": "_duckdb",
       "name": "disable_profiling",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
-      "line": 1098
+      "line": 1098,
+      "evidence": "python-profile-20261024: native formats and real streaming counters; 2 upstream cases, 37 normalized functional comparisons, raw timing/resource profiles retained; 4 signed SDK stream/type tests; broader custom metrics/error/concurrency/platform coverage open"
     },
     {
       "surface": "_duckdb",

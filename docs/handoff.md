@@ -138,7 +138,18 @@ convertible member, while SQL CAST keeps its ambiguity errors; five SQL controls
 Two signed SDK tests verify native type-name lookup during streaming, failed lookups,
 uncommitted enum types and rollback. Python/SDK Clippy and whole-workspace checks pass.
 Default/explicit connection and catalog-name type coverage still need broader review.
-Current evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
+Profiling APIs and auxiliary Python modules are now implemented/packaged. Two profiler
+cases and 37 functional comparisons match; raw timing/resource metrics are retained.
+Streaming EOF now flushes executor metrics before query termination; planner estimates
+are included. Four signed SDK stream/type tests pass. Both packages collect 3212 fast
+cases without collection errors; nine shared dependency/version file skips remain.
+This is collection, not a full execution pass. All 3212 case node IDs match. Spark
+runs 294 cases: Rust288 pass/1 missing read_json failure/4 skips/1 xfail, versus C++289
+pass with the same existing skips/xfail. Unnamed row STRUCT conversion is fixed;
+18 typed row/NumPy/Pandas outcomes match without conflating container types.
+Current profile/package evidence is
+python-profile-20261024/python-profile-checkpoint.json and python-collection-20261024.
+Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.
 The complete closed-owner relation case now passes after native dataframe-map support

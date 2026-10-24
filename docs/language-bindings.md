@@ -33,8 +33,14 @@ Three type/conversion files pass 34/34 with 84 exact focused outcomes; two signe
 tests preserve streams, transactional type lookup and rollback. Native dataframe-map
 callbacks pass 11 upstream cases and 82/84 scoped outcomes;
 the two reference lifetime discrepancies remain recorded. Bounded numeric conversion
-improves map timings without retaining table blocks. R and the other language
-packages remain unimplemented/unverified. The complete workspace/all-target check
+improves map timings without retaining table blocks. Profiling passes 2 upstream cases and 37 scoped comparisons, with real streaming
+counters and four signed SDK stream/type tests. Frozen auxiliary Python modules and
+licenses are packaged; both engines collect 3212 fast-suite cases without errors,
+with nine shared dependency/version file skips still open. Collection does not prove
+runtime parity. Spark runs 294 cases: 288 pass, one missing read_json failure, four
+existing skips and one existing xfail (C++289 pass with the same skips/xfail). Eighteen
+row/NumPy/Pandas tuple comparisons match. R and the other language packages remain
+unimplemented/unverified. The complete workspace/all-target check
 includes the Python crate. See [Python implementation gates](python-bindings.md).
 
 | Surface | Current evidence / remaining work |
