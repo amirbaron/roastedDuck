@@ -62,26 +62,28 @@ correction; the corrected binary passes 154 native metadata cases. Two-way check
 plus nonempty WAL replay passes for the recorded INTEGER/VARCHAR/NULL/Unicode scenario.
 These remain scoped evidence, not full final shell/corpus/storage/WAL acceptance.
 
-ADBC now exports the frozen 1.0/1.1 initializer and implements all 54 callbacks C++
-assigns. Export sets match: 547 duckdb_ symbols with none missing/additional. Thirteen
-signed C API unit tests pass, seven public-C++-ABI probe families pass on both engines,
-and legacy driver/error mmap guard pages pass. Separate cross-thread connection and
-statement cancellation probes match C++ and recover for the next query.
+ADBC exports the frozen 1.0/1.1 initializer with all 54 assigned callbacks. The complete
+64-case frozen upstream suite now passes on both engines with 3,040 assertions each.
+The adapted suite retains every case/assertion and uses actual native APIs. Its Rust
+run has no C++ DuckDB fallback; selected-image checks pass. Three opt-in test bridge
+functions exist only in the separate test dylib. The restored/signed shipping library
+still exposes 547 duckdb_ symbols and no test bridge.
 
-Actual pinned Apache Python ADBC driver-manager loading and PyArrow full validation
-pass: 12 client journey comparisons and 13 dense metadata cases match C++. Only own
-library version labels are normalized after checking them independently: reference
-v0.0.1 vs Rust v1.5.6. Raw initial/normalized reports are retained. The rebuilt library
-passes all 30 upstream C API files, 155 cases and 814,544 assertions in this run, with
-the existing private-C++ exclusions. C API all-target Clippy and workspace/all-target
-checking pass. This is not the full 64-case upstream ADBC suite or DuckDB Python API.
+The first Rust suite run passed 63/64: dynamic PIVOT's MULTI wrapper reached preparation.
+Shared connection preprocessing now unpacks its enum creation + SELECT like C++.
+Two signed runtime regressions (including invalid-UTF8 identifiers) and a maintained
+public C probe on both shipping libraries pass. All 30 shipping C API files pass (155
+cases/706,158 assertions this run); 13 signed C API unit tests pass. Default/test-feature
+Clippy and workspace/all-target checking pass. Non-SELECT multi/pragma preprocessing
+and transaction-policy extraction still need a broader core audit.
 
-Native table description/appender/selected-column/query-appender operations also have
-1,747 matching C ABI journeys (all sum 49) and maintained seven-name C tests at the
-preceding ingestion snapshot. Full ADBC upstream/native/lifetime/package coverage,
-Python and every selected client, ENUM semantics, and final engine/storage/WAL/shell/
-corpus/performance gates remain required. See `docs/adbc.md` and the latest external
-`adbc-metadata-checkpoint.json`. The accepted uncached memory policy is unchanged.
+Earlier ADBC evidence includes seven public ABI families, cancellation/recovery,
+12 real Python ADBC comparisons and 13 dense Arrow metadata comparisons; only verified
+own build-version labels were normalized in those comparisons. Python ADBC validation
+is not the DuckDB Python API/package. All primary clients plus C#/.NET, Swift and Julia,
+native/type/fuzz/package matrices, ENUM semantics and final unit/corpus/shell/storage/
+WAL/performance gates remain required. See `docs/adbc.md` and external
+`adbc-upstream-checkpoint.json`. The uncached lower-memory policy is unchanged.
 
 Historical corpus and benchmark figures below describe previously accepted binaries.
 The new migration still needs the full unit/corpus/shell/storage/WAL/client verification
@@ -1548,3 +1550,25 @@ continue Python-first and all selected clients. ADBC client probes are not the D
 Python package. Final full engine/corpus/shell/storage/WAL/performance acceptance and
 the existing ENUM gap remain open. No table caching policy changed. Exact evidence and
 source hashes are in external `adbc-metadata-checkpoint.json`; scope: `docs/adbc.md`.
+
+
+The full upstream ADBC continuation (2026-10-24) passes all 64 frozen cases/3,040
+assertions on both Rust and C++, preserving every case/assertion. The opt-in native
+Rust test bridge replaces private C++ helper access; the Rust runner never links the
+reference bridge/engine. Image checks enforce one selected DuckDB library. Shipping
+artifacts are rebuilt without the bridge and retain 547 duckdb_ exports, no test hooks.
+Reference calibration fixed helper stream-identity and nested getter issues. The first
+Rust run's sole failing case exposed missing SELECT-containing MULTI preprocessing;
+PIVOT enum creation and SELECT now unpack before extracted-statement preparation. The
+public C regression passes both libraries; two signed runtime regressions pass, including
+native byte identifiers. Non-SELECT multi/pragma/transaction-policy extraction remains
+an explicit broader audit, not silently declared complete.
+
+The restored shipping library passes 30 upstream C API files (155 cases/706,158
+assertions in this run), 13 signed C API unit tests, default/test-feature Clippy and
+workspace/all-target checking. No source assertion was removed; failure logs and the
+first test library are retained. Evidence/source hashes: `adbc-upstream-checkpoint.json`
+on the SSD; runner documentation: `scripts/adbc-tests/README.md`. Continue Python-first
+and all selected language clients, broad core/native/fuzz/lifetime coverage, ENUM/PEG/
+codec gaps and final engine/corpus/shell/storage/WAL/performance acceptance. No table
+caching or accepted speed-memory policy changed.

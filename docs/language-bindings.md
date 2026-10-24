@@ -29,7 +29,7 @@ packages load or pass their APIs. The native-byte migration now compiles across 
 | Java/JDBC | Audit native adapter and package; port dependencies on engine internals and pass JDBC/client tests |
 | ODBC | Complete driver/adapter, packaging and upstream conformance/client tests |
 | WebAssembly | Build the Rust engine for the client runtime; verify browser/worker and supported host/package journeys, without a bundled C++ engine |
-| ADBC/Arrow | All frozen initializer callbacks exist; scoped native C++, real Python ADBC driver-manager and PyArrow comparisons pass. Full upstream ADBC conformance, packaging and selected DuckDB client acceptance remain pending. See [ADBC inventory](adbc.md) |
+| ADBC/Arrow | All frozen initializer callbacks exist; scoped native C++, real Python ADBC driver-manager and PyArrow comparisons pass. All 64 frozen upstream ADBC cases now pass on both engines with 3,040 assertions. Broader matrices, packaging and selected DuckDB client acceptance remain pending. See [ADBC inventory](adbc.md) |
 | C#/.NET | Pin the client; verify its complete API/tests and native-library loading/packaging |
 | Swift | Pin the client; verify its complete API/tests, native loading and ownership behavior |
 | Julia | Pin the client; verify its complete API/tests, native loading and ownership behavior |

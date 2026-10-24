@@ -4,8 +4,8 @@ The target is DuckDB 1.5.6's frozen `src/common/adbc/adbc.cpp` and its vendored
 ADBC 1.0/1.1 header, not the latest Arrow driver API. The Rust implementation is
 **in progress**. The initializer is now exported and all 54 callbacks assigned by the
 frozen C++ initializer are wired. Real driver-manager loading and scoped client journeys
-pass. Full upstream ADBC conformance remains open, as does the separate DuckDB Python
-API/package goal. The oracle scripts and Apache ADBC client are not that Python package.
+pass. The complete frozen 64-case upstream suite now passes on both engines. Broader
+coverage, packaging and the separate DuckDB Python API/package goal remain open. The oracle scripts and Apache ADBC client are not that Python package.
 
 ## Implementation inventory
 
@@ -24,12 +24,12 @@ API/package goal. The oracle scripts and Apache ADBC client are not that Python 
 | Arrow Bind / BindStream | Ownership transfer and per-batch parameter binding staged; C++'s one-row limit is retained |
 | Arrow result stream | Schema, batch, last-error and release callbacks staged; reuse/release buffers unread batches without eager buffering at query start |
 | Arrow single-batch stream | Independent schema copy including raw names, flags, nested fields, dictionaries and binary metadata staged |
-| Statement option API / ingestion | All typed callbacks and four ingestion modes staged; scoped native-name/temporary-shadow/row-count/error journeys pass. Remaining nested-type, failure and concurrency cases require upstream conformance |
+| Statement option API / ingestion | All typed callbacks and four ingestion modes staged; scoped native-name/temporary-shadow/row-count/error journeys pass. All 64 frozen upstream cases pass; broader type/native/failure coverage remains open |
 | Connection metadata | All six callbacks implemented; frozen object-list SQL retained, prescribed dense unions/NOT NULL metadata validated by PyArrow and C++ comparisons |
 | Partitions / Substrait | Exact frozen unsupported partition callbacks staged; initializer must preserve C++'s untouched Substrait slot |
 | ADBC 1.1 error API | Detail count/get/from-stream implemented; owned/borrowed message lifetimes, deferred errors and cancellation type details verified in scoped journeys |
 | Initializer | Exported; 1.0/1.1 callback wiring matches frozen C++; unsupported versions, untouched slots, legacy driver/error prefix canaries and guard pages pass |
-| Packaging / driver manager | Pinned Apache Python ADBC driver manager loads the release library; full upstream ADBC suite, packaging and all selected DuckDB clients remain open |
+| Packaging / driver manager | Pinned Apache Python ADBC driver manager loads the release library; all 64 frozen upstream cases pass; packaging and all selected DuckDB clients remain open |
 
 The temporary dead-code allowance was removed when initializer wiring made all callbacks
 reachable. Production implementation is Rust. The C++ files in `crates/capi/tests/` are
@@ -190,3 +190,55 @@ Evidence on the external SSD: `adbc-metadata-checkpoint.json`,
 `adbc-metadata-workspace-check-1.jsonl`, `adbc-metadata-exports.json`.
 Client behavior is exercised using Apache's [ADBC Python API](https://arrow.apache.org/adbc/main/python/api/adbc_driver_manager.html),
 with the installed pinned API inspected locally rather than assuming current docs match it.
+
+## Full frozen upstream suite checkpoint, 2026-10-24
+
+**64/64 upstream ADBC cases pass on Rust and C++, with 3,040 assertions on each.**
+`scripts/adbc-tests/run.sh` compiles the frozen test file, driver manager and nanoarrow
+helpers. All cases/assertions remain; source/adaptation hashes and assertion counts
+are checked. Two private C++ database helper bodies, the private autocommit inspection
+and private error initializer are adapted to the selected implementation. The Rust
+executable never compiles the C++ reference bridge or links a C++ DuckDB engine.
+
+The optional `rustdb-capi/adbc-test-api` feature exposes three borrowed-handle/test
+initializer functions solely for this suite. The test dylib lives in its own SSD
+directory with an @rpath identity and signature. Both runners verify the requested
+engine image is the only DuckDB library loaded before/after the suite. The normal
+shipping build is restored, signed and checked to expose **547 duckdb_ functions and
+zero test bridge functions**. No test feature is required by clients.
+
+Reference calibration caught adapter issues before Rust acceptance. A borrowed proxy
+preserves driver-manager release identity when the public Arrow scan API changes its
+private copy. The nested value helper uses the engine's VARCHAR cast, since legacy
+C result getters cannot fetch nested values. Arrow comparisons retain logical type
+parameters and use SQL EXCEPT ALL for duplicate/NULL/numeric semantics. The same
+adapter passes the complete reference suite; no failing assertion or case was removed.
+
+The first Rust run passed 63/64, failing dynamic PIVOT preparation with `Cannot plan
+statement of type MULTI!`. C++ preprocesses SELECT-containing multi-statements into
+their component statements. The shared text/byte connection preprocessing now does
+this before extraction/preparation, preserving PIVOT's unwrapped enum-create + SELECT
+behavior. Both shipping C APIs pass the maintained extracted/prepared/executed PIVOT
+probe. Two signed runtime regressions pass, including native invalid-UTF8 identifiers.
+The initial failing run/library and harness calibration evidence are retained.
+
+The normal shipping library passes **all 30 upstream C API files**: 155 cases and
+706,158 assertions in this run (pending-task loops make assertion totals run-dependent).
+Existing C++-internal exclusions remain unchanged. Thirteen signed C API unit tests
+also pass, none ignored. Default C API/runtime all-target Clippy, test-feature C API
+all-target Clippy, and complete workspace/all-target checking pass.
+
+This closes the frozen upstream ADBC suite gate. It does not complete native/fuzz/type/
+packaging matrices, DuckDB's Python API or other selected clients, the existing ENUM
+failure gap, raw PEG/value codecs or final full engine/corpus/shell/storage/WAL and
+speed-memory acceptance. Non-SELECT multi/pragma extraction and transaction-policy
+preprocessing remain a separate broader core audit; this fix covers the PIVOT/SELECT
+unpacking branch and retains existing handling elsewhere. No table-cache retention or
+accepted performance policy changed.
+
+Evidence: external `adbc-upstream-checkpoint.json`, `adbc-upstream-summary.json`,
+`adbc-upstream-{cpp,rust}-1/test.log`, source manifests, test/shipping libraries and
+symbol/dependency records, `adbc-pivot-{cpp,rust}.log`,
+`adbc-pivot-runtime-tests-1-summary.json`, `adbc-upstream-capi-unit-tests-1-summary.json`,
+`adbc-upstream-shipping-capi.log`, `adbc-upstream-clippy-{default,test-api}-1.jsonl`,
+`adbc-upstream-workspace-check-1.jsonl`. Harness details: `scripts/adbc-tests/README.md`.
