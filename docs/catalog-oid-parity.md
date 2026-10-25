@@ -461,3 +461,29 @@ a test-only raw-message type comparison. A seventh SDK settings test covers disa
 loading, invalid values, overwritten values and no file creation on validation failure.
 Native after-fix controls and the signed SDK run are pending. Evidence:
 startup-settings-before-comparison-1.json and startup-extension-check-2.log.
+
+
+## Startup settings and Parquet scope stage
+
+The corrected startup native image2matches all43original available-ICU C API controls,
+closing the10previous acceptance/value-validation gaps, including exact two-option error
+order. The next6three-option permutations expose an additional Parquet-origin issue.
+A two-connection public Parquet journey verifies45differences across85steps: automatic
+SET leaks values globally, scope metadata remains GLOBAL after session overrides, and
+invalid boolean input is accepted and corrupts the setting value. Both engines reject
+SET LOCAL; the positive session control uses SET SESSION. Raw failed harness assumptions
+and corrected before-fix records are retained, with no comparator normalization.
+
+The working source now registers all5Parquet options as actual extension options when
+Parquet loads, retaining their descriptions, boolean types/defaults and session-default
+scope. They are excluded from core canonical lookup and fake built-in settings rows;
+dynamic session/global values and reset semantics use the existing extension paths.
+Extension value cast failures follow CPPValue::CastAs's InvalidInput wrapper. The public
+settings table sorts by name after collecting core and dynamic entries, as CPPdoes.
+C API flag enumeration already classified extension origins and remains unchanged.
+An eighth SDK settings test covers actual session isolation, failed-cast preservation,
+startup values and explicit LOAD registration. The public scope probe now also checks
+actual Parquet BLOB/VARCHAR reads across both connections. Clippy passed before the final
+settings-row ordering line; new native/runtime and final combined SDK/client/SQL checks
+remain pending. Evidence: startup-settings-after-comparison-2.json,
+parquet-settings-before-comparison-2.json and startup-map-common-terminal-3.json(32pass).
