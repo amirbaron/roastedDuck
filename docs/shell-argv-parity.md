@@ -298,3 +298,9 @@ fresh Python package validation are pending for this shared-renderer change.
 The prior wheel3 results remain evidence for that earlier image. Remaining clients,
 core/storage/WAL and final coupled speed-memory/per-query acceptance remain open;
 no full-table cache has been added.
+
+The numeric carrier follow-up also needs direct ordinary/signed-number, readable-cell,
+large row-count and readable-footer journeys. Compare those with the same exact-byte
+recorder on preserved CLI5 and corrected CLI6, including default malformed-byte classes.
+Keep raw failures and prior images; a single ordinary decimal query cannot establish
+that all changed numeric/footer consumers preserve their bytes.
