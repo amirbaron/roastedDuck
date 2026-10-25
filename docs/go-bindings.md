@@ -147,3 +147,19 @@ step, while query metrics are active, before reporting task readiness. Preserve 
 existing end-query handling for other callback requests and for unstepped execution.
 Failures must use the normal active-query cleanup and retain the pending error. Repeat
 actual task/error/WAL controls before accepting the change.
+
+Checkpoint pending-lifecycle correction now matches all4CPP control cases exactly:
+eight repeated WAL flushes, direct/prepared errors, task-observed pending failure
+wrapping, rollback and reuse. Immutable pending-library-2 SHA68e49cdbb89a8c55e94c0741ba7178e98a0087d0c220ffdcde2cffcef9cdb965;
+checkpoint-capi-comparison-3.json retains the exact comparison. Go's latest complete
+650/652run precedes this final task-readiness correction and must be refreshed.
+
+The remaining timestamp failure comes from consuming both bound comparison children
+before checking whether their types are comparable. A rejected comparison leaves
+DEFAULT placeholders; correlated/LATERAL retry then replaces the real type error with
+a DEFAULT-clause error. Inspect bound child types without taking ownership, reject an
+incompatible comparison with its children intact, then consume them only on success.
+Preserve existing parameter typing and valid comparisons; do not copy whole ASTs or
+silently coerce nanosecond timestamps to timezone timestamps to hide the error.
+Verify the unchanged upstream regression plus focused valid/invalid join controls and
+complete Go/corpus checks after rebuilding.
