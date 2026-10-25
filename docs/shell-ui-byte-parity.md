@@ -36,3 +36,37 @@ Add bounded real PTY journeys with a safe printf-marker/cat pager: configure nat
 bytes via -cmd or each environment default, verify the marker bytes, query output,
 return to normal stdout after .pager off, and exact C++ terminal/file effects.
 Keep these separate from the110caseconfiguration baseline and preserve raw output.
+
+## Native implementation and verification
+
+Color callbacks now preserve bytes through element/color/intensity selection, candidate
+ranking, errors and deprecated guidance. Pager command storage/reporting, environment
+defaults and the OS process argument retain native bytes. ASCII matching and validation
+order are unchanged; numeric threshold parsing keeps its existing native algorithm.
+The changed source is limited to CLI state/metadata/highlight modules, outside the four
+shared rendering-library modules verified in Python wheel4.
+
+Signed CLI7 closes all50baseline mismatches:110/110exact, zero earlier matches regressed.
+The exhaustive matrix is2,915/2,915exact with no fixture errors, crashes, timeouts or
+waivers. Real PTY journeys improve6/12to12/12exact: command arguments and both pager
+environment defaults each match with ASCII/UTF8/invalidFF/incompleteC3 payloads.
+Actual printf marker bytes, pager query output and normal query output after pager off
+match, including exit0 and raw terminal/file effects. No normalization is used.
+
+The first PTY attempt omitted the explicit terminal theme flag and stalled both engines,
+including ASCII controls, at OSC theme detection. It was stopped; partial raw evidence
+and `pager-probe-invalid-1.json` remain. It is invalid harness evidence, not an engine
+failure or parity result. The corrected harness uses the existing suite's dark-mode
+flag, suppresses the banner and requires valid C++ marker/exit controls.
+
+Workspace/all-target checking and warnings-denied Clippy pass. Signed shell units pass15;
+upstream shell tests pass392with3existing skips. All13affected color/pager differential
+cases pass, including4PTYsessions, with no known markers. The full768case/46PTYrun
+remains CLI6 evidence; it is not relabeled as a CLI7 run. CLI7 signed SHA:
+aed606af9c1b1dfeb4ef0237bd721fb245550ab1fd0083cecde56446f3609aa4.
+
+Evidence: `.context/artifacts/shell-argv-20261025/ui-verification-1.json`, source/image
+manifests, `ui-{baseline,after,exhaustive}-1.jsonl`, `pager-baseline-2.jsonl`,
+`pager-after-1.jsonl`, raw test logs/JUnit and preserved probe sources. Prompt/UI byte
+boundaries, public catalog IDs, raw Stack Trace formatting, broader core/client/storage
+and final coupled speed-memory/per-query acceptance remain open. No table cache changed.

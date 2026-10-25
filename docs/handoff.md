@@ -38,6 +38,16 @@ Complete Python bindings first and all primary clients plus C#/.NET, Swift and J
 - Subagents use model "opus". Commit messages end with the Co-Authored-By line; docs
   changes go in their own commit before the code.
 
+## Latest color/pager checkpoint (2026-10-25)
+
+CLI7 closes all50measured color/pager byte mismatches:110/110default and2,915/2,915
+exhaustive exact. Twelve real pager PTY journeys now match C++ (previously6/12),
+including raw command/environment transport and return to stdout. Shell392pass/3skips,
+15signed units and13affected differential cases/4PTYpass. The earlier full768/46PTY
+result belongs to CLI6. Shared Python rendering source is unchanged from verified
+wheel4. See [color/pager evidence](shell-ui-byte-parity.md) and SSD index
+`shell-argv-20261025/ui-verification-1.json`. Remaining goal gates stay open.
+
 ## Latest shell/shared-renderer checkpoint (2026-10-25)
 
 Signed CLI6 closes62of66settings-byte mismatches, with4raw Stack Trace differences
