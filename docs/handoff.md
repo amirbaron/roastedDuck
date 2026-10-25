@@ -412,6 +412,20 @@ Scalar/group/UDF paired time/RSS remains similar, cold samples retained, no cach
 Evidence: python-udf-names-20261025/. Current fresh release CLI/CAPI/slt build is underway
 under scalar-release-20261025/; do not treat its start as terminal verification. Broader
 core/corpus/shell and selected-client/final performance gates remain open.
+Fresh scalar release build 1 completes and its shell/CAPI/slt images are signed and
+SHA-preserved under scalar-release-20261025/signed-images/. The rebuilt C API passes
+all 30 upstream harness files:155 cases/727632 assertions. Shell pytest required a
+harness option-order correction and an SSD lexical tmp_path alias: nine failures also
+occurred on C++ because upstream dot commands omit quotes around temp paths. The
+fixture adapter delegates original pytest cleanup and changes only the returned path;
+test bodies/assertions remain unchanged. C++ then passes392/3skips; Rust391/one real
+failure/3skips. Investigation finds FIFO fstat size can describe queued bytes, not
+total CSV length. CSV native file capability now uses metadata.is_file() rather than
+unconditionally treating a FIFO as seekable. One signed FIFO buffer regression passes,
+and the signed corrected DEVELOPMENT shell matches392/3skips. CSV all-target Clippy
+passes. Release build 2 with the pipe correction is now active, not yet acceptance;
+after terminal/signing rerun release shell/CAPI/differential then one fresh fullcorpus.
+Do not rebuild Slt while its corpus is running; preserve earlier images/results.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.
