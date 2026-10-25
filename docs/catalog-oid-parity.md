@@ -174,3 +174,10 @@ then installs the identity-preserving altered entry. Represent these actual vers
 register undo/cleanup in the same order; do not emulate them with an unexplained counter
 increment. Conflicts must be checked before destructive changes, and rollback must restore
 old names/visibility without leaking a new name.
+
+
+The rename-node implementation passes16signed catalog tests, including old-reader
+visibility, identity-preserving commit and rollback, and the actual internal node sequence.
+Workspace/all-target Clippy passes with warnings denied after replacing a panic-style map
+lookup with entry access. A fresh C API image is building for public lifecycle/client
+verification. These native checks and full numeric/bootstrap parity are not yet accepted.
