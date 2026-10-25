@@ -87,3 +87,19 @@ Evidence: `correction-checkpoint-3.json`, `native-tests-3/`, `cpp-controls-5/`,
 `source-corrections-4.json` (seven hashed source overlays on the preserved full source
 archive), and `external-source-root-2.json` (all4,870 test hashes checked). Preserve the
 first complete corpus and rejected control setups; do not merge them into acceptance.
+
+## Exact C API library identity
+
+The C API test script currently re-signs the default target library even with
+`--no-build`. The Rust dylib also has an absolute install name pointing at the mutable
+`target/release/deps/libduckdb.dylib`; linking with a snapshot directory alone does not
+pin the loaded image. Earlier behavioral results remain recorded, but final image
+verification must select and prove the actual library path and SHA.
+
+Add an explicit `RUSTDB_CAPI_LIBRARY_DIR` override requiring `--no-build`. It must use
+the already-signed selected image without re-signing it, and on macOS rewrite only
+the newly built test executables' dependency to that exact image before signing the
+executables. A separate `RUSTDB_CAPI_TEST_BIN_DIR` preserves fresh executable/log output
+while reusing the existing object cache. Keep the frozen test bodies and harness
+exclusions unchanged. Portable install names for eventual native client packages are
+a separate packaging gate; this test adapter must not silently mutate preserved dylibs.
