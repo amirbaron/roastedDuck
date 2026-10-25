@@ -1125,6 +1125,40 @@ Evidence: `.context/artifacts/python-adbc-package-20261025/`, especially signed
 `full-fast-comparison.json`, `journey-comparison-4.json`, `facade-api-audit.json`,
 `performance-before-after.json`, dependency pins and compiler terminal records.
 
+## PyArrow 21 matrix (2026-10-25)
+
+Separate installed environments upgrade only PyArrow to 21.0.0; the preserved 19.0.1
+baseline environments remain unchanged. Both engines pass **886 Arrow-folder cases**,
+with 14 shared skips and two expected failures. The newly enabled run-end module has
+**250 passes/two existing BIT/UUID skips**, covering scalar/nested/encoded inputs,
+projections and empty data. No engine implementation change was needed.
+
+Full fast-suite runs have **3492 JUnit records**: C++ 3456 pass/36 skip-or-xfail;
+Rust 3453 pass/the same three held Decimal assertions/36 skip-or-xfail, zero collection
+errors. Every previous 3235 normal case remains; all 252 additional normal IDs belong
+to the run-end module. The 3487 normal cases and five import-skipped module records
+are reconciled separately.
+
+`test_7652` remains an unmodified shared module skip: its minimum-version guard asks
+`pyarrow.parquet.__version__`, which is absent on both supported dependency versions.
+The separate `scripts/python-tests/parquet-7652-body.py` compiles the unchanged class/
+method AST with the real PyArrow/Parquet modules. All original regression assertions
+pass on both engines with matching source SHA. This is explicitly an adapted functional
+journey, not an unmodified pytest pass; no dependency attributes or test files are patched.
+
+Two fresh-process first-batch repeats keep latency, result/recovery checks and peak RSS
+together for 1M/100M-row sources. Rust development takes 0.45–0.52 ms versus C++ release
+0.26–0.39 ms; warm whole-process peaks are 70.9–71.0 MB versus 69.5–69.8 MB. First cold
+1M samples peak at 79.3/80.0 MB and remain in the raw records. Rows are bounded to the
+first 1024 and peaks do not grow with the logical input. This small client latency
+difference remains visible; it is not final release or TPC-H/ClickBench acceptance.
+
+Evidence: `.context/artifacts/python-arrow21-20261025/`, including
+`arrow-{cpp,rust}-1/`, `full-fast-{cpp,rust}-1/`, `full-fast-comparison.json`,
+`ree-cpp-summary.json`, `parquet-body-{cpp,rust}-1.log`, `reader-comparison.json`
+and separate version-pinned environments. The signed wheel is unchanged from the
+preceding Python ADBC checkpoint; no table/input/result cache is introduced.
+
 ## Remaining gates
 
 The runtime availability audit is complete for all 385 inventory entries. Finish complete signatures/overloads/defaults/error
@@ -1135,7 +1169,7 @@ broader concurrency and registered-backend database storage remain required. The
 partial implementation/evidence; no surface is declared fully complete yet.
 
 All 3212 normally collected fast cases have now executed; the skipped modules and
-newer dependency/platform matrices (tensor coverage is now separately verified),
+other dependency/platform matrices (tensor coverage and PyArrow 19/21 are now separately verified),
 configured extension/HTTPFS cases, complete argument/overload audit,
 and applicable dependency/platform/version matrices remain. The seven non-fast files
 have run at their default fixture settings and pinned native stubs now ship.

@@ -328,6 +328,18 @@ Coupled before/after statement/reader measurements stay bounded; no cache added.
 Python/CAPI Clippy and workspace/all-target checks pass. Evidence:
 python-adbc-package-20261025/ and `docs/python-adbc-inventory.json`. Other client and
 final Python/core/shell/storage/WAL/release/performance gates remain open.
+The subsequent PyArrow 21.0.0 matrix keeps the 19.0.1 baseline environments intact.
+Both Arrow cohorts pass 886 cases/14 skips/two xfails; run-end coverage is 250 passes/
+two existing BIT/UUID skips. Full fast reruns have 3492 records: C++ 3456 pass/36
+skip-xfail; Rust 3453 pass/the same three held Decimal assertions/36 skip-xfail,
+zero collection errors. All 3487 normal cases reconcile, including 252 newly enabled
+run-end IDs. The Parquet7652 module still skips because parquet has no version
+attribute; its unchanged class/method AST passes separately on both real engines,
+explicitly an adapted journey rather than a pytest pass. First-batch RSS stays bounded
+for 1M/100M rows; the 0.45–0.52 ms Rust versus 0.26–0.39 ms C++ latency remains visible.
+No engine code or cache change; same signed ADBC wheel. Evidence:
+python-arrow21-20261025/. Other dependency/platform and final client/core acceptance
+gates remain open.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.

@@ -138,6 +138,15 @@ ADBC cases. Coupled timing/RSS stays bounded; Clippy/workspace checks pass. No f
 Python, ADBC matrix, other-client or final release/performance completion is claimed.
 Evidence: `.context/artifacts/python-adbc-package-20261025/`.
 
+The PyArrow 21 matrix subsequently matches 886 passing Arrow cases, including 250
+newly enabled run-end passes/two existing skips. Full fast reruns have 3492 records:
+C++ 3456 pass/36 skip-xfail; Rust 3453 pass/the same three held Decimal assertions/
+36 skip-xfail, zero collection errors. All 3487 normal cases reconcile. The Parquet
+version-attribute guard remains a shared module skip; its unchanged test body passes
+as a separately labeled adapted journey. PyArrow 19 controls and the signed ADBC wheel
+are unchanged. Bounded prefix timing/RSS and the small latency difference remain in
+`.context/artifacts/python-arrow21-20261025/`; broader client/final acceptance remains open.
+
 | Surface | Current evidence / remaining work |
 |---|---|
 | Python | Native arrays, Arrow, joins/writes and expression trees; 101/101 DB-API, 37/37 host, 41/41 Arrow, 79/81 object and 123/123 relation/expression cases pass. 559 UDF cases pass plus one existing xfail; complete remaining relation/input/expression and UDF overload APIs, platform/package gates and twelve unaccepted discrepancy categories |

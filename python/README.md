@@ -15,7 +15,10 @@ The wheel also ships the pinned ADBC facade and native Rust initializer; all 23
 upstream Python ADBC tests pass on both engines, with one-image and sequential
 file/transaction/reopen journeys. Full fast reruns now have 3203 passing Rust records,
 the same three held Decimal assertions and 35 skip/xfail records, without collection
-errors. Complete signature/lifetime and final release acceptance remain open.
+errors. A separate PyArrow 21 matrix additionally enables 250 passing run-end cases;
+its full fast run has 3453 passes, the same three held assertions and 36 skip/xfail
+records. The original PyArrow 19 environments remain intact. Complete signature/lifetime
+and final release acceptance remain open.
 
 Build from this directory with maturin 1.9.6 and a native Python interpreter. Keep
 CARGO_HOME, TMPDIR, wheel output, environments and caches on the mounted external SSD;
