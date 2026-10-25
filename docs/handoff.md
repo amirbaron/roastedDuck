@@ -314,6 +314,20 @@ errors each, with provenance confirming installed paths. Runtime code is unchang
 from the preceding Python checkpoint. Evidence: python-nonfast-20261025/, especially
 nonfast-comparison.json and wheel-stubs-verified.json. Broader signature/runtime,
 dependency/platform, other-client and final acceptance gates remain open.
+The following Python wheel now includes the frozen ADBC facade and native initializer
+in its own Rust image (547 shipping symbols, no test bridge). All 23 previously skipped
+upstream ADBC tests pass on both engines. Sequential file/transaction/UDF-write/reopen
+and one-image installed journeys match; live shared-instance access is not asserted
+(the initial C++ harness expectation failed). Full fast runs now have 3241 records:
+C++ 3206 pass/35 skip-xfail; Rust 3203 pass/the same three held Decimal assertions/
+35 skip-xfail, zero collection errors. All 3235 normal cases reconcile: previous
+3212 plus 23 ADBC.
+Initial incomplete dependency setup errors and corrected final runs are retained.
+31 facade declarations resolve on both packages; broader semantics remain partial.
+Coupled before/after statement/reader measurements stay bounded; no cache added.
+Python/CAPI Clippy and workspace/all-target checks pass. Evidence:
+python-adbc-package-20261025/ and `docs/python-adbc-inventory.json`. Other client and
+final Python/core/shell/storage/WAL/release/performance gates remain open.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.

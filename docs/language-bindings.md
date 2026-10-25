@@ -127,6 +127,17 @@ stub; installed strict typing clients and negative controls pass their expected 
 This closes stub distribution, not every runtime signature or final Python acceptance.
 Evidence is under `.context/artifacts/python-nonfast-20261025/`.
 
+The wheel subsequently adds the frozen Python ADBC facade and Rust initializer in
+its own native image. All 23 upstream ADBC tests now pass on both engines; installed
+sequential file/transaction/UDF-write/reopen and one-image journeys match. All31 facade
+declarations resolve; signatures/aliases remain partial in
+`docs/python-adbc-inventory.json`. Complete fast reruns now have 3241 records:
+C++ 3206 pass/35 skip-xfail; Rust 3203 pass/the same three held Decimal assertions/
+35 skip-xfail, zero collection errors. All 3235 normal cases reconcile, including the 23 newly enabled
+ADBC cases. Coupled timing/RSS stays bounded; Clippy/workspace checks pass. No full
+Python, ADBC matrix, other-client or final release/performance completion is claimed.
+Evidence: `.context/artifacts/python-adbc-package-20261025/`.
+
 | Surface | Current evidence / remaining work |
 |---|---|
 | Python | Native arrays, Arrow, joins/writes and expression trees; 101/101 DB-API, 37/37 host, 41/41 Arrow, 79/81 object and 123/123 relation/expression cases pass. 559 UDF cases pass plus one existing xfail; complete remaining relation/input/expression and UDF overload APIs, platform/package gates and twelve unaccepted discrepancy categories |

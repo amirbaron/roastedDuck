@@ -1,0 +1,199 @@
+{
+  "target": "DuckDB Python ADBC facade 1.5.6",
+  "commit": "802a345bb627435d2a05d63cb74454fa98b60b5e",
+  "upstream_sha256": {
+    "dbapi.py": "ce3febfacb48dca2631f5a7d0c11cdd82f77bf2cd90e7684397363df83665935",
+    "__init__.py": "96d53c934790fe1cd5901cfa5b0a12ddabb92eaba98f47dd5a0ca22f272a56d1"
+  },
+  "surfaces": [
+    {
+      "surface": "adbc_driver_duckdb",
+      "name": "StatementOptions",
+      "status": "partial",
+      "source": "__init__.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb",
+      "name": "StatementOptions.BATCH_ROWS",
+      "status": "partial",
+      "source": "__init__.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb",
+      "name": "connect",
+      "status": "partial",
+      "source": "__init__.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb",
+      "name": "driver_path",
+      "status": "partial",
+      "source": "__init__.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "BINARY",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "DATETIME",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "NUMBER",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "ROWID",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "STRING",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "Connection",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "Cursor",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "DataError",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "DatabaseError",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "Date",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "DateFromTicks",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "Error",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "IntegrityError",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "InterfaceError",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "InternalError",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "NotSupportedError",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "OperationalError",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "ProgrammingError",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "Time",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "TimeFromTicks",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "Timestamp",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "TimestampFromTicks",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "Warning",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "apilevel",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "connect",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "paramstyle",
+      "status": "partial",
+      "source": "dbapi.py"
+    },
+    {
+      "surface": "adbc_driver_duckdb.dbapi",
+      "name": "threadsafety",
+      "status": "partial",
+      "source": "dbapi.py"
+    }
+  ],
+  "implementation": "Frozen Apache-licensed facade; dbapi.py unchanged. Driver path imports the top-level native shim and returns its native __file__. Rust C API initializer is re-exported in the Python image, without a second engine dylib.",
+  "evidence": ".context/artifacts/python-adbc-package-20261025/",
+  "status_note": "All 23 upstream ADBC tests pass against both installed packages. Sequential file handoff, Python UDF writes, ADBC rollback/commit, reopen and one-image identity journey match. Exports/aliases remain partial pending broader signature/ownership/type/platform matrices; this does not complete Python or all language clients."
+}

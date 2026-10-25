@@ -4,12 +4,18 @@ Native PyO3 bindings to this repository's Rust engine, targeting the pinned Duck
 Python 1.5.6 contract in upstream.json. This package is under active implementation;
 docs/python-api-inventory.json records the native API baseline. It is not complete
 Python parity yet. The pinned fast suite has executed in full; three held Decimal
-assertions, complete signature/lifetime audits, skipped dependency/version modules and the
-non-fast/platform/stub/packaging gates remain. See docs/python-bindings.md for the
-current evidence and exact scope.
+assertions, complete signature/lifetime audits, skipped dependency/version modules,
+configured extension/HTTPFS, platform and broader packaging gates remain. All seven
+non-fast files have run with default fixtures, and frozen native stubs now ship.
+See docs/python-bindings.md for the current evidence and exact scope.
 All 385 runtime entries in the pinned inventory are available. Type constructors,
 tokenizer/descriptors and real CPU PyTorch/TensorFlow outputs have focused C++ comparisons;
-this does not complete the dependency/platform/stub and broader client gates.
+this does not complete the dependency/platform and broader client gates.
+The wheel also ships the pinned ADBC facade and native Rust initializer; all 23
+upstream Python ADBC tests pass on both engines, with one-image and sequential
+file/transaction/reopen journeys. Full fast reruns now have 3203 passing Rust records,
+the same three held Decimal assertions and 35 skip/xfail records, without collection
+errors. Complete signature/lifetime and final release acceptance remain open.
 
 Build from this directory with maturin 1.9.6 and a native Python interpreter. Keep
 CARGO_HOME, TMPDIR, wheel output, environments and caches on the mounted external SSD;

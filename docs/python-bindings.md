@@ -1089,6 +1089,42 @@ individual JUnit/logs and H2O download receipts, `wheel-stubs-verified.json`, si
 `wheels-dev-1-signed/`, installed `typing-env/`, `mypy-*.log` and typed client sources.
 The runtime binary is unchanged from the preceding type/API checkpoint.
 
+## Packaged Python ADBC facade (2026-10-25)
+
+The wheel now distributes the pinned Apache-licensed `adbc_driver_duckdb` facade.
+Its DB-API file is unchanged; driver discovery imports the native top-level shim and
+returns its actual extension path. The Python extension re-exports the Rust C API's
+ADBC initializer and all 547 shipping C symbols, with no test bridge. ADBC uses this
+same native image instead of loading a second DuckDB library.
+
+All **23 tests in the three previously skipped upstream ADBC modules pass on both
+engines**, using driver-manager 1.4.0 and the preserved baseline's other dependencies.
+The installed-package journey matches sequential Python/ADBC file handoff, Python UDF
+writes, ADBC parameter binding/rollback/commit and reopen. It proves exactly one engine
+image and verifies that driver discovery finds it before an explicit DuckDB import.
+The exploratory live-instance-sharing expectation failed on C++ and was removed from
+the valid journey; simultaneous live adapters on one filename are not proved.
+
+All 31 declared facade exports resolve on both installed packages; the separate
+`docs/python-adbc-inventory.json` retains partial status and frozen source hashes.
+Full fast-suite reruns now have **3241 JUnit records**: C++ 3206 pass/35 skip-or-xfail;
+Rust 3203 pass/the same three held Decimal assertions/35 skip-or-xfail, zero collection
+errors. The 3235 normal cases include every previous 3212 ID plus 23 ADBC IDs.
+An initial C++ run used an incomplete old dependency list and produced setup errors;
+its logs remain, and both environments were corrected before these final reruns.
+
+Fresh-process before/after samples keep timing and RSS together. Final insert-many
+repeats are 35.8–36.2 ms versus 35.7–39.0 ms before; parsed/text loops are 75.6–78.0 ms
+versus 74.0–77.7 ms. Warm first-batch peaks stay near 72–73 MB for 1M/100M source rows;
+the first cold 1M samples reach 80.5/81.3 MB and are retained. No table/input/result
+cache is added. Python/C API all-target warnings-denied Clippy and workspace/all-target
+checks pass. These development-wheel checks do not replace final release acceptance.
+
+Evidence: `.context/artifacts/python-adbc-package-20261025/`, especially signed
+`wheels-dev-1-signed/`, `upstream-{cpp,rust}-1/`, `full-fast-{cpp,rust}-2/`,
+`full-fast-comparison.json`, `journey-comparison-4.json`, `facade-api-audit.json`,
+`performance-before-after.json`, dependency pins and compiler terminal records.
+
 ## Remaining gates
 
 The runtime availability audit is complete for all 385 inventory entries. Finish complete signatures/overloads/defaults/error
