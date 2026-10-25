@@ -59,3 +59,18 @@ The generated absolute linker paths are test setup, not portable distribution ac
 A toolchain help/version probe reports Apple Swift6.4 targeting arm64macOS27.0; full
 help output is retained under `toolchain/`. This did not compile the package or run
 its132test methods. The full core corpus remains the only heavy workload.
+
+## Serialized build and signing contract
+
+Prepare a build-only runner using the observed Swift6.4CLI flags: one job, explicit
+package/scratch/shared-cache/config/security paths, with temporary and module caches
+on the dedicated SSD. It must refuse a live SQL corpus, verify pinned source/header/
+manifest/library hashes, retain complete build logs and preserve prior outputs.
+
+After a successful build, inspect project Mach-O executables/dylibs/bundles, pin any
+libduckdb load command to the selected immutable image, then sign and strictly verify
+those artifacts and test bundles before execution. Recheck library/source hashes.
+This step stops before tests. A later Foundation cache/temp probe must prove that its
+user-cache-derived test directories are on dedicated storage; TMPDIRalone is not proof.
+Only then run the complete upstream suite and actual loaded-library/ownership/data
+journeys. Portable distribution and other platforms remain independent open gates.
