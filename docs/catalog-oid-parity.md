@@ -251,3 +251,13 @@ before attachment; ordinary remaining statically linked extensions should load a
 database creation as CPPDuckDB construction does. Stored JSON/ICU types, WAL replay,
 read-only/reopen/data-file attachment and disabled-autoload cases require controls before
 accepting that move. Do not indiscriminately disable early option/type dependencies.
+
+The next extension-order implementation will preload only known statically linked
+extensions explicitly required by startup options, then create the main database, then
+load the remaining ordinary static extensions. Preserve explicit no-extension startup
+and later LOAD. Use the existing idempotent loader and original extension order; normal
+options are applied before storage initialization as today. Validate stored JSON values
+and JSON-using defaults in both checkpoint/WAL reopen, read-only reopen, configured ICU
+startup and disabled-autoload/explicit-load controls. A type/function needed during
+storage/WAL loading must be available through its real autoload/config path; do not
+silently ignore a failure or pre-load everything merely to mask order differences.
