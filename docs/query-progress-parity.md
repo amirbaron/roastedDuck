@@ -38,3 +38,25 @@ percentage across unsupported pipeline updates, and expose completed executor pr
 as an empty pipeline set. C++'s0/0final ratio does not increase the last percentage.
 Do not add a shell sleep or retain table blocks. Stream-close progress/lifetime details
 in the trace remain separate verification boundaries, not silently accepted differences.
+
+## Fresh signed ABI checkpoint and remaining accounting
+
+The first fresh library (progress-library-1, SHA
+d0b648afc257627bec71c9bc37d12764a7ad36aba69cdb5f6ef9663b181acfb3) fixes constant
+unknown progress and known0percent counter publication. Two signed SDK tests pass in
+both result modes. All12partial/exhausted public C API journeys preserve scalar data,
+streaming flags and reuse, with dladdr verifying the actual selected function image.
+
+The fresh trace still reports totals one below C++ for aggregates. Source explains
+that contribution: C++ includes the uninitialized root collector pull pipeline
+(collector estimated cardinality0 clamped to1); Rust builds only its child push
+pipelines. Include that root progress contribution without scheduling another task.
+Use the root's cardinality metadata, not a query-specific displayed constant.
+
+CPPpartial stream close retains its last progress measurement until a new query starts;
+fully exhausted streams reset to unknown. Rust currently resets both on close. Preserve
+only the already held scalar progress metadata after explicit close, while releasing
+the query's resources. Reset it at initial cleanup before preparation/new execution.
+Do not retain a result/table cache to reproduce this public observation. Broader stream
+transaction/ownership semantics remain separate client/storage verification gates.
+Evidence: `progress-capi-{cpp,rust}-3-{partial,exhaust}.json`; earlier images remain.
