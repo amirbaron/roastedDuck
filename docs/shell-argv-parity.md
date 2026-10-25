@@ -27,3 +27,28 @@ blanket UTF8 rejection of every argument. Changes to shared rendering carriers r
 review of their SDK/Python consumers as well. This document is a source audit and test
 scope, not runtime evidence for those still-unmeasured boundaries or a completion claim.
 Run builds/tests serially after the active complete corpus terminates.
+
+## Measured release3 baseline
+
+The new `scripts/shell-argv-parity.py` executes actual byte argv and creates fixtures
+with native filename bytes, preserving raw stdout/stderr, return codes, filename
+bytes and per-engine worktrees. No version/address/decoder-byte normalization is used.
+Database content is retained but excluded from this shell comparison, so this probe
+is not a storage/WAL compatibility test. Crashes/timeouts/fixture errors never count
+as parity passes. It requires new --work/--out paths under the external artifact task.
+
+Both32-caseASCII and32-caseUTF8controls match. The full320-case default run records
+170matches,140mismatches and10hostfixture errors. Five malformed-byte classes each
+mismatch across all four SQL transports, raw print, eight NULL modes, separators,
+newline, version errors, option/program-name errors, DB paths and missing-file errors.
+JSON/quote NULL rendering ignores the configured text like C++, so those cases match.
+The host rejects creation of invalidUTF8files with errno92; ten existing-file fixtures
+are unavailable and explicitly held, while missing-path/DB-path behavior is measured.
+
+Malformed boxed NULL text causes C++'s UTF8 width calculation to report an INTERNAL
+error (exit1), including its Stack Trace section. Rust currently renders replacement
+text (exit0). Preserve actual validation/error priority; the trace-format discrepancy
+remains the previously open architectural diagnostic gap, without a new waiver.
+All artifacts are under `.context/artifacts/shell-argv-20261025/`; `checkpoint-1.json`
+contains source/binary hashes and exact family counts. The script can additionally
+exercise all255nonNULbyte suffixes with --exhaustive; that matrix has not run yet.

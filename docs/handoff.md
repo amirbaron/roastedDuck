@@ -53,17 +53,23 @@ Full differential: zero unexpected /768cases, including46PTY, with three known g
 still OPEN (internal-error stack traces, database OIDs, invalid-UTF8 argv). The stale
 stdin-Latin1 known marker is removed and its unchanged case passes strictly.
 
-A fresh complete4,870-file corpus is LIVE on immutable signed-images-3 from
-external-source-root-3: actual copied test/data trees, all4,870test hashes and1,522data
-entries verified. Full-corpus-2 was interrupted after a linked-data fixture made a
-recursiveglobtest fail on BOTH engines; root3passesall8affectedcontrols on both.
-Evidence: `.context/artifacts/scalar-release-20261025/release-verification-4.json`,
-`full-corpus-3/manifest.json` and worker logs. Do not start another heavy workload or
-rebuild the running binary; wait for terminal results, then exact coverage, compare
-and ratchet. Do not merge prior verdicts into this new acceptance run.
+The fresh complete corpus on signed-images-3 is now TERMINAL: **4,781pass /15accepted
+design failures /74sharedskips**, zero crashes/timeouts. Exact4,870-file coverage and
+all74skip reasons match the frozen C++ reference. Ratchet:4,855listed /zero regressions
+/zero newlypassing. All4,870test and1,522data hashes remain unchanged after the run.
+Evidence: `.context/artifacts/scalar-release-20261025/release-verification-5.json` and
+`full-corpus-3/terminal-summary.json`. This is a current-source SQL corpus gate, not
+whole-port/client/storage/performance completion.
+
+Native argv work is next. A new exact-byte probe passes32ASCII and32UTF8controls;
+its320-case baseline records170matches,140mismatches and10hostfixture errors (filesystem
+rejects invalidUTF8filenames, errno92). Paths, diagnostics, NULL/separator carriers and
+SQL transport need native bytes. See [argv audit](shell-argv-parity.md); malformed
+boxedNULL also exposes the existing stack-trace format gap. No test waiver or global
+UTF8 prevalidation has been introduced.
 
 The preceding full-corpus-1 remains4,774pass /21fail /75skip with seven ratchet
-regressions; those focused corrections pass, but the new full acceptance is pending.
+regressions; the corrected full-corpus-3 now passes the ratchet.
 See [release checkpoint](scalar-release-verification.md). Broader Python and all
 selected clients, storage/WAL matrices and documented final coupled speed-memory /
 per-query acceptance remain OPEN. Preserve the lower-memory scan baseline.

@@ -162,3 +162,25 @@ one worker, normal engine threading and300s/file. `full-corpus-3/manifest.json` 
 all identities. `fixture-correction-3.json` and `full-corpus-2/interrupted-summary.json`
 preserve why the second attempt was stopped. Only a terminal complete run plus exact
 coverage/ratchet checks can establish fresh corpus acceptance.
+
+## Terminal fresh corpus acceptance
+
+Full-corpus-3 completes with4,781pass /15documented design failures /74sharedskips,
+zero crashes/timeouts. All4,870file identities match the frozen C++ reference; all74
+skip reasons match. The15failures are exactly the documented set left after removing
+the six corrected functional failures from full-corpus-1. Ratchet:4,855listed,
+zero regressions, zero newlypassing. Compare and ratchet both exit0. The signed image,
+reference and ratchet hashes remain unchanged. All4,870test and1,522data hashes also
+match their pre-run values. `full-corpus-3/terminal-summary.json` records these checks.
+No old or interrupted verdict was merged. This closes the fresh corpus gate for
+this snapshot; it does not close the broader port requirements.
+
+The next black-box native argv probe is implemented and run serially against both
+preserved binaries.32ASCII and32UTF8control cases match exactly. Across320cases,
+170match /140mismatch /10fixture-error. All10fixture errors are host errno92 while
+creating invalidUTF8filenames; these are not counted as parity passes or engine
+failures. Malformed missing-path and database-path behavior remains measurable.
+Raw output/exit codes and filename bytes are retained without normalization, and
+worktrees are archived per engine. Evidence: external `shell-argv-20261025/checkpoint-1.json`.
+Shared renderer changes require Python validation; the existing internal-error stack
+trace gap remains unaccepted. Current evidence index: `release-verification-5.json`.
