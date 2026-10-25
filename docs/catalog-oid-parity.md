@@ -129,3 +129,15 @@ matching CPPStartChain. A new test checks that an unobserved internal macro cann
 shadowed and remains the same committed object after rollback. Its next catalog build
 is active; the first native checkpoint predates this small conflict follow-up. C API,
 Clippy, broader catalog/default suites and full core verification still follow.
+
+
+## Lazy-entry follow-up checkpoint
+
+The follow-up passes14signed catalog tests, workspace/all-target release Clippy with
+warnings denied, all30C API files (155cases/795450assertions) and all652Go cases on the
+same signed oid-lazy-library-2 image. Runtime paths and hash receipts are retained. Its
+SHA is d631be95705f0d15ddeb9c076c6c73374fb07e30f73f6541f33a0a4e8c1b4a27.
+The create/default conflict path is included; raw first-image results remain separate.
+Receipt: oid-lazy-verification-1.json. A fresh Slt runner is building for frozen macro/
+schema/catalog-introspection coverage. Numeric bootstrap and full corpus acceptance are
+still open; no reference display value or allocation offset is hardcoded.
