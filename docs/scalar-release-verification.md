@@ -59,3 +59,12 @@ although test output is linked to the external SSD (~123 GiB free). Repeat using
 dedicated external working root that links the same frozen source/test/data entries,
 with its own actual external test directory. Do not change the requirement or clean
 unrelated data. Preserve this first run as-is; use new outputs for the rerun.
+
+The first external symlink-only test view produced absolute canonical test IDs, so
+C++ matched no cases. Its setup failures are retained in `cpp-controls-3/`. The second
+view copies the 47 MB test tree, with all 4,870 test SHA-256 values checked against the
+frozen source, while linking other unchanged inputs. Six C++ controls then pass, but
+its disk-space control still skips because C++ unittest resets cwd to its compiled
+source root unless `--test-dir` is supplied. Correct the Slt unittest adapter to pass
+its requested root through that existing upstream option. Retain `cpp-controls-4/`;
+use separately labeled direct C++ controls/new harness results rather than rewriting it.
