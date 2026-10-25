@@ -74,6 +74,26 @@ reporting. It is not accepted by the separate TPC-H/ClickBench baseline policy.
 Before/intermediate/final samples, controls and result checks are retained in
 `.context/artifacts/python-pandas-remaining-20261025/performance*-comparison.json`.
 
+## Python execution/reader checkpoint (2026-10-25)
+
+After native signal polling and reader lifecycle corrections, the final signed
+development wheel's 1000-operation samples are 34.2–34.8 ms/~47 MB for insert-many
+versus C++ 233–241 ms/~117 MB, and 73–78 ms/~46 MB for parsed/text execution versus
+227–243 ms/~115 MB. First-parameter initialization is included as documented by the
+measurement driver. Earlier noisier insert samples, Rust 50.7–67.1 ms and C++ 384–506 ms,
+are preserved separately; no performance improvement is attributed to the later
+Explain-only changes. These client samples do not prove engine outperformance.
+
+Reading only the first 1024 rows of logical 1M/100M-row queries stays bounded at
+about 73 MB versus C++ 71 MB, and connection reuse succeeds afterward. The per-case
+latency difference remains visible: Rust 0.41–0.53 ms versus C++ 0.25–0.34 ms. It adds
+about 0.1–0.2 ms; final release acceptance must assess both its absolute magnitude and
+the bounded memory behavior. It is not silently averaged into the suite baseline.
+All checksums, individual samples and earlier rounds are retained in
+`.context/artifacts/python-arrow-remaining-20261025/performance*-comparison.json`.
+The uncached baseline and cache policy remain unchanged; these are not final release
+measurements or a new exact-speed requirement.
+
 ## Final verification and sign-off
 
 Completion requires a report on the actual final signed binaries, with:

@@ -245,6 +245,21 @@ The remaining 1.9×/2.0× slowdown (Rust dev versus C++ release) stays an indivi
 outlier; see performance-acceptance.md. Current 26 cohorts run 2946 cases: 2923 pass,
 four held failure assertions, 19 skip/xfail. 274 collected cases in 73 files remain.
 Latest evidence: python-pandas-remaining-20261025/python-pandas-remaining-checkpoint.json.
+The next Arrow/API cohorts close 13 Rust-only failures, including a keyboard-interrupt
+timeout. Arrow matches 77 pass/two existing skips. API matches 86 pass/one shared
+UTC-assuming timezone assertion/one existing xfail; explicit UTC controls pass 87/one
+xfail on both engines. Native pending tasks poll Python signals and preserve cleanup;
+all four warmed cancellation/reuse journeys match. BIGNUM text output, zero-batch reader
+ownership/errors, indexing, joins, tuple conversion, missing ExplainType, progress and
+startup secret options are corrected. Explain/statement checks match 175/175 and reader
+boundaries 92/92. Ten signed SDK tests pass. Final signed development wheel runs 3113
+cases: 3086 pass/five held assertions/22 skip-or-xfail, zero collection errors; 107
+collected cases in 48 files remain, plus environment/platform/client/final gates.
+Python/SDK Clippy and workspace checks pass. Coupled first-batch reads stay bounded at
+about 73 MB for 1M/100M sources; the 0.1–0.2 ms latency gap and noisier earlier insert
+measurements remain visible. No caching policy changes. Full persistent-secret format
+compatibility is not proved by the isolated disabled-read fixture. Latest evidence:
+python-arrow-remaining-20261025/python-arrow-remaining-checkpoint.json.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.

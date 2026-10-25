@@ -880,6 +880,68 @@ Evidence: `.context/artifacts/python-pandas-remaining-20261025/python-pandas-rem
 unmodified upstream before/after/regression reports, exact boundary comparisons,
 coupled performance controls, signed wheel/compiler records and source archive.
 
+## Arrow, execution and API checkpoint (2026-10-25)
+
+The remaining six-file Arrow cohort matches C++ with **77 passed and two existing
+skips**. BIGNUM row conversion returns decimal text, while NumPy/Pandas retain their
+unsupported-type error. Reader aliases use the frozen unsigned-argument rules and
+diagnostics. A valid zero-size request consumes/closes its result before raising the
+same RuntimeError; invalid argument types preserve the result. Explicit execution can
+reuse a relation after the error. All **92 focused Arrow boundary outcomes** match.
+
+The remaining 19-file API cohort now matches C++: **86 passed, one shared local-timezone
+assertion failure and one existing xfail**. With an explicit `TZ=UTC` process environment,
+both engines pass **87 with one xfail**; the original local controls remain preserved.
+The UTC-assuming test does not establish a timezone conversion defect. Eleven Rust-only
+API failures, including a keyboard-interrupt timeout, are closed, alongside two Arrow
+failures.
+
+Python executes native pending tasks with main-thread signal checks between unfinished
+tasks, preserving C++'s RuntimeError and cancellation/transaction cleanup. Text, prepared,
+relation and CTAS cancellation all match C++ and permit connection reuse. A first probe
+hit optional parameter-import initialization instead of execution; both that receipt
+and the corrected warmed control remain retained. The warmed cases interrupt at about
+0.10–0.11 seconds on both engines. This is native task execution, without a watcher
+thread or replacement SQL evaluator.
+
+Startup secret-manager options now reach the database instance before first use.
+An isolated malformed-file fixture proves that disabling persistence avoids reads,
+while the enabled control reports its decode error. Existing saved secret files are
+unchanged; this is not proof of full persistent-secret format compatibility. Setting
+`progress_bar_time` enables progress tracking, and resetting it restores the default.
+The SDK changes have two signed native regressions; all ten signed settings, statement,
+type and profiling tests pass.
+
+Other fixes cover missing/nested relation indexing, missing join operands, nonfinal
+prepared parameters, tuple targets and unsupported TIME WITH TIME ZONE bulk output.
+Native ExplainType follows its frozen converter and equality behavior, including valid
+strings/integers and unknown enum objects. Relation ANALYZE executes its native query
+and renders the native profiler under the configured profiling state. A side-effecting
+UDF proves execution with profiling both disabled and enabled. The expanded statement,
+enum and explain comparison matches **175/175** outcomes.
+
+The final signed development wheel runs **3113 distinct scoped cases: 3086 pass,
+five held failure assertions and 22 skip/xfail**, without collection errors. The new
+shared timezone assertion joins the existing decimal categories and shared Parquet
+timestamp-unit assertion. Separate UTC API controls pass; original local controls are
+not replaced. **107 normally collected cases in 48 files** remain.
+
+Coupled final samples for 1000 operations record insert-many at 34.2–34.8 ms/~47 MB
+versus C++ 233–241 ms/~117 MB, and parsed/text loops at 73–78 ms/~46 MB versus
+227–243 ms/~115 MB. Initial noisier insert samples (Rust 50.7–67.1 ms; C++ 384–506 ms)
+are retained. These measurements include the documented first-parameter initialization
+cost and are development-versus-release evidence, not engine or final release acceptance.
+First-batch reads of 1024 rows from one-million/100-million-row sources stay at about
+73 MB versus C++ 71 MB, with connection recovery verified. The remaining latency
+difference (Rust 0.41–0.53 ms, C++ 0.25–0.34 ms) stays visible separately. No cache or
+accepted TPC-H/ClickBench baseline policy changes.
+
+Python/SDK all-target Clippy and workspace/all-target checks pass. Full Python/dependency and
+platform matrices, remaining selected clients, final core/shell/corpus/storage/WAL and
+signed release/performance acceptance remain open. Evidence is preserved under
+`.context/artifacts/python-arrow-remaining-20261025/python-arrow-remaining-checkpoint.json`, with the signed wheel, raw controls,
+source checkpoint, JUnit/compiler/signature records and coupled performance samples.
+
 ## Remaining gates
 
 Complete relation APIs (including delete, remaining file formats/filesystems, mutation/type/metadata and

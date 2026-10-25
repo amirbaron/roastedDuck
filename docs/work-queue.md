@@ -15,13 +15,16 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
 
 ## Public surface (M8)
 
-2. **C API, the rest.** The C API exports 546 of DuckDB's 547 functions, and all 30
-   `test/api/capi` files pass (`scripts/capi-tests/run.sh`, as against the C++ library).
+2. **C API, the rest.** The integration checkpoint exports all 546 frozen duckdb.h
+   functions plus `duckdb_adbc_init`. All 30 `test/api/capi` files pass at that snapshot
+   (`scripts/capi-tests/run.sh`, as against the C++ library); final-source verification
+   remains required.
    Left:
-   - ADBC (`duckdb_adbc_init`, `src/common/adbc`). Its test, `test/api/adbc/test_adbc.cpp`,
-     needs `arrow_test_helper.hpp`, nanoarrow and the ADBC driver manager in the harness.
-   - Arrow filter pushdown by column type (`ArrowPushdownType`): `arrow_scan` hands
-     filters on every type to the producer, as `TableFunction` has no per-type hook.
+   - ADBC's 64-case frozen upstream suite passes on both engines with 3040 assertions;
+     broader client/version/packaging matrices remain open. See `docs/adbc.md`.
+   - Arrow per-type filter support and native producer filtering now exist. The C API
+     raw-producer projection/filtering and dynamic-filter matrices still need explicit
+     client verification; Python's producer tests alone do not close this gate.
    - `duckdb_result_get_arrow_options` reads the connection's settings when called, not
      those the result was created with.
    - `parse_statements` hands a PRAGMA's expansion of several statements out as one

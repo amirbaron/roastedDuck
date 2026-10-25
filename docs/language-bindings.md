@@ -89,7 +89,15 @@ C++ 130 pass/one existing version skip; 31 focused boundary outcomes match. Curr
 cases, leaving 274 collected cases in 73 files plus dependency/platform matrices.
 Direct chunk string copies reduce measured scan time without a material memory
 increase; the remaining 1.9×/2.0× dev-versus-release slowdown stays an individual open
-outlier. R and the other language packages remain
+outlier. The following Arrow/API cohorts close 13 Rust-only failures, including signal
+cancellation. Arrow matches C++ 77 pass/two skips; API matches 86 pass/one shared local
+timezone assertion/one xfail and, under UTC, 87 pass/one xfail on both engines. Current
+28 cohorts record 3086 pass/five held assertions/22 skip-or-xfail across 3113 cases;
+107 collected cases in 48 files remain plus dependency/platform matrices. Focused
+statement/Explain checks match 175/175, reader boundaries 92/92 and cancellation/reuse
+four/four; ten signed SDK tests and compiler checks pass. First-batch memory is bounded
+for 1M/100M sources; latency differences remain separate and the cache policy is unchanged.
+R and the other language packages remain
 unimplemented/unverified. The complete workspace/all-target check
 includes the Python crate. See [Python implementation gates](python-bindings.md).
 
