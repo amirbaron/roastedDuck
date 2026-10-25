@@ -205,3 +205,12 @@ source snapshot are preserved. Receipt: oid-node-targeted-verification-1.json.
 This accepts the targeted version-node behavior, not the full4870corpus or numeric OID
 bootstrap parity. Builtin creation, default committed creation, dependency entries and
 startup/attach order remain separately audited work.
+
+Ordinary builtin initialization needs a distinct committed-chain insertion API: publish
+its named entry plus the actual allocated INVALIDroot without a user transaction undo
+record. Generated defaults/checkpoint-restored committed entries retain direct insertion.
+Rust's Transaction::system is a lookup view, not CPP's bootstrap CatalogTransaction, so
+do not force bootstrap writes through it or leave uncommitted timestamps/undo retention.
+Verify named entry IDs and the next allocated ID through the chain API, including that
+an existing entry does not create a second root. Apply only at source-confirmed ordinary
+builtin/main-schema construction sites; merges/defaults/load paths have separate semantics.
