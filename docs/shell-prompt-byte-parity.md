@@ -55,3 +55,10 @@ Both max-width controls match. Keep those distinct boundaries: native editor wid
 must retain C++ error behavior, and only linenoise's C-string input ends at NUL.
 Evidence: `prompt-pty-baseline-1`, `prompt-pty-invalid-8`, `prompt-pty-supplement-8`
 raw JSONL/worktrees under the existing SSD task. No raw differences are waived.
+
+For actual progress display, use bounded real queries under a PTY, enable immediate
+progress, clear default dynamic components, then cancel and execute SELECT42 on the
+same connection. Check custom literal/SQL components and hide/padding behavior using
+raw fixed frame bytes. Preserve complete terminal streams and frame counts; progress
+frequency/timing is nondeterministic, so a fixed-frame/reuse check is not a claim of
+raw stream equality. Do not normalize raw error bytes or count missing frames as passes.
