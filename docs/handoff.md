@@ -61,12 +61,17 @@ Evidence: `.context/artifacts/scalar-release-20261025/release-verification-5.jso
 `full-corpus-3/terminal-summary.json`. This is a current-source SQL corpus gate, not
 whole-port/client/storage/performance completion.
 
-Native argv work is next. A new exact-byte probe passes32ASCII and32UTF8controls;
-its320-case baseline records170matches,140mismatches and10hostfixture errors (filesystem
-rejects invalidUTF8filenames, errno92). Paths, diagnostics, NULL/separator carriers and
-SQL transport need native bytes. See [argv audit](shell-argv-parity.md); malformed
-boxedNULL also exposes the existing stack-trace format gap. No test waiver or global
-UTF8 prevalidation has been introduced.
+Native argv/state/rendering byte carriers are now implemented and measured. The
+corrected shared renderer is verified in the signed Python wheel:32NULL/36width cases
+match exactly; both fast dependency matrices retain exact previous node/verdict sets,
+all385runtime exports and seven frozen stub files, plus installed strict typing checks.
+Three held Decimal assertions and the string-columns reference discrepancy remain open.
+The updated signed CLI passes392tests/three shared skips. Its expanded8,745caseprobe
+has7,813exact matches,666trace-format mismatches and266hostfixture errors; raw mismatches
+are not waived. Full768caseinteractive differential for the updated CLI is LIVE.
+See `.context/artifacts/shell-argv-20261025/verification-checkpoint-4.json` and
+[argv verification](shell-argv-parity.md). This source follows the corpus-accepted
+snapshot; final current-core/version/WAL and broader client/performance gates remain.
 
 The preceding full-corpus-1 remains4,774pass /21fail /75skip with seven ratchet
 regressions; the corrected full-corpus-3 now passes the ratchet.

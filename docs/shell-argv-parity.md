@@ -156,3 +156,18 @@ stub and typing receipts. This is not full Python/client completion or acceptanc
 the held discrepancies. Updated CLI reconstruction is now in progress to validate
 the shared glyph-width correction with explicit duckbox coverage. Broader core,
 storage/WAL/version/platform and final coupled performance acceptance remain open.
+
+## Updated shared-renderer CLI verification
+
+The lint-clean shared-renderer source is rebuilt and signed as CLI snapshot2
+(SHA32248057ecc1e642a3a1af7bc0dc273f19534279b99eb37cc3e37d7b1fdca7e4).
+The expanded probe explicitly includes duckbox:330cases yield302exactmatches,
+18trace-format mismatches and10hostfixture errors. The8,745caseexhaustive matrix yields
+7,813exactmatches /666trace-format mismatches /266hostfixture errors. Each raw mismatch
+has matching exit codes and exact pre-StackTrace error text; all666 raw verdicts
+remain mismatches, not waived or normalized into passes.
+
+The updated CLI passes392upstream shell tests with the same three skips. Its full
+768case/46PTYdifferential is now running separately. `verification-checkpoint-4.json`
+indexes the signed CLI identity, raw matrices, Python exact-image results and remaining
+work. Broader core/current-native/WAL/client/performance gates are still open.
