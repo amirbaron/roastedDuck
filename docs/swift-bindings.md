@@ -109,3 +109,23 @@ TMPDIR. The first probe exits2before marker writes; raw paths/status/source/sign
 hashes remain under `storage-probe-1/`. Collect environment/directory diagnostics and
 the actual item-replacement path before selecting a fixture adaptation. This failure
 keeps the data-writing Swift suite gated; it is not client/runtime acceptance.
+
+## Measured fixture path adaptation
+
+Probe2 confirms TMPDIRexists/is writable but Foundation ignores it for generic temp;
+itemReplacementDirectory chooses the SSDvolume's shared .TemporaryItems directory,
+outside the dedicated workspace root. It exits2without marker/database writes.
+Source/signature/path reports remain under storage-probe-2. The core corpus is now
+terminal and accepted; these probes are serialized after it.
+
+The owner's explicit dedicated-storage requirement takes precedence over keeping a
+path helper byte-identical. Adapt only DatabaseTests.generateTemporaryFileURL in both
+CPP/Rust copies to RUSTDB_SWIFT_TEST_DIRECTORY plus a unique child directory. Preserve
+all assertions, record the exact original/patched hashes and path-only diff, retain
+original prepared controls, and require the environment at runtime. Update input pin
+verification to recognize only that recorded adaptation. Test functionality is not
+weakened; actual database files still use the upstream API/cases.
+
+Verify the adapted fixture behavior with the signed storage probe's explicit mode.
+Report original Foundation paths separately; success of explicit fixtures must not
+be relabeled as proof that Foundation's generic temp/replacement redirect worked.
