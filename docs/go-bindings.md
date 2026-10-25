@@ -138,3 +138,12 @@ The first control recorder's1000tight task steps were insufficient for asynchron
 checkpoint IO; it stopped before completing coverage. The corrected recorder waits
 only when no work is ready, with a30second deadline. Original source/snapshots/failure
 are preserved in checkpoint-capi-cpp-1; accepted CPP control is checkpoint-capi-cpp-2.
+
+The first pending-wrapper correction alone does not close those two cases: checkpoint
+requests are still deferred until result finalization, so Rust ExecuteTask reports ready
+before the checkpoint failure exists. Keep pending-library-1 and comparison2as failed
+scoped verification. Apply execution-affecting checkpoint requests after each executor
+step, while query metrics are active, before reporting task readiness. Preserve the
+existing end-query handling for other callback requests and for unstepped execution.
+Failures must use the normal active-query cleanup and retain the pending error. Repeat
+actual task/error/WAL controls before accepting the change.
