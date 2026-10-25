@@ -181,3 +181,15 @@ visibility, identity-preserving commit and rollback, and the actual internal nod
 Workspace/all-target Clippy passes with warnings denied after replacing a panic-style map
 lookup with entry access. A fresh C API image is building for public lifecycle/client
 verification. These native checks and full numeric/bootstrap parity are not yet accepted.
+
+## Node native checkpoint
+
+Signed oid-node-library-1 SHA65c62138993ad0ad27e8e5c3887cbb4af1fa6a26c3c1d3b393cc85579a73a8f2
+preserves public table identity across rename/comment and independent instance allocation;
+all652Go cases pass. Repeated introspection versus no repeated introspection produces the
+same next marker-table ID on each engine, so repeated read-only catalog snapshots do not
+cause unbounded drift. Controls oid-repeat-{cpp,rust}-{0,1} preserve the raw observations.
+Numeric IDs still differ. CPPdependency-manager entries also own catalog-chain identities,
+where Rust currently stores logical dependency lists; those real lifecycle objects must
+be audited before claiming later user-object sequence parity. Do not replace them with
+fixed per-dependency increments.
