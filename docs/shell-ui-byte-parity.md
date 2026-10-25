@@ -21,3 +21,12 @@ this probe does not establish interactive pager execution or whole-shell complet
 Run one build/test workload at a time, sign every new executable, and preserve the
 accepted lower-memory engine policy. Shared Python rendering code is outside this
 CLI-only scope; any scope change must trigger corresponding consumer verification.
+
+## Measured baseline
+
+The unchanged exact-byte recorder measures110cases on signed CLI6:60exact/50raw
+mismatches, no crashes/timeouts/fixture errors. All11ASCII and11UTF8controls match.
+Each of five malformed payload classes differs in highlight element/color/intensity,
+six deprecated color messages and pager command reporting. Pager row-threshold
+parsing already matches. Evidence: `shell-argv-20261025/ui-baseline-1.jsonl` and its
+manifest/summary; no pager process is launched by these configuration journeys.
