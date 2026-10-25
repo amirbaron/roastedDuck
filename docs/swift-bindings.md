@@ -86,3 +86,17 @@ The runner preserves initial command/input metadata and build exit status, pins 
 project Mach-O dependencies before signing, signs test bundles, then records final
 artifact hashes after bundle signing. Runtime library identity, full upstream tests,
 Foundation cache/temp placement and portable distribution are still unverified gates.
+
+## Foundation storage precondition
+
+The upstream database test helper requests an item-replacement directory appropriate
+for the user caches directory. Prepare a standalone Foundation probe that reports
+home/cache/temp/replacement paths under an explicit dedicated test root. It must stop
+before writing probe data if base or returned paths escape that root. A small marker
+is written/read only after the replacement location passes the containment check.
+
+Compile/sign/run this probe only after the corpus terminates, with test-only
+CFFIXED_USER_HOME and TMPDIR settings and external module caches. Preserve its actual
+path report and status; environment variables alone do not prove placement. A failed
+precondition must gate the data-writing Swift suite. Any later fixture-path adaptation
+must preserve upstream assertions and be applied equally to CPP/Rust controls.
