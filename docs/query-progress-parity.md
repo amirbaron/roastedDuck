@@ -95,3 +95,19 @@ on C++. The shell creates a ProgressDisplay for a direct statement with no under
 progress bar. Require the backend's restarted/known progress state before creating
 that display; pending direct statements remain unknown, while running plans restart
 at0before tasks. Do not insert a fixed delay or force engine threads to1.
+
+## Progress capability fixture correction
+
+The missing default-thread frames in the range-based visibility probe are explained
+by source capability: frozen C++ range has no progress callback, and Rust's generic
+table-function source uses invalid progress by default. An initial uninitialized
+pipeline can briefly report0percent; those setup frames are scheduler-dependent.
+Do not require ongoing progress from that unsupported source or label its missing
+frames an engine regression. Preserve all earlier raw runs and the capability audit
+`progress-range-fixture-audit-1.json`; none is whole progress-visibility acceptance.
+
+Use a100,000-row stored table (one BIGINT column, about0.8MB base data) joined with
+itself under a scalar aggregate, so table scans support progress and the build side
+stays bounded. Configure custom components after table setup, wait for actual progress,
+then interrupt and verify query reuse. This keeps normal engine threads and tests real
+supported progress without a large intermediate dataset or a synthetic engine callback.
