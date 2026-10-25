@@ -60,3 +60,25 @@ to dedicated SSD quarantine after checking no active handles, preserving hashes 
 original paths; pre-existing cache files were untouched. Receipt:
 `parser-cache-quarantine-1/manifest.json`. The runner now parses saved Go test markers
 in Python, so it cannot compile the parser or create another default Go cache.
+
+## Startup fixes and first full Rust suite
+
+Signed SDK image2passes all4client-settings regressions. New immutable Rust C API image
+`config-library-1/libduckdb.dylib` SHA7161c8893b34827377a0dfc96b359062f4a616fe109bbb26608d5ef1b0cd777a
+retains547exports and matches all27direct configuration observations, closing all19
+prior mismatches. Original automatic mode remains automatic; explicit modes read back
+correctly in both current_setting and duckdb_settings. Inputs/raw outputs and a source
+snapshot accompany config-comparison-after-1.json.
+
+The complete root Go suite with Arrow now finishes:647pass/5fail records across the
+same652case IDs as CPP, with no unstarted/unfinished tests and the selected Rust library
+verified by the loader. Five records represent four open categories: VARIANT typed
+segment visibility, SET external_threads=-1 not rejected, custom CHECKPOINT_LATENCY
+remaining zero, and a complex TIMESTAMP_NS/timestamptz bind error being masked by a
+LATERAL DEFAULT-clause error (parent/subtest both fail). Preserve individual errors;
+none are waived. Evidence: rust-test-2 and full-suite-comparison-2.json.
+
+Next verify external_threads input conversion/callback constraints against the frozen
+public API, preserving exact error types and messages and valid control settings.
+Then close remaining categories and rerun the entire suite. Core/shell/Python/Swift
+acceptance on earlier images predates these core changes and needs a final refresh.
