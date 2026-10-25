@@ -38,6 +38,21 @@ Complete Python bindings first and all primary clients plus C#/.NET, Swift and J
 - Subagents use model "opus". Commit messages end with the Co-Authored-By line; docs
   changes go in their own commit before the code.
 
+## Current release verification (2026-10-25)
+
+Release build 2 incorporates native scalar byte names and the CSV pipe correction.
+The signed release passes all 30 C API files (155 cases / 726,562 assertions), and
+both shells pass 392 upstream tests with three identical skips. The shell differential
+has zero unexpected differences across 768 cases (46 PTY), with three known gaps
+still open. See [release checkpoint](scalar-release-verification.md).
+
+The new full 4,870-file corpus is live on immutable signed images. At 2,984 completed
+files it found three unexpected failures: lowercase compression names in one JSON
+test and missing final EOF-read log events in two logging tests. These are real
+regressions, not accepted divergences. Corrections and focused verification are next;
+no final corpus/client/storage/performance acceptance is claimed. Keep all workloads
+serial and retain the uncached lower-memory baseline.
+
 ## Current source integration (2026-10-24)
 
 The checkout still has an **uncommitted native-byte migration**, but the **entire

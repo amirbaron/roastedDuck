@@ -1,0 +1,39 @@
+# Scalar byte-name release verification
+
+2026-10-25; goal active. This checkpoint does not complete the Rust port.
+
+Release build 2 completed in 6m56s. Signed immutable images and SHA-256 identities:
+`.context/artifacts/scalar-release-20261025/signed-images-2.json`.
+
+- Upstream C API: 30 files, 155 cases, 726,562 assertions pass; existing harness
+  exclusions remain. This is not complete C API semantic acceptance.
+- Upstream shell: C++ and Rust each 392 pass / three skips, identical 395 test IDs.
+  Only the pytest module-root prefix is normalized for identity comparison. Both
+  use the documented SSD lexical-path fixture; test bodies/assertions are unchanged.
+- Shell differential: zero unexpected differences / 768 cases, including 46 PTY.
+  Three known gaps remain open: native internal-error stack traces, database OIDs,
+  and invalid-UTF8 command-line arguments. They are not silently accepted as parity.
+
+Fresh complete corpus: `full-corpus-1/manifest.json`, `run.log`, per-file worker logs
+and eventual `rust-run.jsonl` under the same external artifact task. It runs only one
+worker, with normal engine threading and immutable signed images. At 2,984 completed
+files, three unexpected ratchet failures are recorded:
+
+| Test | Diagnosis / correction required |
+|---|---|
+| `test/sql/json/issues/internal_issue5288.test` | Restore ASCII-case-insensitive compression-name lookup while preserving raw-byte diagnostics; audit the adjacent secret-persistence enum conversion |
+| `test/sql/logging/logging_csv.test` | Preserve bounded small-file allocations and original file-size boundary while restoring C++'s final zero-length read/log event |
+| `test/sql/logging/logging_types.test` | Same CSV EOF-read behavior |
+
+The partial run also has documented extension-loading and lean-memory divergences.
+Let the run finish to capture every result before compiling corrections. Do not merge
+historical verdicts into this new run. Compare its exact coverage with the frozen C++
+reference and enforce all 4,855 ratchet entries. Record correction validation separately
+from this pre-correction run. Diagnosis: `full-corpus-1/regression-diagnosis.md`.
+
+Detailed current receipts: `release-verification-2.json`, `capi-summary-2.json`,
+`shell-release-comparison-2.json`, `shell-diff-summary-1.json` and their raw logs/XML.
+Remaining Python/environment/API, all selected clients, broad storage/WAL/version/
+encryption/recovery, and final signed-release speed-memory acceptance remain open.
+The historical uncached performance baseline remains the control; no table cache
+is introduced or authorized by this checkpoint.
