@@ -141,3 +141,17 @@ The create/default conflict path is included; raw first-image results remain sep
 Receipt: oid-lazy-verification-1.json. A fresh Slt runner is building for frozen macro/
 schema/catalog-introspection coverage. Numeric bootstrap and full corpus acceptance are
 still open; no reference display value or allocation offset is hardcoded.
+
+
+## Frozen targeted SQL verification
+
+A freshly built/signed current runner passes169catalog/pg_catalog/storage-introspection
+files. An additional54macro/schema/SQLite-relevant files, selected separately to close
+selector coverage gaps, produce48passes and6exactCPPskips. The223unique files have no
+failures and every verdict/skip reason matches CPP. Both outputs remain separate and
+immutable; no earlier results are merged. Runner hash/signature stays unchanged.
+Receipt: oid-lazy-targeted-verification-1.json and lazy-targeted-{1,2} logs/manifests.
+
+This validates targeted default/catalog behavior on the current lazy-entry implementation;
+it is not a new4870-file result or numeric OID parity. The remaining allocation-order
+stages and a fresh full corpus after stabilization remain required.
