@@ -304,3 +304,21 @@ large row-count and readable-footer journeys. Compare those with the same exact-
 recorder on preserved CLI5 and corrected CLI6, including default malformed-byte classes.
 Keep raw failures and prior images; a single ordinary decimal query cannot establish
 that all changed numeric/footer consumers preserve their bytes.
+
+## Numeric consumers and shell regression verification
+
+Direct signed/readable-cell and row-count/readable-footer journeys improve from
+62 to 72 exact matches across 80 cases, with zero previous matches regressed.
+The eight remaining raw mismatches have the same exit/error prefix/file effects
+and retain the open Stack Trace gap. Footer byte output matches C++, including
+malformed separators where C++ emits those bytes. No additional validation policy
+is imposed on those paths. Evidence: `numeric-comparison-1.json` and both raw runs.
+
+The same signed CLI6 passes 392 upstream shell tests with three existing skips,
+all 768 differential cases with zero unexpected differences (46 PTY sessions and
+two known gaps), and signed unit suites of 15 binary/four shared tests. The default
+argv, dot-path and catalog/import guard probes retain exactly their prior case IDs
+and verdicts, including explicitly open raw mismatches and host fixture errors.
+`settings-verification-1.json` indexes identities, raw results and limitations.
+Fresh Python wheel4 validation is in progress for the changed shared numeric code;
+this does not complete the remaining shell/core/client/storage/performance gates.
