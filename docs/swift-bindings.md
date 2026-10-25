@@ -253,3 +253,19 @@ Other architectures/platforms, strict Swift6language-mode concurrency diagnostic
 complete public API/error/cancellation coverage and release/distribution signing remain
 open. The frozen wrapper emits Sendable pointer warnings in Swift5language mode;
 keep that limitation explicit rather than claiming strict Swift6acceptance.
+
+
+## Refresh on the accepted post-Go-fix core
+
+All132frozen upstream tests plus the separate identity case pass again, with the same
+133case IDs as CPPcontrol2. This run loads only current native image2
+SHA2c234877ce75ed425437a7a6051fbdff2d984a75304f6e3192cb6a082bf97209. Prepared source,
+header, test bundle and library signatures/hashes remain unchanged after execution.
+A fresh relative XCFramework package, relocated consumer and standalone deployment also
+pass. All4cross-engine checkpoint/nonempty-WAL reader/write/readback journeys pass using
+the standalone consumer. Earlier controls/artifacts are preserved under their own hashes.
+
+Current receipt: `.context/artifacts/swift-client-20261025/current-verification-2.json`;
+raw suites/builds: rust-{build-3,test-2}; portable package/journeys: sdk-package-2,
+sdk-consumer-3, sdk-deployment-2 and sdk-interop-2. This refresh covers the current verified
+core on macOSarm64; broader API/platform and release packaging gates remain separate.
