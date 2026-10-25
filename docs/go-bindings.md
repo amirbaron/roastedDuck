@@ -82,3 +82,28 @@ Next verify external_threads input conversion/callback constraints against the f
 public API, preserving exact error types and messages and valid control settings.
 Then close remaining categories and rerun the entire suite. Core/shell/Python/Swift
 acceptance on earlier images predates these core changes and needs a final refresh.
+
+## External-thread validation and prepared checkpoint diagnosis
+
+Casting external_threads to its UBIGINT input type before storing the assignment closes
+the error gap. Six direct public SQL controls now match CPP exactly, including invalid
+negative/text/overflow error types/messages and unchanged readback after each failure.
+The full Go suite advances to648pass/4fail records, with the same652case IDs and complete
+execution. Image: thread-library-1 (SHA66af9fd4414de1eb527c389395ec7a108b8216a15b65d5581ea8322974b9dcf8).
+The added signed SDK regression still needs its next build/run; earlier4tests passed.
+
+An assertion-preserving Go diagnostic exposes transient segments after its prepared
+CHECKPOINT, whereas ordinary SQL checkpoints produce the same persistent typed segments
+on both engines. Source inspection identifies the no-op checkpoint table function:
+only Connection's SQL-text path actually performs the checkpoint. Prepared execution
+bypasses that shortcut, also explaining zero CHECKPOINT_LATENCY. Keep diagnostic source
+copies/diff, both engine logs, and the mistaken initial metadata query (segment_count
+instead of count) separately; corrected direct controls use the real count column.
+
+Move the actual action to the connection's established function-request lifecycle,
+consumed before transaction/profile finalization. Both SQL and prepared checkpoint
+functions should enqueue the target/force request once; remove the SQL-only shortcut.
+Preserve database validation, explicit transaction/force errors, index binding and actual
+storage timing. Verify materialized/pending prepared execution, repeat checkpoint/reopen,
+WAL changes, errors and profiling with CPP controls. Do not fabricate latency or change
+VARIANT layout merely to satisfy a metadata assertion.
