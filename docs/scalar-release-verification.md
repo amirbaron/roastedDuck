@@ -202,3 +202,33 @@ results/worker logs/dashboard/ratchet and source-current-4.json/tar.gz. New Swif
 preparation tooling/docs added during the run are outside the compiled engine snapshot.
 This closes current scoped SQL corpus verification, not all-client/storage/performance
 or whole-port completion. Remaining gates in the handoff still apply.
+
+
+## Current post-Go-fix full refresh (2026-10-25, active)
+
+After closing five Go-discovered core gaps, release all-target workspace Clippy passes,
+signed SDK settings5/5and persistence10/10pass, current native C API30files/155cases/
+749820assertions pass and the pinned Go root+Arrow suite passes652/652against the same
+signed native image. All expected runtime images and unchanged hashes are recorded in
+`.context/artifacts/go-client-20261025/verification-checkpoint-3.json`.
+
+Native CLI/Slt rebuild exits0; immutable signed-images-5 records both images and the
+879unchanged source inputs. CLI SHA61493f24b4106cae741bc0d3abafec74d39944b871d58e3d5f82db9621237f0f;
+Slt SHAeb4a380f76c92eb374ec0cabcf05bf5c952114d1aa910dbd142bed88e691f526.
+Current shell verification passes392upstream cases with3unchanged skips; complete
+768-case differential/46PTY has0unexpected differences and2known OPEN gaps (internal
+stack-trace output and catalog OID numbering). Do not call that complete shell parity.
+
+Fresh full run5 starts2026-10-25T18:38:29UTC using the actual copied test/data root3,
+one process worker, normal engine threading and new output/log/temp directories. All
+4870test hashes and1522data entries including symlinks match, CPP reference/ratchet
+hashes are unchanged. The first fixture audit's broad *.test* glob included the disabled
+Spinque fixture; corrected auditing uses the actual harness's .test/.test_slow suffixes,
+without changing the collector, test bodies or case set. Both audit records are retained.
+
+Evidence root: `.context/artifacts/go-client-20261025/full-corpus-5`. The dedicated
+run.py preserves manifest, logs, process exit, exact coverage, skip reasons, compare/
+ratchet statuses and post-run source/fixture/binary/archive hashes. It never merges older
+results. Worker live snapshots are partial observations only; acceptance requires the
+terminal summary. Earlier corpus4/Python6/Swift verification remains historical evidence
+on its recorded images. Final client/core/storage/performance gates remain open.
