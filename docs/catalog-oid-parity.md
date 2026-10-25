@@ -214,3 +214,13 @@ do not force bootstrap writes through it or leave uncommitted timestamps/undo re
 Verify named entry IDs and the next allocated ID through the chain API, including that
 an existing entry does not create a second root. Apply only at source-confirmed ordinary
 builtin/main-schema construction sites; merges/defaults/load paths have separate semantics.
+
+The committed ordinary-builtin-chain step passes16signed catalog tests. Main-schema
+and regular register_builtin now construct real INVALIDroots; generated default/direct
+committed insertion remains distinct. Public numeric parity is still unverified for this
+new stage. Next separate attachment identity timing: construct/initialize the attached
+catalog and its entries, then allocate its database OID at final registration as CPP
+FinalizeAttach does. Standalone Catalog::new behavior stays explicit for tests/users;
+the database manager can use an initially unregistered catalog. Do not move extension
+loading simultaneously: storage/WAL/option-driven extension needs require their own
+controls and lifecycle port.
