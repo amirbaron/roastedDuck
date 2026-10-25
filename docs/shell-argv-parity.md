@@ -76,3 +76,22 @@ The original argument-latin1 differential case now matches both stdout/stderr an
 exit1 exactly. Remove its obsolete known marker and repeat full differential checks;
 only the database-OID and internal-stack-trace markers remain. Full malformed-byte
 coverage and rendering consumer validation still need to run.
+
+## Exhaustive byte and regression checks
+
+The full768-case differential now passes with zero unexpected differences, including
+46PTYsessions. Only two existing known markers remain (internal-error stack traces
+and database OIDs). The upstream suite still has392pass/three identical skips.
+
+The exhaustive probe runs8,480cases (the original10classes plus255nonNULbyte suffixes):
+7,622exactmatches /592rawmismatches /266hostfixture errors. Every mismatch has the
+same exit code and exact error text before C++'s Stack Trace section; all592 remain
+rawmismatches, without a waiver. `exhaustive-classification-1.json` records this
+classification separately from unchanged raw evidence. Host fixture errors are not
+counted as engine failures or parity passes.
+
+Whole-workspace/all-target Clippy with warnings denied passes. Signed native unit
+suites pass (shell library4, serializer6, shell binary15; shared tests can overlap).
+A fresh release Python wheel is building for shared-renderer validation; this is
+not Python completion. `implementation-checkpoint-3.json` is the current evidence
+index. Source/signature and previous controls remain preserved on the SSD.
