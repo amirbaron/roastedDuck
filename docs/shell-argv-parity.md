@@ -135,3 +135,24 @@ after wheel2 changes only a documentation code span and passing the bound receiv
 by reference; a final release wheel rebuild is in progress so exact-image confirmation
 can use current source. Updated CLI duckbox/exhaustive checks, package typing/API and
 broader current-source/core/storage/client/performance gates remain required.
+
+## Exact current Python image verification
+
+Release wheel3 is signed and installed into new Arrow19/21 environments. Both load
+exactly one Rust engine image; installed extension SHA matches the signed wheel
+(7324ed059ebc80bbd96f2cae535c5d6c355027de3f4144761a80d8011b2b79e5).
+Focused32NULL and36width cases still match C++ exactly. Existing rendering remains
+18/19 with the same unaccepted reference string-columns discrepancy.
+
+Both complete fast matrices on this exact image reproduce the earlier node/verdict
+sets:3,203pass/3held/35skip-xfail over3,241records forArrow19, and3,453/3/36 over3,492
+forArrow21. Zero collection errors/new failures. All385frozen runtime exports remain
+available;29typing-only declarations remain separate. All seven packaged stub files
+are byte-identical to the preserved frozen copies. Two strict positive typing clients
+pass; two negative clients each report exactly four expected errors.
+
+Evidence: `python-validation-3.json` indexes identity, focused, JUnit, availability,
+stub and typing receipts. This is not full Python/client completion or acceptance of
+the held discrepancies. Updated CLI reconstruction is now in progress to validate
+the shared glyph-width correction with explicit duckbox coverage. Broader core,
+storage/WAL/version/platform and final coupled performance acceptance remain open.
