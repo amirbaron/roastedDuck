@@ -115,3 +115,17 @@ native image is building for public inventories and complete client checks; this
 runtime/catalog-wide acceptance yet. Creation/conflict paths must also trigger defaults
 before starting a new chain, matching CPPStartChain, so callers cannot shadow a default
 merely because it has not been looked up. Keep that audit explicit in the next controls.
+
+## First lazy-entry native checkpoint
+
+Signed oid-lazy-library-1 SHAee293309d5058d1802abf7b2e0e8e4a73284395e836000562d3377aba501babb
+passes the complete652-case Go root+Arrow suite. Public inventory queries have no errors;
+function names/counts,47internal views and244internal type rows match CPP. Initial Rust
+DBOID becomes21020instead of21187through actual deferred construction; it still differs
+from CPP20624. This is progress, not numeric parity acceptance.
+
+The transactional create path now triggers generated defaults before starting a chain,
+matching CPPStartChain. A new test checks that an unobserved internal macro cannot be
+shadowed and remains the same committed object after rollback. Its next catalog build
+is active; the first native checkpoint predates this small conflict follow-up. C API,
+Clippy, broader catalog/default suites and full core verification still follow.
