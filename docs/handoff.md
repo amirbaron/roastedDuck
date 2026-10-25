@@ -295,6 +295,16 @@ and workspace checks pass. Signatures/overloads/lifetimes, stubs, remaining depe
 platform and seven non-fast files, other clients and final core/shell/storage/WAL/release/
 performance acceptance remain open. Latest evidence:
 python-type-api-20261025/python-type-api-checkpoint.json.
+The following non-fast/default-fixture checkpoint invokes all seven upstream files:
+both engines record 71 passes/eight skips across 79 records, including all30 H2O Arrow
+cases and the 10M-row materialized fetch. One extension-loading pass is a fixture-unset
+no-op; configured extension loading and HTTPFS remain open. All six pinned native
+stub files now ship unchanged in a signed wheel, plus a relative-extension forwarding
+stub. Installed strict mypy positive clients pass and negative controls reject four
+errors each, with provenance confirming installed paths. Runtime code is unchanged
+from the preceding Python checkpoint. Evidence: python-nonfast-20261025/, especially
+nonfast-comparison.json and wheel-stubs-verified.json. Broader signature/runtime,
+dependency/platform, other-client and final acceptance gates remain open.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.

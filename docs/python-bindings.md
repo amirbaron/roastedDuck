@@ -1061,6 +1061,34 @@ all constructor/token/descriptor/tensor comparisons, guarded reference receipts,
 native signature/test logs, full JUnit and node reconciliation, dependency pins,
 before/after performance and memory-stage probes, source SHA/archive and signed wheel.
 
+## Non-fast tests and installed type stubs (2026-10-25)
+
+All seven upstream non-fast files were invoked without editing their tests. Both
+engines record **71 passes and eight skips** across 79 records: coverage/materialized
+4/4, concurrency two passes/two Windows-only skips, default extension/JSON paths
+35 passes/six skips, and all 30 H2O Arrow cases. The materialized tests include 10M-row
+fetches and re-execution; concurrency requires 200 successful connections per case.
+H2O uses the upstream downloaded datasets at one/four threads. These correctness
+test durations are not speed-memory acceptance measurements.
+
+The extension-loading case returns without loading anything when its fixture is
+unset, despite pytest counting it as passed. Five HTTPFS cases are disabled by their
+flag, and the nonexistent-extension case skips on the reference exception category.
+Configured extension loading and HTTPFS remain open; these counts do not close them.
+
+The signed development wheel now includes all six frozen `_duckdb-stubs/*.pyi`
+files with exact inventory hashes and a `duckdb/_duckdb.pyi` forwarding stub.
+A separate installed-package environment passes two strict mypy clients covering
+root/native exports, constructors, expressions, tokenization and tensor return types.
+Two negative clients each produce four expected type errors. Verbose provenance
+confirms installed stub/frontend paths; missing imports are not ignored. Distribution
+and these typing journeys do not establish every signature's runtime semantics.
+
+Evidence: `.context/artifacts/python-nonfast-20261025/nonfast-comparison.json`,
+individual JUnit/logs and H2O download receipts, `wheel-stubs-verified.json`, signed
+`wheels-dev-1-signed/`, installed `typing-env/`, `mypy-*.log` and typed client sources.
+The runtime binary is unchanged from the preceding type/API checkpoint.
+
 ## Remaining gates
 
 The runtime availability audit is complete for all 385 inventory entries. Finish complete signatures/overloads/defaults/error
@@ -1072,8 +1100,9 @@ partial implementation/evidence; no surface is declared fully complete yet.
 
 All 3212 normally collected fast cases have now executed; the skipped modules and
 newer dependency/platform matrices (tensor coverage is now separately verified),
-seven non-fast test files, complete argument/overload audit,
-pinned stub distribution and applicable dependency/platform/version matrices remain.
+configured extension/HTTPFS cases, complete argument/overload audit,
+and applicable dependency/platform/version matrices remain. The seven non-fast files
+have run at their default fixture settings and pinned native stubs now ship.
 Packaging/lifetime and cross-engine
 storage/WAL journeys remain open. Development-wheel correctness does not establish
 release performance. Preserve the accepted uncached speed-memory baseline and report

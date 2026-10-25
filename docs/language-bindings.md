@@ -119,6 +119,14 @@ R and the other language packages remain
 unimplemented/unverified. The complete workspace/all-target check
 includes the Python crate. See [Python implementation gates](python-bindings.md).
 
+The subsequent non-fast/default-fixture run invokes all seven files: 71 passes and
+eight skips per engine, including all30 H2O cases. Configured extension loading and
+HTTPFS remain unverified (one reported pass is a fixture-unset no-op). The signed wheel
+now distributes all six exact pinned native stubs and a relative-import forwarding
+stub; installed strict typing clients and negative controls pass their expected checks.
+This closes stub distribution, not every runtime signature or final Python acceptance.
+Evidence is under `.context/artifacts/python-nonfast-20261025/`.
+
 | Surface | Current evidence / remaining work |
 |---|---|
 | Python | Native arrays, Arrow, joins/writes and expression trees; 101/101 DB-API, 37/37 host, 41/41 Arrow, 79/81 object and 123/123 relation/expression cases pass. 559 UDF cases pass plus one existing xfail; complete remaining relation/input/expression and UDF overload APIs, platform/package gates and twelve unaccepted discrepancy categories |
