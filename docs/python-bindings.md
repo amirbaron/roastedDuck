@@ -9,6 +9,20 @@ the pure-Python frontend/value and packaging requirements. The upstream tree con
 275 test files. Completion requires the full documented API and applicable upstream
 suite, not the focused subset below.
 
+## Current signed verification (2026-10-25)
+
+Signed wheel6 matches all336Decimal conversion/inference outcomes, including frozen
+CPPnumeric quirks. Both complete fast suites now have zero failures and exactly match
+CPPtest IDs/verdicts:3205pass+1XPASS/27skip/8xfail forArrow19 and3455+1/28/8 forArrow21.
+All three formerly held Decimal assertions pass. Runtime385exports, exact seven stubs,
+strict positive/negative typing and four current15-column file/WAL append journeys pass.
+
+[Decimal evidence and scope](python-decimal-parity.md) and SSD index
+`shell-argv-20261025/python-validation-6.json` preserve current images, raw data and
+limits. Existing other reference discrepancies, signatures/lifetimes/nonfast/environment/
+platform/client/storage and final performance gates remain open. Earlier sections below
+retain historical checkpoints; their three Decimal failures are now resolved.
+
 ## Current implementation
 
 `crates/python` implements a native PyO3 extension over this repository's Rust runtime.

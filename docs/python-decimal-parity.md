@@ -75,3 +75,27 @@ Per-value route timings and whole/above-import RSS are retained in the performan
 comparison. The corrected large positive-exponent case stays bounded (Rust132808704B
 whole process versus CPP140722176B in one diagnostic), not an engine-suite acceptance
 claim. No old exponentsized-string allocation is reproduced for timing measurements.
+
+## Final signed current package checkpoint
+
+Wheel6 fixes dictionary-field recursion and matches all336focused outcomes:256scalar/
+Pandas plus80nested LIST/STRUCT. No previous exact matches regress; all150primary and
+six nested mismatches are closed. The exact signed native image is
+04d315a4b1927246311e56345f7c739c82c3a9ec8d1949334833260a0a30324b, installed and identity/
+signature-verified in new Arrow19/21 environments. All source snapshot hashes still match.
+
+Both complete fast suites retain exactly the frozen CPPnode/verdict maps: Arrow19
+3205pass+1existingXPASS/27skip/8xfail (3241records), Arrow21 3455+1/28/8 (3492records),
+zero failures or collection errors. The three previously held Decimal assertions pass
+without test edits or new exceptions. All385runtime exports remain available, seven
+packaged stubs remain exact, two strict typing clients pass, and two negative clients
+produce the expected four errors each using the current installed package.
+
+The unchanged rendering probes retain NULL32/show36exact and render18/19with the prior
+unaccepted string-columns discrepancy. The current15column append journey passes four
+checkpoint/WAL engine-direction variants: real nonempty999byteWALs replay, the receiving
+engine inserts/checkpoints, and the original writer reads back all four rows. Original
+files/WALs, raw logs, signatures and hashes are preserved. This is scoped compatibility,
+not full storage/WAL/version acceptance. `python-validation-6.json` under the SSD task
+indexes all evidence. Broader client/environment/nonfast/reference/performance gates
+remain open; no table/result cache or exponentsized string allocation was introduced.

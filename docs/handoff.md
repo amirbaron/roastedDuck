@@ -38,6 +38,20 @@ Complete Python bindings first and all primary clients plus C#/.NET, Swift and J
 - Subagents use model "opus". Commit messages end with the Co-Authored-By line; docs
   changes go in their own commit before the code.
 
+## Current Python checkpoint (2026-10-25)
+
+Signed wheel6 closes the three remaining fast-suite Decimal failures. Both Arrow19/21
+complete fast suites match frozen CPPnodes/verdicts with zero failures;336focused
+Decimal outcomes, runtime385exports, exact stubs and strict typing checks pass. Four
+current15column checkpoint/nonemptyWAL/receiver-write/writer-readback journeys pass.
+See [Python Decimal verification](python-decimal-parity.md) and SSD
+`shell-argv-20261025/python-validation-6.json`. Other documented reference/client/
+environment/storage/performance gates remain open; this is not whole-port completion.
+
+Core2CAPI30files/155cases/752694assertions and CLI11full768/46PTY/392upstream tests,
+15+4signedunits/seven byte guards remain current for their unchanged compiled code.
+Fresh whole SQL corpus validation is next; prior full-corpus3predates core progress.
+
 ## Current core progress checkpoint (2026-10-25)
 
 Core progress now preserves distinct unknown/started states, publishes0percent row
