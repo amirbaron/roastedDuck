@@ -95,3 +95,23 @@ suites pass (shell library4, serializer6, shell binary15; shared tests can overl
 A fresh release Python wheel is building for shared-renderer validation; this is
 not Python completion. `implementation-checkpoint-3.json` is the current evidence
 index. Source/signature and previous controls remain preserved on the SSD.
+
+## Shared Python renderer validation found additional work
+
+The first signed release wheel installs with one verified Rust engine image. Existing
+render comparisons retain18/19matches (the known string-columns reference bug).
+A new32caseNULL/configuration probe initially matches10/32: six tab/newline/ANSI cases
+expose a width regression, and18invalid-option cases expose frozen error-format gaps.
+These are retained in `null-render-{cpp,rust}-1.json`, not hidden by the broader shell
+results. C++ shared BoxRenderer uses Utf8Proc glyph widths; shell column layout uses
+terminal-aware RenderLength. Restore the shared box width to a byte-native glyph
+calculation, retaining terminal semantics only in the existing column path. Add
+explicit duckbox coverage to the argv probe so this distinction is tested directly.
+
+Frozen show() binds Optional[py::int_] and Optional[py::str], then casts values in its
+body. Measurements confirm: floats/index-only objects are binding TypeErrors; negative
+or overflowing integers are body RuntimeErrors; unencodable strings are RuntimeErrors.
+Preserve strict string acceptance (bytes are rejected by BOTH engines), exact frozen
+invocation diagnostics and validation priority. `show-options-cpp-1.json` and
+`null-surrogate-cpp-1.json` retain the reference behavior. These fixes and fresh package
+reruns are required before accepting the shared renderer change.
