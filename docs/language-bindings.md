@@ -202,7 +202,7 @@ client/core/final acceptance gates remain open.
 | WebAssembly | Build the Rust engine for the client runtime; verify browser/worker and supported host/package journeys, without a bundled C++ engine |
 | ADBC/Arrow | All frozen initializer callbacks exist; scoped native C++, real Python ADBC driver-manager and PyArrow comparisons pass. All 64 frozen upstream ADBC cases now pass on both engines with 3,040 assertions. Broader matrices, packaging and selected DuckDB client acceptance remain pending. See [ADBC inventory](adbc.md) |
 | C#/.NET | Pin the client; verify its complete API/tests and native-library loading/packaging |
-| Swift | Frozen1.5.6bundled wrapper inventoried:28source files/9test files/132test methods; all105called C API functions exported. Rust-linked package adaptation/build/tests and loading/ownership/type/storage acceptance remain open; see [Swift scope](swift-bindings.md) |
+| Swift | Current macOSarm64Swift6.4: complete frozen132upstream cases plus separate identity test pass on CPPandRust with identical IDs; selected Rust DLL only is verified in process. Portable distribution, broader client/API/platform/storage acceptance remain open; see [Swift evidence](swift-bindings.md) |
 | Julia | Pin the client; verify its complete API/tests, native loading and ownership behavior |
 
 C++ private/internal ABI and C++-API extension binaries remain the original documented

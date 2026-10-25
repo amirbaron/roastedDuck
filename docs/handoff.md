@@ -38,6 +38,15 @@ Complete Python bindings first and all primary clients plus C#/.NET, Swift and J
 - Subagents use model "opus". Commit messages end with the Co-Authored-By line; docs
   changes go in their own commit before the code.
 
+## Swift current-host client checkpoint (2026-10-25)
+
+Frozen Swift wrapper's complete132upstream cases pass on both CPPandRust, plus one
+separate identity case with identical case IDs. In-process evidence confirms only the
+selected signed Rust library is loaded. Dedicated test fixtures use a documented
+path-only helper adaptation with all assertions unchanged. [Swift evidence](swift-bindings.md)
+records preserved controls and limits: portable SDK distribution, broader client/API/
+platform/storage journeys and other selected clients remain open. Whole goal is active.
+
 ## Fresh current-core corpus acceptance (2026-10-25)
 
 Signed runner4 completed all4870frozen files:4781pass/15existing documented design

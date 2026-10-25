@@ -170,3 +170,27 @@ the one identity case. SwiftTesting's separate zero-case report cannot replace t
 accounting. Verify the in-process function/image report and unchanged source/library/
 artifact hashes/signatures after execution. Missing identity or case coverage is a
 failed verification even if the launcher exits0. Retain complete logs/exit statuses.
+
+## Current-host complete upstream suite checkpoint
+
+Both CPPandRust controls pass all132upstream XCTestcases plus one separately identified
+in-process identity test, with exactly the same133case IDs. Rust loads only the selected
+signed library2 (SHAb958e90af7ee0b154d10163c8949191a3ee9fee4d190232b55ebbf5ef58b6c4c);
+CPPloads only its frozen reference. dladdr and the process image list verify that inside
+the test process, despite launcher environment tracing being stripped. Source/library/
+project artifact hashes/signatures remain unchanged after execution. CPP's source-tar
+version string v0.0.1andRust'sv1.5.6remain recorded raw, not normalized.
+
+Tests/assertions are identical across engines. The one upstream test-helper path
+adaptation redirects database fixtures to a dedicated directory; all assertion code is
+unchanged. The signed explicit storage probe confirms cache/fixture containment and
+marker readback, while reporting the failed generic Foundation temp redirect separately.
+The first search-name linkage failure, missing loader trace and original path probes
+remain preserved. SwiftTesting's independent zero-test suite is not the132-case proof.
+
+Evidence: `.context/artifacts/swift-client-20261025/verification-1.json`,
+`{cpp-test-2,rust-test-1}` raw logs/case IDs/identity reports, signed build inventories,
+prepared source hashes and `tooling-source-verified-1/`. This is current macOSarm64/
+Swift6.4functionality evidence. The absolute library-file test linkage is not portable
+SDK packaging. Complete public API coverage, independent client journeys, other platforms
+and broader file/WAL/ownership/performance acceptance remain open.
