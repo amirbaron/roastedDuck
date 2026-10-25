@@ -190,3 +190,23 @@ that build is not a passing test result. Final core/shell/Python/Swift refresh, 
 Go API/install/portable package/platform/performance journeys, dependency-module tests
 and other clients remain open. The dynamic build tag excludes the upstream default
 prebuilt-only extension tests equally on both engines; their omission is explicit.
+
+
+## Signed SDK verification and source pin
+
+Both current formatted-source SDK executables are copied to immutable signed images
+before execution: client_settings5/5and persistence10/10pass, no ignores/failures.
+The persistence suite includes prepared pending readiness/WAL clearing, repeated execution,
+positive measured checkpoint latency, uncommitted-write rejection/rollback/reuse, torn
+WAL tails, bulk insert replay, large checkpointing commits, rolled-back block cleanup,
+indexes and table restart. Evidence: sdk-final-run-1/{summary.json,terminal.json,*.log},
+with signed image/source hashes. Workspace all-target Clippy is running separately.
+
+`go/upstream.json` pins all79source/archive files and the generated bindings header.
+Accepted CPP/Rust build inventories exactly match that archive pin; the bindings header
+is byte-identical to the frozen engine header (SHAe85f70155b5948c8575e59f66e60d43575cec8b252293534c9e8598eb313a293).
+The build runner now enforces those pins; source changes require an explicit diagnostic
+flag and are labeled with differing paths. Previous accepted tooling remains preserved,
+so this audit does not rewrite its execution history. Updated receipt:
+verification-checkpoint-2.json. Broader final refresh, packaging/platform/client and
+coupled performance acceptance gates remain open.
