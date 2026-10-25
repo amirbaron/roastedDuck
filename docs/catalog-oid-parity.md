@@ -79,3 +79,23 @@ and actual tombstone should consume from its owning allocator; failed/no-op oper
 must follow the same source lifecycle. Preserve MVCC visibility/rollback and copied entry
 identity. Use the existing placeholders as real internal catalog objects/versions, not
 an arbitrary offset. Lazy default creation and initialization order remain later stages.
+
+## Next lazy-default stage design
+
+Public inventories currently have the same names/counts, so do not remove functions or
+views to reduce the counter. Default schemas must be created on lookup/scan; schema sets
+need default view/macro factories in the frozen definition order. CatalogSet lookups,
+scans and suggestion lookups must materialize the applicable defaults, as CPPdoes, while
+committed generated defaults avoid normal-chain placeholders. Factories must not capture
+an owning Catalog Arc and create reference cycles. They must not hold a catalog lock
+while parsing/binding a view that can reenter catalog lookup. Preserve one published
+entry under concurrent lookup and default immunity to rollback.
+
+Install generators without eager entry construction/OID consumption. Deferred schema
+creation must install its own view/macro generators too. A generic factory interface can
+carry the catalog name/allocator and frozen definition data; core catalog code must not
+depend on the database/planner crate. Keep error behavior explicit instead of silently
+ignoring factory errors. This design must be validated with existing view/macro/catalog
+suites, public inventories, concurrent default creation and client/corpus checks before
+claiming bootstrap parity. Placeholder/tombstone IDs and attach/extension order still
+need their own source-driven implementation and controls.
