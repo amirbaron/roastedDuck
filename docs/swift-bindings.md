@@ -100,3 +100,12 @@ CFFIXED_USER_HOME and TMPDIR settings and external module caches. Preserve its a
 path report and status; environment variables alone do not prove placement. A failed
 precondition must gate the data-writing Swift suite. Any later fixture-path adaptation
 must preserve upstream assertions and be applied equally to CPP/Rust controls.
+
+## First Foundation storage observation
+
+The signed probe's user home/cache redirect is honored, but generic temporaryDirectory
+still points at the internal Darwin user temp directory despite an existing external
+TMPDIR. The first probe exits2before marker writes; raw paths/status/source/signature
+hashes remain under `storage-probe-1/`. Collect environment/directory diagnostics and
+the actual item-replacement path before selecting a fixture adaptation. This failure
+keeps the data-writing Swift suite gated; it is not client/runtime acceptance.
