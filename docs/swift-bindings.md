@@ -194,3 +194,23 @@ prepared source hashes and `tooling-source-verified-1/`. This is current macOSar
 Swift6.4functionality evidence. The absolute library-file test linkage is not portable
 SDK packaging. Complete public API coverage, independent client journeys, other platforms
 and broader file/WAL/ownership/performance acceptance remain open.
+
+## Relocatable macOS package contract
+
+Package the frozen Swift wrapper around a Cduckdb XCFramework containing only a copy
+of the signed Rust C API library and frozen header. Set that copy's install name to
+@rpath/Cduckdb.framework/Cduckdb and sign it again; preserve the original library.
+Use a relative binaryTarget path without unsafe linker flags or absolute build paths.
+Retain wrapper/license hashes, original and packaged binary hashes, load commands,
+platform/architecture/deployment target, signatures and complete preparation logs.
+
+Verify a separate consumer after copying the entire package to another SSD directory.
+Build the consumer with ordinary SwiftPM product dependency wiring and one job, then
+sign before execution. Do not rewrite its native dependencies to an absolute engine
+path. Prove the actual loaded framework/function image, absence of a libduckdb fallback,
+SQL/prepared/appender/transaction/readback behavior, and unchanged package hashes.
+This first artifact covers macOSarm64 only; do not imply iOS, Intel or Linux support.
+
+This follows Apple's binaryTarget/XCFramework packaging contract:
+https://developer.apple.com/documentation/xcode/distributing-binary-frameworks-as-swift-packages
+and https://developer.apple.com/documentation/xcode/creating-a-multi-platform-binary-framework-bundle.
