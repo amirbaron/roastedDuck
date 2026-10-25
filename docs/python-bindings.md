@@ -995,18 +995,84 @@ does not certify release performance. Evidence, signature/compiler records, comp
 JUnit/node-coverage receipts, runtime export audit, source archive and wheel layout are
 under `.context/artifacts/python-tail-20261025/python-tail-checkpoint.json`.
 
+## Runtime API closure and tensor checkpoint (2026-10-25)
+
+All **385 frozen runtime entries** in the 414-declaration inventory are now present;
+the other 29 declarations are typing/protocol definitions. The 23 prior availability
+gaps are closed: connection type constructors/aliases and explicit destructor,
+PyTorch/TensorFlow output on connection/relation/module, tokenization/token enum,
+legacy division methods and explicitly callable attribute descriptors. Availability
+still does not establish complete overload/error/platform parity.
+
+Type construction shares native argument validation across connection and module
+APIs. Named lookup uses the correct connection/default catalog and preserves active
+streams and explicit rollback. Static constructors also work on closed connections,
+as in C++. Type-name bytes and bytearrays now pass through byte-preserving parser/SDK
+boundaries; invalid UTF-8 reports the frozen Python decoding error rather than being
+replaced. Constructors match **225/225** focused outcomes, including numeric argument
+boundaries, invalid containers, missing arguments, closed owners and catalog journeys.
+
+The active query now owns a read-only catalog context that survives planning and later
+stream batches. Callback lookup uses that context without locking the already executing
+connection. Native tests prove successful lookup across 10001 rows, preservation after
+interleaved metadata lookup and release of the context at query end. They also cover
+non-Unicode catalog type names. All **12 signed SDK settings/statement/type/profiling
+tests** pass. A same-connection UDF `dtype` reference probe stalls in C++ and is terminated
+after eight seconds, with its Python stack retained; Rust safely resolves the type.
+This is a **fourteenth unaccepted reference discrepancy**, not an accepted exclusion
+or a reason to emulate a deadlock.
+
+The tokenizer uses the native byte lexer and matches **298/298** outcomes, including
+all 256 byte values, UTF-8 offsets, incomplete input, keyword/operator distinctions,
+enum equality and argument diagnostics. Explicit descriptor/destructor/operator and
+reader/cursor lifetime journeys match **13/13**, including child cursors surviving
+parent GC, explicit destruction closing children and transferred readers surviving.
+Private bridge methods are removed from class lookup so their names remain usable as
+data fields.
+
+Tensor output fetches owned native NumPy columns before importing and invoking the
+real library converters. In separate CPU environments, **PyTorch 51/51 and TensorFlow
+51/51** C++ comparisons match values, dtypes, shapes, unsupported types, result
+consumption and lifetime after source closure. Pins are PyTorch 2.10.0 and TensorFlow
+2.21.0 with NumPy 2.2.6; original conformance environments are unchanged. The matching
+frozen C++ extension's SHA is verified. The unmodified upstream TensorFlow test passes
+on both engines; the upstream PyTorch test retains its existing skip, so it is not
+claimed as a pass. These software pins follow the [official PyTorch release table](https://pytorch.org/get-started/previous-versions/)
+and [TensorFlow release files](https://pypi.org/project/tensorflow/2.21.0/).
+
+An initial build eagerly created the default database through two DB-API built-in
+constants, adding roughly 4 MB RSS. It was rejected. Private native built-in constants
+now preserve lazy initialization while user type parsing stays catalog-aware. Before/
+after samples and the rejected round are retained. Final 1000-operation repeats:
+insert-many 35.2–35.5 ms versus 32.9–33.7 ms before (~6% longer), parsed/text loops
+70.5–72.9 ms versus 69.8–73.4 ms. Peaks stay about 45–49 MB versus 46–48 MB. A first
+1024-row read from 1M/100M-row sources stays near 72 MB versus 73 MB before, with
+connection recovery verified. No table/input/result cache is added. This is coupled
+development-build evidence, not final release acceptance or a new exact-speed target.
+
+The actual final signed wheel again runs the entire fast suite: **3180 pass, three
+held Decimal assertions, 38 skip/xfail records**, zero collection errors, all 3212
+original collected IDs matched to execution. Python/SDK/parser/CSV all-target Clippy
+with warnings denied and workspace/all-target checks pass. The broader Python and
+other-client/final release gates remain open.
+
+Evidence: `.context/artifacts/python-type-api-20261025/python-type-api-checkpoint.json`,
+all constructor/token/descriptor/tensor comparisons, guarded reference receipts,
+native signature/test logs, full JUnit and node reconciliation, dependency pins,
+before/after performance and memory-stage probes, source SHA/archive and signed wheel.
+
 ## Remaining gates
 
-Implement the 23 missing runtime exports, including connection type constructors,
-tensor outputs and tokenization. Finish complete signatures/overloads/defaults/error
+The runtime availability audit is complete for all 385 inventory entries. Finish complete signatures/overloads/defaults/error
 and ownership audits of the implemented relation, expression, UDF, Pandas/NumPy,
 Arrow/Polars, replacement-scan, filesystem and function-catalog surfaces. Explicit
 legacy/magic descriptors, remaining type/metadata behavior, raw Binder JSON ordering,
 broader concurrency and registered-backend database storage remain required. The API inventory marks only
 partial implementation/evidence; no surface is declared fully complete yet.
 
-All 3212 normally collected fast cases have now executed; the nine skipped modules,
-seven non-fast test files, missing runtime exports, complete argument/overload audit,
+All 3212 normally collected fast cases have now executed; the skipped modules and
+newer dependency/platform matrices (tensor coverage is now separately verified),
+seven non-fast test files, complete argument/overload audit,
 pinned stub distribution and applicable dependency/platform/version matrices remain.
 Packaging/lifetime and cross-engine
 storage/WAL journeys remain open. Development-wheel correctness does not establish

@@ -277,6 +277,24 @@ JSON key-order gap. A rejected rethrow attempt affected candidate errors; planne
 is restored exactly to the preceding source. Python Clippy/workspace checks pass and
 cache/performance policy is unchanged. Latest evidence:
 python-tail-20261025/python-tail-checkpoint.json. This is not Python/client completion.
+The 23 runtime availability gaps are now closed: all385 frozen runtime inventory entries
+exist. Shared native type constructors/default and per-connection catalog lookup match
+225/225; native byte tokenizer/token enum 298/298; explicit getters/legacy division/
+destructor/cursor/reader lifetime 13/13. Separate CPU environments verify actual PyTorch
+and TensorFlow conversions 51/51 each; unmodified upstream TF passes, upstream Torch
+keeps its existing skip. Original control dependencies are unchanged.
+Active queries retain a read-only callback catalog context, released with query end;
+12 signed SDK tests pass, including 10001-row streaming lookup and raw-byte type names.
+C++ same-connection UDF dtype lookup hangs in an isolated eight-second control; Rust
+resolves safely (fourteenth unaccepted reference discrepancy, not accepted/emulated).
+An eager-default initialization caused an initial ~4MB increase and was removed; final
+before/after runs have similar bounded RSS. Insert-many is ~6% longer, parsed/text similar;
+all rounds/results retained, no cache added. Whole fast suite again3180pass/threeheld
+Decimalassertions/38skip-xfail, all3212collectedIDs reconciled. Clippy Python/SDK/parser/CSV
+and workspace checks pass. Signatures/overloads/lifetimes, stubs, remaining dependency/
+platform and seven non-fast files, other clients and final core/shell/storage/WAL/release/
+performance acceptance remain open. Latest evidence:
+python-type-api-20261025/python-type-api-checkpoint.json.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.

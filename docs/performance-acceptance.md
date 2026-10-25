@@ -94,6 +94,27 @@ All checksums, individual samples and earlier rounds are retained in
 The uncached baseline and cache policy remain unchanged; these are not final release
 measurements or a new exact-speed requirement.
 
+## Python type/callback context checkpoint (2026-10-25)
+
+Read-only callback metadata survives planning and streamed batches, and is released at
+query end; it retains catalog/transaction state rather than table blocks. An initial
+build also initialized the default database eagerly through DB-API built-in type
+constants. Its roughly 4 MB RSS increase was rejected and the bootstrap now uses native
+built-in constants directly. Normal user type parsing remains catalog-aware.
+
+Two-repeat fresh-process comparisons against the preserved signed pre-change wheel,
+with the same interpreter and test dependencies, record 1000 insert-many operations at
+35.2–35.5 ms versus 32.9–33.7 ms before (~6% longer), and parsed/text loops at
+70.5–72.9 ms versus 69.8–73.4 ms. Whole-process peaks remain about 45–49 MB versus
+46–48 MB. First1024-row reads from logical1M/100M sources stay near72 MB versus73 MB,
+with source-size independence and connection recovery verified. All checksums pass;
+the rejected samples remain preserved. These are development measurements, not final
+release acceptance. No result/input/table cache was added, and the accepted uncached
+TPC-H/ClickBench baseline remains the control.
+
+Evidence: `.context/artifacts/python-type-api-20261025/performance-summary-7.json`,
+raw `performance-*-before-after-7.json`, staged memory probes and prior rejected round.
+
 ## Final verification and sign-off
 
 Completion requires a report on the actual final signed binaries, with:

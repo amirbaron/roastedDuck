@@ -106,6 +106,15 @@ first and 49 low-level helpers now work. Runtime exports are 362/385, with 23 mi
 typing-only declarations are separate, and native stub distribution remains open.
 Seven non-fast files, missing dependency/version modules, broader signature/lifetime
 audits and one raw Binder JSON key-order gap remain. No Python completion is claimed.
+The 23 inventory availability gaps have since closed: all385 frozen runtime entries
+are available. Constructors225/225, tokenizer298/298, explicit descriptor/lifetime13/13
+and real CPU Torch51/51/TF51/51 comparisons match. Twelve signed SDK tests and compiler
+checks pass; whole fast suite remains3180pass/threeheldDecimalassertions/38skip-xfail.
+Callback metadata uses a scoped read-only native context; a guarded C++ reentry hang
+is the fourteenth unaccepted reference discrepancy. Rejected eager-default memory
+growth was removed; bounded before/after RSS and the ~6% insert-time difference are
+retained. This availability/tensor checkpoint does not complete signatures, stubs,
+the remaining environments/platforms/non-fast files or final acceptance.
 R and the other language packages remain
 unimplemented/unverified. The complete workspace/all-target check
 includes the Python crate. See [Python implementation gates](python-bindings.md).
