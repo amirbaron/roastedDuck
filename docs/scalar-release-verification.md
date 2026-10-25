@@ -122,3 +122,21 @@ The obsolete `input-latin1-string` known marker now masks a matching case. Remov
 that marker and rerun the unchanged case strictly. Keep the three remaining gaps
 open and preserve separately labeled raw output for diagnosis. Workspace linting and
 one fresh complete4870file run are next; final client/storage/performance gates remain.
+
+## Fresh complete rerun
+
+Workspace/all-target Clippy with warnings denied passes (`workspace-clippy-3.*`).
+The stale stdin-Latin1 marker is removed; its unchanged case passes strictly
+(`shell-strict-latin1-3.log`). Exactly three known markers remain. Their raw byte
+outputs are preserved losslessly in `shell-known-raw-3/results.json`; these gaps remain
+open. The shipping library retains the same547DuckDBexports with no test bridge.
+
+A fresh complete4,870file run is now live under `full-corpus-2/`, using immutable
+signed-images-3 and `external-source-root-2`. All4,870frozen test-file hashes were checked
+again before launch. Its manifest pins the image, source checkpoint, root, reference,
+ratchet and normal engine-thread settings. Run one worker with300s/file and keep all
+evidence separate. The first full run is retained unchanged, without verdict merging.
+Current complete source evidence:844modified/untracked nonignored files in
+`corrected-source-checkpoint-3.json` and its SHA-recorded archive. Current scoped
+verification index: `release-verification-3.json`. Wait for the complete run before
+claiming a fresh corpus acceptance; all broader goal gates remain open.

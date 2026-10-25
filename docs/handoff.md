@@ -40,21 +40,31 @@ Complete Python bindings first and all primary clients plus C#/.NET, Swift and J
 
 ## Current release verification (2026-10-25)
 
-Release build 2 incorporates native scalar byte names and the CSV pipe correction.
-The signed release passes all 30 C API files (155 cases / 726,562 assertions), and
-both shells pass 392 upstream tests with three identical skips. The shell differential
-has zero unexpected differences across 768 cases (46 PTY), with three known gaps
-still open. See [release checkpoint](scalar-release-verification.md).
+Signed release3 completes the corrections found by the first new full corpus.
+All seven affected files now pass on Rust and C++ through the corrected test adapter,
+including the real disk-space requirement. Signed component tests pass126cases.
+Workspace/all-target Clippy passes with warnings denied.
 
-The new full 4,870-file corpus finished with **4,774 pass / 21 fail / 75 skip** and
-exact frozen C++ coverage. Its ratchet check finds seven regressions: six failed
-files and one disk-space skip. Five failures share compression-case/CSV-EOF causes;
-the sixth needs separate alias-based catalog type binding while preserving default
-binding's expression names. The disk requirement measured the internal source cwd;
-repeat from a dedicated external working root using the same frozen inputs. See the
-linked checkpoint and external `full-corpus-1/terminal-summary.json`. Corrections in
-the working source remain uncompiled/unverified; no final acceptance is claimed.
-Keep all workloads serial and retain the uncached lower-memory baseline.
+The exact preserved library passes all30 C API files (155cases /772,976assertions).
+Runtime loader traces from every test executable prove the selected image; its SHA
+stays unchanged. All547 shipping DuckDB exports are retained, without test bridges.
+The shell passes392upstream tests /three identical skips; all395IDs/verdicts match C++.
+Full differential: zero unexpected /768cases, including46PTY, with three known gaps
+still OPEN (internal-error stack traces, database OIDs, invalid-UTF8 argv). The stale
+stdin-Latin1 known marker is removed and its unchanged case passes strictly.
+
+A fresh complete4,870-file corpus is LIVE on immutable signed-images-3 from the actual
+SSD working root, using the frozen test tree with all4,870file hashes verified.
+Evidence: `.context/artifacts/scalar-release-20261025/release-verification-3.json`,
+`full-corpus-2/manifest.json` and worker logs. Do not start another heavy workload or
+rebuild the running binary; wait for terminal results, then exact coverage, compare
+and ratchet. Do not merge prior verdicts into this new acceptance run.
+
+The preceding full-corpus-1 remains4,774pass /21fail /75skip with seven ratchet
+regressions; those focused corrections pass, but the new full acceptance is pending.
+See [release checkpoint](scalar-release-verification.md). Broader Python and all
+selected clients, storage/WAL matrices and documented final coupled speed-memory /
+per-query acceptance remain OPEN. Preserve the lower-memory scan baseline.
 
 ## Current source integration (2026-10-24)
 
