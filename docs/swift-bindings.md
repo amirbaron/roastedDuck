@@ -157,3 +157,16 @@ CPP/Rust packages that records dladdr/the loaded libduckdb image and compares it
 the explicit expected path. Keep132upstream assertions unchanged and report this
 additional identity test separately. The firstRust build is in progress; it has not
 yet established runtime client parity.
+
+## Test execution and identity accounting
+
+Run tests from an already signed/pinned build with --skip-build/--no-parallel and
+explicit external cache/config/security/scratch paths. Before data tests, rerun the
+signed dedicated fixture probe for that run's root. Require the expected native
+library path and a new identity-report path in the additional test's environment.
+
+Parse all XCTestcase start/pass/failure IDs; keep the132upstream cases separate from
+the one identity case. SwiftTesting's separate zero-case report cannot replace that
+accounting. Verify the in-process function/image report and unchanged source/library/
+artifact hashes/signatures after execution. Missing identity or case coverage is a
+failed verification even if the launcher exits0. Retain complete logs/exit statuses.
