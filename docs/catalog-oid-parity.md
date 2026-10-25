@@ -487,3 +487,13 @@ actual Parquet BLOB/VARCHAR reads across both connections. Clippy passed before 
 settings-row ordering line; new native/runtime and final combined SDK/client/SQL checks
 remain pending. Evidence: startup-settings-after-comparison-2.json,
 parquet-settings-before-comparison-2.json and startup-map-common-terminal-3.json(32pass).
+
+
+The migrated signed native image passes all49startup cases exactly, including all six
+Parquet/ICU option-order permutations. All85two-connection Parquet steps now match the
+frozen CPPnative reference exactly, including real BLOB/VARCHAR Parquet reads, session/
+global/reset isolation, invalid-boolean errors and unchanged values after failure.
+This closes the45observed setting-step differences; no case normalization or new waiver
+was used. Evidence: startup-settings-parquet-comparison-1.json and
+parquet-settings-after-comparison-3.json. The final combined SDK, broad C API/Go/SQL and
+selected-client refreshes are still pending for this settings source stage.
