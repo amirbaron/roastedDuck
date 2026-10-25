@@ -26,3 +26,28 @@ verify focused conversions, unchanged rendering, complete Arrow19/21 fast matric
 current query-progress behavior. Existing other discrepancies/client/storage/performance
 gates remain open. Store environments, logs, wheels and snapshots on the SSD, serialize
 all work, and preserve the accepted lower-memory policy without retaining table blocks.
+
+## Measured installed-package baseline
+
+44values/256real outcomes yield106exact/150mismatches, with no child crashes or
+timeouts on either engine. The immutable Rust wheel4 conversion baseline and frozen
+CPPresults preserve description types, Decimal tuples, float bits and raw errors.
+Families are parameters, explicit Value wrappers, DOUBLE insertion, DECIMAL casting,
+and single/mixed Pandas columns; four large exponent-caster cases are binder-only.
+Evidence: `shell-argv-20261025/decimal-{cpp,rust-baseline}-1.jsonl` and
+`decimal-comparison-baseline-1.json`. A provisional36valuecomparison is retained
+separately as partial observation, not terminal acceptance.
+
+Port the frozen contract explicitly: fractional width uses scale+1when leading zeros
+require it; positive exponents retain decimal scale; the cached19power multiplier
+uses its frozen integer-width/wrap behavior; value conversion narrows scale tou8,
+whereas Pandas type inference uses the full exponent. Nonfinite values use FLOAT,
+Infinity sign is discarded, signaling NaNs are NotImplemented errors, and out-of-i32
+exponents use the frozen caster error. These are compatibility semantics, including
+the frozen client's numerical quirks; existing failing tests must pass without edits.
+
+Keep Pandas inference separate from row conversion, including nested values and
+error origin, so ordinary unsupported-object fallback is unchanged while Decimal
+constructor errors propagate like CPP. Avoid the current zero-extension-before-width
+check: coefficient conversion must remain bounded by the supported decimal width,
+not allocate a string whose length is an arbitrary positive Python exponent.
