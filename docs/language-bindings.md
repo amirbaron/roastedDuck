@@ -97,6 +97,15 @@ timezone assertion/one xfail and, under UTC, 87 pass/one xfail on both engines. 
 statement/Explain checks match 175/175, reader boundaries 92/92 and cancellation/reuse
 four/four; ten signed SDK tests and compiler checks pass. First-batch memory is bounded
 for 1M/100M sources; latency differences remain separate and the cache policy is unchanged.
+The remaining fast cohort matches C++ 100 pass/seven skips, closing five failures.
+Whole-process `tests/fast` with pinned dependencies/TZ=UTC reports C++ 3183 pass and
+Rust 3180 pass/three held Decimal assertions, with 38 shared skip/xfail records each
+and no collection errors (3221 JUnit records, including nine file skips). Every one of
+3212 original collected IDs is matched to execution records. Direct `_duckdb` import
+first and 49 low-level helpers now work. Runtime exports are 362/385, with 23 missing;
+typing-only declarations are separate, and native stub distribution remains open.
+Seven non-fast files, missing dependency/version modules, broader signature/lifetime
+audits and one raw Binder JSON key-order gap remain. No Python completion is claimed.
 R and the other language packages remain
 unimplemented/unverified. The complete workspace/all-target check
 includes the Python crate. See [Python implementation gates](python-bindings.md).

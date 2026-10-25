@@ -13,56 +13,56 @@
     {
       "surface": "_duckdb",
       "name": "BinderException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 190
     },
     {
       "surface": "_duckdb",
       "name": "CatalogException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 191
     },
     {
       "surface": "_duckdb",
       "name": "ConnectionException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 192
     },
     {
       "surface": "_duckdb",
       "name": "ConstraintException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 193
     },
     {
       "surface": "_duckdb",
       "name": "ConversionException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 194
     },
     {
       "surface": "_duckdb",
       "name": "DataError",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 195
     },
     {
       "surface": "_duckdb",
       "name": "DatabaseError",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 196
     },
     {
       "surface": "_duckdb",
       "name": "DependencyException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 197
     },
@@ -100,7 +100,7 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "append",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 203
     },
@@ -239,7 +239,7 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "extract_statements",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 248
     },
@@ -318,7 +318,7 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "filesystem_is_registered",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 264
     },
@@ -365,14 +365,14 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "get_table_names",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 330
     },
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "install_extension",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 331
     },
@@ -411,7 +411,7 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "list_filesystems",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 344
     },
@@ -426,7 +426,7 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "load_extension",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 346
     },
@@ -441,7 +441,7 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "pl",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 355
     },
@@ -496,7 +496,7 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "register_filesystem",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 447
     },
@@ -548,7 +548,7 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "struct_type",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 454
     },
@@ -607,7 +607,7 @@
     {
       "surface": "_duckdb.DuckDBPyConnection",
       "name": "unregister_filesystem",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 462
     },
@@ -646,7 +646,7 @@
     {
       "surface": "_duckdb",
       "name": "DuckDBPyRelation",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 470
     },
@@ -924,7 +924,7 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "fetch_arrow_reader",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 544
     },
@@ -1203,7 +1203,7 @@
     {
       "surface": "_duckdb.DuckDBPyRelation",
       "name": "pl",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 637
     },
@@ -1576,203 +1576,203 @@
     {
       "surface": "_duckdb",
       "name": "Error",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 815
     },
     {
       "surface": "_duckdb",
       "name": "FatalException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 816
     },
     {
       "surface": "_duckdb",
       "name": "HTTPException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 818
     },
     {
       "surface": "_duckdb",
       "name": "IOException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 824
     },
     {
       "surface": "_duckdb",
       "name": "IntegrityError",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 825
     },
     {
       "surface": "_duckdb",
       "name": "InternalError",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 826
     },
     {
       "surface": "_duckdb",
       "name": "InternalException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 827
     },
     {
       "surface": "_duckdb",
       "name": "InterruptException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 828
     },
     {
       "surface": "_duckdb",
       "name": "InvalidInputException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 829
     },
     {
       "surface": "_duckdb",
       "name": "InvalidTypeException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 830
     },
     {
       "surface": "_duckdb",
       "name": "NotImplementedException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 831
     },
     {
       "surface": "_duckdb",
       "name": "NotSupportedError",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 832
     },
     {
       "surface": "_duckdb",
       "name": "OperationalError",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 833
     },
     {
       "surface": "_duckdb",
       "name": "OutOfMemoryException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 834
     },
     {
       "surface": "_duckdb",
       "name": "OutOfRangeException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 835
     },
     {
       "surface": "_duckdb",
       "name": "ParserException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 836
     },
     {
       "surface": "_duckdb",
       "name": "PermissionException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 837
     },
     {
       "surface": "_duckdb",
       "name": "ProgrammingError",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 838
     },
     {
       "surface": "_duckdb",
       "name": "SequenceException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 839
     },
     {
       "surface": "_duckdb",
       "name": "SerializationException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 840
     },
     {
       "surface": "_duckdb",
       "name": "Statement",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 842
     },
     {
       "surface": "_duckdb.Statement",
       "name": "expected_result_type",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 844
     },
     {
       "surface": "_duckdb.Statement",
       "name": "named_parameters",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 846
     },
     {
       "surface": "_duckdb.Statement",
       "name": "query",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 848
     },
     {
       "surface": "_duckdb.Statement",
       "name": "type",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 850
     },
     {
       "surface": "_duckdb",
       "name": "SyntaxException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 852
     },
     {
       "surface": "_duckdb",
       "name": "TransactionException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 853
     },
     {
       "surface": "_duckdb",
       "name": "TypeMismatchException",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 854
     },
     {
       "surface": "_duckdb",
       "name": "Warning",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 855
     },
@@ -1851,21 +1851,21 @@
     {
       "surface": "_duckdb",
       "name": "aggregate",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 866
     },
     {
       "surface": "_duckdb",
       "name": "alias",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 873
     },
     {
       "surface": "_duckdb",
       "name": "append",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 874
     },
@@ -1992,7 +1992,7 @@
     {
       "surface": "_duckdb",
       "name": "distinct",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 942
     },
@@ -2038,7 +2038,7 @@
     {
       "surface": "_duckdb",
       "name": "extract_statements",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 964
     },
@@ -2117,14 +2117,14 @@
     {
       "surface": "_duckdb",
       "name": "filesystem_is_registered",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 993
     },
     {
       "surface": "_duckdb",
       "name": "filter",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 994
     },
@@ -2171,14 +2171,14 @@
     {
       "surface": "_duckdb",
       "name": "get_table_names",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1074
     },
     {
       "surface": "_duckdb",
       "name": "install_extension",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1077
     },
@@ -2193,7 +2193,7 @@
     {
       "surface": "_duckdb",
       "name": "limit",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1087
     },
@@ -2224,7 +2224,7 @@
     {
       "surface": "_duckdb",
       "name": "list_filesystems",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1099
     },
@@ -2239,7 +2239,7 @@
     {
       "surface": "_duckdb",
       "name": "load_extension",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1101
     },
@@ -2254,21 +2254,21 @@
     {
       "surface": "_duckdb",
       "name": "order",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1105
     },
     {
       "surface": "_duckdb",
       "name": "pl",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1123
     },
     {
       "surface": "_duckdb",
       "name": "project",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1129
     },
@@ -2331,7 +2331,7 @@
     {
       "surface": "_duckdb",
       "name": "register_filesystem",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1237
     },
@@ -2471,7 +2471,7 @@
     {
       "surface": "_duckdb",
       "name": "unregister_filesystem",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/__init__.pyi",
       "line": 1268
     },
@@ -2587,14 +2587,14 @@
     {
       "surface": "_duckdb._enums",
       "name": "ExpectedResultType",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_enums.pyi",
       "line": 31
     },
     {
       "surface": "_duckdb._enums",
       "name": "ExplainType",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_enums.pyi",
       "line": 39
     },
@@ -2617,7 +2617,7 @@
     {
       "surface": "_duckdb._enums",
       "name": "StatementType",
-      "status": "pending",
+      "status": "partial",
       "source": "_duckdb-stubs/_enums.pyi",
       "line": 64
     },
@@ -3203,5 +3203,68 @@
       "line": 53
     }
   ],
-  "note": "414 native module/class/member surfaces across the pinned stubs, overloads deduplicated. Partial marks implementation with scoped evidence, never complete parity. Pure-Python value/frontend/packaging surfaces are additional requirements."
+  "note": "414 module/class/member declarations across pinned stubs, overloads deduplicated. 385 resolve to runtime exports in the frozen C++ build; 29 are typing-only/protocol declarations. Partial denotes implementation/availability with scoped evidence, never full parity. Pure-Python value/frontend/packaging and interpreter/dependency/platform matrices remain additional requirements.",
+  "runtime_audit": {
+    "date": "2026-10-25",
+    "cpp_exposed": 385,
+    "rust_exposed": 362,
+    "missing_runtime_exports": [
+      "_duckdb.DuckDBPyConnection.__del__",
+      "_duckdb.DuckDBPyConnection.array_type",
+      "_duckdb.DuckDBPyConnection.decimal_type",
+      "_duckdb.DuckDBPyConnection.dtype",
+      "_duckdb.DuckDBPyConnection.enum_type",
+      "_duckdb.DuckDBPyConnection.row_type",
+      "_duckdb.DuckDBPyConnection.sqltype",
+      "_duckdb.DuckDBPyConnection.string_type",
+      "_duckdb.DuckDBPyConnection.tf",
+      "_duckdb.DuckDBPyConnection.torch",
+      "_duckdb.DuckDBPyConnection.type",
+      "_duckdb.DuckDBPyConnection.union_type",
+      "_duckdb.DuckDBPyRelation.__getattr__",
+      "_duckdb.DuckDBPyRelation.tf",
+      "_duckdb.DuckDBPyRelation.torch",
+      "_duckdb.enum_type",
+      "_duckdb.tf",
+      "_duckdb.tokenize",
+      "_duckdb.torch",
+      "_duckdb._enums.token_type",
+      "_duckdb._expression.Expression.__div__",
+      "_duckdb._expression.Expression.__rdiv__",
+      "_duckdb._sqltypes.DuckDBPyType.__getattr__"
+    ],
+    "stub_only_declarations_not_exposed_by_cpp": [
+      "_duckdb._enums.CppEnum",
+      "_duckdb._enums.CppEnum.__eq__",
+      "_duckdb._enums.CppEnum.__getstate__",
+      "_duckdb._enums.CppEnum.__hash__",
+      "_duckdb._enums.CppEnum.__index__",
+      "_duckdb._enums.CppEnum.__init__",
+      "_duckdb._enums.CppEnum.__int__",
+      "_duckdb._enums.CppEnum.__ne__",
+      "_duckdb._enums.CppEnum.__setstate__",
+      "_duckdb._enums.CppEnum.name",
+      "_duckdb._enums.CppEnum.value",
+      "_duckdb._typing.NPProtocol",
+      "_duckdb._typing.NPProtocol.dtype",
+      "_duckdb._typing.NPProtocol.ndim",
+      "_duckdb._typing.NPProtocol.__array__",
+      "_duckdb._typing.NPProtocol.__array_wrap__",
+      "_duckdb._typing.NPProtocol.__array_interface__",
+      "_duckdb._typing.NPProtocol.__array_priority__",
+      "_duckdb._typing.NPScalarTypeLike",
+      "_duckdb._typing.NPScalarTypeLike.itemsize",
+      "_duckdb._typing.NPArrayLike",
+      "_duckdb._typing.NPArrayLike.__len__",
+      "_duckdb._typing.NPArrayLike.__contains__",
+      "_duckdb._typing.NPArrayLike.__iter__",
+      "_duckdb._typing.NPArrayLike.__array_finalize__",
+      "_duckdb._typing.NPArrayLike.__getitem__",
+      "_duckdb._typing.NPArrayLike.__setitem__",
+      "_duckdb._typing.NPArrayLike.shape",
+      "_duckdb._typing.NPArrayLike.size"
+    ],
+    "evidence": ".context/artifacts/python-tail-20261025/api-audit-comparison-4.json",
+    "note": "Stub _expression/_enums re-exports resolve at the extension root. Presence is only an availability check, never semantic completion; typing-only declarations and package/stub compatibility remain separate."
+  }
 }

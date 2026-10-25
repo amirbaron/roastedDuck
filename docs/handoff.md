@@ -260,6 +260,23 @@ about 73 MB for 1M/100M sources; the 0.1–0.2 ms latency gap and noisier earlie
 measurements remain visible. No caching policy changes. Full persistent-secret format
 compatibility is not proved by the isolated disabled-read fixture. Latest evidence:
 python-arrow-remaining-20261025/python-arrow-remaining-checkpoint.json.
+The remaining 48-file fast cohort now matches C++ 100 pass/seven existing skips,
+closing five failures in NumPy arrays, Arrow protocol diagnostics and typed JSON errors.
+Full unmodified fast-suite runs with pinned dependencies and TZ=UTC now have 3221
+JUnit records: C++ 3183 pass/38 skip-or-xfail; final signed Rust development wheel
+3180 pass/three held Decimal assertions/38 skip-or-xfail, no collection errors. Passed
+counts include one XPASS. All 3212 original collected test IDs are matched to execution
+records on both engines; the additional nine records are skipped dependency/version
+modules. Seven non-fast files and those dependency/platform matrices remain open.
+The package supports direct `_duckdb` import first and adds 49 low-level helper exports;
+fresh-process default-owner/query/cursor/metadata/reopen journeys match. Runtime API
+audit resolves stub aliases: 362/385 C++ runtime entries exist, 23 remain missing; 29
+stub declarations are typing-only. Pinned native `.pyi` files are not yet shipped.
+Focused probes are 30/31 raw exact/all31 parsed semantic outcomes, retaining one Binder
+JSON key-order gap. A rejected rethrow attempt affected candidate errors; planner SHA
+is restored exactly to the preceding source. Python Clippy/workspace checks pass and
+cache/performance policy is unchanged. Latest evidence:
+python-tail-20261025/python-tail-checkpoint.json. This is not Python/client completion.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.

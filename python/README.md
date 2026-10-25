@@ -3,8 +3,10 @@
 Native PyO3 bindings to this repository's Rust engine, targeting the pinned DuckDB
 Python 1.5.6 contract in upstream.json. This package is under active implementation;
 docs/python-api-inventory.json records the native API baseline. It is not complete
-Python parity yet. Full relation/expression APIs, UDFs, replacement scans, host interchange
-and additional conversions/packaging remain required.
+Python parity yet. The pinned fast suite has executed in full; three held Decimal
+assertions, 23 missing runtime exports, skipped dependency/version modules and the
+non-fast/platform/stub/packaging gates remain. See docs/python-bindings.md for the
+current evidence and exact scope.
 
 Build from this directory with maturin 1.9.6 and a native Python interpreter. Keep
 CARGO_HOME, TMPDIR, wheel output, environments and caches on the mounted external SSD;

@@ -3,7 +3,8 @@
 Target: DuckDB Python **1.5.6**, upstream commit
 `802a345bb627435d2a05d63cb74454fa98b60b5e`. The archive is pinned and hashed on the
 external SSD. `python/upstream.json` and `docs/python-api-inventory.json` record the
-contract: 414 deduplicated native module/class/member surfaces across all stubs, plus
+contract: 414 deduplicated declarations across the stubs (385 runtime exports in the
+frozen C++ build and 29 typing/protocol declarations), plus
 the pure-Python frontend/value and packaging requirements. The upstream tree contains
 275 test files. Completion requires the full documented API and applicable upstream
 suite, not the focused subset below.
@@ -942,20 +943,72 @@ signed release/performance acceptance remain open. Evidence is preserved under
 `.context/artifacts/python-arrow-remaining-20261025/python-arrow-remaining-checkpoint.json`, with the signed wheel, raw controls,
 source checkpoint, JUnit/compiler/signature records and coupled performance samples.
 
+## Whole-process fast suite and low-level imports (2026-10-25)
+
+The last 48-file cohort closes five Rust failures and matches C++ **100 passed/seven
+existing skips**. Non-scalar NumPy parameters recurse through `.tolist()` instead of
+calling scalar `.item()`. Invalid Arrow capsule names retain the typed frozen error;
+IPC MessageReader input reports the same missing-nanoarrow requirement. Typed Python
+exceptions retain their prefix before native JSON. This does not implement nanoarrow
+IPC decoding or load C++ extension binaries.
+
+The full unmodified `tests/fast` suite now runs in a single process per engine with
+identical pinned dependencies and `TZ=UTC`. The actual final signed development wheel
+reports **3180 passed, three held Decimal assertions and 38 skipped/xfail records**
+across 3221 JUnit records. C++ reports **3183 passed and the same 38 skipped/xfail
+records**, with no failures or collection errors. Passed counts include one non-strict
+XPASS on each engine. Every one of the original **3212 collected test IDs** is matched
+to an executed JUnit record on both engines; the nine additional records are file-level
+dependency/version skips. The three assertions exercise the already held positive
+Decimal exponent twice and negative Infinity sign once. They are not newly accepted
+exceptions. Original local-time controls from the preceding checkpoint remain retained.
+
+This examines all 268 fast test files: 259 supply the collected cases and nine skip at
+module import. Seven other upstream test files remain outside the fast suite: three
+slow, three extension and one coverage file. The nine skipped modules include the ADBC
+manager tests, newer Arrow features, PyTorch, TensorFlow and build/version helper tests.
+Those dependency/platform/version and non-fast gates still require execution.
+
+The wheel now supports `import _duckdb` before importing `duckdb`. Its alias is installed
+before the version helper runs, avoiding an import cycle. Forty-nine existing public
+default-connection helpers are also exported by the low-level module. A fresh-process
+journey proves shared default ownership, table creation/insertion/querying through both
+names, cursor independence, metadata and replacement of an explicitly closed default.
+Execution stays in the signed Rust extension; there is no C++ fallback.
+
+An actual-runtime audit resolves stub re-exports at the extension root and finds **362
+of 385 C++ runtime entries present**, with **23 missing**. These include connection type
+constructors, tensor outputs, tokenization and explicitly callable legacy/magic methods.
+Presence is only an availability check; it does not prove complete signatures, overloads
+or behavior. The 29 typing-only declarations are not counted as missing native exports.
+The wheel has `py.typed` but does not yet distribute the pinned native `.pyi` stubs.
+
+Focused parameter/protocol/error probes match **30/31 raw outcomes and all 31 parsed
+semantic outcomes**. One no-FROM Binder JSON key-order difference remains open. An
+attempted generic rethrow change fixed that order but changed candidate-bearing errors,
+so it was rejected; the planner file's SHA matches the preceding checkpoint. Original
+and rejected receipts are retained, without normalizing the raw exact-match count.
+
+Python all-target Clippy with warnings denied and workspace/all-target checks pass.
+Cache/storage policy and accepted performance baseline are unchanged; this checkpoint
+does not certify release performance. Evidence, signature/compiler records, complete
+JUnit/node-coverage receipts, runtime export audit, source archive and wheel layout are
+under `.context/artifacts/python-tail-20261025/python-tail-checkpoint.json`.
+
 ## Remaining gates
 
-Complete relation APIs (including delete, remaining file formats/filesystems, mutation/type/metadata and
-remaining expression overloads), remaining display/error semantics, broader result lifetimes,
-remaining UDF overload/annotation/concurrency coverage, replacement scans,
-complete native Pandas/NumPy inference, nested conversion and input error semantics,
-complete Arrow registration/protocol/schema/error/pushdown
-coverage, complete reader/capsule/concurrency behavior, remaining Polars semantics and Torch output,
-filesystems, helper/function-catalog compatibility and remaining type/metadata/exception
-semantics are still required. The API inventory marks only
+Implement the 23 missing runtime exports, including connection type constructors,
+tensor outputs and tokenization. Finish complete signatures/overloads/defaults/error
+and ownership audits of the implemented relation, expression, UDF, Pandas/NumPy,
+Arrow/Polars, replacement-scan, filesystem and function-catalog surfaces. Explicit
+legacy/magic descriptors, remaining type/metadata behavior, raw Binder JSON ordering,
+broader concurrency and registered-backend database storage remain required. The API inventory marks only
 partial implementation/evidence; no surface is declared fully complete yet.
 
-All 275 upstream files and their parametrized cases still need full collection/running
-with applicable dependencies; packaging/platform/version/lifetime and cross-engine
+All 3212 normally collected fast cases have now executed; the nine skipped modules,
+seven non-fast test files, missing runtime exports, complete argument/overload audit,
+pinned stub distribution and applicable dependency/platform/version matrices remain.
+Packaging/lifetime and cross-engine
 storage/WAL journeys remain open. Development-wheel correctness does not establish
 release performance. Preserve the accepted uncached speed-memory baseline and report
 individual query outliers in final acceptance. No table-cache retention was introduced.
