@@ -51,3 +51,27 @@ error origin, so ordinary unsupported-object fallback is unchanged while Decimal
 constructor errors propagate like CPP. Avoid the current zero-extension-before-width
 check: coefficient conversion must remain bounded by the supported decimal width,
 not allocate a string whose length is an arbitrary positive Python exponent.
+
+## First signed wheel and nested follow-up
+
+Signed wheel5 (native SHA910018dff85f0247a9c6bbe2f7d486c34df6e306566a22c6de7a319f35a3e62a)
+installs with one verified Rust engine in fresh Arrow19/21 environments. All256primary
+Decimal outcomes match CPP, closing150mismatches with zero prior matches regressed.
+Both complete fast suites now match every frozen CPPnode/verdict: Arrow19 has3205pass
+plus1XPASS/27skip/8xfail over3241records; Arrow21 has3455plus1/28/8 over3492. Zero
+failures/collection errors; exactly the three old Decimal assertions become passes.
+All385runtime exports remain available, and all seven packaged stubs are unchanged.
+FocusedNULL32/show36stillmatch; render18/19retains the existing string-columns gap.
+
+A separate40value/80outcome nested LIST/STRUCT comparison matches74/80. Six STRUCT
+outcomes still bypass the analyzer leaf through the dictionary-field recursion, so
+large exponent types and signaling-NaN errors differ. Propagate the inference mode
+through that field path and rebuild a new signed package; do not waive those cases.
+The first nested recorder attempt also failed to recursively encode dictionary
+Decimal values; partial evidence/source/audit remain, and corrected controls now
+complete normally. It is invalid recorder evidence, not a native engine failure.
+
+Per-value route timings and whole/above-import RSS are retained in the performance
+comparison. The corrected large positive-exponent case stays bounded (Rust132808704B
+whole process versus CPP140722176B in one diagnostic), not an engine-suite acceptance
+claim. No old exponentsized-string allocation is reproduced for timing measurements.
