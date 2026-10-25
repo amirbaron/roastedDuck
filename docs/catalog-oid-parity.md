@@ -155,3 +155,12 @@ Receipt: oid-lazy-targeted-verification-1.json and lazy-targeted-{1,2} logs/mani
 This validates targeted default/catalog behavior on the current lazy-entry implementation;
 it is not a new4870-file result or numeric OID parity. The remaining allocation-order
 stages and a fresh full corpus after stabilization remain required.
+
+The next bounded placeholder step starts with transaction-created chain roots and delete
+versions. Each such real Version will retain its allocated internal node OID, mirroring
+the identity of CPPINVALID/DELETED entries, while keeping its public entry optional for
+MVCC visibility. Allocate delete IDs only after existence/conflict/internal-drop checks
+succeed. Failed/no-op drops must not consume a tombstone ID. Commit/rollback behavior
+must remain unchanged. Rename chains, ordinary builtin registration versus default committed
+creation, and dependency entries require separate verification; do not generalize a
+fixed per-operation increment beyond the actual node constructors.
