@@ -307,3 +307,19 @@ extension-backed file/WAL reopening now pass17SDK tests for this extension-order
 Receipt: shell-final-gaps-20261025/oid-extension-sdk-verification-3.json, linked to the
 preserved persistence receipt. The native public-library rebuild is next; final full
 corpus, client and coupled performance acceptance remain open.
+
+
+## Static-extension boundary native checkpoint
+
+Signed native oid-extension-library-1 SHA0d2b3909becdbdfcb82f21256e6909477cb06949f58fff082055702a33bab890
+passes all652Go cases and30C API files/155cases/724646assertions. Every C API test's actual
+loaded image/signature and source/library hashes are verified; workspace/all-target Clippy
+passes with warnings denied. Together with17SDK tests, this verifies the static-extension
+boundary stage. Receipt: shell-final-gaps-20261025/oid-extension-verification-1.json.
+
+The maintained lifecycle script's schema query used schema_oid rather than duckdb_schemas.oid;
+this verification-tool typo is corrected. New CPP/Rust controls have zero snapshot query
+errors and retain all raw operation outcomes. Rust's three independent initial databases
+all report21262(down from21857), whereas CPPremains20624. The numeric gap is still open;
+core_functions registration and real placeholder/collation/dependency objects remain to port.
+This staged evidence predates that next source change and final SQL/client/performance runs.
