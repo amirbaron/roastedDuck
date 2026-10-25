@@ -38,6 +38,17 @@ Complete Python bindings first and all primary clients plus C#/.NET, Swift and J
 - Subagents use model "opus". Commit messages end with the Co-Authored-By line; docs
   changes go in their own commit before the code.
 
+## Latest shell/shared-renderer checkpoint (2026-10-25)
+
+Signed CLI6 closes62of66settings-byte mismatches, with4raw Stack Trace differences
+still open; exhaustive settings5,296/5,300exact. Shell392pass/3skips and full768case
+/46PTYdifferential have no new differences; both known diagnostic/OID gaps remain.
+Fresh signed Python wheel4 retains all prior fast-suite verdicts in Arrow19/21,
+including three held Decimal failures. See [native shell evidence](shell-argv-parity.md)
+and SSD indexes `shell-argv-20261025/{settings-verification-1,python-validation-4}.json`.
+This is a scoped frontend/shared-renderer checkpoint; broader clients, current core,
+storage/WAL and final coupled speed-memory acceptance remain open.
+
 ## Current release verification (2026-10-25)
 
 Signed release3 completes the corrections found by the first new full corpus.

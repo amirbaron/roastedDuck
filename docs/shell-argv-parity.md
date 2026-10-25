@@ -322,3 +322,20 @@ and verdicts, including explicitly open raw mismatches and host fixture errors.
 `settings-verification-1.json` indexes identities, raw results and limitations.
 Fresh Python wheel4 validation is in progress for the changed shared numeric code;
 this does not complete the remaining shell/core/client/storage/performance gates.
+
+## Shared numeric renderer: fresh Python image
+
+Signed release wheel4 installs into new pinned Arrow19/21 environments, each loading
+one Rust engine image. Both installed extensions match the signed wheel entry SHA
+2e8c064995c82ee9f72fdf6b607bcef0aa446649937fd844edd5256d56f197c1 and pass strict
+signature verification. All seven packaged stubs are byte-identical to wheel3.
+Focused NULL32/show-options36 outcomes match C++ exactly; render remains18/19 with
+the existing unaccepted string-columns reference discrepancy.
+
+The complete fast matrices retain exactly the prior test-ID/verdict multisets:
+Arrow19 has3,203passes/3heldDecimalfailures/35skip-xfail across3,241records;
+Arrow21 has3,453/3/36 across3,492records. No collection errors or new failures.
+Passing counts include the existing non-strict XPASS. `python-validation-4.json`,
+`full-fast-comparison-4.json`, identity receipts and raw JUnit/logs preserve evidence.
+This closes shared-renderer regression verification for the numeric-byte change,
+without accepting existing discrepancies or completing the broader client gates.
