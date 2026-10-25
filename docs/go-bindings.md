@@ -29,3 +29,34 @@ A successful build is preparation only. Completion also requires public API/test
 installation/loading, ownership/concurrency/cancellation, types/UDF/Arrow, cross-engine
 file/WAL journeys and documented performance/platform acceptance. Broader clients and
 the whole-port speed–memory/storage gates remain open.
+
+## First complete control and Rust discovery
+
+The signed CPP dynamic client with Arrow passes all652reported cases (including
+subtests/examples), with255listed top-level Test functions all started/finished and
+no skips/failures. Direct launch with child nice increment preserves DYLD loader proof.
+The first launch through protected /usr/bin/nice passed tests but lost loader tracing;
+its evidence remains separate. Runtime/binary/source hashes are preserved in
+`.context/artifacts/go-client-20261025/cpp-test-2/summary.json`.
+
+The first Rust run terminates early at TestErrConnect/local_config_option: schema=main
+incorrectly succeeds as a startup option, then the upstream helper dereferences its
+expected error. Prior outcomes include197pass and5fail records (parents/subtests counted),
+with many tests still unstarted. Other observed failures: explicit access_mode=read_write
+on an in-memory connection reads back automatic, and query-appender VARIANT shredding
+exposes no typed value segments after checkpoint. These are open product gaps, not
+accepted client deviations. Keep the failed Rust run and unstarted list intact.
+
+Match frozen DBConfig::SetOption: the15DUCKDB_LOCAL custom options (and their aliases)
+have no global setter and reject startup configuration. Generic settings with a LOCAL
+default scope may still be set at startup; do not reject them based only on displayed
+scope. Match AccessModeSetting::GetSetting using actual instance configuration, not a
+hardcoded settings-table default. Verify direct C API controls and signed SDK/Go tests
+before regenerating broader core/shell/Python acceptance on a changed engine.
+
+The first output-parser invocation also accidentally generated54,548,250bytes in the
+system Go cache. Only717new files born during its exact observation window were moved
+to dedicated SSD quarantine after checking no active handles, preserving hashes and
+original paths; pre-existing cache files were untouched. Receipt:
+`parser-cache-quarantine-1/manifest.json`. The runner now parses saved Go test markers
+in Python, so it cannot compile the parser or create another default Go cache.
