@@ -323,3 +323,38 @@ errors and retain all raw operation outcomes. Rust's three independent initial d
 all report21262(down from21857), whereas CPPremains20624. The numeric gap is still open;
 core_functions registration and real placeholder/collation/dependency objects remain to port.
 This staged evidence predates that next source change and final SQL/client/performance runs.
+
+
+## Core-function source stage in progress
+
+New function_lists.rs preserves all153built-in and367core definitions in frozen source
+order, including interleaved scalar/aggregate entries. StartupFunctions consumes the
+existing descriptors and rejects missing/duplicate/unclassified entries. The shared &&
+set is split by actual GEOMETRY versus list argument types, then merged when core loads.
+Built-ins now register after table/copy registration; core entries register after main
+attachment, before the six ordinary static extensions. Existing SDK availability with
+load_extensions=false is retained. Temporary registration descriptors are consumed at
+startup; no table/result cache is added. The source-order audit matches all520definitions.
+
+Workspace/all-target check passes after correcting an aggregate-name map key type. The
+first signed native core-registration image opens successfully and all corrected lifecycle
+snapshot queries succeed: Rust initial OID20530in all3instances, CPP20624. Numeric parity
+is still open, including real extension placeholder/collation/dependency entry lifecycles.
+Current native SHA6bed3404824057e3184653868992d314723b7ae8b334f5005a092253f6480d0f;
+Go/C API, expanded persistence/settings and final acceptance are pending. Persistence
+coverage now also includes core-function defaults, generated columns, expression indexes
+and constraints across checkpoint/WAL reopen. No later-stage runtime success is implied.
+
+
+The core-registration native image passes all652Go cases and30C API files/155cases/
+752984assertions, with actual library paths and signatures verified. All four fresh
+cross-engine scalar-storage journeys pass: each engine writes checkpointed and nonempty
+WAL states, the other reopens/checks generated columns, defaults, expression index and
+constraint failure/recovery, appends/checkpoints, then the writer reads the new row back.
+Pre-replay files/WAL plus hashes remain in oid-core-registration-storage-1. Separate child
+processes verify the actual native image; no mixed-engine fallback is used.
+
+Workspace/all-target Clippy passes after doc-markdown-only corrections. The generated
+lists are reproducible with scripts/generate-function-lists.py --check. SDK settings and
+the expanded persistence test are rebuilding; no full SQL/client/performance acceptance
+is claimed for this source stage yet.

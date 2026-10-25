@@ -20,6 +20,29 @@ The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swi
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
 
+## Current catalog startup work
+
+Instance-owned OID allocation, lazy default entries and actual MVCC version-node IDs
+are implemented in the working tree. Main database registration now follows storage
+initialization; ordinary static extensions load after main attachment, with configured
+extension options loaded when needed. The signed static-extension checkpoint passes
+17 SDK tests, 652 Go cases and 155 C API cases across 30 files, plus workspace Clippy.
+
+The next source stage separates the frozen 153 built-in and 367 core_functions
+definitions, preserving source order and shared overloads. Its signed native image
+passes all 652 Go cases, 155 C API cases and four bidirectional scalar-expression
+checkpoint/WAL journeys. Workspace checking and Clippy pass. Expanded SDK persistence
+and settings tests are rebuilding. This is staged evidence, not final full-source
+acceptance: initial database OIDs are 20530 versus C++ 20624, with real placeholder,
+collation and dependency entry lifecycles still to audit. See
+[catalog evidence](catalog-oid-parity.md) and external
+`shell-final-gaps-20261025/oid-core-registration-storage-1/summary.json`.
+
+The complete 4870-file corpus checkpoint below predates these catalog changes.
+Final signed SQL-corpus, shell, C API/ADBC, Python, Go, Swift, storage/WAL and coupled
+speed/memory measurements remain open. Preserve the uncached lower-memory baseline
+and report query outliers separately.
+
 ## Latest Go/core checkpoint
 
 Pinned Go v2.10506.0 root suite with Arrow passes652/652on both Rust and frozen CPP,
