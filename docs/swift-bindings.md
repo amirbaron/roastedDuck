@@ -29,3 +29,18 @@ Rust library with no C++fallback. CPPcontrols must use the same pinned wrapper/t
 Keep source and small tooling in the workspace; copies/builds/caches/module cache/test
 output on the dedicated SSD. Serialize builds/tests/benchmarks with one job/nice10.
 Other clients and whole-port performance/storage acceptance remain open.
+
+## Preparation contract
+
+`swift/upstream.json` pins the bundled source/test/license and C header hashes.
+Prepare separate fresh test packages for each explicitly selected signed library,
+copying wrapper/tests byte-for-byte. A minimal C target includes only the frozen C
+header; no C++engine source generator runs. Record source/library/manifest hashes and
+link directories. Test-specific linker paths/header padding permit pinning the built
+executables to their immutable engine image before signing and running.
+
+This prepared package is test wiring, not completed portable distribution. It must
+not overwrite an earlier output, silently select a system library, alter assertions,
+run a build during preparation, or claim that the132tests passed from inventory alone.
+Build/cache/scratch/temp paths and actual loaded-library verification follow after the
+active corpus terminates. Validate Foundation cache/temp placement as well as TMPDIR.

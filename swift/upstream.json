@@ -1,0 +1,163 @@
+{
+  "version": "1.5.6",
+  "source": "DuckDB1.5.6/tools/swift/duckdb-swift",
+  "header_sha256": "e85f70155b5948c8575e59f66e60d43575cec8b252293534c9e8598eb313a293",
+  "files": [
+    {
+      "path": "Sources/DuckDB/Appender.swift",
+      "sha256": "0a159be61bbb8629b6963ba16823f91e33dc39ed16e6fda4b6e564cbbe6f5d2c"
+    },
+    {
+      "path": "Sources/DuckDB/CodingUserInfoKeys.swift",
+      "sha256": "b2c009dfa1a2a4cee07b07ebed7b1ae07f5122b3e73fa6156cf33de54676807b"
+    },
+    {
+      "path": "Sources/DuckDB/Column.swift",
+      "sha256": "d2bc5c6b2894fc656f9620cea509d87191dd1d638eed1a66db5f14cedef564ca"
+    },
+    {
+      "path": "Sources/DuckDB/Configuration.swift",
+      "sha256": "5a262403d4937291250770f464e00b73e8f5bc6dfd7d0d4a777d1345ebb2647c"
+    },
+    {
+      "path": "Sources/DuckDB/Connection.swift",
+      "sha256": "58345d3c517345b0fb6cbd55044ceeae82d814aed1fcf849bd051485b399cd65"
+    },
+    {
+      "path": "Sources/DuckDB/Database.swift",
+      "sha256": "99ea46006bcec861945c248072ac874ba3ea65d8a727936fc0c7652ccdd1c474"
+    },
+    {
+      "path": "Sources/DuckDB/DatabaseError.swift",
+      "sha256": "393d31bc51012b9fc3324d8cffa443de5a54421d4cc221a8588d30bffec82bdf"
+    },
+    {
+      "path": "Sources/DuckDB/DatabaseType.swift",
+      "sha256": "331f4682f5ea488b3e403219f9346fd4887db66e9eb8dbb5c1ff670fac477d6a"
+    },
+    {
+      "path": "Sources/DuckDB/DuckDB.docc/DuckDB.md",
+      "sha256": "7a15e1debcc1368d876714d36e511880ea160795b36e7706a57a7591d3454e61"
+    },
+    {
+      "path": "Sources/DuckDB/Extensions/Column+TabularData.swift",
+      "sha256": "44d3b61d7c8d93f1d734d02d910d16fd228bbf537c0b99dbded78af10631aba7"
+    },
+    {
+      "path": "Sources/DuckDB/Extensions/Date+Foundation.swift",
+      "sha256": "0265e868075ea5f265a3faa8210c5b2b45145a08a9e948a1257f37a7f67060e9"
+    },
+    {
+      "path": "Sources/DuckDB/Extensions/Decimal+IntHuge.swift",
+      "sha256": "5a649b2612a81506780296e56c95cefc152d177b870eb5b86750dc025227b8bf"
+    },
+    {
+      "path": "Sources/DuckDB/Extensions/Time+Foundation.swift",
+      "sha256": "34a5448eb792b58d39b8d9f00fdafdd3e126a089e970e1b90b876ea2b5839ce6"
+    },
+    {
+      "path": "Sources/DuckDB/Extensions/Timestamp+Foundation.swift",
+      "sha256": "67cac66349ecc7b3a7e026dfe7131e8123c4f23a0aed7c78bb4a5cc55b9dcad7"
+    },
+    {
+      "path": "Sources/DuckDB/Internal/CTypeUtilities.swift",
+      "sha256": "3c5311a44ea7b8a7e8fc7e5d06824be2811962aa9a42d36d1ab4921c42ac55d7"
+    },
+    {
+      "path": "Sources/DuckDB/Internal/DataChunk.swift",
+      "sha256": "5bc0e06b90b286e4c81b05229e73154b2b6f208e7124a3bad1cf2a5b69bffd63"
+    },
+    {
+      "path": "Sources/DuckDB/Internal/DecimalStorageType.swift",
+      "sha256": "5b2a8246e6e0750712eae779835afddbdf3f4221c21c1abe9737a2277e2e7460"
+    },
+    {
+      "path": "Sources/DuckDB/Internal/Optional+CString.swift",
+      "sha256": "28d335a39a3cddbcf0b6ba5c8e826074db8a5d3e1eadb4bbcc07ef7b23cbc8f3"
+    },
+    {
+      "path": "Sources/DuckDB/Internal/PrimitiveDatabaseValue.swift",
+      "sha256": "544c11a1c593c835d1fcbc48c7dbddec1c64c035c488ddbd2585bebb1a3d8c3c"
+    },
+    {
+      "path": "Sources/DuckDB/Internal/Vector.swift",
+      "sha256": "9bf375de17016a63361a0268c96c3bb646b7d7b9ba22fb6bcf85fcd761b5d9b7"
+    },
+    {
+      "path": "Sources/DuckDB/Internal/VectorElementDecoder.swift",
+      "sha256": "6d4ecbbbdb94776ed5ce8133955126c5b2e905c834a12f18d3ff7731b00ba1b6"
+    },
+    {
+      "path": "Sources/DuckDB/LogicalType.swift",
+      "sha256": "43f35891d959c656afa832ebe55cf0afa335cb68f21a576c202a60c6002cd582"
+    },
+    {
+      "path": "Sources/DuckDB/PreparedStatement.swift",
+      "sha256": "1ba60362497c2f04ceeb0c28703750a7269c4819e0001e73d5a65ab4321f24d3"
+    },
+    {
+      "path": "Sources/DuckDB/ResultSet.swift",
+      "sha256": "d2d89f7cc89cb93d8c1a72d0761d30fd9333cf10e37e7eb77cb4350d9b2b630b"
+    },
+    {
+      "path": "Sources/DuckDB/Types/Date.swift",
+      "sha256": "8b6d03f12a14d7d58f99699ef0ebd1b04577131885ce2dda31a0d84a10e10332"
+    },
+    {
+      "path": "Sources/DuckDB/Types/IntHuge.swift",
+      "sha256": "88764a3d93dcb6269fe2376bdf8cc0e7d69616e1bb86030bf56a1300033bbe07"
+    },
+    {
+      "path": "Sources/DuckDB/Types/Interval.swift",
+      "sha256": "c44462dd909242d96710e11c65d037a30b89c1e9e60beee251cf583817a3c2d3"
+    },
+    {
+      "path": "Sources/DuckDB/Types/Time.swift",
+      "sha256": "0110c7e3bc26fc49e460ae191e178d27a4181e6fdb7448c67ff985742b34e988"
+    },
+    {
+      "path": "Sources/DuckDB/Types/Timestamp.swift",
+      "sha256": "468f12fcc1f67b1bf9c81a86a8ed21f72ddf1169045ea5123517c17843e4df04"
+    },
+    {
+      "path": "Tests/DuckDBTests/AppenderTests.swift",
+      "sha256": "087d4c817801172634941eb6917bd13808247abb57887f8f24014a7d8e3775cd"
+    },
+    {
+      "path": "Tests/DuckDBTests/CodingUserInfoKeysTests.swift",
+      "sha256": "1dd6a888d8d69f69179ab1fb4036b04c972ff05fd2f3656e4c5fa8e490863ca1"
+    },
+    {
+      "path": "Tests/DuckDBTests/DatabaseTests.swift",
+      "sha256": "2b12d032579513997f6ddb15175d0cc0fcbf96dfa41b4469d553fcf74a3ee99a"
+    },
+    {
+      "path": "Tests/DuckDBTests/DecimalUtilityTests.swift",
+      "sha256": "57e77d8608cfeef794fd8efadf598874a4133a6fc7b28a55fb19b609d1a572e9"
+    },
+    {
+      "path": "Tests/DuckDBTests/ExtensionTests.swift",
+      "sha256": "c8c2c44875f9f64c72ef0a94b8c0fafd393aa6a4677e2a84188a861e330d51be"
+    },
+    {
+      "path": "Tests/DuckDBTests/FoundationTests.swift",
+      "sha256": "0330e81744e891a47cd676b56e6d59c81f0b5a4c66266aed52e0b9252c9f0684"
+    },
+    {
+      "path": "Tests/DuckDBTests/LogicalTypeTests.swift",
+      "sha256": "28b3f4b709f824f7dc58c9712d319e31afae3f3c3beee93de760b29a7e5d0db3"
+    },
+    {
+      "path": "Tests/DuckDBTests/PreparedStatementTests.swift",
+      "sha256": "388af006f7a1d8892ab51d90bae37d5a6471d46a180f8a089771cd72a77934cc"
+    },
+    {
+      "path": "Tests/DuckDBTests/TypeConversionTests.swift",
+      "sha256": "b839b8ac41c0e6d53dddf583efa73abe9e6b913d0d468364add1dbfc68b17d09"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "4d65ba92eaa7596e2c5d97037abe9705d3e75073c9f37c336ed2f7ed0650f9b4"
+    }
+  ]
+}
