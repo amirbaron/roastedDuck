@@ -837,6 +837,49 @@ unmodified before/after JUnit records, exact focused outputs, deduplicated cover
 signed wheel, compiler records and source archive. Full Python and the overall port
 remain incomplete.
 
+## Remaining Pandas cohort checkpoint (2026-10-25)
+
+The remaining 31-file Pandas cohort now matches C++: **130 passed, one existing
+Pandas-before-3.0 string-type skip**, closing 17 Rust failures. Typed `Value` parameters
+accept the same type specifications as the frozen client. List/array conversion treats
+the requested child type as a hint, then infers actual element types and array length;
+empty/all-NULL lists retain SQLNULL element types. Recursive NumPy object arrays use
+the Pandas inference path, preserving MAP entries rather than merging missing keys
+into NULL STRUCT fields. Arrow extension strings scan through their NumPy object view
+without reading deprecated `_data`. Failed whole-frame Arrow conversion retains the
+frozen InvalidInput exception, including through frame replacement scans.
+
+Empty relation DataFrames retain ENUM categories; empty connection results preserve
+their existing empty-category behavior. Both paths have direct C++ comparisons.
+The new focused boundary comparison matches **31/31** outcomes.
+
+String scans copy Python UTF-8 directly into each native chunk's owned string heap,
+avoiding temporary String/Value allocations. Pandas NA detection uses its singleton
+before the generic fallback. These changes add no input/result/table cache. Coupled
+one-million-row, one-thread repeats retain every result check and time/RSS sample:
+
+| Input storage | Rust before | Rust after | C++ control | Rust / C++ peak memory |
+|---|---|---|---|---|
+| Python extension strings | 136.7–139.7 ms | 65.2–66.1 ms | 35.2–35.4 ms | 143.8–144.2 / 141.3–142.3 MB |
+| Arrow extension strings | 186.8–193.0 ms | 114.2–115.0 ms | 57.5–57.7 ms | 215.3–215.5 / 197.7 MB |
+
+This removes about 52%/40% of execution time without a material memory increase. The
+remaining approximately 1.9×/2.0× slowdown is an **individual open performance outlier**,
+not hidden by averages or accepted by the TPC-H/ClickBench policy. Rust is still a
+development build versus the C++ release; final signed release acceptance remains open.
+Prior controls and intermediate direct-copy measurements remain preserved.
+
+The final current wheel runs **2946 distinct scoped cases: 2923 pass, four held failure
+assertions, 19 skip/xfail**, with zero collection errors. The same two decimal categories
+and shared Parquet timestamp-unit assertion remain; the positive decimal exponent has
+two assertions. **274 normally collected cases in 73 files** remain, plus the separate
+dependency/version/platform matrix, other languages and final core/shell/storage/WAL
+and release performance gates.
+
+Evidence: `.context/artifacts/python-pandas-remaining-20261025/python-pandas-remaining-checkpoint.json`,
+unmodified upstream before/after/regression reports, exact boundary comparisons,
+coupled performance controls, signed wheel/compiler records and source archive.
+
 ## Remaining gates
 
 Complete relation APIs (including delete, remaining file formats/filesystems, mutation/type/metadata and

@@ -83,7 +83,13 @@ Focused scalar outcomes match 35/36; C++ ignores memoryview strides (thirteenth
 unaccepted category). Current 25 nonoverlapping cohorts record 2793 pass/four held
 failure assertions/18 skip-or-xfail across 2815 cases; 405 collected cases in 104 files
 remain, plus dependency/platform matrices. Python Clippy and workspace checks pass;
-no table cache is added. R and the other language packages remain
+no table cache is added. The remaining Pandas cohort closes 17 failures and matches
+C++ 130 pass/one existing version skip; 31 focused boundary outcomes match. Current
+26 cohorts record 2923 pass/four held failure assertions/19 skip-or-xfail across 2946
+cases, leaving 274 collected cases in 73 files plus dependency/platform matrices.
+Direct chunk string copies reduce measured scan time without a material memory
+increase; the remaining 1.9×/2.0× dev-versus-release slowdown stays an individual open
+outlier. R and the other language packages remain
 unimplemented/unverified. The complete workspace/all-target check
 includes the Python crate. See [Python implementation gates](python-bindings.md).
 

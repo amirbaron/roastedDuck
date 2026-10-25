@@ -234,6 +234,17 @@ The positive-exponent category is asserted in two cohorts. 405 collected cases i
 workspace checks pass. Latest signed development wheel/source snapshot evidence:
 python-scalars-20261025/python-scalars-checkpoint.json. Cache and performance policy
 are unchanged; full final verification and documented performance acceptance remain open.
+The remaining 31-file Pandas cohort now matches C++ 130 pass/one existing version skip,
+closing 17 failures. Recursive NumPy object inference preserves MAP entries, typed
+Value accepts type hints with C++ list/array inference, Arrow strings avoid deprecated
+storage access, replacement errors keep their native classes, and empty relation ENUM
+categories are retained while connection behavior stays distinct. New focused boundary
+checks match 31/31. Direct UTF-8 chunk copies and singleton NULL checks reduce the
+one-million-row string-scan time by about 52%/40% without materially raising memory.
+The remaining 1.9×/2.0× slowdown (Rust dev versus C++ release) stays an individual open
+outlier; see performance-acceptance.md. Current 26 cohorts run 2946 cases: 2923 pass,
+four held failure assertions, 19 skip/xfail. 274 collected cases in 73 files remain.
+Latest evidence: python-pandas-remaining-20261025/python-pandas-remaining-checkpoint.json.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.

@@ -59,6 +59,21 @@ policy. Its uncommitted `keep_cached()` switch is removed; persistent table segm
 again use `release_on_unpin()`. Historical cache benchmarks and diagnostic artifacts
 are retained for comparison, not as a performance target.
 
+## Python string-scan outlier (2026-10-25)
+
+The nullable one-million-row Pandas string scan remains an individual open outlier.
+After direct native-chunk UTF-8 copies and singleton NULL checks, Rust development
+repeats are 65.2–66.1 ms for Python extension strings versus C++ release 35.2–35.4 ms,
+and 114.2–115.0 ms for Arrow extension strings versus 57.5–57.7 ms. Peak RSS is
+143.8–144.2 MB versus 141.3–142.3 MB, and 215.3–215.5 MB versus about 197.7 MB.
+All count/length checks pass. Earlier Rust times were 136.7–139.7/186.8–193.0 ms;
+the speed improvement does not materially increase memory or introduce a cache.
+
+The remaining roughly 1.9×/2.0× slowdown needs release-build investigation and explicit
+reporting. It is not accepted by the separate TPC-H/ClickBench baseline policy.
+Before/intermediate/final samples, controls and result checks are retained in
+`.context/artifacts/python-pandas-remaining-20261025/performance*-comparison.json`.
+
 ## Final verification and sign-off
 
 Completion requires a report on the actual final signed binaries, with:
