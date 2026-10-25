@@ -164,3 +164,13 @@ succeed. Failed/no-op drops must not consume a tombstone ID. Commit/rollback beh
 must remain unchanged. Rename chains, ordinary builtin registration versus default committed
 creation, and dependency entries require separate verification; do not generalize a
 fixed per-operation increment beyond the actual node constructors.
+
+The initial root/delete-node step passes15signed catalog tests and workspace all-target
+release Clippy with warnings denied. The new lifecycle test verifies allocation only for
+actual chain/delete versions and entry identity after rollback; no native numeric parity
+claim yet. Rename remains separate: CPPconstructs an old-name RENAMED node, its DELETED
+node, a new-name RENAMED node, and an INVALID root only when the new chain is absent,
+then installs the identity-preserving altered entry. Represent these actual versions and
+register undo/cleanup in the same order; do not emulate them with an unexplained counter
+increment. Conflicts must be checked before destructive changes, and rollback must restore
+old names/visibility without leaking a new name.
