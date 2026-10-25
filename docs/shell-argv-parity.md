@@ -245,3 +245,17 @@ The changed CLI files remain outside the four shared rendering-library modules, 
 this phase does not alter Python wheel3's verified rendering code. Additional legacy
 callbacks, metadata-ID semantics, stack traces, remaining clients and final broad
 storage/WAL/current-core/performance gates remain open. No table cache was added.
+
+## Settings callback baseline
+
+CLI4 completes the full differential with zero unexpected/768cases,46PTY and two
+retained known diagnostic/OID gaps. A separate settings probe then passes20ASCII and
+20UTF8controls. The200casebaseline has134matches/66mismatches, no fixture errors.
+Raw boolean diagnostics, .help patterns, one-byte numeric separators and INSERT
+names differ; measured numeric limit and fixed enum selectors already match.
+
+Preserve byte-based boolean/integer parsing, separator byte counts, help GLOB matching
+and native INSERT identifiers. Keep valid-string callers and all option validation
+rules; do not blanket-reject malformed bytes. Numeric formatting can legitimately
+reach the existing invalid-codepoint/InternalError path, whose raw stack trace remains
+an open discrepancy. Retain that classification without waiving raw outcomes.
