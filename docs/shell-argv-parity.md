@@ -171,3 +171,20 @@ The updated CLI passes392upstream shell tests with the same three skips. Its ful
 768case/46PTYdifferential is now running separately. `verification-checkpoint-4.json`
 indexes the signed CLI identity, raw matrices, Python exact-image results and remaining
 work. Broader core/current-native/WAL/client/performance gates are still open.
+
+## Native dot-path boundary baseline
+
+A focused dot-path probe composes the same exact-byte recorder without replacing
+engine behavior. Eight ASCII and eight UTF8 controls match. The80casebaseline has
+40matches /35mismatches /fivehostfilename fixture errors. All five malformed-byte
+classes mismatch in .open, .open --sql, .output, .once, .log, missing .read and .cd.
+Raw bytes, file effects and exit codes are preserved in `dot-baseline-1.jsonl`.
+
+Migrate these callbacks and their state/OS boundaries to native bytes: database and
+output paths, output-file state, directory changes, read paths, .open SQL/error text,
+and output pipe arguments. Preserve safe-mode checks, option priority, fallback DB
+behavior, file/pipe close sequencing and existing valid-string callers. Native raw
+path handling must reach the OS; do not replace invalid names or count errno92 host
+fixture failures as parity passes. `.open --sql` must preserve its SQL bytes before
+value construction rejects invalid Unicode. Remaining legacy callbacks are not
+silently declared complete by these focused cases.
