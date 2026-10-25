@@ -25,3 +25,18 @@ attach persistence. Run appropriate signed catalog/engine/client/corpus checks a
 shared change. CPPbuild-specific bootstrap ordering must be matched by real construction
 behavior, not by a magic offset, display rewrite or cached reference results. Other shell
 and client/performance acceptance gates remain open.
+
+## Instance-owned allocator implementation in progress
+
+The first wiring pass compiles across the workspace/all targets. After removing two
+unused imports, signed catalog tests pass11/11, including independent allocator isolation,
+shared attached/temp allocation and lazy default-type allocation. A follow-up source audit
+also routes metadata-copy constructors and lazy coordinate-system IDs through the owning
+instance. Standalone entry/catalog constructors retain compatible fallback construction;
+production instance paths use explicit catalog/allocator entry methods. Native C API build
+is active; public lifecycle results and numeric parity are not yet accepted.
+
+This pass deliberately retains bootstrap/attachment order and conflict behavior so the
+next public probe can separate instance ownership from remaining ordering differences.
+The existing complete SQL/client acceptance remains on its recorded pre-OID images.
+A shared allocation change requires fresh verification after the implementation stabilizes.
