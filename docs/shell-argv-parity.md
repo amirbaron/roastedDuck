@@ -208,3 +208,20 @@ The CLI-only dot files are outside the library's four shared rendering modules, 
 this phase does not change the verified Python wheel3 rendering code. Other legacy
 callbacks, database-OID semantics and stack-trace formatting remain open; these
 results are not whole-shell or whole-client completion. No table cache was added.
+
+## Catalog/import byte baseline
+
+The latest CLI3 full differential completes with zero unexpected/768cases,46PTY,
+and the same two known diagnostic/OID gaps. A catalog/import probe then passes eight
+ASCII/eight UTF8 controls. Its80casebaseline has40matches/40mismatches, with no host
+fixture errors: malformed arguments differ across .schema/debug/indent, .tables,
+.indexes, .dump, missing .import paths and .import table names. Raw evidence is in
+`catalog-baseline-1.jsonl`; these are new measured gaps, not inferred passes.
+
+Retain native bytes through SQL literals/identifiers, qualified-pattern parsing,
+prepared values and import's libc++-ordered generic parameters. Preserve validation
+at value construction rather than replacing malformed names. C++ RunSchemaDumpQuery
+iterates an unsuccessful result, which raises a failed-fetch error containing the
+underlying query error; Rust currently returns silently. Match that operation-specific
+failure propagation, keeping BEGIN/COMMIT output and flag restoration behavior tied
+to the actual control flow. Do not turn these40mismatches into known exceptions.
