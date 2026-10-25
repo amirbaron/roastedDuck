@@ -443,3 +443,21 @@ introduced. Next fix startup flags, extension value callbacks and overwrite sema
 real startup connection state; retain both reference build configurations explicitly.
 Evidence: startup-extension-{cpp,rust,official-cpp}-1, startup-extension-official-comparison-1.json,
 startup-python-reference-1.json and startup-extension-reference-1/signing-validation.json.
+
+
+The expanded43-case startup C API cohort records actual image identities, settings
+readback and raw errors. The official signed CPPPython1.5.6native image is used directly
+through duckdb.h in a Python3.13process; Rust runs through the same interpreter/driver in
+a separate process with only its selected native image. Before the fix,33/43outcomes
+match:10Rust-only acceptance gaps cover disabled autoload, invalid TimeZone/Calendar and
+invalid final overwrites. Both reference configurations and unmodified before-fix images
+remain preserved; this does not change the frozen SQL/performance oracle.
+
+The working source now uses a real startup connection/transaction for extension value
+callbacks before main storage creation, honors autoload_known_extensions, and preserves
+last-value/first-key semantics for repeated extension options. Pending options follow the
+existing libc++case-insensitive map order. Workspace/all-target check passes after fixing
+a test-only raw-message type comparison. A seventh SDK settings test covers disabled
+loading, invalid values, overwritten values and no file creation on validation failure.
+Native after-fix controls and the signed SDK run are pending. Evidence:
+startup-settings-before-comparison-1.json and startup-extension-check-2.log.
