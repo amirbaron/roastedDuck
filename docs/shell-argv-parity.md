@@ -225,3 +225,23 @@ iterates an unsuccessful result, which raises a failed-fetch error containing th
 underlying query error; Rust currently returns silently. Match that operation-specific
 failure propagation, keeping BEGIN/COMMIT output and flag restoration behavior tied
 to the actual control flow. Do not turn these40mismatches into known exceptions.
+
+## Catalog/import native-byte results
+
+The new signed CLI4 closes all40measured catalog/import mismatches. The unchanged
+80caseprobe now has80exactmatches, with zero earlier matches regressed. The2,120case
+exhaustive run is2,120exactmatches, zero mismatches, zero fixture errors, zero waivers.
+This includes raw SQL debug output, malformed-pattern validation, dump failed-fetch
+error propagation and successful imports into raw table identifiers.
+
+Workspace/all-target checking and warnings-denied Clippy pass. Signed native shell
+binary units pass15/15. Upstream shell tests pass392/three shared skips. Full768case /
+46PTYdifferential for this CLI is now running; the preceding CLI3 run completed with
+zero unexpected differences and the same two known diagnostic/OID gaps.
+
+CLI4 SHA:7e015cb30dcd0286cec645bb9f57295fd97d0e79181ce6c2ab650e2110b3025c.
+`catalog-verification-1.json` indexes source/image identities and all raw outcomes.
+The changed CLI files remain outside the four shared rendering-library modules, so
+this phase does not alter Python wheel3's verified rendering code. Additional legacy
+callbacks, metadata-ID semantics, stack traces, remaining clients and final broad
+storage/WAL/current-core/performance gates remain open. No table cache was added.
