@@ -1543,3 +1543,29 @@ acceptance. Three signed SDK regressions and12public C API lifecycle paths now p
 for the new core. A fresh wheel5/installed-image/Arrow19/21 fast-suite checkpoint is
 required before transferring the Python acceptance evidence. Existing Decimal/reference
 discrepancies and broader client/environment/storage/performance gates remain open.
+
+
+## Current core signed package refresh (2026-10-25)
+
+A new wheel on the accepted post-Go-fix core is built, signed and installed into new
+Arrow19/21environments with the same30pinned dependencies. Native image SHA
+ced8441fe4684dfe4ef42e27a8fba6f9accd32999056d8b571680a56ded9bcce
+matches the signed wheel entry in both environments, with exactly one Rust engine image
+and strict signatures unchanged after testing. No prior wheel/environment is overwritten.
+The original unsigned Maturin tool is preserved; an isolated signed copy built this wheel.
+
+Both complete fast matrices exactly match every CPPtest ID/verdict: Arrow19has3205pass,
+27skip,8xfail,1existingXPASS (3241records); Arrow21has3455pass,28skip,8xfail,1existingXPASS
+(3492records), zero failures/collection errors. Focused Decimal256primary+80nested outcomes
+match without normalization. Seven packaged stubs remain byte-identical;385runtime
+exports are present, with the same29typing-only declarations separate. Strict typing
+passes both valid clients and produces the expected4errors for each invalid client.
+All4current15-column cross-engine checkpoint/nonempty-WAL read/write/readback journeys
+pass, preserving pre-replay database/WAL snapshots and hashes.
+
+Receipt: `.context/artifacts/python-core-refresh-20261025/verification-7.json`; that task
+holds complete logs, XML/node maps, source/wheel/installed identity hashes, pinned envs,
+Decimal raw outcomes, typing outputs and persistence artifacts. This is current scoped
+verification. It does not waive unresolved unsafe/unstable CPP reference outcomes or
+complete broader signature/lifetime/nonfast/configured extension/backend/platform and
+whole-port coupled performance acceptance gates.

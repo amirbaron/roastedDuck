@@ -189,7 +189,7 @@ client/core/final acceptance gates remain open.
 
 | Surface | Current evidence / remaining work |
 |---|---|
-| Python | Signed wheel6: both complete Arrow19/21fast matrices match CPP with zero failures;336Decimal,385runtime exports, exact stubs/strict typing and four scoped15column file/WAL journeys pass. Other reference/signature/lifetime/nonfast/environment/platform acceptance remains open; see [current evidence](python-decimal-parity.md) |
+| Python | Current post-Go-fix signed wheel refresh: both complete Arrow19/21fast matrices match CPP with zero failures;336Decimal,385runtime exports, exact stubs/strict typing and four current15column file/WAL journeys pass. Broader reference/signature/lifetime/nonfast/backend/platform acceptance remains open; see [current evidence](python-bindings.md) |
 | R | New bindings/package required; inventory and implement the public API and run upstream tests |
 | C API | Current rebuilt library: all 546 duckdb.h exports; upstream 30-file harness passes; 8,735 native ABI outcomes match. ENUM invalid-value failure semantics remain open; duckdb_adbc_init now exists; scoped ADBC loading/interchange checks pass |
 | CLI | Existing shell implementation and historical differential tests; close remaining engine/name gaps and repeat final shell verification |

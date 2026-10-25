@@ -39,6 +39,16 @@ corpus4, Python6, shell11 and Swift verification predate these core changes and 
 refresh. All primary clients plus.NET/Swift/Julia and final coupled performance acceptance
 remain the goal; no full-table cache was added.
 
+## Current Python and Swift package refresh
+
+Python current signed wheel native SHAced8441f… matches both new Arrow19/21environments.
+Both complete fast matrices match CPPexactly with zero failures (3241/3492records),336
+Decimal outcomes,385exports,7stubs,strict typing and4current15columnfile/WAL journeys pass.
+Receipt: python-core-refresh-20261025/verification-7.json. Swift current library2passes
+132upstream+1identity case with exactCPPIDs, relative XCFramework/relocated/standalone
+consumer and4cross-enginefile/WAL journeys. Receipt: swift-client-20261025/current-verification-2.json.
+Broader client/backend/platform gates and final coupled performance acceptance remain open.
+
 ## Latest Swift package checkpoint
 
 Relative Cduckdb XCFramework packaging and a separate relocated SwiftPM consumer now
