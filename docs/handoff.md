@@ -46,12 +46,15 @@ both shells pass 392 upstream tests with three identical skips. The shell differ
 has zero unexpected differences across 768 cases (46 PTY), with three known gaps
 still open. See [release checkpoint](scalar-release-verification.md).
 
-The new full 4,870-file corpus is live on immutable signed images. At 2,984 completed
-files it found three unexpected failures: lowercase compression names in one JSON
-test and missing final EOF-read log events in two logging tests. These are real
-regressions, not accepted divergences. Corrections and focused verification are next;
-no final corpus/client/storage/performance acceptance is claimed. Keep all workloads
-serial and retain the uncached lower-memory baseline.
+The new full 4,870-file corpus finished with **4,774 pass / 21 fail / 75 skip** and
+exact frozen C++ coverage. Its ratchet check finds seven regressions: six failed
+files and one disk-space skip. Five failures share compression-case/CSV-EOF causes;
+the sixth needs separate alias-based catalog type binding while preserving default
+binding's expression names. The disk requirement measured the internal source cwd;
+repeat from a dedicated external working root using the same frozen inputs. See the
+linked checkpoint and external `full-corpus-1/terminal-summary.json`. Corrections in
+the working source remain uncompiled/unverified; no final acceptance is claimed.
+Keep all workloads serial and retain the uncached lower-memory baseline.
 
 ## Current source integration (2026-10-24)
 

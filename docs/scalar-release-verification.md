@@ -37,3 +37,25 @@ Remaining Python/environment/API, all selected clients, broad storage/WAL/versio
 encryption/recovery, and final signed-release speed-memory acceptance remain open.
 The historical uncached performance baseline remains the control; no table cache
 is introduced or authorized by this checkpoint.
+
+## Terminal corpus result and follow-up
+
+The fresh run finished with 4,774 pass / 21 fail / 75 skip, exactly 4,870 unique files
+matching the frozen C++ reference. Ratchet: seven regressions, zero newly passing.
+Its process exit was zero; that does not make its failed files an acceptance pass.
+`full-corpus-1/terminal-summary.json`, `dashboard.md` and `ratchet.log` retain the result.
+
+Five failed files share the compression-name and CSV EOF causes above, including
+`storage/compression/test_using_compression.test` and `zstd/zstd_giant_string.test_slow`.
+A sixth failure is `types/type/test_make_get_type.test`: catalog type binding incorrectly
+uses the default binder's expression-derived names. C++ default binding uses GetName;
+catalog/make_type binding uses explicit GetAlias. Preserve the former and add an
+explicit alias-based route for the latter, retaining native bytes and mixed-name errors.
+
+The seventh regression is a `disk_space 40gb` skip in
+`aggregate/distinct/grouped/distinct_grouping_tpch.test_slow`. Both harnesses probe
+`.`. The current source working directory is on the internal volume (~25 GiB free),
+although test output is linked to the external SSD (~123 GiB free). Repeat using a
+dedicated external working root that links the same frozen source/test/data entries,
+with its own actual external test directory. Do not change the requirement or clean
+unrelated data. Preserve this first run as-is; use new outputs for the rerun.
