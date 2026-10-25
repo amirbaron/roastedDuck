@@ -115,3 +115,23 @@ Preserve strict string acceptance (bytes are rejected by BOTH engines), exact fr
 invocation diagnostics and validation priority. `show-options-cpp-1.json` and
 `null-surrogate-cpp-1.json` retain the reference behavior. These fixes and fresh package
 reruns are required before accepting the shared renderer change.
+
+## Python correction results
+
+The second signed release wheel fixes all32focusedNULL-rendering outcomes and all36
+show-width binding/body-cast outcomes exactly, including cache/fetch behavior and
+error text. Existing render cases remain18/19, with only the previously documented
+string-columns reference discrepancy. The first failed wheel and all raw output are
+preserved; no differences were normalized away.
+
+Fresh complete fast suites retain the exact earlier test-ID/verdict sets: Arrow19
+has3,203passing records /the same3heldDecimal assertions /35skip-xfail records across
+3,241JUnit records; Arrow21 has3,453passing /the same3held /36skip-xfail across3,492.
+No collection errors or new failures. Held discrepancies remain unaccepted. Evidence:
+`python-validation-2.json` and both raw full-fast directories under the argv artifact task.
+
+All-target workspace Clippy with warnings denied now passes (`clippy-4.*`). Lint cleanup
+after wheel2 changes only a documentation code span and passing the bound receiver
+by reference; a final release wheel rebuild is in progress so exact-image confirmation
+can use current source. Updated CLI duckbox/exhaustive checks, package typing/API and
+broader current-source/core/storage/client/performance gates remain required.
