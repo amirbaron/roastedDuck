@@ -210,3 +210,22 @@ flag and are labeled with differing paths. Previous accepted tooling remains pre
 so this audit does not rewrite its execution history. Updated receipt:
 verification-checkpoint-2.json. Broader final refresh, packaging/platform/client and
 coupled performance acceptance gates remain open.
+
+
+## Current native-image refresh
+
+Workspace release Clippy with all targets and warnings denied passes. After the current
+native build exits0, accepted native-current-2 is copied/signed and its879recorded source
+inputs verified unchanged. Image SHA2c234877ce75ed425437a7a6051fbdff2d984a75304f6e3192cb6a082bf97209.
+The30-file C API harness passes155cases/749,820assertions, all30actual loaded-image paths
+verified, with unchanged signatures/hashes and the same existing exclusions. Go is rebuilt
+with the enforced79-file pin and passes all652cases again against this image; its dynamic
+DuckDB symbol imports are verified against the547exports. Exact controls/SDK evidence
+remain scoped in their original receipts; final source/image refresh is explicit.
+
+Receipt: verification-checkpoint-3.json, capi-current-1 and rust-{build,test}-6. An earlier
+library copy native-current-1 was mistakenly captured before the build terminated; it was
+never executed and remains explicitly rejected with its original manifest. Source overlay
+archive is reused only after verifying every input hash; the rejected library is not
+current-build proof. CLI/Slt rebuild is active; fresh full corpus/shell/Python/Swift and
+remaining client/package/platform/performance acceptance are still open.

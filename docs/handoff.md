@@ -28,7 +28,9 @@ pending errors, and comparison retry errors were corrected. Scoped public contro
 27startup,6thread,4checkpoint lifecycle cases match;547native exports remain available.
 See `docs/go-bindings.md` and `.context/artifacts/go-client-20261025/verification-checkpoint-1.json`.
 The signed SDK client-settings5/5and persistence10/10tests now pass; workspace all-target
-Clippy is active. Updated receipt: go-client-20261025/verification-checkpoint-2.json. Earlier full
+Clippy passed. Current signed native image2also passes CAPI30files/155cases/749820assertions
+and Go652/652again. Receipt: go-client-20261025/verification-checkpoint-3.json. CLI/Slt rebuild
+is active. Earlier full
 corpus4, Python6, shell11 and Swift verification predate these core changes and require
 refresh. All primary clients plus.NET/Swift/Julia and final coupled performance acceptance
 remain the goal; no full-table cache was added.
