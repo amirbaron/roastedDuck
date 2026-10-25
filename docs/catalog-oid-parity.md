@@ -497,3 +497,22 @@ This closes the45observed setting-step differences; no case normalization or new
 was used. Evidence: startup-settings-parquet-comparison-1.json and
 parquet-settings-after-comparison-3.json. The final combined SDK, broad C API/Go/SQL and
 selected-client refreshes are still pending for this settings source stage.
+
+
+## NULL settings and read failure control
+
+The combined settings image passes all652Go cases and30C API files/155cases/705212assertions.
+The expanded95-step NULL cohort then exposes5remaining differences: metadata changes SQL
+NULL into an empty string, and reading Parquet with binary_as_string=NULL succeeds in Rust
+while CPPthrows INTERNAL Calling GetValueInternal on a value that is NULL. The CPPprocess
+remains reusable after RESET; raw errors, native traces and before-fix results are retained.
+
+The working source now represents nullable settings metadata explicitly and renders a
+VARCHAR NULL. Parquet scan/metadata option construction checks binary_as_string NULL at
+its actual use and captures the genuine Rust origin of the corresponding internal error.
+ErrorData::AddErrorLocation transfers a resolved stack_trace into the raw message before
+the internal footer; the renderer is ported accordingly, preserving the direct-shell
+trace/footer order. Signed common tests pass33/33, including trace placement/idempotence;
+workspace/all-target Clippy passes before a test-assertion-strengthening change. The NULL
+native rebuild and full combined SDK/client/SQL checks remain pending. Native frame bodies
+are implementation/compiler-specific and are not replaced with CPPsymbols.
