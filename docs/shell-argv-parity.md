@@ -259,3 +259,14 @@ and native INSERT identifiers. Keep valid-string callers and all option validati
 rules; do not blanket-reject malformed bytes. Numeric formatting can legitimately
 reach the existing invalid-codepoint/InternalError path, whose raw stack trace remains
 an open discrepancy. Retain that classification without waiving raw outcomes.
+
+## Numeric-format carrier follow-up
+
+The first settings implementation passes194/200cases (baseline134/200), closing60
+mismatches. Six separator cases still differ: the native separator reaches state,
+but FormatNumber converts its output through String::from_utf8_lossy. This causes
+replacement text/success where C++ preserves the byte or raises an invalid-codepoint
+error. Preserve rendered numeric cells and footer/readable-number strings as bytes;
+compute widths through native glyph logic. The same helper is shared with table
+metadata, so keep those consumers and Python renderer validation in scope. Do not
+count a trace-prefix-only improvement as a raw parity pass.
