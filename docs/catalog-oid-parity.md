@@ -224,3 +224,12 @@ FinalizeAttach does. Standalone Catalog::new behavior stays explicit for tests/u
 the database manager can use an initially unregistered catalog. Do not move extension
 loading simultaneously: storage/WAL/option-driven extension needs require their own
 controls and lifecycle port.
+
+Ordinary builtin chains and one-time attachment identity finalization now pass17signed
+catalog tests. Database-manager attachment uses an unregistered catalog while storage/
+entries initialize, then finalizes its OnceLock-held identity before publication. Repeated
+or concurrent finalization consumes no additional IDs. Standalone catalog construction
+retains its explicit immediate-registration behavior. Workspace check passes; current
+Clippy is running, and public/native/client/storage/corpus refresh is still pending for
+these latest startup changes. Extension-loading and full builtin registration order remain
+unchanged and open; no numeric parity claim is made from the unit tests.
