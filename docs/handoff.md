@@ -353,6 +353,22 @@ Module-helper timings remain around 74–77 ms/1000 calls at ordinary 46–48 MB
 reader prefixes stay bounded around 73 MB. No eager default DB or table cache added.
 Evidence: python-root-contract-20261025/. Argument-value conversions and broader
 semantics remain partial, alongside the existing client/core/final acceptance gates.
+The following byte-alias checkpoint accepts str/bytes/bytearray for connection
+sql/query/from_query and relation set_alias, preserving NUL/invalid UTF-8 bytes.
+It corrects from_query to keyword-only alias/empty default. The alias matrix improves
+20/2670 to 2670/2670; 94 state outcomes, 432 expanded connection cases, 1872 helper
+boundaries and 225 constructor outcomes match. Component cohorts overlap; generated
+C++ aliases are compared by shape/uniqueness with actual random values retained.
+Failed repr diagnostics use C++'s fallback; existing rendered strings remain available
+after close, with GIL-free waiting. Actual-type connection checks reject spoofed
+__class__. Concurrent render output matches without deadlock, but C++ observes two
+callbacks versus one on both previous/current Rust: this discrepancy is retained.
+Final signed wheel 4 keeps the full fast counts on both Arrow versions unchanged,
+with every C++ node covered and no collection errors; typing/export audits, Python
+Clippy and workspace checks pass. Query/alias micro timings remain about 23–26 ms/1000
+at ordinary 45–48 MB peaks, reader prefixes around 73 MB, cold samples retained.
+Evidence: python-name-contract-20261025/. Table/view and other string boundaries,
+broader Python semantics and all existing final/client/core gates remain open.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.

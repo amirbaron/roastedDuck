@@ -157,6 +157,17 @@ default database creation stays lazy. Broader argument-value conversions and com
 Python/client acceptance remain open. Evidence:
 `.context/artifacts/python-root-contract-20261025/`.
 
+The next Python checkpoint preserves byte aliases in connection sql/query/from_query
+and relation set_alias, corrects from_query's keyword-only/empty alias default, handles
+failed repr diagnostics/cached-after-close displays and rejects spoofed connection
+types. Scoped matches: 2670 alias, 94 state, 432 connection, 1872 helper-boundary and
+225 constructor outcomes (overlapping, not additive). A concurrent-render callback
+count difference is explicitly retained; generated aliases use pattern/uniqueness
+checks. Both full fast dependency matrices remain at the counts above, with no new
+failures or collection errors. Typing, export and compiler gates pass; coupled RSS/
+timings stay bounded. Evidence: `.context/artifacts/python-name-contract-20261025/`.
+Other named-string boundaries and full client/final acceptance remain open.
+
 | Surface | Current evidence / remaining work |
 |---|---|
 | Python | Native arrays, Arrow, joins/writes and expression trees; 101/101 DB-API, 37/37 host, 41/41 Arrow, 79/81 object and 123/123 relation/expression cases pass. 559 UDF cases pass plus one existing xfail; complete remaining relation/input/expression and UDF overload APIs, platform/package gates and twelve unaccepted discrepancy categories |

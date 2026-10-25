@@ -1205,6 +1205,56 @@ directories, typing receipts/provenance, frozen signature records and before/aft
 timing/RSS samples. Wheel 1 and the unused wheel 2 remain as intermediate evidence.
 Rust runtime algorithms are unchanged from the preceding native/ADBC checkpoint.
 
+## Native byte aliases and diagnostic lifetimes (2026-10-25)
+
+Connection `sql`/`query`/`from_query` and relation `set_alias` now accept the frozen
+string caster's Unicode, bytes and bytearray inputs. Owned native byte strings preserve
+embedded NULs and invalid UTF-8; fetching data remains valid, while reading an invalid
+Unicode alias raises the same decoder error as C++. The shared binder uses a fixed
+array and static signatures, adding no per-call argument-vector/signature allocation.
+`from_query` now also matches C++'s keyword-only alias and empty default; it previously
+allowed a positional alias and used `query_relation` as its default.
+
+The 2670-case alias cohort, including all 256 raw byte suffixes across connection,
+root/native module and relation APIs, improves from **20/2670 to 2670/2670** matching
+outcomes. A further **94 state outcomes match**, covering mutable bytearray copies,
+parameters/statements, bad arguments, closed owners and failing `repr` methods.
+Generated aliases are random in C++; their required pattern/uniqueness is compared
+and their actual values are retained separately, not falsely reported as equal.
+
+Argument diagnostics now use C++'s `<repr raised Error>` fallback when a user/owner
+representation fails. Existing rendered display strings remain readable after close;
+the cache lock is waited on with the GIL released. No additional rendered data is
+retained. Native connection checks inspect actual types, rejecting `__class__` spoofing;
+the expanded connection cohort matches **432/432**. Broader helper boundaries still
+match **1872/1872**, and shared type-constructor diagnostics match **225/225**.
+These are overlapping component cohorts, not additive totals.
+
+The concurrent rendering journey completes on both engines with the same output.
+C++ invokes its callback twice in the preserved observation; both previous and current
+Rust invoke it once. This is an explicitly retained concurrency discrepancy, not a new
+Rust change or a claim of identical callback counts. The previous Rust display failed
+after close; the current display matches C++'s cached-after-close behavior.
+
+Final signed wheel 4 again runs the complete fast matrices with every C++ node covered:
+Arrow 19 **3203 pass/three held Decimal assertions/35 skip-xfail**; Arrow 21
+**3453 pass/the same three held assertions/36 skip-xfail**, no collection errors.
+Installed strict typing positive/negative controls and 385-runtime-export audit pass.
+Python all-target Clippy with warnings denied and workspace/all-target checking pass.
+
+Paired development checks of 1000 query/alias operations take about 23–26 ms before/
+after, with ordinary whole-process peaks around 45–48 MB. The first old cold 55.4 MB
+sample is retained. First-batch peaks stay around 73 MB for 1M/100M-row sources, with
+cold 81.6/81.1 MB samples retained. No table/input/result retention change or final
+performance acceptance is claimed.
+
+Evidence: `.context/artifacts/python-name-contract-20261025/`, especially signed
+`wheels-dev-4-signed/`, `aliases-comparison-4.json`, `state-comparison-4.json`,
+`connections-comparison-4.json`, `boundaries-comparison-4.json`,
+`constructors-comparison-4.json`, complete fast JUnit/logs, concurrent-render receipts,
+compiler terminal records and paired timing/RSS. Other string-valued API boundaries
+such as table/view names still require their own byte/caster audits.
+
 ## Remaining gates
 
 The runtime availability audit is complete for all 385 inventory entries. Finish complete signatures/overloads/defaults/error

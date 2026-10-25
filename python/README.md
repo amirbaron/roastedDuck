@@ -22,6 +22,10 @@ and final release acceptance remain open. Module helpers now validate optional
 connections, preserve actual false-valued connections and use frozen call-boundary
 diagnostics; 396 connection, 1872 boundary and 28 state comparisons match C++.
 Those scoped cohorts overlap; they do not complete every argument-value conversion.
+Query/relation aliases additionally accept native bytes/bytearrays, including raw
+non-UTF8 and embedded NUL names; 2670 alias comparisons match C++. `from_query` now
+uses the same keyword-only alias/empty default. Other string-valued boundaries and
+broader runtime/platform acceptance remain open.
 
 Build from this directory with maturin 1.9.6 and a native Python interpreter. Keep
 CARGO_HOME, TMPDIR, wheel output, environments and caches on the mounted external SSD;
