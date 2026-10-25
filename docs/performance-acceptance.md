@@ -70,6 +70,18 @@ Arrow settings snapshot. This bounded client microcheck does not replace final
 TPC-H/ClickBench or per-query acceptance. No table caching is introduced.
 Evidence: `.context/artifacts/capi-arrow-snapshot-20261025/performance-comparison.json`.
 
+## Python catalog metadata lookup checkpoint (2026-10-25)
+
+Matching C++'s physical-table/view fallback adds a metadata lookup. Two paired fresh
+development repeats expose the cost: 1000 physical-table operations increase from
+8.5–8.9 to 10.9–11.2 ms; registered-table operations from 22–23 to 27–28 ms. Direct
+views remain about 22–23 ms and registration about 100–105 ms. Whole-process RSS
+stays around 118–119 MB; first cold 142/139 MB samples are retained. Reader prefixes
+remain around 73 MB for 1M/100M source rows. Preserve these individual lookup costs;
+they are not hidden in an aggregate or accepted as final engine performance. No
+table cache was added to recover the extra few microseconds per lookup.
+Evidence: `.context/artifacts/python-catalog-names-20261025/performance-before-after.json`.
+
 ## Python string-scan outlier (2026-10-25)
 
 The nullable one-million-row Pandas string scan remains an individual open outlier.

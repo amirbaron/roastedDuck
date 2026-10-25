@@ -26,6 +26,9 @@ Query/relation aliases additionally accept native bytes/bytearrays, including ra
 non-UTF8 and embedded NUL names; 2670 alias comparisons match C++. `from_query` now
 uses the same keyword-only alias/empty default. Other string-valued boundaries and
 broader runtime/platform acceptance remain open.
+Registration, unregistration, table and view names also preserve native bytes;
+3993 catalog outcomes match C++, with stream/transaction and decoder-state checks.
+Other string-valued APIs and all final client/core acceptance gates remain open.
 
 Build from this directory with maturin 1.9.6 and a native Python interpreter. Keep
 CARGO_HOME, TMPDIR, wheel output, environments and caches on the mounted external SSD;

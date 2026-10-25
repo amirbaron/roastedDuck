@@ -168,6 +168,16 @@ failures or collection errors. Typing, export and compiler gates pass; coupled R
 timings stay bounded. Evidence: `.context/artifacts/python-name-contract-20261025/`.
 Other named-string boundaries and full client/final acceptance remain open.
 
+Catalog-name support subsequently covers register/unregister/table/view, preserving
+C++'s separate view fallback and raw-name semantics. The catalog cohort matches3993
+outcomes, 18 state checks and two signed SDK regressions pass, and both full fast
+matrices keep the same counts above. Strict fresh alias/state receipts preserve
+hexadecimal decoder bytes after correcting an overly broad pointer normalization.
+Typing/export/compiler gates pass. Metadata lookup adds a few microseconds per call
+without higher RSS or a table cache; those costs are retained separately in
+`.context/artifacts/python-catalog-names-20261025/`. Other client/conversion/platform
+and final release/core/storage/WAL/performance acceptance remains open.
+
 | Surface | Current evidence / remaining work |
 |---|---|
 | Python | Native arrays, Arrow, joins/writes and expression trees; 101/101 DB-API, 37/37 host, 41/41 Arrow, 79/81 object and 123/123 relation/expression cases pass. 559 UDF cases pass plus one existing xfail; complete remaining relation/input/expression and UDF overload APIs, platform/package gates and twelve unaccepted discrepancy categories |

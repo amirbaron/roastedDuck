@@ -1255,6 +1255,54 @@ Evidence: `.context/artifacts/python-name-contract-20261025/`, especially signed
 compiler terminal records and paired timing/RSS. Other string-valued API boundaries
 such as table/view names still require their own byte/caster audits.
 
+## Catalog name bytes and stream-safe lookup (2026-10-25)
+
+Connection/module `register`, `unregister`, `table` and `view` now accept the frozen
+Unicode/bytes/bytearray name contract. Registration owns native byte names and assigns
+view names directly in the AST, preserving NULs that cannot pass through SQL scanning.
+Table lookup distinguishes physical tables from views: C++'s registered-view fallback
+uses `from ...` through Python Unicode, while `view()` uses the literal name. The
+fallback and decoder behavior are preserved, rather than treating both as direct
+base-table references. A metadata-only SDK lookup avoids ending active results or
+committing the caller's transaction.
+
+The expanded catalog cohort matches **3993/3993 recorded outcomes**, including all
+256 byte suffixes, replacement/unregistration and empty names. Existing empty-name
+views produce C++'s checked `InternalException` on lookup without introducing an
+assertion/panic; platform-specific native stack traces are retained separately and
+excluded from stable message comparison. The 18 state checks match stream continuity,
+transaction rollback, copied registration names and complete `UnicodeDecodeError`
+encoding/object/start/end/reason with JSON errors and replacements enabled/disabled.
+Decoder exception data travels in owned error metadata, with no retained exception
+registry. Two signed native SDK regression tests pass.
+
+The comparison harness previously normalized every hexadecimal token, including byte
+values in decoder errors. It now normalizes only actual object addresses. Original
+receipts remain; fresh controls preserve hexadecimal byte values and again match all
+2670 alias and 94 alias-state outcomes. This correction is explicit rather than an
+overwrite or a broader normalization of native behavior.
+
+Final signed wheel 3 passes the complete fast matrices at the same counts: Arrow 19
+3203 pass/three held Decimal assertions/35 skip-xfail; Arrow 21 3453 pass/the same
+three held assertions/36 skip-xfail, zero collection errors and every C++ node covered.
+Installed strict typing positive/negative controls, 385-export audit, Python/SDK
+all-target Clippy with warnings denied and workspace/all-target checking pass.
+
+Paired metadata benchmarks expose the lookup cost: 1000 physical-table operations
+increase from 8.5–8.9 to 10.9–11.2 ms; registered-table operations increase from
+22–23 to 27–28 ms. Direct view operations remain about 22–23 ms and registration
+about 100–105 ms. Ordinary whole-process peaks remain about 118–119 MB, with the
+first cold 142/139 MB samples retained. Reader prefixes from 1M/100M logical inputs
+stay near 73 MB. No table cache is added to recover the few microseconds per lookup;
+this is scoped development evidence, not final performance acceptance.
+
+Evidence: `.context/artifacts/python-catalog-names-20261025/`, especially signed
+`wheels-dev-3-signed/`, `catalog-comparison-5.json`, `state-strict-comparison.json`,
+`aliases-strict-comparison.json`, `name-state-strict-comparison.json`, full fast JUnit/
+logs, native regression receipts, compiler records and paired timing/RSS samples.
+Other named-string APIs, broad conversion/lifetime/platform matrices, selected
+language clients and final core/storage/WAL/release acceptance remain open.
+
 ## Remaining gates
 
 The runtime availability audit is complete for all 385 inventory entries. Finish complete signatures/overloads/defaults/error

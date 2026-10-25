@@ -369,6 +369,21 @@ Clippy and workspace checks pass. Query/alias micro timings remain about 23–26
 at ordinary 45–48 MB peaks, reader prefixes around 73 MB, cold samples retained.
 Evidence: python-name-contract-20261025/. Table/view and other string boundaries,
 broader Python semantics and all existing final/client/core gates remain open.
+The next catalog-name checkpoint ports register/unregister/table/view to native byte
+names, including direct view AST names and C++'s distinct physical-table versus view
+fallback. A new SDK metadata lookup preserves active streams/transactions. Expanded
+catalog outcomes match 3993/3993; 18 state checks and two signed SDK tests pass.
+Empty-view names return a checked C++-compatible InternalException without assertions.
+Decoder exception arguments survive the engine's owned error channel.
+Harness correction: old broad hex normalization also masked decoder byte values.
+New receipts normalize only actual object addresses; raw old receipts remain, and
+strict fresh alias2670/state94 comparisons still match. Full fast counts on both
+Arrow versions remain unchanged with every C++ node covered and no collection errors.
+Typing/export audits, Python/SDK Clippy and workspace checking pass. Lookup microcosts
+remain visible: physical 8.5–8.9 to10.9–11.2 ms/1000; registered-table22–23 to27–28 ms;
+direct-view/registration similar, ordinary118–119 MB RSS, prefixes~73 MB. No cache
+added. Evidence: python-catalog-names-20261025/, final signed wheel3. Other binding/
+core/final acceptance gates remain open.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.
