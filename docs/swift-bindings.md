@@ -74,3 +74,15 @@ This step stops before tests. A later Foundation cache/temp probe must prove tha
 user-cache-derived test directories are on dedicated storage; TMPDIRalone is not proof.
 Only then run the complete upstream suite and actual loaded-library/ownership/data
 journeys. Portable distribution and other platforms remain independent open gates.
+
+## Build-only runner prepared
+
+`scripts/swift-tests/build.py` implements the serialized build/sign step and stops
+before test execution. Its live-corpus refusal was exercised: exit2with no build output
+directory or compiler/test launch. The guard evidence is retained under the Swift
+artifact task's `toolchain/live-corpus-guard-1.*`. No Swift compilation has run yet.
+
+The runner preserves initial command/input metadata and build exit status, pins actual
+project Mach-O dependencies before signing, signs test bundles, then records final
+artifact hashes after bundle signing. Runtime library identity, full upstream tests,
+Foundation cache/temp placement and portable distribution are still unverified gates.
