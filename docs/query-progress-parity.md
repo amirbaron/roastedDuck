@@ -60,3 +60,24 @@ the query's resources. Reset it at initial cleanup before preparation/new execut
 Do not retain a result/table cache to reproduce this public observation. Broader stream
 transaction/ownership semantics remain separate client/storage verification gates.
 Evidence: `progress-capi-{cpp,rust}-3-{partial,exhaust}.json`; earlier images remain.
+
+## Signed corrected progress publication
+
+Library2 (SHA b958e90af7ee0b154d10163c8949191a3ee9fee4d190232b55ebbf5ef58b6c4c)
+now matches all12public progress lifecycle paths across materialized/streaming and
+partial/exhausted results. Actual scalar values, streaming flags, row counters,
+unknown/started/closed/prepared transitions and connection reuse match. dladdr verifies
+the selected Rust/C++ function image for every process. All547DuckDB exports are
+unchanged. Three signed SDK regressions pass, with current all-target workspace checks
+and warnings-denied Clippy passing.
+
+The comparison coalesces only repeated identical task observations; raw snapshots
+and task counts are retained separately. CPPuses one/two additional scheduler steps
+in these cases. This is not a claim that the raw scheduler traces are byte-identical.
+`progress-verification-1.json` indexes evidence and scope under the SSD shell task.
+
+The shell is rebuilding for actual progress activation verification. Fresh shell,
+Python, broad C API/core/storage and final performance gates remain pending after
+these core changes. Prior CLI9/wheel4/full-corpus3 evidence is not relabeled as current.
+Only scalar progress metadata survives partial result close; query resources are
+released, and no table/result cache or fixed progress delay is added.
