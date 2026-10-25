@@ -53,10 +53,12 @@ Full differential: zero unexpected /768cases, including46PTY, with three known g
 still OPEN (internal-error stack traces, database OIDs, invalid-UTF8 argv). The stale
 stdin-Latin1 known marker is removed and its unchanged case passes strictly.
 
-A fresh complete4,870-file corpus is LIVE on immutable signed-images-3 from the actual
-SSD working root, using the frozen test tree with all4,870file hashes verified.
+A fresh complete4,870-file corpus is LIVE on immutable signed-images-3 from
+external-source-root-3: actual copied test/data trees, all4,870test hashes and1,522data
+entries verified. Full-corpus-2 was interrupted after a linked-data fixture made a
+recursiveglobtest fail on BOTH engines; root3passesall8affectedcontrols on both.
 Evidence: `.context/artifacts/scalar-release-20261025/release-verification-3.json`,
-`full-corpus-2/manifest.json` and worker logs. Do not start another heavy workload or
+`full-corpus-3/manifest.json` and worker logs. Do not start another heavy workload or
 rebuild the running binary; wait for terminal results, then exact coverage, compare
 and ratchet. Do not merge prior verdicts into this new acceptance run.
 

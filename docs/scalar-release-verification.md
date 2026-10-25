@@ -140,3 +140,25 @@ Current complete source evidence:844modified/untracked nonignored files in
 `corrected-source-checkpoint-3.json` and its SHA-recorded archive. Current scoped
 verification index: `release-verification-3.json`. Wait for the complete run before
 claiming a fresh corpus acceptance; all broader goal gates remain open.
+
+## Recursive-glob fixture correction
+
+Full-corpus-2 was deliberately interrupted after2,991completed files (exit143), not
+accepted or merged into another run. One new failure was fixture layout:
+`read_csv_glob_crawl.test_slow` expected8files but saw0 because the external working
+view linked `data/`. C++ CrawlDirectoryLevel explicitly skips symbolic links. The
+unmodified frozen C++ binary reproduces the same failure in that view
+(`glob-fixture-root2-cpp/`). No engine glob semantics or test assertions were changed.
+
+`external-source-root-3` now contains actual copied `test/` and `data/` directories.
+All4,870test hashes and1,522data entries match the original source; data bytes total
+121,870,559. The glob case and seven prior regressions all pass on both engines in
+this view, eight/eight with no skips (`root3-controls-rust/`, `root3-controls-cpp/`).
+All other frozen inputs are retained through links, with a separate actual test
+scratch directory. The layout change preserves the recursive-glob fixture semantics.
+
+A new complete run is live under `full-corpus-3/` with the same immutable signed Slt3,
+one worker, normal engine threading and300s/file. `full-corpus-3/manifest.json` pins
+all identities. `fixture-correction-3.json` and `full-corpus-2/interrupted-summary.json`
+preserve why the second attempt was stopped. Only a terminal complete run plus exact
+coverage/ratchet checks can establish fresh corpus acceptance.
