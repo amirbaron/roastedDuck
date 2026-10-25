@@ -36,3 +36,20 @@ nonempty trace bodies. Missing traces or changed diagnostics/exit/files must fai
 the raw frame difference classified explicitly; do not fake CPPframes or normalize whole
 trailing error streams. Exercise negative controls against the checker, then run the
 full shell suites. OID numbering remains open and separate.
+
+
+## Full shell verification
+
+The new signed CLI passes all392upstream shell tests with the same3skips and all768
+expanded differential cases/46PTY with0unexpected differences. Two explicit differences
+remain: native implementation/compiler frame content (now guarded to frame body only),
+and catalog OID numbering. The missing section is fixed; raw frame identity is not claimed.
+All7comparator negative controls fail as intended. Native signatures/source/binary hashes
+remain unchanged after execution. Appropriate common/shell Clippy is running separately.
+
+Evidence: `.context/artifacts/shell-final-gaps-20261025/verification-1.json`,
+`common-test-1`, `signed-shell-1`, `shell-upstream-trace-1`, `shell-diff-trace-1`,
+trace-current-1 raw streams and comparator controls. Earlier full core/client acceptance
+is on its recorded pre-trace images; this trace change is opt-in at the shell invariant.
+Other internal-diagnostic surfaces, OID lifecycle parity, broader client/platform/storage
+and final coupled performance acceptance remain open.
