@@ -129,3 +129,15 @@ weakened; actual database files still use the upstream API/cases.
 Verify the adapted fixture behavior with the signed storage probe's explicit mode.
 Report original Foundation paths separately; success of explicit fixtures must not
 be relabeled as proof that Foundation's generic temp/replacement redirect worked.
+
+## First control build linkage correction
+
+The first CPPcontrol compiles the wrapper/tests but fails native symbol linkage.
+Its generated Products/Debug contains libDuckDB.a; -lduckdb resolves that similarly
+named wrapper archive ahead of the selected native directory on this case-insensitive
+volume. The selected arm64CPPlibrary exports duckdb_open and the required APIs.
+Preserve cpp-build-1logs/exit status; this is package wiring, not Rust engine evidence.
+
+Prepare fresh controls with the explicit native library file passed to the linker,
+retaining RPATH/header padding and subsequent install-name pinning/signing. Avoid
+search-name ambiguity rather than changing wrapper/test behavior or engine code.
