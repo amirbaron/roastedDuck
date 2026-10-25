@@ -81,3 +81,17 @@ Python, broad C API/core/storage and final performance gates remain pending afte
 these core changes. Prior CLI9/wheel4/full-corpus3 evidence is not relabeled as current.
 Only scalar progress metadata survives partial result close; query resources are
 released, and no table/result cache or fixed progress delay is added.
+
+## Default-thread terminal follow-up
+
+CLI10's default-thread progress run retains correct component bytes and cancellation/
+reuse where a frame appears, but the fixed one-second interval misses frames on either
+engine in SQL-component cases. The partial run is preserved as `progress-journey-3`;
+it does not pass the six-case gate. Replace that timing assumption with a bounded wait
+for the actual component marker before cancelling, keeping raw timing/count differences.
+
+Raw streams also confirm a deterministic leading clear from Rust's SET setup, absent
+on C++. The shell creates a ProgressDisplay for a direct statement with no underlying
+progress bar. Require the backend's restarted/known progress state before creating
+that display; pending direct statements remain unknown, while running plans restart
+at0before tasks. Do not insert a fixed delay or force engine threads to1.
