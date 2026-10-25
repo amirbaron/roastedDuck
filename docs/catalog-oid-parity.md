@@ -402,3 +402,44 @@ entry visibility, independent transform storage and duplicate-registration ident
 The native rebuild and C++/Rust collation/SQL/client controls are pending. This changes
 catalog/binding behavior; prior signed image2and its final-stage receipt remain preserved
 as controls and do not prove this new source stage.
+
+
+The signed collation native image matches all82paired public CPP outcomes exactly:
+78successful queries and4expected errors, including column names/types and raw error
+text. Cases cover inventory, sorting, DISTINCT, grouping, ordered aggregates, windows,
+LIKE, combined/duplicate/invalid collations and default/reset behavior. A fresh signed
+SQL runner passes all33frozen collation-related files, matching33CPPpasses with no
+skips/failures. Input/runner hashes and signatures remain stable. Workspace/all-target
+Clippy also passes. Initial database OIDis20536for3independent instances, versus CPP20624;
+real built-in collation construction accounts for the changed allocation, with numeric
+parity still open. Remaining Go/C API/catalog regression controls are running separately.
+Evidence: collation-controls-comparison-1.json and collation-targeted-1/verification.json.
+
+
+The real-collation image additionally passes all652Go cases with exact CPPIDs/verdicts,
+30C API files/155cases/745284assertions, and the419-file catalog/transaction target:
+413pass/6exactCPPskips/0failures. All18catalog tests,82paired public collation outcomes,
+33frozen collation SQL files and workspace Clippy pass. Actual runtime image paths,
+signatures and changed-source hashes remain verified. Receipt:
+shell-final-gaps-20261025/oid-collation-verification-1.json. Final full-source client/corpus/
+performance acceptance and remaining numeric lifecycle work are still open.
+
+## Startup extension-setting controls
+
+A new35-case native startup probe finds that the frozen source-build CPPbinary cannot
+autoload ICU before its outer constructor: CMakeCache records autoload/autoinstall disabled,
+and no ICU is installed in its normal extension directory. Its8new ICU-option cases
+therefore fail, whereas Rust accepts them. Preserve those raw observations without treating
+an unavailable reference extension as the intended available-extension contract.
+
+The preserved official signed CPP1.5.6Python native image also exports duckdb.h and provides
+an available-ICU control through those exact C API calls. It matches31/35Rust outcomes:
+normal autoload succeeds on both, while4autoload=false cases must fail with the unrecognized
+setting message and Rust currently accepts them. The official Python API independently
+confirms valid startup values, autoload-disabled rejection and invalid TimeZone/Calendar
+validation. The isolated local CPPICU extension copy failed strict signature validation
+and was never loaded; its failure receipt is retained. No Rust fallback to a CPPengine is
+introduced. Next fix startup flags, extension value callbacks and overwrite semantics using
+real startup connection state; retain both reference build configurations explicitly.
+Evidence: startup-extension-{cpp,rust,official-cpp}-1, startup-extension-official-comparison-1.json,
+startup-python-reference-1.json and startup-extension-reference-1/signing-validation.json.
