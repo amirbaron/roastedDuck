@@ -68,3 +68,22 @@ its disk-space control still skips because C++ unittest resets cwd to its compil
 source root unless `--test-dir` is supplied. Correct the Slt unittest adapter to pass
 its requested root through that existing upstream option. Retain `cpp-controls-4/`;
 use separately labeled direct C++ controls/new harness results rather than rewriting it.
+
+## Correction source and component verification
+
+All six functional failures now have corrections prepared: byte-preserving ASCII enum
+lookup; bounded CSV EOF reads without redundant plain-UTF8 read-ahead; and separate
+explicit-alias catalog type binding while preserving expression-derived default binding.
+The Slt unittest adapter now forwards `--test-dir` to honor its selected source root.
+
+Signed release component tests pass: parser20, types104, growing-CSV boundary1 and
+FIFO1 (126 total). All seven direct frozen C++ controls pass with the actual external
+test directory, including the 40 GB requirement. This verifies the control setup;
+the corrected Rust engine has not yet passed those end-to-end cases. Release build3
+is in progress. After it completes, sign and snapshot its binaries, run the focused
+Rust/control cases, and repeat broader validation with new output paths.
+
+Evidence: `correction-checkpoint-3.json`, `native-tests-3/`, `cpp-controls-5/`,
+`source-corrections-4.json` (seven hashed source overlays on the preserved full source
+archive), and `external-source-root-2.json` (all4,870 test hashes checked). Preserve the
+first complete corpus and rejected control setups; do not merge them into acceptance.
