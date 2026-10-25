@@ -273,3 +273,37 @@ remains available. The corrected assertion checks only optional JSON/ICU; produc
 unchanged and its signed rerun remains pending. Evidence is preserved under
 shell-final-gaps-20261025/oid-extension-sdk-verification-1.json. Native public OID/client
 controls and final full-source acceptance are still pending.
+
+## Remaining core-function startup boundary
+
+A frozen-source audit separates153 built-in definitions (145scalar,8aggregate) from
+367 core_functions definitions (300scalar,67aggregate), preserving generated list order.
+The audit records names, kinds, source definitions and input hashes without reference OIDs:
+shell-final-gaps-20261025/function-registration-origin-audit-1.json. Rust currently combines
+both origins in builtin_scalar_functions/builtin_aggregate_functions before main attachment.
+Moving only the six StaticExtension variants therefore cannot reproduce CPP's boundary.
+
+The next stage must separate real core_functions registration from built-in registration,
+retain aliases/overloads, and follow each frozen list's interleaved scalar/aggregate order.
+Database-dependent built-ins (sequence/context/switch) must join the correct source list
+without duplicate registration. Ordinary table/pragma/copy/collation registration and
+extension placeholders still need their source lifecycle audited. Preserve disabled-loading
+SDK behavior explicitly and verify stored expressions before changing the boundary.
+This is a source audit and implementation plan, not a new numeric-parity claim.
+
+
+The second signed settings run reaches the explicit-load timezone assertion: under TZ=UTC,
+Rust reports UTC rather than the test's assumed Etc/UTC. A separate frozen CPP native
+control also reports UTC with the same environment; evidence is
+shell-final-gaps-20261025/oid-extension-cpp-timezone-1.json. The new test now sets UTC
+explicitly after LOAD to avoid depending on a host default. Its third signed build/run
+is pending; both earlier failed test logs remain preserved. No production timezone
+behavior was changed.
+
+
+The third signed client-settings run passes all6cases after those two test corrections.
+Together with the first signed persistence binary's11passing cases, startup settings and
+extension-backed file/WAL reopening now pass17SDK tests for this extension-order stage.
+Receipt: shell-final-gaps-20261025/oid-extension-sdk-verification-3.json, linked to the
+preserved persistence receipt. The native public-library rebuild is next; final full
+corpus, client and coupled performance acceptance remain open.
