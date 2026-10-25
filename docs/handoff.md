@@ -38,6 +38,25 @@ Complete Python bindings first and all primary clients plus C#/.NET, Swift and J
 - Subagents use model "opus". Commit messages end with the Co-Authored-By line; docs
   changes go in their own commit before the code.
 
+## Current core progress checkpoint (2026-10-25)
+
+Core progress now preserves distinct unknown/started states, publishes0percent row
+counters, accounts for the collector pull pipeline, and retains only scalar metadata
+after partial close until the next preparation. Three signed SDK regressions and12
+public C API lifecycle paths pass;547exports are unchanged and actual function images
+are verified. [Progress evidence and limits](query-progress-parity.md) records raw
+scheduler counts separately and the supported stored-table terminal fixture.
+
+Signed CLI11 passes392upstream shell tests/3existing skips and retains all seven
+native-byte guard probes' prior case/verdict sets. Six supported progress display /
+cancel/reuse journeys pass fixed frame checks; timing-dependent full streams/counts
+remain recorded separately. Full768case/46PTYdifferential is currently running.
+`current-checkpoint-11.json` on the SSD indexes the source/image identities and gates.
+
+Earlier CLI9/wheel4/full-corpus3 sections below describe prior core snapshots. Fresh
+Python/native C API suite/core corpus/storageWAL/performance and all selected client
+acceptance remain open. No table cache or fixed progress delay was introduced.
+
 ## Latest color/pager checkpoint (2026-10-25)
 
 CLI7 closes all50measured color/pager byte mismatches:110/110default and2,915/2,915

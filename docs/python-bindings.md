@@ -1518,3 +1518,14 @@ restored `foundation-comparison-4.json`,
 
 Contract sources: [pinned upstream release](https://github.com/duckdb/duckdb-python/releases/tag/v1.5.6)
 and the [pinned PyO3 API](https://docs.rs/pyo3/0.27.2/pyo3/).
+
+
+## Core progress change: fresh package verification pending (2026-10-25)
+
+The core progress-publication and partial-close metadata changes described in
+[query progress parity](query-progress-parity.md) postdate signed wheel4. Its fast-suite
+and rendering outcomes remain valid for that preserved image, not current-core package
+acceptance. Three signed SDK regressions and12public C API lifecycle paths now pass
+for the new core. A fresh wheel5/installed-image/Arrow19/21 fast-suite checkpoint is
+required before transferring the Python acceptance evidence. Existing Decimal/reference
+discrepancies and broader client/environment/storage/performance gates remain open.

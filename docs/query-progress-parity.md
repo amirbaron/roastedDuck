@@ -111,3 +111,20 @@ itself under a scalar aggregate, so table scans support progress and the build s
 stays bounded. Configure custom components after table setup, wait for actual progress,
 then interrupt and verify query reuse. This keeps normal engine threads and tests real
 supported progress without a large intermediate dataset or a synthetic engine callback.
+
+## Supported progress display and current regressions
+
+Signed CLI11 (SHA ded15853775e05c0208e88ace90b276f41728c919aa31d037267ab426fdccedf)
+passes all six stored-table progress journeys: fixed literal/SQL component bytes,
+hide/padding, actual display readiness, cancellation status and SELECT42reuse match.
+Neither engine times out waiting for supported progress. Raw redraw counts differ
+(three CPPframes versus three/four Rustframes), and only two whole streams are exact;
+no full-stream parity claim replaces those raw observations. The leading SET clear
+is fixed. `progress-display-verification-1.json` and `progress-journey-5.jsonl` retain
+all bytes/counts. Previous range-based runs remain an unsupported-source fixture audit.
+
+CLI11passes392upstream shell tests/3existing skips and all seven existing byte-guard
+case/verdict sets remain unchanged. The new bounded output-wait mechanism has a real
+negative control: identical CPPprocesses with an impossible marker correctly fail the
+readiness gate. Full768case/46PTYdifferential is running; fresh Python, broad native
+C API/core/storageWAL and final performance/client acceptance remain pending.
