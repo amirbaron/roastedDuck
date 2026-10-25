@@ -62,3 +62,20 @@ Inventory probe1used schema_oid instead of the actual duckdb_schemas.oid column;
 error/raw results are preserved. Corrected probe2has no query error in its first inventory
 stage and records exact schemas/function/view/type IDs. Full Go/C API/catalog/Clippy
 checks are needed for the current ownership pass before layering ordering changes.
+
+
+## Ownership pass verification
+
+The ownership image passes all652pinned Go root+Arrow cases and all30C API files:
+155cases/753956assertions, with actual runtime images and unchanged native hashes verified.
+Workspace release all-target Clippy passes with warnings denied. The earlier11catalog
+tests cover the initial wiring; metadata-copy/CRS follow-up is additionally compiled and
+exercised by the client/C API runs. Receipt: oid-ownership-verification-1.json.
+This is a stable isolation checkpoint, not numeric parity or final full corpus acceptance.
+
+Next implement OID consumption for actual chain placeholders/tombstones as specified by
+frozen CatalogSet::StartChain/DropEntryInternal/RenameEntryInternal. Every new entry chain
+and actual tombstone should consume from its owning allocator; failed/no-op operations
+must follow the same source lifecycle. Preserve MVCC visibility/rollback and copied entry
+identity. Use the existing placeholders as real internal catalog objects/versions, not
+an arbitrary offset. Lazy default creation and initialization order remain later stages.
