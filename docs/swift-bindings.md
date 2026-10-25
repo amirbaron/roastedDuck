@@ -1,6 +1,7 @@
 # Swift client parity
 
-Completion scope includes Swift alongside all primary clients and C#/.NET/Julia.
+Required language clients are Python, Go and Swift only (owner, 2026-10-25).
+Preserve C API and ADBC functionality; other language clients are outside this goal.
 Use the wrapper and tests bundled in frozen DuckDB1.5.6 under
 `tools/swift/duckdb-swift`, not an unpinned newer package. Preserve its MIT license.
 

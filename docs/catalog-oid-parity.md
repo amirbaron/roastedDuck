@@ -358,3 +358,30 @@ Workspace/all-target Clippy passes after doc-markdown-only corrections. The gene
 lists are reproducible with scripts/generate-function-lists.py --check. SDK settings and
 the expanded persistence test are rebuilding; no full SQL/client/performance acceptance
 is claimed for this source stage yet.
+
+
+## Current-source core-registration checkpoint
+
+The final SDK build for this stage passes all17signed tests (6settings/11persistence),
+including core-function generated/default/index/constraint behavior combined with JSON
+and TIMESTAMPTZ across checkpoint and committed WAL reopening. Latest signed native
+image2 SHA7b77ca405649127f421289e8122d69aec33e2eb7dcaffc98776a625fc47276e2
+is rebuilt after doc-only source corrections and passes652Go cases with exact CPPIDs/
+verdicts,30C API files/155cases/729050assertions, and all4cross-engine storage journeys
+again. Source hashes, signatures and actual loaded images are verified. All2953function
+name/type rows and per-kind counts match CPP; individual numeric OIDvalues still differ.
+Receipt: shell-final-gaps-20261025/oid-core-registration-verification-2.json.
+
+The remaining initial OIDdifference can now be localized without inventing allocations.
+The first generated built-in !~~ is20312in CPPversus20222in Rust, a90-IDdifference before
+that list. CPPsource declares42real extension-placeholder names (214overloads), and
+3real built-in collations, each through ordinary catalog chain construction. Separately,
+CPPCreateMainDatabase uses a real Connection: ClientData creates/initializes its temporary
+catalog (identity plus main-schema chain), and the ordinary AttachedDatabase constructor
+allocates a provisional entry identity before FinalizeAttach assigns its registered one.
+Those lifecycles account for the additional4before the main database's visible identity.
+Rust currently attaches directly and omits those object stages. Port the actual startup
+connection/attachment flow and retain real provisional identities; do not create unused
+objects or discarded counter increments just to reach a reference number. Later dependency
+and extension/collation merge lifecycles also remain open. No final corpus/performance
+acceptance is implied by this current-source staged checkpoint.

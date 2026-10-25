@@ -30,10 +30,9 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    - `parse_statements` hands a PRAGMA's expansion of several statements out as one
      multi-statement, where DuckDB's `StatementPreprocessor` adds `BEGIN`/`COMMIT`
      statements around them, so `duckdb_extract_statements` counts fewer statements.
-17. **Complete language clients.** Owner-confirmed scope (2026-10-23): Python first,
-   all primary clients and C#/.NET, Swift and Julia. This includes R, Go, Rust, Java/JDBC,
-   Node.js Neo, WebAssembly and ODBC, alongside the C API, shell and required ADBC.
-   Python/R are no longer excluded. Inventory the versioned API surfaces and packages,
+17. **Complete language clients.** Owner-confirmed scope (2026-10-25): Python, Go
+   and Swift only. Preserve existing C API and ADBC functionality; other language
+   clients are outside this goal. Inventory the versioned API surfaces and packages,
    implement missing bindings/adapters, then run upstream suites and real installation,
    query, interchange, UDF and resource-lifetime journeys against the Rust engine.
    C API smoke tests alone do not establish client parity; bundling the C++ engine is

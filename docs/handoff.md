@@ -32,7 +32,7 @@ The next source stage separates the frozen 153 built-in and 367 core_functions
 definitions, preserving source order and shared overloads. Its signed native image
 passes all 652 Go cases, 155 C API cases and four bidirectional scalar-expression
 checkpoint/WAL journeys. Workspace checking and Clippy pass. Expanded SDK persistence
-and settings tests are rebuilding. This is staged evidence, not final full-source
+and settings tests pass 17/17 on signed executables. This is staged evidence, not final full-source
 acceptance: initial database OIDs are 20530 versus C++ 20624, with real placeholder,
 collation and dependency entry lifecycles still to audit. See
 [catalog evidence](catalog-oid-parity.md) and external
