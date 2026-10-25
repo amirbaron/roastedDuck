@@ -385,3 +385,20 @@ connection/attachment flow and retain real provisional identities; do not create
 objects or discarded counter increments just to reach a reference number. Later dependency
 and extension/collation merge lifecycles also remain open. No final corpus/performance
 acceptance is implied by this current-source staged checkpoint.
+
+
+## Real collation entries in progress
+
+The engine now creates nocase/noaccent/nfc as actual built-in catalog entries with
+ordinary chain roots before the generated function list. They carry their own transform
+functions and flags without separately publishing scalar functions. Collation metadata
+now scans those entries rather than synthesizing the three names. Binding prefers the
+registered collation's stored transform; standalone planner contexts retain their fallback.
+Extension collations now have ordinary entry chains and IGNORE_ON_CONFLICT semantics for
+both collation and serialization function, preserving an existing transform on repeat load.
+
+Workspace/all-target checking passes and all18signed catalog tests pass, including actual
+entry visibility, independent transform storage and duplicate-registration identity/flags.
+The native rebuild and C++/Rust collation/SQL/client controls are pending. This changes
+catalog/binding behavior; prior signed image2and its final-stage receipt remain preserved
+as controls and do not prove this new source stage.
