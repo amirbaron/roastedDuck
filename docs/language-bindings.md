@@ -178,6 +178,15 @@ without higher RSS or a table cache; those costs are retained separately in
 `.context/artifacts/python-catalog-names-20261025/`. Other client/conversion/platform
 and final release/core/storage/WAL/performance acceptance remains open.
 
+Table-function names subsequently match 842 frozen outcomes, including byte casters
+and literal dotted names. Scan catalog names/signatures match C++; an owned-reader
+journey and signed SDK stream/replacement regression pass. Arrow callback EOF/release
+now flushes deferred Python decrefs, matching C++ input release without another query;
+partial-reader shutdown checks pass. Both complete fast matrices keep their counts,
+typing/export/compiler checks pass, and paired timing/RSS stays bounded. Evidence:
+`.context/artifacts/python-function-names-20261025/`. Scalar UDF names and the broader
+client/core/final acceptance gates remain open.
+
 | Surface | Current evidence / remaining work |
 |---|---|
 | Python | Native arrays, Arrow, joins/writes and expression trees; 101/101 DB-API, 37/37 host, 41/41 Arrow, 79/81 object and 123/123 relation/expression cases pass. 559 UDF cases pass plus one existing xfail; complete remaining relation/input/expression and UDF overload APIs, platform/package gates and twelve unaccepted discrepancy categories |

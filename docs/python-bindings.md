@@ -1303,6 +1303,50 @@ logs, native regression receipts, compiler records and paired timing/RSS samples
 Other named-string APIs, broad conversion/lifetime/platform matrices, selected
 language clients and final core/storage/WAL/release acceptance remain open.
 
+## Table-function names and scan ownership (2026-10-25)
+
+`table_function` now uses the frozen string caster for Unicode/bytes/bytearray names
+and treats the complete name literally. It previously rejected bytes and split dotted
+names into schema/function parts, unlike C++. The 842-case name/parameter/call/closed
+owner matrix improves from 35 matches to **842/842**.
+
+Python scans now expose the canonical catalog entries and signatures:
+`arrow_scan(POINTER, POINTER, POINTER)`, `arrow_scan_dumb` with the same arguments,
+and `pandas_scan(POINTER)`. The private `python_arrow_scan*` entries previously changed
+missing-function suggestions. The Arrow adapter retains Python source ownership for
+its own producer and delegates other producers to the native three-pointer bind path.
+A signed SDK regression verifies that replacing an adapter preserves an existing
+10001-row stream while subsequent queries use its replacement.
+
+A real Arrow journey matches C++'s catalog and output, survives opening another
+connection during streaming, and proves the input is released after reader close.
+The previous Rust image deferred that final decrement until the next PyO3 entry.
+EOF/error and release callbacks now flush deferred references after dropping locks,
+using `Python::try_attach` so cleanup does not initialize Python or attach during
+shutdown/GC traversal. Partial-reader process shutdown checks pass on both engines.
+This is a lifetime correction, not a retained-input cache.
+
+The final signed development wheel 3 retains the complete fast-matrix counts:
+Arrow 19 **3203 pass/three held Decimal assertions/35 skip-xfail**; Arrow 21
+**3453 pass/the same three held assertions/36 skip-xfail**, zero collection errors,
+all C++ node IDs covered. Installed strict typing positive/negative controls,
+385-runtime-export audit, Python/SDK all-target warnings-denied Clippy and
+workspace/all-target checking pass.
+
+Paired result-checked samples retain time and RSS: 1000 table-function calls take
+37.0–37.5 ms before and 37.7–38.4 ms after, ordinary peaks around 46–48 MB. Full
+one-million-row/eight-column Arrow scans take about 5.1–5.3 ms in warm repeats, at
+about 257 MB; projected filtered scans remain around 0.8–0.9 ms/192–193 MB. Cold
+and earlier samples are retained separately. Reader prefixes stay near 73 MB for
+1M/100M logical source rows. These are development samples, not final engine or
+per-query performance acceptance; no table cache was introduced.
+
+Evidence: `.context/artifacts/python-function-names-20261025/`, especially signed
+`wheels-dev-3-signed/`, `table-functions-comparison-4.json`, lifetime before/diagnostic/
+final receipts, `lifetime-comparison-3.json`, native regression receipts, shutdown
+logs, complete fast matrices, typing/compiler logs and paired timing/RSS.
+Scalar UDF and other named-string boundaries remain separate open work.
+
 ## Remaining gates
 
 The runtime availability audit is complete for all 385 inventory entries. Finish complete signatures/overloads/defaults/error

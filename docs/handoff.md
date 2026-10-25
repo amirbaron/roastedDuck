@@ -384,6 +384,21 @@ remain visible: physical 8.5–8.9 to10.9–11.2 ms/1000; registered-table22–2
 direct-view/registration similar, ordinary118–119 MB RSS, prefixes~73 MB. No cache
 added. Evidence: python-catalog-names-20261025/, final signed wheel3. Other binding/
 core/final acceptance gates remain open.
+The following table-function checkpoint fixes byte casting and literal dotted names;
+the name/argument matrix improves 35/842 to 842/842. Python scan names/signatures now
+match C++ (arrow_scan/arrow_scan_dumb three POINTERs, pandas_scan one POINTER), removing
+private scan names from suggestions. Native Arrow producers delegate to the original
+bind path; Python producers retain owners. One signed SDK test proves adapter
+replacement preserves a running 10001-row stream and affects later binds. A real Arrow
+journey matches catalog/output and source lifetime across another connection opening.
+Deferred PyO3 decrefs previously retained input until another native call; final EOF/
+release cleanup fixes this after dropping locks and avoids shutdown/GC attachment.
+Shutdown checks pass. Final signed wheel 3 has unchanged whole fast counts on Arrow 19/
+21, no new failures/collection errors and all C++ nodes covered. Typing/export/compiler
+checks pass. Table-function 1000 calls 37.0–37.5 ms before/37.7–38.4 after, ordinary
+46–48 MB; Arrow scans and bounded 73 MB prefix samples retained. Evidence:
+python-function-names-20261025/. Scalar UDF and other string boundaries, other clients
+and final core acceptance remain open.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.
