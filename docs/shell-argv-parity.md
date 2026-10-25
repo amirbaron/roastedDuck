@@ -52,3 +52,27 @@ remains the previously open architectural diagnostic gap, without a new waiver.
 All artifacts are under `.context/artifacts/shell-argv-20261025/`; `checkpoint-1.json`
 contains source/binary hashes and exact family counts. The script can additionally
 exercise all255nonNULbyte suffixes with --exhaustive; that matrix has not run yet.
+
+## First native-byte implementation
+
+OS argv, option callbacks, program/database/init filenames, NULL text and separators
+now retain ByteString through their consumers. Initial SQL/dot dispatch takes bytes;
+file opens use native paths; version lookup and option diagnostics preserve raw input.
+Renderer row data/settings and escapes write bytes; aligned NULL width uses the
+fallible native C++-compatible width path. Metadata .nullvalue/.separator now use native
+callbacks. Other legacy dot callbacks remain open. Python's shared box configuration
+assignment is adapted; its runtime validation remains required.
+
+Workspace/all-target checking passes. The signed first release shell passes392upstream
+tests/three existing skips. The unchanged320-case probe improves170to294exactmatches;
+124prior mismatches become exact matches, with zero previous matches regressed.
+16rawmismatches remain: exit codes and error text before C++'s Stack Trace match,
+but the trace format is still different. All10hostfixture errors remain, without a
+waiver. Evidence: `shell-argv-20261025/comparison-1.json`, rawafter-1.jsonl and source/
+image SHA manifests. This is not full shell/client completion or a fresh core gate
+for the changed serde helper. Shared Python and broader checks remain pending.
+
+The original argument-latin1 differential case now matches both stdout/stderr and
+exit1 exactly. Remove its obsolete known marker and repeat full differential checks;
+only the database-OID and internal-stack-trace markers remain. Full malformed-byte
+coverage and rendering consumer validation still need to run.
