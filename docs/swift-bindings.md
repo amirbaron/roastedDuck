@@ -44,3 +44,18 @@ not overwrite an earlier output, silently select a system library, alter asserti
 run a build during preparation, or claim that the132tests passed from inventory alone.
 Build/cache/scratch/temp paths and actual loaded-library verification follow after the
 active corpus terminates. Validate Foundation cache/temp placement as well as TMPDIR.
+
+## Prepared controls (2026-10-25)
+
+`scripts/swift-tests/prepare.py` prepares separate explicit Rust/CPP packages without
+building or running tests. Both generated packages preserve all39pinned wrapper/test/
+license files byte-for-byte, include only a minimal C header target and contain no
+C++engine sources. The selected native image is signature-verified before preparation;
+its path/hash and generated manifest hash are recorded. Existing outputs are refused.
+
+Prepared controls and comparison are under
+`.context/artifacts/swift-client-20261025/{rust-package-1,cpp-package-1,preparation-comparison-1.json}`.
+The generated absolute linker paths are test setup, not portable distribution acceptance.
+A toolchain help/version probe reports Apple Swift6.4 targeting arm64macOS27.0; full
+help output is retained under `toolchain/`. This did not compile the package or run
+its132test methods. The full core corpus remains the only heavy workload.
