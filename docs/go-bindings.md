@@ -107,3 +107,34 @@ Preserve database validation, explicit transaction/force errors, index binding a
 storage timing. Verify materialized/pending prepared execution, repeat checkpoint/reopen,
 WAL changes, errors and profiling with CPP controls. Do not fabricate latency or change
 VARIANT layout merely to satisfy a metadata assertion.
+
+## Prepared checkpoint implementation checkpoint
+
+The function now requests the real checkpoint before connection transaction/profile
+finalization. Its bind data captures the selected database name, the scan queues one
+request, and both SQL/prepared paths share the previous storage/index/transaction
+validation. The former SQL-only post-plan action is removed. No VARIANT encoding or
+cache policy changed. First build-only image is preserved separately and was superseded
+before execution to capture the default database at bind time.
+
+New signed checkpoint-library-1 SHA21f1bd49bac077d44e039423545194a1275b6e6df920c614eeac93e4cfca9ee3
+passes both focused upstream checkpoint cases, including actual typed persistent
+VARIANT segments and positive checkpoint latency. Full Go root+Arrow suite now completes
+650pass/2fail records with identical652case IDs and no unstarted/unfinished cases.
+Only the timestamp bind-error parent/subtest remains. SDK persistence/client-settings
+regressions and final broader verification remain pending.
+
+Public checkpoint-lifecycle controls verify eight real WAL flushes/repeated execution
+across direct, prepared, pending and pending-streaming routes, transaction rejection,
+rollback and reuse. Direct/prepared cases match CPP exactly. Both pending cases have
+correct effects/recovery but still differ after task stepping has already failed:
+CPP wraps execute_pending as InvalidInput with the prior pending error embedded;
+Rust returns the prior Transaction error directly. This is not waived. Match the
+frozen PendingQueryResult::CheckExecutableInternal/LockContext failure wrapper only
+for already failed pending results, preserving raw error bytes and direct execution
+error behavior. Keep before/after controls and complete C API checks.
+
+The first control recorder's1000tight task steps were insufficient for asynchronous
+checkpoint IO; it stopped before completing coverage. The corrected recorder waits
+only when no work is ready, with a30second deadline. Original source/snapshots/failure
+are preserved in checkpoint-capi-cpp-1; accepted CPP control is checkpoint-capi-cpp-2.
