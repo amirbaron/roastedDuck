@@ -232,3 +232,18 @@ ratchet statuses and post-run source/fixture/binary/archive hashes. It never mer
 results. Worker live snapshots are partial observations only; acceptance requires the
 terminal summary. Earlier corpus4/Python6/Swift verification remains historical evidence
 on its recorded images. Final client/core/storage/performance gates remain open.
+
+
+## Current full run5 accepted (2026-10-25T19:16:28UTC)
+
+The fresh run completes all4870files:4781pass,15unchanged documented failures and74skips
+with exact CPPskip reasons. Every per-file verdict matches prior run4. Compare and ratchet
+exit0;4855listed/0regressions/0new passing. No abnormal worker result or new failure.
+All879source hashes, source archive,4870test/1522data inputs including symlinks, signed
+Slt/CLI images, CPPreference and ratchet hashes remain unchanged. The data-entry set is
+also checked for additions/removals after execution. No earlier results were merged.
+
+Evidence: `.context/artifacts/go-client-20261025/full-corpus-5/{manifest.json,process-terminal.json,terminal-summary.json,post-verification.json,ratchet.log,dashboard.md}`.
+Accepted scope is the current frozen SQL corpus and existing divergence policy. It is
+not whole-port completion: two shell gaps, refreshed Python/Swift/client/storage matrices,
+remaining selected clients and coupled speed/RSS/per-query performance acceptance remain.

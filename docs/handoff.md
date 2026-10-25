@@ -31,9 +31,10 @@ The signed SDK client-settings5/5and persistence10/10tests now pass; workspace a
 Clippy passed. Current signed native image2also passes CAPI30files/155cases/749820assertions
 and Go652/652again. Receipt: go-client-20261025/verification-checkpoint-3.json. CLI/Slt rebuild
 completed and signed. Current shell passes392upstream tests/3same skips and full768-case
-differential (46PTY) with0unexpected/2known open gaps. Fresh full4870corpus run5is active
-under go-client-20261025/full-corpus-5; wait for its terminal-summary.json before accepting
-current SQL coverage. Earlier full
+differential (46PTY) with0unexpected/2known open gaps. Fresh full4870corpus run5now passes the scoped gate:
+4781pass/15same documented failures/74exactCPPskips,4855ratchet entries/0regressions, every
+verdict unchanged and source/fixture/binary/archive/reference hashes stable. Evidence:
+go-client-20261025/full-corpus-5/{terminal-summary.json,post-verification.json}. Earlier full
 corpus4, Python6, shell11 and Swift verification predate these core changes and require
 refresh. All primary clients plus.NET/Swift/Julia and final coupled performance acceptance
 remain the goal; no full-table cache was added.
