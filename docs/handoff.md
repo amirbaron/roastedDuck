@@ -85,6 +85,15 @@ native/type/fuzz/package matrices, ENUM semantics and final unit/corpus/shell/st
 WAL/performance gates remain required. See `docs/adbc.md` and external
 `adbc-upstream-checkpoint.json`. The uncached lower-memory policy is unchanged.
 
+The subsequent signed release C API checkpoint fixes result Arrow settings snapshots:
+the public ABI journey matches C++ in21/21 cases versus12 old-library mismatches.
+All30 upstream C API files pass155cases/778,832assertions; affected C++ controls and
+warnings-denied Clippy pass. Failed-result options used for schema conversion expose
+a separate unaccepted C++ INTERNAL/Rust-success discrepancy, retained explicitly.
+Bounded coupled timing/RSS samples and both signed libraries are preserved under
+capi-arrow-snapshot-20261025/. See `docs/capi-arrow-options.md`; this is scoped C API
+evidence, not completion of other clients or final release acceptance.
+
 Python binding work now has a pinned 1.5.6 source/API inventory (414 native surfaces)
 and a real PyO3 package in crates/python + python/. The signed initial release wheel
 installs and passes seven upstream tests. The current development wheel includes later

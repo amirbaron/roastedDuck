@@ -59,6 +59,17 @@ policy. Its uncommitted `keep_cached()` switch is removed; persistent table segm
 again use `release_on_unpin()`. Historical cache benchmarks and diagnostic artifacts
 are retained for comparison, not as a performance target.
 
+## C API result snapshot checkpoint (2026-10-25)
+
+Fresh release-library C ABI samples retain 1000 checked trivial-query timings and
+peak RSS together: 14.0–14.3 ms before versus 15.8–16.2 ms after, with warm-repeat
+whole-process peaks 36.5–36.6 MB versus 36.8–37.2 MB. The first older-library sample
+peaks at 45.3 MB and remains in the raw records. The older shipping library predates
+other SDK integration changes; do not attribute the entire difference to the new
+Arrow settings snapshot. This bounded client microcheck does not replace final
+TPC-H/ClickBench or per-query acceptance. No table caching is introduced.
+Evidence: `.context/artifacts/capi-arrow-snapshot-20261025/performance-comparison.json`.
+
 ## Python string-scan outlier (2026-10-25)
 
 The nullable one-million-row Pandas string scan remains an individual open outlier.
