@@ -53,3 +53,10 @@ trace-current-1 raw streams and comparator controls. Earlier full core/client ac
 is on its recorded pre-trace images; this trace change is opt-in at the shell invariant.
 Other internal-diagnostic surfaces, OID lifecycle parity, broader client/platform/storage
 and final coupled performance acceptance remain open.
+
+
+Common/shell release all-target Clippy now passes with warnings denied. Its first run
+found only assert_is_empty in the new unit test; the assertion is rewritten as suggested,
+with no production change. Receipt verification-2.json preserves both the executed binary/
+source checkpoint and that test-only follow-up. Next investigate OID allocation through
+public multi-instance/catalog lifecycle controls before changing catalog implementation.
