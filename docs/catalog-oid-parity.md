@@ -99,3 +99,11 @@ ignoring factory errors. This design must be validated with existing view/macro/
 suites, public inventories, concurrent default creation and client/corpus checks before
 claiming bootstrap parity. Placeholder/tombstone IDs and attach/extension order still
 need their own source-driven implementation and controls.
+
+The first bounded lazy stage will retain eager parsing of frozen default definitions,
+which already fails startup explicitly on malformed SQL, but defer actual CatalogEntry
+construction and OID allocation. Factories then only clone validated definition data
+and create an entry, so existing infallible catalog lookup APIs do not swallow errors.
+Parsing under catalog locks is avoided, and no owning Catalog Arc is captured. This
+matches observable entry allocation laziness without introducing a fallible factory into
+an Option-returning lookup. Full parse-time deferral is not claimed by this stage.
