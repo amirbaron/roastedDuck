@@ -38,6 +38,17 @@ Complete Python bindings first and all primary clients plus C#/.NET, Swift and J
 - Subagents use model "opus". Commit messages end with the Co-Authored-By line; docs
   changes go in their own commit before the code.
 
+## Fresh current-core corpus acceptance (2026-10-25)
+
+Signed runner4 completed all4870frozen files:4781pass/15existing documented design
+failures/74exact shared skips, no crashes/timeouts,4855ratchet entries with0regressions.
+Runner/source/archive/reference/ratchet/fixture hashes remain unchanged. This is a
+fresh complete current-core run, separate from the older corpus3snapshot. Evidence:
+`scalar-release-20261025/full-corpus-4/terminal-summary.json` on the SSD and
+[verification details](scalar-release-verification.md). Broader client/storage/WAL and
+final coupled performance acceptance remain open. Swift controls/tooling are prepared;
+actual Swift build/tests have not yet established parity.
+
 ## Current Python checkpoint (2026-10-25)
 
 Signed wheel6 closes the three remaining fast-suite Decimal failures. Both Arrow19/21
@@ -50,7 +61,7 @@ environment/storage/performance gates remain open; this is not whole-port comple
 
 Core2CAPI30files/155cases/752694assertions and CLI11full768/46PTY/392upstream tests,
 15+4signedunits/seven byte guards remain current for their unchanged compiled code.
-Fresh whole SQL corpus validation is next; prior full-corpus3predates core progress.
+Fresh corpus4now verifies current core; prior full-corpus3still denotes its older snapshot.
 
 ## Current core progress checkpoint (2026-10-25)
 

@@ -184,3 +184,21 @@ Raw output/exit codes and filename bytes are retained without normalization, and
 worktrees are archived per engine. Evidence: external `shell-argv-20261025/checkpoint-1.json`.
 Shared renderer changes require Python validation; the existing internal-error stack
 trace gap remains unaccepted. Current evidence index: `release-verification-5.json`.
+
+## Fresh complete current-core corpus (2026-10-25)
+
+Signed runner4 (SHA8cece1a4d77516cf21e16d400a4ab9c924760f005a2cdd75ded3364a58fe36e7)
+completed a fresh4870file run using one worker and normal engine threading. Results
+are4781pass,15existing documented design failures and74skips whose reasons exactly
+match frozen CPP. There are no crashes/timeouts, per-file statuses match the prior
+snapshot, and compare/ratchet commands both exit0:4855listed/0regressions/0newpassing.
+No earlier results are merged and no new exception is introduced.
+
+Post-run verification confirms the selected runner/signature, frozen CPPreference,
+ratchet list, all863recorded source files/archive,4870test files and1522data entries
+(including two symlink targets) remain unchanged. Evidence:
+`.context/artifacts/scalar-release-20261025/full-corpus-4/terminal-summary.json`, raw
+results/worker logs/dashboard/ratchet and source-current-4.json/tar.gz. New Swift
+preparation tooling/docs added during the run are outside the compiled engine snapshot.
+This closes current scoped SQL corpus verification, not all-client/storage/performance
+or whole-port completion. Remaining gates in the handoff still apply.
