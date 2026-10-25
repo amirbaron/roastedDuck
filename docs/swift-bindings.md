@@ -141,3 +141,19 @@ Preserve cpp-build-1logs/exit status; this is package wiring, not Rust engine ev
 Prepare fresh controls with the explicit native library file passed to the linker,
 retaining RPATH/header padding and subsequent install-name pinning/signing. Avoid
 search-name ambiguity rather than changing wrapper/test behavior or engine code.
+
+## First complete CPP control execution
+
+Explicit file linkage fixes the control: cpp-build-2completes, its native test bundle
+is pinned/signed/strictly verified, and all132upstream XCTestcases pass. SwiftTesting
+also emits a separate zero-test suite; it is not used as evidence for the132cases.
+Per-case start/pass IDs and all raw logs are retained. Native artifact/library hashes
+remain unchanged after execution.
+
+DYLD_PRINT_LIBRARIESdoes not survive this Swift launcher path, so no loaded engine
+path is present in the control log. Do not infer runtime image proof from that absence
+or linker commands alone. Add one separately identified in-process identity test to
+CPP/Rust packages that records dladdr/the loaded libduckdb image and compares it with
+the explicit expected path. Keep132upstream assertions unchanged and report this
+additional identity test separately. The firstRust build is in progress; it has not
+yet established runtime client parity.
