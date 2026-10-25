@@ -193,3 +193,15 @@ Numeric IDs still differ. CPPdependency-manager entries also own catalog-chain i
 where Rust currently stores logical dependency lists; those real lifecycle objects must
 be audited before claiming later user-object sequence parity. Do not replace them with
 fixed per-dependency increments.
+
+
+## Node targeted SQL acceptance
+
+The current signed node runner completes419frozen files:413passes/6exactCPPskips/0failures.
+All verdicts match both CPPand the prior complete baseline, including70transaction files
+and relevant ALTER/rename/drop/dependency/default/catalog tests. No older outputs are
+merged. Runner signatures/hashes stay unchanged; raw logs/worker records and current
+source snapshot are preserved. Receipt: oid-node-targeted-verification-1.json.
+This accepts the targeted version-node behavior, not the full4870corpus or numeric OID
+bootstrap parity. Builtin creation, default committed creation, dependency entries and
+startup/attach order remain separately audited work.
