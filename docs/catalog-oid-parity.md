@@ -241,3 +241,13 @@ real ordinary catalog-chain nodes now consume IDs, so a larger numeric differenc
 is not a regression in lifecycle fidelity. Numeric parity remains open. Extension-loading
 and function-registration order are unchanged; validate native clients/storage before
 changing those next. No hardcoded offset or display correction is used.
+
+
+The ordinary-builtin-chain/attachment-finalization native image passes all652Go cases
+and all30C API files/155cases, with runtime-image and signature checks. Numeric startup
+parity remains open at Rust21857versus CPP20624. Extension-loading order is the next
+separate lifecycle step. Configured extension options must load their required extension
+before attachment; ordinary remaining statically linked extensions should load after main
+database creation as CPPDuckDB construction does. Stored JSON/ICU types, WAL replay,
+read-only/reopen/data-file attachment and disabled-autoload cases require controls before
+accepting that move. Do not indiscriminately disable early option/type dependencies.
