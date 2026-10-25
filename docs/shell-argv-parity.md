@@ -270,3 +270,31 @@ error. Preserve rendered numeric cells and footer/readable-number strings as byt
 compute widths through native glyph logic. The same helper is shared with table
 metadata, so keep those consumers and Python renderer validation in scope. Do not
 count a trace-prefix-only improvement as a raw parity pass.
+
+## Settings and numeric-byte results
+
+The second signed settings image (CLI6) records 196 exact matches and four raw
+mismatches across the unchanged 200-case probe, compared with 134/66 before the
+settings changes. All 62 newly exact cases were previous mismatches; no previous
+exact match regressed. The exhaustive 5,300-case run records 5,296 exact matches,
+the same four raw mismatches, and no fixture errors, crashes or timeouts.
+
+Malformed decimal/thousand separators now follow C++ numeric rendering: incomplete
+sequences retain their bytes, and invalid codepoints produce the matching exit/error
+rather than replacement text. The four remaining mismatches have identical exit
+codes, file effects and output before the Stack Trace section. They remain open raw
+mismatches, with no waiver. Boolean diagnostics, help GLOB patterns, INSERT names,
+separator byte counts and the existing numeric/enum selectors retain byte semantics.
+Numeric cells, footer counts, readable numbers and table-size metadata retain bytes
+through their render consumers.
+
+All-target workspace checking and warnings-denied Clippy pass. Build6 terminates
+successfully; the signed immutable CLI SHA is
+79b8601a18d0b0fbb04aa28e523ef01594e92fe12ea61c622b3904cd2bda6b5a.
+Evidence is under `.context/artifacts/shell-argv-20261025/`: `signed-image-6.json`,
+`settings-implementation-2.json`, `settings-comparison-2.json`, both raw settings
+runs and `settings-exhaustive-classification-1.json`. Shell regression checks and
+fresh Python package validation are pending for this shared-renderer change.
+The prior wheel3 results remain evidence for that earlier image. Remaining clients,
+core/storage/WAL and final coupled speed-memory/per-query acceptance remain open;
+no full-table cache has been added.
