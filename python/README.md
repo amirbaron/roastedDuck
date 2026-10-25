@@ -18,7 +18,10 @@ the same three held Decimal assertions and 35 skip/xfail records, without collec
 errors. A separate PyArrow 21 matrix additionally enables 250 passing run-end cases;
 its full fast run has 3453 passes, the same three held assertions and 36 skip/xfail
 records. The original PyArrow 19 environments remain intact. Complete signature/lifetime
-and final release acceptance remain open.
+and final release acceptance remain open. Module helpers now validate optional
+connections, preserve actual false-valued connections and use frozen call-boundary
+diagnostics; 396 connection, 1872 boundary and 28 state comparisons match C++.
+Those scoped cohorts overlap; they do not complete every argument-value conversion.
 
 Build from this directory with maturin 1.9.6 and a native Python interpreter. Keep
 CARGO_HOME, TMPDIR, wheel output, environments and caches on the mounted external SSD;

@@ -1159,6 +1159,52 @@ Evidence: `.context/artifacts/python-arrow21-20261025/`, including
 and separate version-pinned environments. The signed wheel is unchanged from the
 preceding Python ADBC checkpoint; no table/input/result cache is introduced.
 
+## Module helper call boundaries (2026-10-25)
+
+Thin module helpers now reject invalid `connection=` values before choosing an engine
+connection. Previously `sql(..., connection=False/0/[])` silently used the default,
+and other invalid objects raised `AttributeError`; C++ raises the module's argument
+`TypeError`. Selection now checks `None` explicitly, so an actual connection whose
+class evaluates to false still uses its own database, including closed-connection
+errors. Both public module namespaces share this behavior.
+
+The 68 frozen helper signatures provide argument diagnostics. Python call-binding
+errors are translated only when the helper body was never entered; errors from native
+execution or callbacks keep their original path. Replacement errors are raised after
+leaving the handler, avoiding an extra public exception context. This does not claim
+complete argument-value conversions or every helper's runtime semantics.
+
+The provided-argument connection cohort changes from **0/396** exact C++ outcomes to
+**396/396**. The broader missing/duplicate/extra/unexpected-argument and connection
+cohort matches **1872/1872** across 68 helpers. A separate real state journey matches
+**28/28**, including false-valued connections with query/dataframe helpers, default
+selection, closed owners, exception context/cause and replacement-scan variables
+across the added Python frames. Invalid calls leave Rust's default database lazy.
+These component cohorts overlap and are not added into an aggregate pass count.
+
+The final signed development wheel runs the entire fast suite on both dependency
+versions with every C++ node matched: PyArrow 19 has **3203 pass/three held Decimal
+assertions/35 skip-xfail** in 3241 records; PyArrow 21 has **3453 pass/the same three
+held assertions/36 skip-xfail** in 3492 records. Neither has collection errors.
+Installed strict mypy positive clients pass; negative clients produce four expected
+errors each, with exit codes and installed-path provenance retained. All 385 frozen
+runtime entries remain available.
+
+Actual module-helper before/after checks cover explicit and default connections,
+1000 operations per fresh process, one engine thread and three repeats. Both remain
+around 74–77 ms and ordinary 46–48 MB whole-process peaks; the old first cold sample
+at 55.8 MB is retained. Warm reader prefixes from 1M/100M sources stay around 73 MB
+on both versions, with cold 81.4/80.6 MB samples retained. No table/input/result cache
+or eager default database is introduced. These are coupled development checks, not
+final performance acceptance.
+
+Evidence: `.context/artifacts/python-root-contract-20261025/`, particularly signed
+`wheels-dev-3-signed/`, `connections-comparison-3.json`, `boundaries-comparison-3.json`,
+`state-comparison-4.json`, `full-fast-comparison-3.json`, both complete final JUnit/log
+directories, typing receipts/provenance, frozen signature records and before/after
+timing/RSS samples. Wheel 1 and the unused wheel 2 remain as intermediate evidence.
+Rust runtime algorithms are unchanged from the preceding native/ADBC checkpoint.
+
 ## Remaining gates
 
 The runtime availability audit is complete for all 385 inventory entries. Finish complete signatures/overloads/defaults/error

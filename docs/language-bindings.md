@@ -147,6 +147,16 @@ as a separately labeled adapted journey. PyArrow 19 controls and the signed ADBC
 are unchanged. Bounded prefix timing/RSS and the small latency difference remain in
 `.context/artifacts/python-arrow21-20261025/`; broader client/final acceptance remains open.
 
+The subsequent helper-boundary checkpoint fixes false-valued invalid connections
+silently choosing the default, and preserves actual false-valued connections. Frozen
+module diagnostics cover 68 helpers: 396 provided-argument comparisons, 1872 broader
+boundary comparisons and 28 state/frame/exception checks match C++ (overlapping
+cohorts, not one aggregate). The final signed wheel retains both complete fast-matrix
+counts above and all 385 exports. Actual helper timings and RSS remain similar;
+default database creation stays lazy. Broader argument-value conversions and complete
+Python/client acceptance remain open. Evidence:
+`.context/artifacts/python-root-contract-20261025/`.
+
 | Surface | Current evidence / remaining work |
 |---|---|
 | Python | Native arrays, Arrow, joins/writes and expression trees; 101/101 DB-API, 37/37 host, 41/41 Arrow, 79/81 object and 123/123 relation/expression cases pass. 559 UDF cases pass plus one existing xfail; complete remaining relation/input/expression and UDF overload APIs, platform/package gates and twelve unaccepted discrepancy categories |

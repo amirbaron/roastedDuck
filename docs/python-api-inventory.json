@@ -3242,5 +3242,15 @@
     ],
     "evidence": ".context/artifacts/python-type-api-20261025/api-audit-comparison-7.json",
     "note": "All385frozen runtimeentries are present;29typing/protocol declarations separate. This is availability only,not full argument/overload/lifetime/dependency/platform parity. Constructor225/tokenizer298/descriptors13/Torch51/TF51 focused comparisons are recorded separately."
+  },
+  "module_helper_boundaries": {
+    "date": "2026-10-25",
+    "helpers": 68,
+    "status": "partial; strict optional connection and Python call-binding behavior, not full argument-value conversions or semantics",
+    "provided_argument_cases": 396,
+    "boundary_cases": 1872,
+    "state_cases": 28,
+    "count_note": "Overlapping scoped cohorts; do not sum",
+    "evidence": ".context/artifacts/python-root-contract-20261025/"
   }
 }

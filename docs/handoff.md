@@ -340,6 +340,19 @@ for 1M/100M rows; the 0.45–0.52 ms Rust versus 0.26–0.39 ms C++ latency rema
 No engine code or cache change; same signed ADBC wheel. Evidence:
 python-arrow21-20261025/. Other dependency/platform and final client/core acceptance
 gates remain open.
+The next Python helper checkpoint fixes invalid connections being treated as omitted
+and valid false-valued connections being replaced by the default. It uses explicit
+None selection and frozen diagnostics across 68 module helpers, without changing
+runtime algorithms. The 396-case provided-argument cohort now matches C++ completely
+(previously zero); the 1872-case boundary cohort and 28-case state/frame/exception
+journey also match. These cohorts overlap; do not sum their counts. The final signed
+wheel 3 again runs both whole fast matrices: Arrow19 3203 pass/three held/35 skip-xfail;
+Arrow21 3453 pass/the same three held/36 skip-xfail, every C++ node covered and no
+collection errors. Installed typing positive/negative checks and 385-export audit pass.
+Module-helper timings remain around 74–77 ms/1000 calls at ordinary 46–48 MB peaks;
+reader prefixes stay bounded around 73 MB. No eager default DB or table cache added.
+Evidence: python-root-contract-20261025/. Argument-value conversions and broader
+semantics remain partial, alongside the existing client/core/final acceptance gates.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.
