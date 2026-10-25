@@ -38,3 +38,20 @@ Keep std::stoull's ASCII whitespace/sign/greedy decimal/overflow behavior and th
 following optional_idx sentinel validation. Preserve bracket/value/literal bytes and
 prompt SQL result bytes; continuation prompts use strncpy's19byte/C-string boundary.
 Actual display and progress rendering still require separate validation.
+
+## First implementation and terminal follow-up
+
+The native parser/UI image (CLI8) improves90to190exact matches across192cases,
+closing100mismatches with no previous exact match regressed. Exhaustive parsing/UI
+is4,780/4,782exact, with two raw negative-sentinel Stack Trace differences still open;
+exit/error-prefix/file effects match. Workspace/all-target check and Clippy pass.
+
+The real26caseCLI7terminal baseline has14exact/12mismatches, including valid UTF8
+crossing the19byte continuation boundary. CLI8's focused invalid-codepoint journeys
+still expose the editor's forgiving width fallback: C++ exits1 while Rust proceeds.
+A separate four-case CLI8 supplement finds a NUL returned by prompt SQL must terminate
+the linenoise prompt C-string; the fallback reader correctly prints the full byte string.
+Both max-width controls match. Keep those distinct boundaries: native editor widths
+must retain C++ error behavior, and only linenoise's C-string input ends at NUL.
+Evidence: `prompt-pty-baseline-1`, `prompt-pty-invalid-8`, `prompt-pty-supplement-8`
+raw JSONL/worktrees under the existing SSD task. No raw differences are waived.
