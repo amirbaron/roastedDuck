@@ -214,3 +214,42 @@ This first artifact covers macOSarm64 only; do not imply iOS, Intel or Linux sup
 This follows Apple's binaryTarget/XCFramework packaging contract:
 https://developer.apple.com/documentation/xcode/distributing-binary-frameworks-as-swift-packages
 and https://developer.apple.com/documentation/xcode/creating-a-multi-platform-binary-framework-bundle.
+
+
+## Relocatable package and client handoff checkpoint (2026-10-25)
+
+The Cduckdb XCFramework package prepares successfully with the frozen header and
+unchanged Swift wrapper/license, relative binaryTarget linkage and no unsafe flags.
+The copied Rust image uses @rpath/Cduckdb.framework/Cduckdb and is signed again;
+original image b958e90a… remains unchanged. Packaged framework SHA256:
+8df8e795072c73152a507c3393e5d62e307d24317d74852a118b2e80db707687.
+Its Mach-O minimum macOS version is11.0; execution was verified on the current
+macOS27arm64 host only, not every supported OS version.
+
+A separate ordinary SwiftPM consumer builds from a relocated package and loads only
+that Rust framework. Prepared inserts, appender rows, rollback, checkpoint, file reopen,
+nullable Unicode strings and result ownership after connection teardown all pass.
+Copying its signed executable/framework away from the SwiftPM tree also passes;
+in-process dladdr/image enumeration points to the standalone distribution copy.
+Both original and relocated package inventories remain unchanged after execution.
+
+Four two-column cross-engine client handoffs pass: Rust Swift writer to frozen CPP
+C API reader and the reverse, each for checkpoint and nonempty committed WAL. The
+receiver verifies four rows, appends a fifth, checkpoints, and the original engine
+reads all five rows/nullable Unicode values. WAL writers are held open until snapshots
+are copied, then killed deliberately to prevent close-time checkpoint; actual writer
+exit status, pre-replay database/WAL files, hashes and raw logs are retained. These
+scoped handoffs complement the earlier15-column Python journeys; they do not establish
+all WAL record types, versions, encryption or recovery acceptance.
+
+Evidence index: `.context/artifacts/swift-client-20261025/sdk-verification-1/index.json`.
+Prepared package: `sdk-package-1/DuckDBRust`; relocated consumer: `sdk-consumer-2`;
+standalone executable/framework: `sdk-deployment-1/distribution`; handoffs: `sdk-interop-1`.
+Reproduction tooling is `scripts/swift-tests/{package,consumer,deploy,interop}.py`
+with `Consumer.swift`; the index preserves the exact verified tooling snapshot.
+
+This is macOSarm64 development-package acceptance, not published SDK acceptance.
+Other architectures/platforms, strict Swift6language-mode concurrency diagnostics,
+complete public API/error/cancellation coverage and release/distribution signing remain
+open. The frozen wrapper emits Sendable pointer warnings in Swift5language mode;
+keep that limitation explicit rather than claiming strict Swift6acceptance.

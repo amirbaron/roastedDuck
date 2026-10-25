@@ -19,6 +19,18 @@ outliers. Functional, correctness and storage/WAL compatibility gates remain in 
 Complete Python bindings first and all primary clients plus C#/.NET, Swift and Julia;
 `docs/language-bindings.md` records the expanded completion scope.
 
+## Latest Swift package checkpoint
+
+Relative Cduckdb XCFramework packaging and a separate relocated SwiftPM consumer now
+pass on macOSarm64, with only the Rust framework loaded. A standalone copied executable/
+framework also passes. Prepared/appender/rollback/file/result-ownership checks and all
+four bidirectional checkpoint/nonempty-WAL handoffs with frozen C++ pass. Source/library/
+package hashes and signatures remain verified; snapshots precede replay. Evidence index:
+`.context/artifacts/swift-client-20261025/sdk-verification-1/index.json`.
+See `docs/swift-bindings.md` for scope: broader API/platform/WAL and published SDK gates
+remain open. No core cache or performance-policy change; final coupled timing/RSS and
+individual-query acceptance remain pending.
+
 ## Ground rules (from the owner)
 
 - **One task and one build or test workload at a time** (owner, 2026-10-22). Do not
