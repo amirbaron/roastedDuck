@@ -233,3 +233,11 @@ retains its explicit immediate-registration behavior. Workspace check passes; cu
 Clippy is running, and public/native/client/storage/corpus refresh is still pending for
 these latest startup changes. Extension-loading and full builtin registration order remain
 unchanged and open; no numeric parity claim is made from the unit tests.
+
+The signed startup image (oid-startup-library-1,
+SHA77fef9dd3a8292f88ceb6db89c8ecf4c83d44721c1319580295540ea2a03f98a) completes the public
+lifecycle probe with instance isolation intact. Initial Rust database OID becomes21857:
+real ordinary catalog-chain nodes now consume IDs, so a larger numeric difference alone
+is not a regression in lifecycle fidelity. Numeric parity remains open. Extension-loading
+and function-registration order are unchanged; validate native clients/storage before
+changing those next. No hardcoded offset or display correction is used.
