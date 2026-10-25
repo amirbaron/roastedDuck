@@ -30,3 +30,9 @@ Each of five malformed payload classes differs in highlight element/color/intens
 six deprecated color messages and pager command reporting. Pager row-threshold
 parsing already matches. Evidence: `shell-argv-20261025/ui-baseline-1.jsonl` and its
 manifest/summary; no pager process is launched by these configuration journeys.
+
+The pager carrier reaches both OS environment defaults and actual process launch.
+Add bounded real PTY journeys with a safe printf-marker/cat pager: configure native
+bytes via -cmd or each environment default, verify the marker bytes, query output,
+return to normal stdout after .pager off, and exact C++ terminal/file effects.
+Keep these separate from the110caseconfiguration baseline and preserve raw output.
