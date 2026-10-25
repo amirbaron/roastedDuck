@@ -163,3 +163,30 @@ Preserve existing parameter typing and valid comparisons; do not copy whole ASTs
 silently coerce nanosecond timestamps to timezone timestamps to hide the error.
 Verify the unchanged upstream regression plus focused valid/invalid join controls and
 complete Go/corpus checks after rebuilding.
+
+
+## Complete selected upstream Go suite (2026-10-25)
+
+The full pinned root suite with duckdb_use_lib and duckdb_arrow now passes652/652
+case records, including all255listed top-level Test functions plus subtests/examples,
+with no failures/skips/unfinished/unstarted cases. The complete case-ID/verdict map
+matches the frozen CPPcontrol exactly. Runtime loader tracing verifies the one selected
+signed Rust image, and executable/library/source hashes remain unchanged after the run.
+
+Signed comparison-library-1 SHA7a550483653b2cf7cbe5a4fc767617cf377509120f8a91c17f9f18347de92d3d
+also retains547exports and matches27startup,6external-thread and4checkpoint lifecycle
+controls. The five discovered product gaps are closed in these observations: startup
+local-option acceptance, access-mode readback, external-thread validation, prepared
+checkpoint effects/profiling/pending failures, and comparison errors masked on LATERAL
+retry. No whole-AST copy, numeric type coercion, artificial latency or table cache was
+introduced. The compiled planner file is preserved; its later change is one rustfmt
+line wrap only, recorded explicitly in the evidence receipt.
+
+Evidence: `.context/artifacts/go-client-20261025/verification-checkpoint-1.json`,
+`rust-test-5`, `cpp-test-2`, `comparison-library-1`, final scoped probe outputs and
+`verified-tooling-1`. All earlier failing runs, controls, source copies, signatures and
+raw verdicts remain intact. New SDK regression/persistence tests are building separately;
+that build is not a passing test result. Final core/shell/Python/Swift refresh, broader
+Go API/install/portable package/platform/performance journeys, dependency-module tests
+and other clients remain open. The dynamic build tag excludes the upstream default
+prebuilt-only extension tests equally on both engines; their omission is explicit.

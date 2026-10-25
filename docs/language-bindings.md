@@ -195,7 +195,7 @@ client/core/final acceptance gates remain open.
 | CLI | Existing shell implementation and historical differential tests; close remaining engine/name gaps and repeat final shell verification |
 | Native Rust | API exists; complete API review, byte-name integration and resource/error semantics |
 | Rust client (`duckdb-rs`) | Pin client revision; build/link against this library and pass its upstream API/tests |
-| Go | Audit native dependency/packaging; run the matching client API/tests against the Rust engine |
+| Go | Pinned v2.10506.0 dynamic root suite with Arrow passes652/652on Rust and CPP with identical case IDs/verdicts and selected Rust image verified. Five discovered core gaps fixed; portable installation, broader API/platform/performance and dependency-test gates remain open; see [Go evidence](go-bindings.md) |
 | Node.js Neo | Complete native adapter/packaging as needed; pass its API and upstream tests |
 | Java/JDBC | Audit native adapter and package; port dependencies on engine internals and pass JDBC/client tests |
 | ODBC | Complete driver/adapter, packaging and upstream conformance/client tests |

@@ -19,6 +19,19 @@ outliers. Functional, correctness and storage/WAL compatibility gates remain in 
 Complete Python bindings first and all primary clients plus C#/.NET, Swift and Julia;
 `docs/language-bindings.md` records the expanded completion scope.
 
+## Latest Go/core checkpoint
+
+Pinned Go v2.10506.0 root suite with Arrow passes652/652on both Rust and frozen CPP,
+with matching IDs/verdicts and the selected signed Rust image verified. Startup config,
+access-mode readback, external-thread validation, prepared checkpoint execution/profiling/
+pending errors, and comparison retry errors were corrected. Scoped public controls:
+27startup,6thread,4checkpoint lifecycle cases match;547native exports remain available.
+See `docs/go-bindings.md` and `.context/artifacts/go-client-20261025/verification-checkpoint-1.json`.
+The new SDK regression/persistence build is active; it has not passed yet. Earlier full
+corpus4, Python6, shell11 and Swift verification predate these core changes and require
+refresh. All primary clients plus.NET/Swift/Julia and final coupled performance acceptance
+remain the goal; no full-table cache was added.
+
 ## Latest Swift package checkpoint
 
 Relative Cduckdb XCFramework packaging and a separate relocated SwiftPM consumer now
