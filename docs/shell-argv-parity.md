@@ -188,3 +188,23 @@ path handling must reach the OS; do not replace invalid names or count errno92 h
 fixture failures as parity passes. `.open --sql` must preserve its SQL bytes before
 value construction rejects invalid Unicode. Remaining legacy callbacks are not
 silently declared complete by these focused cases.
+
+## Native dot-path implementation results
+
+The measured path callbacks now retain bytes through .open SQL/value/errors, native
+file/directory calls, output-file state and pipe arguments. The original80caseprobe
+improves40to75exactmatches, closing all35mismatches with no old match regressed. Five
+host filename-fixture errors remain explicit. The2,120caseexhaustive run has1,987exact
+matches, zero mismatches and133hostfixture errors; those are not parity passes.
+
+Workspace/all-target checking and warnings-denied Clippy pass. Signed shell binary
+unit tests pass15/15. The new signed CLI3 passes392upstream tests/three shared skips;
+its complete768case/46PTYdifferential is running separately. The previous CLI2 full
+suite completed with zero unexpected differences and two retained known gaps.
+
+CLI3 SHA:fd071a7461d1c97c57bbd8c46fd4f07d4e57e6ee80cc072ae18942ad143905ad.
+`dot-verification-1.json` indexes raw probes, source/binary hashes and remaining work.
+The CLI-only dot files are outside the library's four shared rendering modules, so
+this phase does not change the verified Python wheel3 rendering code. Other legacy
+callbacks, database-OID semantics and stack-trace formatting remain open; these
+results are not whole-shell or whole-client completion. No table cache was added.
