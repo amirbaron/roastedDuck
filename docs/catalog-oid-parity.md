@@ -107,3 +107,11 @@ and create an entry, so existing infallible catalog lookup APIs do not swallow e
 Parsing under catalog locks is avoided, and no owning Catalog Arc is captured. This
 matches observable entry allocation laziness without introducing a fallible factory into
 an Option-returning lookup. Full parse-time deferral is not claimed by this stage.
+
+The initial deferred-entry implementation passes workspace/all-target compilation and
+13signed catalog tests, including first-lookup OID allocation, one published entry under
+concurrent lookup and release of the default registry after catalog teardown. A new
+native image is building for public inventories and complete client checks; this is not
+runtime/catalog-wide acceptance yet. Creation/conflict paths must also trigger defaults
+before starting a new chain, matching CPPStartChain, so callers cannot shadow a default
+merely because it has not been looked up. Keep that audit explicit in the next controls.
