@@ -103,3 +103,22 @@ executables. A separate `RUSTDB_CAPI_TEST_BIN_DIR` preserves fresh executable/lo
 while reusing the existing object cache. Keep the frozen test bodies and harness
 exclusions unchanged. Portable install names for eventual native client packages are
 a separate packaging gate; this test adapter must not silently mutate preserved dylibs.
+
+## Corrected release3 checks
+
+Release3 completed in11m20s; all three images are signed and preserved in
+`signed-images-3.json`. All seven affected Rust files pass, and all seven C++ controls
+pass through the rebuilt unittest adapter with no skips (`focused-rust-3/`,
+`cpp-controls-6/`). These are focused results, not a replacement for the full rerun.
+
+The exact selected library passes all30 C API files,155cases,772,976assertions.
+Each driver's runtime loader trace identifies the preserved library; its SHA remains
+unchanged after the run (`capi-upstream-3/summary.json`). The existing exclusions remain.
+The shell passes392tests/three identical skips and all395 test IDs/verdicts match the
+C++ control (`shell-release-comparison-3.json`). Full differential: zero unexpected/
+768cases, including46PTY, with the same three known gaps (`shell-diff-2.log`).
+
+The obsolete `input-latin1-string` known marker now masks a matching case. Remove
+that marker and rerun the unchanged case strictly. Keep the three remaining gaps
+open and preserve separately labeled raw output for diagnosis. Workspace linting and
+one fresh complete4870file run are next; final client/storage/performance gates remain.
