@@ -1347,6 +1347,47 @@ final receipts, `lifetime-comparison-3.json`, native regression receipts, shutdo
 logs, complete fast matrices, typing/compiler logs and paired timing/RSS.
 Scalar UDF and other named-string boundaries remain separate open work.
 
+## Scalar UDF native names (2026-10-25)
+
+Scalar function and overload-set identities now own native bytes through catalog
+registration, overload diagnostics, expression rendering, optimizer matching and plan
+serialization. Python `create_function`, `remove_function` and `FunctionExpression`
+accept the frozen Unicode/bytes/bytearray contract, including embedded NUL and invalid
+UTF-8. ASCII-only case folding preserves other bytes. Removal after close follows
+C++'s cleared registration map and error priority. No ASCII stand-in function name or
+lossy Unicode conversion substitutes for the requested identity.
+
+The 804-case create/call/duplicate/remove matrix improves **15/804 to 804/804** across
+connection and both module namespaces. Eight further state outcomes match copied
+mutable names, case-insensitive calls/removal, callback ownership and closed-owner
+errors. Both complete fast dependency matrices retain the preceding counts with no
+new failures/collection errors and every C++ node covered. Workspace-wide all-target
+Clippy with warnings denied passes; seven signed native library binaries run **105
+passing tests**, and two signed scalar-name regressions pass. These are component
+checks, not the complete native corpus.
+
+Two-way persisted-file checks cover scalar generated expressions, defaults, CHECK
+constraints, an expression index and recovery after a rejected insert. Both engines
+read each other's checkpointed files and copied nonempty WALs; the fixture's 156-byte
+WALs are byte-identical. This is a focused serialization/storage check, not complete
+storage/version/encryption/recovery acceptance. An initial native test incorrectly
+expected arbitrary non-UTF8 identifiers to materialize as catalog VARCHAR values;
+C++ rejects those too. The corrected test checks NUL identity in valid UTF-8 catalog
+values, while raw-byte execution/diagnostics are tested separately.
+
+Paired development samples retain elapsed time and RSS: a 10M-row scalar expression
+takes roughly 49–53 ms before and 51 ms after; 1M-row grouping roughly 14–18/15 ms;
+100K UDF rows roughly 8.6–9.0/8.5 ms. Ordinary peaks remain around 47/50/56 MB by
+workload, with first cold samples preserved. No table cache is introduced. A fresh
+signed release shell/C API/conformance-runner build is in progress for broader core
+verification; it is not yet release or final performance acceptance.
+
+Evidence: `.context/artifacts/python-udf-names-20261025/` contains signed wheel 2,
+804-case comparisons, state results, full JUnit/node reconciliation, native test logs,
+two-way file/WAL copies and SHA receipts, workspace Clippy and paired measurements.
+Release build evidence is under `.context/artifacts/scalar-release-20261025/`.
+Other binding/platform/value cases and all selected clients/final core gates remain open.
+
 ## Remaining gates
 
 The runtime availability audit is complete for all 385 inventory entries. Finish complete signatures/overloads/defaults/error

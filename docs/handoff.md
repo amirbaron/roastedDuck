@@ -399,6 +399,19 @@ checks pass. Table-function 1000 calls 37.0–37.5 ms before/37.7–38.4 after, 
 46–48 MB; Arrow scans and bounded 73 MB prefix samples retained. Evidence:
 python-function-names-20261025/. Scalar UDF and other string boundaries, other clients
 and final core acceptance remain open.
+The subsequent scalar-UDF checkpoint migrates ScalarFunction/Set names to native
+bytes throughout catalog/binder/display/optimizer/serialization and ports Python
+create/remove/FunctionExpression casters. The UDF matrix improves15/804to804/804,
+with eight further name/ownership/closed-state matches. Both complete fast matrices
+have unchanged counts/no new failures/collection errors/all C++ IDs covered. Workspace
+all-target Clippy-Dwarnings passes; seven signed library binaries pass105tests and
+two signed raw/NUL scalar regressions pass. Focused cross-engine checkpoint/WAL
+checks of generated/default/constraint/index scalar expressions pass in both directions;
+the fixture WALs are identical156bytes. Broader storage acceptance remains open.
+Scalar/group/UDF paired time/RSS remains similar, cold samples retained, no cache added.
+Evidence: python-udf-names-20261025/. Current fresh release CLI/CAPI/slt build is underway
+under scalar-release-20261025/; do not treat its start as terminal verification. Broader
+core/corpus/shell and selected-client/final performance gates remain open.
 Previous nested/type evidence: python-nested-20261024/python-nested-checkpoint.json, signed wheel9,
 source archive, complete scoped regressions and repeated coupled UDF timings. The
 native UDF slowdown remains an individual outlier; a noisy C++ run is retained.
