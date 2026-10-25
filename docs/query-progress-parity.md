@@ -21,3 +21,20 @@ and updates counters only if percentage increases. Measure those boundaries rath
 than adding a fixed shell delay. If core SDK publication changes, expand validation to
 signed SDK/C API images and fresh Python bindings; do not reuse wheel4 as current-core
 evidence. Keep all workloads serial/nice10/j1 and preserve the lower-memory policy.
+
+## Public ABI baseline
+
+The maintained pending-task driver runs six real materialized/streaming journeys on
+both signed libraries, checks actual scalar data chunks and connection reuse, and
+retains every unmodified task/progress snapshot. Both modes' result streaming flags
+match. For the constant query, C++ switches public STARTED0 to unknown-1 after its
+first task; Rust keeps0through pending execution. For empty/range aggregates, C++
+publishes positive source totals at0percent while Rust leaves those counters0.
+Evidence: `progress-capi-{cpp,rust}-2.json` under the shell artifact task.
+
+Mirror the distinct internal unknown/public restarted progress states. Publish row
+counters on known0percent updates as well as increases, preserve the highest known
+percentage across unsupported pipeline updates, and expose completed executor progress
+as an empty pipeline set. C++'s0/0final ratio does not increase the last percentage.
+Do not add a shell sleep or retain table blocks. Stream-close progress/lifetime details
+in the trace remain separate verification boundaries, not silently accepted differences.
