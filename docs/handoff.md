@@ -16,8 +16,9 @@ roughly 15–20% longer execution with 60–70% less memory on TPC-H and ClickBe
 acceptable. Exact speed/memory parity and outperformance are not required. Do not raise
 memory merely to copy C++ caching or close small speed gaps; report individual query
 outliers. Functional, correctness and storage/WAL compatibility gates remain in place.
-Complete Python bindings first and all primary clients plus C#/.NET, Swift and Julia;
-`docs/language-bindings.md` records the expanded completion scope.
+The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swift
+only**, and preserve existing C API and ADBC functionality. Other language clients
+are outside this goal. `docs/language-bindings.md` records the current scope.
 
 ## Latest Go/core checkpoint
 
@@ -36,7 +37,7 @@ differential (46PTY) with0unexpected/2known open gaps. Fresh full4870corpus run5
 verdict unchanged and source/fixture/binary/archive/reference hashes stable. Evidence:
 go-client-20261025/full-corpus-5/{terminal-summary.json,post-verification.json}. Earlier full
 corpus4, Python6, shell11 and Swift verification predate these core changes and require
-refresh. All primary clients plus.NET/Swift/Julia and final coupled performance acceptance
+refresh. Python, Go, Swift, preserved C API/ADBC and final coupled performance acceptance
 remain the goal; no full-table cache was added.
 
 ## Current Python and Swift package refresh
@@ -237,7 +238,7 @@ and transaction-policy extraction still need a broader core audit.
 Earlier ADBC evidence includes seven public ABI families, cancellation/recovery,
 12 real Python ADBC comparisons and 13 dense Arrow metadata comparisons; only verified
 own build-version labels were normalized in those comparisons. Python ADBC validation
-is not the DuckDB Python API/package. All primary clients plus C#/.NET, Swift and Julia,
+is not the DuckDB Python API/package. Required Python, Go and Swift clients, preserved C API/ADBC,
 native/type/fuzz/package matrices, ENUM semantics and final unit/corpus/shell/storage/
 WAL/performance gates remain required. See `docs/adbc.md` and external
 `adbc-upstream-checkpoint.json`. The uncached lower-memory policy is unchanged.

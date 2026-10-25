@@ -1,8 +1,10 @@
 # Language-client completion
 
-The owner expanded the goal on 2026-10-23 and confirmed this scope: **all primary
-clients plus C#/.NET, Swift and Julia**, with Python first. Python/R are no longer
-excluded from completion. The engine target remains the frozen DuckDB 1.5.6 contract.
+The owner narrowed the goal on 2026-10-25: required language clients are **Python,
+Go and Swift only**. Preserve existing **C API and ADBC** functionality. R, Rust
+client wrappers, Node.js, Java/JDBC, ODBC, WebAssembly, C#/.NET, Julia and other
+language clients are outside this goal. Earlier expanded-scope notes are historical.
+The engine target remains the frozen DuckDB 1.5.6 contract.
 
 The [versioned client overview](https://duckdb.org/docs/1.5/clients/overview) and
 [client repository inventory](https://duckdb.org/docs/1.5/dev/repositories) identify
@@ -190,23 +192,23 @@ client/core/final acceptance gates remain open.
 | Surface | Current evidence / remaining work |
 |---|---|
 | Python | Current post-Go-fix signed wheel refresh: both complete Arrow19/21fast matrices match CPP with zero failures;336Decimal,385runtime exports, exact stubs/strict typing and four current15column file/WAL journeys pass. Broader reference/signature/lifetime/nonfast/backend/platform acceptance remains open; see [current evidence](python-bindings.md) |
-| R | New bindings/package required; inventory and implement the public API and run upstream tests |
+| R | Outside the current goal |
 | C API | Current rebuilt library: all 546 duckdb.h exports; upstream 30-file harness passes; 8,735 native ABI outcomes match. ENUM invalid-value failure semantics remain open; duckdb_adbc_init now exists; scoped ADBC loading/interchange checks pass |
 | CLI | Existing shell implementation and historical differential tests; close remaining engine/name gaps and repeat final shell verification |
 | Native Rust | API exists; complete API review, byte-name integration and resource/error semantics |
-| Rust client (`duckdb-rs`) | Pin client revision; build/link against this library and pass its upstream API/tests |
+| Rust client (`duckdb-rs`) | Outside the current goal |
 | Go | Pinned v2.10506.0 dynamic root suite with Arrow passes652/652on Rust and CPP with identical case IDs/verdicts and selected Rust image verified. Five discovered core gaps fixed; portable installation, broader API/platform/performance and dependency-test gates remain open; see [Go evidence](go-bindings.md) |
-| Node.js Neo | Complete native adapter/packaging as needed; pass its API and upstream tests |
-| Java/JDBC | Audit native adapter and package; port dependencies on engine internals and pass JDBC/client tests |
-| ODBC | Complete driver/adapter, packaging and upstream conformance/client tests |
-| WebAssembly | Build the Rust engine for the client runtime; verify browser/worker and supported host/package journeys, without a bundled C++ engine |
+| Node.js Neo | Outside the current goal |
+| Java/JDBC | Outside the current goal |
+| ODBC | Outside the current goal |
+| WebAssembly | Outside the current goal |
 | ADBC/Arrow | All frozen initializer callbacks exist; scoped native C++, real Python ADBC driver-manager and PyArrow comparisons pass. All 64 frozen upstream ADBC cases now pass on both engines with 3,040 assertions. Broader matrices, packaging and selected DuckDB client acceptance remain pending. See [ADBC inventory](adbc.md) |
-| C#/.NET | Pin the client; verify its complete API/tests and native-library loading/packaging |
+| C#/.NET | Outside the current goal |
 | Swift | Current macOSarm64Swift6.4: complete frozen132upstream cases plus separate identity test pass on CPPandRust with identical IDs; selected Rust DLL only is verified in process. Relative XCFramework package, relocated SwiftPM/standalone consumer and four bidirectional checkpoint/WAL client handoffs pass. Published distribution, broader API/platform/storage acceptance remain open; see [Swift evidence](swift-bindings.md) |
-| Julia | Pin the client; verify its complete API/tests, native loading and ownership behavior |
+| Julia | Outside the current goal |
 
 C++ private/internal ABI and C++-API extension binaries remain the original documented
-engine limitation. This does not excuse Python/R/Java or other selected client APIs:
+engine limitation. This does not excuse Python, Go or Swift client APIs:
 port adapters that depend on internals rather than loading the C++ DuckDB engine.
 Deprecated/other community clients are not silently added to this confirmed scope.
 

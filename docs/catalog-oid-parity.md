@@ -261,3 +261,15 @@ and JSON-using defaults in both checkpoint/WAL reopen, read-only reopen, configu
 startup and disabled-autoload/explicit-load controls. A type/function needed during
 storage/WAL loading must be available through its real autoload/config path; do not
 silently ignore a failure or pre-load everything merely to mask order differences.
+
+
+## Extension-order persistence control
+
+The first signed SDK build with main-database attachment before ordinary static extension
+loading passes all eleven persistence cases, including JSON defaults and TIMESTAMPTZ
+checkpoint and committed-WAL reopening. Client settings pass five of six: the new disabled
+extension assertion incorrectly expected no loaded entries, although built-in core_functions
+remains available. The corrected assertion checks only optional JSON/ICU; production is
+unchanged and its signed rerun remains pending. Evidence is preserved under
+shell-final-gaps-20261025/oid-extension-sdk-verification-1.json. Native public OID/client
+controls and final full-source acceptance are still pending.
