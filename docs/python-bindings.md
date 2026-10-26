@@ -1795,3 +1795,37 @@ wheels, both fast suites, `python-main-controls-arrow{19,21}-1/`, and
 remain documented above. Broader core catalog lifecycles, final selected-client/native
 ADBC/full-corpus/storage/WAL and coupled performance acceptance remain open. The uncached
 lower-memory baseline is unchanged.
+
+
+## Signed import/preprocessing package checkpoint (2026-10-27)
+
+The fresh source-5 release wheel now closes the registered-memory import failure and
+matches the frozen C++ import/transaction contract. Its signed native image SHA-256 is
+`2d7481420e5015748dea8ef27bca89fc3972c721103b9b4253cef60868bfa05b`.
+Both Arrow 19 and Arrow 21 environments use this identical strictly signed image, with
+exactly one loaded Rust engine verified in each.
+
+All 14 paired local/registered-memory import journeys match C++ literally in each
+environment, without normalization. They cover result metadata/rows, implicit, active and
+chained success, bind/data failures, transaction aborts and rollback/readback. Two ADBC
+import/manual-rollback controls also match C++ exactly per environment. Both installed
+Python/ADBC file handoffs pass, including UDF writes, parameters, rollback, commit and
+reopening; each uses the same single Rust image. Native ADBC's separate 64-case gate is
+still required.
+
+Both complete fast suites retain exact C++ IDs, verdicts and skip reasons: Arrow 19 has
+3,205 passes, 27 skips, eight xfails and one existing XPASS (3,241 records); Arrow 21 has
+3,455 passes, 28 skips, eight xfails and that XPASS (3,492 records). A fresh presence audit
+matches all 385 runtime exports and 29 typing-only declarations. All 300 frozen upstream
+test files, seven installed stubs per environment, 908 source inputs, original/signed
+wheel hashes and native image signatures verify unchanged. This does not claim a new
+complete overload/platform audit or a rerun of the unchanged strict typing clients.
+
+Evidence: external `import-preprocessing-20261027/{package-verification-1.json,
+python-import-comparison-1.json,python-import-rust-arrow21-1.json,
+adbc-import-comparison-1.json,adbc-package-1-index.json}` and both full-fast directories.
+The core shipping image also matches all five public C API extraction contexts and seven
+prepare/execute journeys; its complete C API suite passes 30 files/155 cases/744,074
+assertions. Broader Go/Swift/native ADBC/full SQL/shell/storage-WAL and coupled performance
+acceptance remain open. Earlier reference-defect and callback-concurrency exceptions remain
+explicit. The accepted uncached lower-memory policy is unchanged.

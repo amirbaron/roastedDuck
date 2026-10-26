@@ -94,3 +94,13 @@ building to refresh registered-memory imports and policy behavior through the in
 binding. Broader SQL/shell/C API/ADBC/Go/Swift, selected Python matrices, storage/WAL and
 coupled performance acceptance still remain; this public gate is scoped to import
 preprocessing and its transaction ownership.
+
+
+The fresh installed Python package now matches all 14 local/registered-memory import
+journeys literally on both Arrow 19/21, closing the preserved local-file fallback failure.
+Both complete Python fast matrices match the frozen C++ case IDs/verdicts/skip reasons.
+Installed ADBC file handoffs pass and both additional import/manual-rollback controls match
+C++ exactly in each environment. The rebuilt complete C API suite passes 30 files/155
+cases/744,074 assertions on shipping image 2. See [Python package evidence](python-bindings.md)
+and external `import-preprocessing-20261027/package-verification-1.json`. Final full-source
+SQL/shell/Go/Swift/native ADBC/storage-WAL and coupled performance gates remain open.

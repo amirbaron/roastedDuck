@@ -30,11 +30,13 @@ cases pass (six import/preprocessing and nine registered storage), including raw
 and implicit/explicit failure atomicity. Source 4 has 908 verified inputs in a complete
 909-entry overlay. See [statement preprocessing evidence](statement-preprocessing-parity.md).
 
-The second signed shipping refresh now matches C++ in all five public extraction contexts
-and all seven step-by-step prepare/execute journeys, including the prepare-versus-query
-rollback distinction. All 908 source hashes and selected signed native images verify.
-The fresh Python wheel is building; registered-import controls through that binding and
-broader current-source regression gates still remain. The
+The second signed shipping refresh matches C++ in all five public extraction contexts
+and all seven step-by-step prepare/execute journeys. Full C API passes 30 files/155 cases/
+744,074 assertions. The fresh signed Python wheel matches all 14 local/registered-memory
+import journeys and two ADBC import controls literally in Arrow 19/21; both complete fast
+suites retain exact C++ IDs/verdicts/skip reasons (3,241/3,492 records). Both installed
+Python/ADBC file handoffs pass with one Rust image each; all 908 source hashes verify.
+Broader current-source regression and final release gates still remain. The
 broader final corpus/shell/selected-client/ADBC/storage-WAL and coupled performance gates
 remain open. No cache policy changed.
 

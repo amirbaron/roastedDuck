@@ -42,8 +42,10 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      The implementation now passes 15 signed component tests for actual expansion,
      implicit rollback, active-transaction invalidation, snapshot/reset lifetimes and
      registered byte-valued imports. All five public C API extraction contexts and seven prepare/execute journeys now
-     match C++; the fresh installed Python registered-import controls and broader
-     regression gates still remain. See `docs/statement-preprocessing-parity.md`.
+     match C++. Both fresh Python matrices pass, including 14 literal local/registered
+     import journeys, two ADBC import controls and installed file handoffs each. The full
+     C API suite passes 155 cases. Broader final gates remain; see
+     `docs/statement-preprocessing-parity.md`.
 17. **Complete language clients.** Owner-confirmed scope (2026-10-25): Python, Go
    and Swift only. Preserve existing C API and ADBC functionality; other language
    clients are outside this goal. Inventory the versioned API surfaces and packages,
