@@ -643,3 +643,36 @@ reset control now matches C++ on all three connections (14,14,14 after reset), v
 preserved pre-fix 14,2,2. Evidence: restart-regressions-1, restart-related-1/verification.json,
 and global-reset-rust-after-1.json. Fresh broad clients and a complete corpus run are still
 required before transferring whole-source acceptance.
+
+
+The corrected native library passes all 652 Go cases with exact C++ test IDs/verdicts,
+30 C API files/155 cases/748,474 assertions, all 49 startup controls and all four current
+cross-engine checkpoint/nonempty-WAL journeys. The 95-step nullable settings comparison
+retains 90 exact steps and five differences limited by the explicit, strict native-frame
+check; no other metadata/value/error differences are accepted. Source and image hashes
+remain stable. Receipt: restart-state-verification-1.json. The shell is rebuilding, and a
+new complete corpus plus final selected-client/ADBC/performance acceptance remain open.
+
+
+The newly rebuilt signed shell passes all 392 upstream cases with the same three skips.
+Its full differential/PTY refresh is running against the corrected core. Source fixes
+are validated by the focused and broad restart cohorts, but fresh full-corpus acceptance
+is still required; the preserved 4,779-pass pre-fix run is not substituted for it.
+
+
+## Complete restart shell verification and new full-corpus run
+
+The corrected signed shell completes all 768 differential cases, including 46 PTY
+sessions, with zero unexpected differences. The two existing exceptions remain native
+frame bodies and opaque catalog identities. All 392 upstream shell tests pass with the
+same three skips. Evidence: `shell-diff-restart-1/summary.json` and
+`shell-upstream-restart-1/terminal.json` under the external task directory.
+
+A new complete 4,870-file corpus run is active against the immutable signed restart
+runner. Before launch, every frozen SQL file and all 1,522 data entries verified,
+including symlinks. The source overlay records 900 build inputs; the command records
+normal engine threads and one worker. This run has no acceptance verdict yet. Its
+complete outcomes, ratchet and post-run source/image/fixture checks must finish before
+it replaces the preserved pre-fix control. Evidence: `full-corpus-restart-1/manifest.json`
+and `restart-fixture-before-1.json`. Selected-client, ADBC and coupled performance
+acceptance remain open; no table-cache retention was added.

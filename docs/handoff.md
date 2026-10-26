@@ -20,6 +20,30 @@ The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swi
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
 
+## Latest restart checkpoint (2026-10-26)
+
+Configuration and client-session snapshots now preserve registered extension metadata,
+global values, local overrides and search paths separately. Global RESET reaches
+untouched/new connections, and NULL temp_directory exposes the disabled physical path.
+Four signed SDK regressions pass; both exact frozen corpus regressions pass. The wider
+421-file restart/settings/storage cohort retains every prior verdict. Current native
+controls pass Go 652 cases, C API 30 files/155 cases/748,474 assertions, 49 startup cases,
+and four bidirectional checkpoint/nonempty-WAL journeys. The 95 nullable-settings steps
+retain 90 literal matches and five differences limited to native frame bodies.
+
+Current shell verification passes 392 upstream tests with three shared skips, plus
+768 differential cases/46 PTY with zero unexpected and two documented differences.
+A new complete 4,870-file SQL corpus is **running** against the signed restart checkpoint;
+its final verdict, ratchet and post-run identities remain required. The pre-fix run had
+4,779 pass/17 fail/74 shared skips, including the two now-fixed regressions, and is not
+current-source acceptance. See [restart evidence](catalog-oid-parity.md) and external
+`shell-final-gaps-20261025/{restart-state-verification-1.json,full-corpus-restart-1/}`.
+
+Python/Swift package results below predate this core checkpoint. Final selected-client,
+ADBC, signed release, storage/WAL and coupled speed/memory acceptance remain open.
+The remaining catalog identity and registered-filesystem database storage audits also
+remain open. Historical checkpoint sections below retain their original scope.
+
 ## Current catalog startup work
 
 Instance-owned OID allocation, lazy default entries and actual MVCC version-node IDs
