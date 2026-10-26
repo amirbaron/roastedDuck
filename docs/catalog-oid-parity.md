@@ -516,3 +516,109 @@ trace/footer order. Signed common tests pass33/33, including trace placement/ide
 workspace/all-target Clippy passes before a test-assertion-strengthening change. The NULL
 native rebuild and full combined SDK/client/SQL checks remain pending. Native frame bodies
 are implementation/compiler-specific and are not replaced with CPPsymbols.
+
+
+## Combined signed SDK checkpoint
+
+The combined settings/persistence release test build finishes successfully and its two
+immutable signed executables pass all19tests:8client-settings and11persistence. The new
+settings cases verify invalid extension values, disabled autoload, last-value behavior,
+no persistent-file creation on rejected configuration, Parquet session isolation, rejected
+boolean casts without changing the value, explicit LOAD registration and actual SQLNULL
+metadata. Existing checkpoint/WAL/torn-tail/index/generated/default/JSON/TIMESTAMPTZ cases
+remain green. All15changed source/tooling hashes remain stable after this run. Evidence:
+shell-final-gaps-20261025/parquet-null-sdk-verification-1.json.
+
+The latest signed native NULL image also passes all652Go cases. Its95-step public Parquet
+journey has90literal matches and5NULLread errors whose status/type, message, query context,
+metadata and internal footer match exactly; only genuine native frame bodies differ.
+The explicit frame-only checker rejects50negative controls and preserves literal mode's
+5reported differences. Receipts: parquet-null-strict-frame-comparison-6.json and
+parquet-null-literal-comparison-6.json. This is not a claim of literal native-trace identity.
+Full C API, fresh shell/SQL and selected-client/ADBC/final performance refreshes remain
+separate gates; the whole port goal is active.
+
+
+## Fresh shell regression and actual extension order
+
+The rebuilt signed shell passes392upstream cases with3shared skips. Its full768-case/
+46PTY differential records1new unexpected difference plus2existing known differences:
+json-errors-execution has the wrong setting candidate order after real Parquet settings
+registration. The raw before-fix log and source overlay are preserved; this is a regression,
+not a new waiver. All other differential cases retain their prior verdicts.
+
+The frozen CMake-generated loader is authoritative: json,icu,tpch,tpcds,autocomplete,
+core_functions,parquet. Rust's previous Parquet-first/ICU-last order and early core slot
+were different. The source now follows that real registration sequence and puts core
+registration between autocomplete and Parquet; it retains the existing core availability
+for the SDK's load_extensions=false mode. No error text or candidate list is rewritten.
+Source hash/control: extension-load-order-source-1.json. Checking, native and rebuilt shell/
+SQL/client controls must verify the change before fresh corpus acceptance is transferred.
+
+
+## Extension-order regression control
+
+The corrected release build finished successfully. Immutable copies of the CLI, SQL
+runner and native library are signed and strictly verified under signed-extension-order-1.
+The targeted json-errors-execution comparison now matches C++ exactly, and the upstream
+shell suite again passes 392 cases with the same three skips. The complete 768-case
+comparison is still running; its interactive sessions must finish before acceptance.
+
+The source overlay contains 900 modified/untracked files over the recorded Git HEAD,
+with 899 build/source inputs and stable hashes. The before-fix snapshot and failing
+comparison remain intact. No candidate text was sorted, rewritten or normalized.
+Evidence: extension-order-images-1.json, extension-order-full-source-1/manifest.json,
+shell-order-json-1/terminal.json and shell-upstream-order-1/terminal.json.
+
+
+## Complete shell control and fresh corpus in progress
+
+The corrected shell comparison finished with zero unexpected differences across all
+768 cases, including 46 PTY sessions. The two prior known differences remain explicit:
+implementation-specific native frames and opaque catalog ID values. The upstream suite
+passes 392 tests with three shared skips. The new JSON candidate-order regression is
+closed by the actual extension registration order, with no comparator waiver.
+
+All 4,870 frozen SQL files and 1,522 data entries, including symlinks, verified against
+the preserved fixture manifest before a new complete corpus run began. Source, archive,
+signed-runner, reference and ratchet identities are recorded in full-corpus-order-1.
+At the first progress audit, 1,787 files had completed: 1,736 pass, 38 skip and 13 fail.
+One verdict differs from the prior complete run: geoparquet/no_spatial.test regresses
+when restart rejects enable_geoparquet_conversion as an unrecognized startup option.
+The run remains active and is not accepted as a passing full-corpus checkpoint.
+
+The source-backed restart diagnosis is general: the Rust runner flattens session values
+into startup options and restores no client state. C++ retains DBConfig's registered
+extension option definitions/global values, then separately restores ClientConfig and
+search paths. The fix must preserve those layers and retained option definitions without
+weakening fresh-config autoload validation, modifying test expectations or skipping the
+file. The frozen run and all before-fix worker errors will remain as evidence.
+
+
+## Complete pre-fix corpus audit and restart implementation
+
+The preserved pre-fix runner completed all 4,870 files: 4,779 pass, 17 fail and 74 skip,
+with no crash or timeout. File coverage is exact and all skip reasons match C++. The
+ratchet identifies exactly two regressions versus the previous complete run: GeoParquet
+restart state and NULL temp-directory rendering. The other fifteen failures retain their
+prior verdicts. Fixtures, signed runner and all 900 archived overlay entries verified
+unchanged. The worktree advanced after that snapshot; this run is explicitly a pre-fix
+control, not current-source acceptance. Evidence: full-corpus-order-1/terminal-summary.json,
+fixture-after.json and ratchet.log.
+
+The working source now has an opaque ConfigurationSnapshot, preserving existing Config
+and C API cache equality behavior, and a separate ClientSessionSnapshot. Registered
+extension metadata/global values initialize before pending startup options; client
+settings, overrides, search paths and the query-log path restore independently. The
+runner uses these APIs rather than replaying session values as unknown startup options.
+The temp-directory getter and NULL setter now expose the disabled physical path, matching
+C++ rather than changing NULL behavior globally.
+
+A separate C API control confirms another related bug: after opening with threads=2 and
+RESET threads, C++ returns 14 on the original, untouched and new connections; the pre-fix
+Rust image returned 14,2,2. Explicit reset markers now preserve this distinction in global
+state, read-only getters and configuration snapshots. New SDK regressions cover retained
+option definitions without module loading, local/global isolation, search-path restoration,
+callback lifetime, reset propagation and the disabled temp path. Workspace/all-target
+checking and Clippy pass; the first Clippy run's doc-markdown issue was corrected. Signed
+runtime and frozen SQL rechecks remain pending for this implementation.
