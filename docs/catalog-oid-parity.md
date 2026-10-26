@@ -762,3 +762,22 @@ public Python/C API/Go controls and current numeric OID observations still requi
 Evidence: external `main-context-20261026/{sdk-verification-1.json,source-1/manifest.json,
 cpp-snapshot-state-terminal.json,startup-runtime-before-index.json}`. The whole port goal
 and final signed release/corpus/client/performance gates remain open.
+
+
+## Broader signed main-context SDK checkpoint (2026-10-26)
+
+All four rebuilt SDK targets pass on immutable signed executables: eight client-settings,
+eleven persistence, eight registered-storage and four restart tests. Together with the
+four focused main-context tests, these are 35 passing current-source tests, with no ignored
+cases in the batch. Every selected case ID is inventoried; all 903 build-input hashes,
+executable hashes and strict signatures verify unchanged. This covers existing configured
+extension callbacks, snapshot lifetimes, typed settings and checkpoint/WAL behavior after
+the startup-client/configuration change.
+
+Evidence: external `main-context-20261026/sdk-verification-{1,2}.json`, per-target logs and
+`source-1/manifest.json`. The fresh shipping C API library, SQL runner and shell are building
+without the ADBC test feature. Public C ABI/Go/Python and targeted SQL controls must still
+verify the shared change before wider acceptance transfers. A 589-file frozen selector
+covers restart directives plus settings, logging, attachment, transaction, GeoParquet and
+temporary-directory files; it is prepared, not executed or substituted for the final full
+corpus. Final release, selected clients, storage/WAL and coupled performance gates remain open.
