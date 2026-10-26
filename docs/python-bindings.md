@@ -1704,3 +1704,21 @@ access-mode rule. Permission checks precede callbacks. Workspace/all-target Clip
 an eighth SDK regression covers all three formats, both virtual-view names and metadata.
 Its signed executable is building; fresh Python and broader final acceptance remain open.
 Evidence: `attach-data-{1,2}-index.json`, the paired reports and `source-6/manifest.json`.
+
+
+## Registered data-file native verification (2026-10-26)
+
+The current signed SDK executable passes all eight registered-storage regressions.
+The data-file case covers CSV, JSON and Parquet COPY/attachment, the automatic remote
+read-only error, explicit READ_WRITE, both virtual views and null-path/read-write catalog
+metadata. The earlier seven permission, callback, lifetime, checkpoint and WAL cases
+also pass with partial I/O. All 902 build inputs and the signed executable verify
+unchanged. Receipt: external `registered-storage-20261026/sdk-verification-7.json`.
+
+Two preceding eight-test runs are retained as test-harness failures: the native memory
+backend lacked literal glob results, then the metadata assertion reversed column/row
+arguments. Both were corrected without weakening assertions or changing production code.
+Source snapshot 8 includes those corrections; production behavior matches snapshot 6.
+Workspace/all-target Clippy passes. Python release wheel 3 is building from this source;
+paired installed-package controls, broader clients and final whole-engine/performance
+acceptance remain open.
