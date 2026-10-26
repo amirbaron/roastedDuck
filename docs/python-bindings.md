@@ -1408,8 +1408,9 @@ The runtime availability audit is complete for all 385 inventory entries. Finish
 and ownership audits of the implemented relation, expression, UDF, Pandas/NumPy,
 Arrow/Polars, replacement-scan, filesystem and function-catalog surfaces. Explicit
 legacy/magic descriptors, remaining type/metadata behavior, raw Binder JSON ordering,
-broader concurrency and registered-backend database storage remain required. The API inventory marks only
-partial implementation/evidence; no surface is declared fully complete yet.
+broader concurrency and backend/flag/platform matrices remain required. Registered database/WAL
+storage and its current-host controls are now implemented and verified below. The API inventory
+still marks partial implementation/evidence; no surface is declared fully complete yet.
 
 All 3212 normally collected fast cases have now executed; the skipped modules and
 other dependency/platform matrices (tensor coverage and PyArrow 19/21 are now separately verified),
@@ -1722,3 +1723,46 @@ Source snapshot 8 includes those corrections; production behavior matches snapsh
 Workspace/all-target Clippy passes. Python release wheel 3 is building from this source;
 paired installed-package controls, broader clients and final whole-engine/performance
 acceptance remain open.
+
+
+## Current signed package and callback diagnostics (2026-10-26)
+
+The source-9 release wheel is signed and installed in separate Arrow 19 and 21
+environments. Its native image is
+`35b1de7f7130fba9415db929fdf16fe45ba3dd982cd003817c7f980ebaf42f46`;
+strict signatures, one loaded engine and all 902 source-input hashes verify.
+Only two Python files changed from the eight-test signed native SDK checkpoint;
+the native SDK's compiled sources remain unchanged.
+
+Both complete fast matrices match frozen C++ case IDs, outcomes and skip reasons:
+Arrow 19 has 3,205 passed/27 skipped/8 xfailed/one existing xpassed (3,241 records),
+and Arrow 21 has 3,455 passed/28 skipped/8 xfailed/one existing xpassed (3,492).
+All 300 upstream test files match the preserved archive without missing/extra files.
+Six virtual data-file attachment controls and four storage/policy controls match C++,
+including actual backend open sequences. The existing filesystem cohort retains
+15 matches and the previously recorded C++ malformed-URI overwrite discrepancy.
+Both installed Python/ADBC facade journeys pass with only the selected Rust image loaded.
+Runtime export availability remains 385 entries, with 29 typing-only declarations;
+all seven frozen stubs match and all four strict typing clients retain their expected
+success/rejection results. This is availability/scoped verification, not complete API proof.
+
+The additional callback audit corrected two real differences. Python filesystem read/write
+opens now request C++'s `rb+`, including unsupported-backend errors; new write-only WALs
+use `wb`, while existing WALs remain non-truncating. Python exception formatting follows
+the traceback to its innermost frame before walking callers, retaining the actual error
+origin. Seven safe registered-database controls now match in full after mapping only
+the known dependency installation roots; the unsafe C++ unregister case is separate.
+
+Nested UDF/Arrow/filesystem diagnostics match exactly in all twelve controlled comparisons
+(one/four threads, stable/volatile UDFs). The before-fix wheel fails all three single-thread
+diagnostic comparisons. A default parallel UDF run still has a different Python caller-frame
+tail despite matching error type/message/origin; raw stacks and thread-local/context
+observations remain preserved. No caller frames were fabricated, no global engine-thread
+restriction was added and this parallel diagnostic/concurrency difference remains explicit.
+
+Evidence index: external `registered-storage-20261026/package-verification-4.json`,
+with source snapshots, signed/original wheels, current matrices, public controls,
+typing/ADBC reports and raw diagnostic controls. Broader client/backend/platform cases,
+independent C++ unregister/WAL defects, catalog lifecycle, fresh native release/corpus/
+shell/C API/ADBC/Go/Swift and final coupled performance acceptance remain open. No data
+block caching or accepted lower-memory policy changed.
