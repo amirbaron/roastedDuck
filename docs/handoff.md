@@ -38,8 +38,12 @@ See [main-context evidence](catalog-oid-parity.md).
 
 The full shell differential also passes all 768 cases, including 46 PTY sessions, with
 zero unexpected differences and the same two documented differences. This is a scoped
-checkpoint. Python/Swift packages predate it. Final full-corpus/client/ADBC/storage/WAL
-and coupled performance gates remain open;
+checkpoint. The fresh signed Python wheel now matches the complete fast suites on both
+Arrow 19 (3,241 records) and Arrow 21 (3,492), including case IDs/verdicts/skip reasons.
+All 18 startup/policy controls match C++ in each environment and both installed Python/ADBC
+file journeys pass with one Rust image. See [Python evidence](python-bindings.md).
+Swift packages predate this stage. Final full-corpus/client/ADBC/storage/WAL and coupled
+performance gates remain open;
 remaining catalog identity/dependency lifecycles are not waived.
 
 ## Latest restart checkpoint (2026-10-26)

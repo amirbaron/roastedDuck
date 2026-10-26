@@ -1766,3 +1766,32 @@ typing/ADBC reports and raw diagnostic controls. Broader client/backend/platform
 independent C++ unregister/WAL defects, catalog lifecycle, fresh native release/corpus/
 shell/C API/ADBC/Go/Swift and final coupled performance acceptance remain open. No data
 block caching or accepted lower-memory policy changed.
+
+
+## Current main-context signed package checkpoint (2026-10-26)
+
+The fresh release wheel includes the real main startup connection/configuration-layer fix.
+Its signed native image SHA-256 is
+`f93818a7f23248ba29afc1cd975145256ff390c9711087fcc45054011b90582e`.
+Arrow 19 and Arrow 21 environments install this identical image, with strict signatures
+and exactly one loaded Rust engine verified independently in each environment.
+
+Both complete fast suites match the frozen C++ case IDs, verdicts and skip reasons:
+Arrow 19 has 3,205 passes, 27 skips, eight xfails and one existing XPASS (3,241 records);
+Arrow 21 has 3,455 passes, 28 skips, eight xfails and the same XPASS (3,492 records).
+All 300 frozen upstream test files and seven installed stubs per environment verify
+unchanged. All 903 source inputs and original/signed wheel hashes verify stable.
+
+Eleven startup-setting controls, three startup external-access controls and four
+main/attached filesystem-policy controls match C++ exactly in each environment. This
+closes the previously preserved main-file commit/rollback and startup-setting acceptance
+counterexamples. The installed Python/ADBC shared-file journeys pass on both Arrow versions,
+including UDF writes, parameter binding, rollback, commit and reopening with only the selected
+Rust image. These journeys do not substitute for the separate native ADBC upstream gate.
+
+Evidence: external `main-context-20261026/package-verification-1.json`, signed/original
+wheels, both fast suites, `python-main-controls-arrow{19,21}-1/`, and
+`adbc-package-1-index.json`. The prior callback concurrency/reference-defect exceptions
+remain documented above. Broader core catalog lifecycles, final selected-client/native
+ADBC/full-corpus/storage/WAL and coupled performance acceptance remain open. The uncached
+lower-memory baseline is unchanged.
