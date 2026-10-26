@@ -834,3 +834,30 @@ semantics and bind-time behavior when ordinary extension loading is disabled. Va
 actual calls, visible metadata and retained entry versions; numeric identity improvement
 alone is insufficient. Existing signed main-context images remain the before-stage
 controls. No placeholder implementation or acceptance is claimed by this planning note.
+
+
+## Typed placeholder component checkpoint and next attachment stage
+
+The implementation now generates all 214 overload records across 42 names, preserving
+multiline records and frozen source order. It registers their real typed scalar sets after
+collations and before the generated built-in list, each using ordinary catalog chains.
+Their bind callback loads the provider, resolves by the declared argument types using the
+normal function binder, replaces the descriptor and delegates to the real bind callback.
+The generator's source check and workspace/all-target Clippy with warnings denied pass.
+
+Two signed release SDK tests pass: real core/ICU date and list calls retain the full 2,953-row
+function inventory, and disabling ordinary extension loading leaves an ICU placeholder
+that loads/delegates on first use and then honors a changed timezone. The first run's second
+test had a row/column assertion-index error; its failed log and corrected source/test run
+remain separate. Evidence: external `extension-overloads-20261026/{source-3/manifest.json,
+sdk-verification-2.json,clippy-2-terminal.json,clippy-3-terminal.json}`. These component
+checks do not refresh the public native/client/full-corpus/performance gates.
+
+The next attachment stage ports the actual provisional identity used during initialization.
+C++'s ordinary AttachedDatabase constructor allocates its CatalogEntry identity before
+creating its DuckCatalog/storage; FinalizeAttach later assigns the registered identity.
+Rust's unregistered catalog currently reports zero throughout initialization. Preserve a
+real provisional identity on that object, expose it during initialization, and assign the
+registered identity once after storage initialization. System/temp constructor semantics
+must stay separate. Test object ordering, finalization idempotence and public attachment
+journeys; do not add discarded counter increments or placeholder objects to reach an OID.
