@@ -50,3 +50,15 @@ earlier draft overlays are explicitly excluded from release provenance. The new 
 images are rebuilding. Public C API counts/execution, Python registered imports and policy
 controls, broader SQL/shell/selected-client/ADBC/storage-WAL and coupled speed/memory gates
 remain required. This component checkpoint does not complete the port goal.
+
+
+The first signed public refresh now matches all five C API extracted counts/errors exactly
+(4/4/6/4/8). Six of seven prepare/execute journeys match after mapping only the known
+fixture-directory roots. The remaining implicit bind-error journey exposes a real ownership
+difference: C++ leaves a failed extracted prepare in an aborted synthetic transaction;
+the next query observes that abort and its query wrapper rolls it back. Rust rolls back
+too early during preparation, so that next query succeeds. Execution-time failures and
+active-transaction cases already agree. Preserve this distinction between client binding
+and query execution before closing the gap. Evidence:
+`import-preprocessing-20261027/public-import-comparison-1.json`; the source-4 shipping
+library SHA is `47944c2d842c7c7174afb07bfb78cf14e5b79be336c112129f4f46b9ade35c12`.
