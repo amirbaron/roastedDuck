@@ -25,8 +25,8 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    - Arrow per-type filter support and native producer filtering now exist. The C API
      raw-producer projection/filtering and dynamic-filter matrices still need explicit
      client verification; Python's producer tests alone do not close this gate.
-   - `duckdb_result_get_arrow_options` reads the connection's settings when called, not
-     those the result was created with.
+   - Result Arrow settings snapshots are implemented and covered by the current signed
+     30-file/155-case C API checkpoint; preserve that behavior in the final release gate.
    - `parse_statements` hands a PRAGMA's expansion of several statements out as one
      multi-statement, where DuckDB's `StatementPreprocessor` adds `BEGIN`/`COMMIT`
      statements around them, so `duckdb_extract_statements` counts fewer statements.
@@ -117,8 +117,12 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      numbered-property wire bytes, checked VARCHAR boundaries, keyword quoting and
      C++ formatting evidence while extending bindings and result names. Partial name
      migrations are not an accepted workspace or shell baseline.
-   - Object ids: the oid of a database (`PRAGMA database_list`'s `seq`) counts the
-     catalog entries created before it, more in DuckDB.
+   - Startup main/schema identities now match the frozen C++ values 20624/20622 across
+     independent instances, and the shell database-list case matches literal bytes.
+     Its obsolete known-difference waiver is removed. Later temporary-catalog,
+     dependency-entry and registration-order identities remain an explicit audit; see
+     `docs/catalog-oid-parity.md` and external
+     `extension-overloads-20261026/public-catalog-comparison-1.json`.
    - A `memory_limit` far below an aggregate's state (`SELECT list(i) FROM range(1e7)`
      under `1MB`) fails in DuckDB and succeeds in rustdb (4).
 
