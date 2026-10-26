@@ -676,3 +676,19 @@ complete outcomes, ratchet and post-run source/image/fixture checks must finish 
 it replaces the preserved pre-fix control. Evidence: `full-corpus-restart-1/manifest.json`
 and `restart-fixture-before-1.json`. Selected-client, ADBC and coupled performance
 acceptance remain open; no table-cache retention was added.
+
+
+## Complete signed restart corpus acceptance (2026-10-26)
+
+The new runner completes all 4,870 frozen files: **4,781 pass, 15 existing documented
+failures, 74 exact C++ skips, zero crashes and zero timeouts**. Both pre-fix regressions
+pass, and every file verdict matches the prior accepted complete run. The ratchet
+passes with 4,855 listed entries and zero regressions. Exact SQL/data file sets, all
+1,522 fixture data entries, the signed runner, reference, ratchet, 900 build-input hashes
+and all 901 archived overlay entries verify unchanged. The source overlay's Git base
+predates the subsequent documentation-only commit; build/source hashes remain stable.
+
+This accepts the current signed restart SQL checkpoint, not whole-port completion.
+Catalog identity, broader selected-client/backend contracts, final ADBC/release refresh
+and coupled speed/memory acceptance remain open. No new exception or cache was added.
+Evidence: external `full-corpus-restart-1/{terminal-summary.json,fixture-after.json,ratchet.log}`.

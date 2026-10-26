@@ -33,10 +33,12 @@ retain 90 literal matches and five differences limited to native frame bodies.
 
 Current shell verification passes 392 upstream tests with three shared skips, plus
 768 differential cases/46 PTY with zero unexpected and two documented differences.
-A new complete 4,870-file SQL corpus is **running** against the signed restart checkpoint;
-its final verdict, ratchet and post-run identities remain required. The pre-fix run had
-4,779 pass/17 fail/74 shared skips, including the two now-fixed regressions, and is not
-current-source acceptance. See [restart evidence](catalog-oid-parity.md) and external
+The new complete signed 4,870-file SQL corpus passes its scoped acceptance gate:
+**4,781 pass, 15 existing documented failures, 74 exact shared skips, no crashes/timeouts**.
+All verdicts match the prior accepted run, with zero ratchet regressions across 4,855
+entries. Source, archived overlay, fixtures, reference and signed-runner identities verify
+unchanged. Both earlier regressions pass. The pre-fix 4,779-pass run remains a preserved
+counterexample, separate from this accepted checkpoint. See [restart evidence](catalog-oid-parity.md) and external
 `shell-final-gaps-20261025/{restart-state-verification-1.json,full-corpus-restart-1/}`.
 
 Python/Swift package results below predate this core checkpoint. Final selected-client,
