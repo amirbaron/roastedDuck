@@ -781,3 +781,39 @@ verify the shared change before wider acceptance transfers. A 589-file frozen se
 covers restart directives plus settings, logging, attachment, transaction, GeoParquet and
 temporary-directory files; it is prepared, not executed or substituted for the final full
 corpus. Final release, selected clients, storage/WAL and coupled performance gates remain open.
+
+
+## Signed native main-context regression checkpoint (2026-10-26)
+
+The new shipping C API library, SQL runner and shell are frozen and strictly signed
+from the same 903 verified build inputs. The shipping library retains 547 C API exports
+and contains no ADBC test-bridge symbols. Its SHA-256 is
+`a592840eea20c71028c303c87ef361403991632f28ea11491df9f4aee27d40b3`.
+
+All 652 pinned Go cases pass with exactly the frozen C++ case IDs and verdicts. All
+30 C API files pass: 155 cases and 704,678 assertions. Runtime loader evidence verifies
+the selected immutable library for every C API executable and the Go runner. Eleven
+startup configuration controls and three main/attached database policy journeys match
+C++ exactly; the existing 49 startup controls remain exact. Three independent instance
+observations start the main catalog OID at 20539, reflecting the three real startup-client
+allocations. C++ remains at 20624: the 42 typed placeholder chains and provisional attached
+constructor identity still require their actual lifecycle implementation, not an offset.
+
+The targeted 589-file frozen SQL cohort completes with 571 passes, two existing failures
+and 16 exact C++ skips, no crashes or timeouts. Every verdict matches the prior accepted
+full-corpus checkpoint. All 903 source hashes and the complete 4,870 SQL/1,522 data fixture
+set verify unchanged. This is targeted regression evidence, not a new full-corpus gate.
+Four bidirectional native scalar-expression checkpoint/nonempty-WAL journeys pass.
+The rebuilt shell passes 392 upstream tests with the same three skips.
+
+Evidence: external `main-context-20261026/{native-images-1.json,go-comparison-1.json,
+capi-suite-1/summary.json,capi-main-policy-comparison-1.json,startup-settings-comparison-1.json,
+oids-1/results.json,targeted-sql-1/verification.json,storage-1/,shell-upstream-1/}`.
+The current Python and Swift packages predate this core stage; their results cannot be
+transferred to it without refresh. The full 768-case shell differential also completes
+with zero unexpected differences
+(two documented native-frame/catalog-OID differences); all 46 PTY cases are included.
+Harness, source and both signed binary identities verify unchanged in
+`shell-diff-1/verification.json`. Full SQL corpus, ADBC, selected clients, broad
+persistence/WAL journeys and coupled speed/memory acceptance remain open. No performance
+cache change was made.

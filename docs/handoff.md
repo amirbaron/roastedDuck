@@ -20,6 +20,28 @@ The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swi
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
 
+## Latest main-context native checkpoint (2026-10-26)
+
+Main startup now uses its actual connection, transaction and file-opener context, fixing
+main-file disabled-filesystem commit rejection/rollback. Startup rejects nine runtime-only
+settings as C++ does; opaque snapshots preserve validated allowlists separately from
+instance manager state. Startup external-access restrictions allow only the explicit
+main database and companion paths, preserving the C++ behavior.
+
+The current signed build passes 35 SDK regressions, all 652 Go cases and the C API suite's
+30 files/155 cases/704,678 assertions. Eleven startup and three database-policy controls,
+plus the existing 49 startup controls, match C++. The targeted 589-file SQL cohort retains
+every prior verdict: 571 pass, two existing failures, 16 exact C++ skips, no crashes/timeouts.
+Four native checkpoint/nonempty-WAL journeys and 392 upstream shell tests pass (three
+shared skips). All 903 source inputs and complete frozen SQL/data fixtures remain stable.
+See [main-context evidence](catalog-oid-parity.md).
+
+The full shell differential also passes all 768 cases, including 46 PTY sessions, with
+zero unexpected differences and the same two documented differences. This is a scoped
+checkpoint. Python/Swift packages predate it. Final full-corpus/client/ADBC/storage/WAL
+and coupled performance gates remain open;
+remaining catalog identity/dependency lifecycles are not waived.
+
 ## Latest restart checkpoint (2026-10-26)
 
 Configuration and client-session snapshots now preserve registered extension metadata,
