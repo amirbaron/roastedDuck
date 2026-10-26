@@ -692,3 +692,34 @@ This accepts the current signed restart SQL checkpoint, not whole-port completio
 Catalog identity, broader selected-client/backend contracts, final ADBC/release refresh
 and coupled speed/memory acceptance remain open. No new exception or cache was added.
 Evidence: external `full-corpus-restart-1/{terminal-summary.json,fixture-after.json,ratchet.log}`.
+
+
+## Main database filesystem context counterexample (2026-10-26)
+
+A paired public Python control on the current signed source-9 wheel exposes two core
+startup gaps. After opening an existing local main database, C++ rejects the first
+WAL commit after disabling LocalFileSystem and rolls back the inserted row. Rust commits
+it. The same attached-database control matches exactly after the retained-backend policy
+fix; disabling general external access still permits main-database writes on both.
+Separately, startup configuration disabled_filesystems is rejected by C++ with
+"Cannot change/set disabled_filesystems before the database is started", but Rust
+accepts it and writes. All raw rows, errors and file hashes are retained in external
+`registered-storage-20261026/main-policy-comparison-4.json` and the paired reports.
+These are open functional gaps, not accepted exceptions.
+
+The frozen source explains the missing context. DatabaseInstance::CreateMainDatabase
+constructs a real Connection, begins a transaction, calls AttachDatabase through its
+ClientContext, then commits. Rust still attaches main directly outside a connection's
+file-opener scope. Consequently its main block manager captures no live disabled-system
+registry. This is also the previously identified real startup connection lifecycle
+whose temporary catalog/schema constructors consume three instance-owned OIDs. Port
+that actual context and transaction flow; do not add unused objects or numeric offsets.
+
+The disabled-filesystem setter calls GetDB and rejects a null instance before changing
+state. Startup validation must match that behavior across configuration entry points.
+Audit related instance-dependent setters and snapshot semantics: C++ restart copies
+DBConfig options/user_settings separately from client state, so runtime registry state
+must not be blindly flattened into startup parameters. Preserve runtime SET behavior,
+configuration equality/C API caching, signed regressions and current source provenance.
+Current Python matrices are verified for the signed before-fix checkpoint; broader final
+release/corpus/client/performance acceptance remains open.
