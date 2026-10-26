@@ -861,3 +861,26 @@ real provisional identity on that object, expose it during initialization, and a
 registered identity once after storage initialization. System/temp constructor semantics
 must stay separate. Test object ordering, finalization idempotence and public attachment
 journeys; do not add discarded counter increments or placeholder objects to reach an OID.
+
+
+## Provisional attachment component checkpoint (2026-10-26)
+
+The ordinary unregistered catalog now owns a provisional identity before its main schema
+and storage initialize. Its public oid exposes that identity until final registration,
+which assigns the registered identity once; registered system/temp construction follows
+its existing separate path. No discarded allocator increments or fake catalog objects
+were added. Workspace/all-target Clippy with warnings denied passes.
+
+All 18 catalog tests pass on an immutable signed release executable, including constructor
+ordering, unchanged provisional visibility during initialization, finalization idempotence
+under concurrent calls, and the existing MVCC/default/collation/rename cases. All three
+signed SDK regressions pass on the same current source: typed core/ICU calls retain 2,953
+function rows, lazy ICU loads/delegates and respects timezone changes, and three independent
+database instances expose the frozen C++ main identity 20624. This is component evidence;
+later catalog dependency/merge allocations are still an open audit.
+
+Evidence: external `extension-overloads-20261026/{source-4/manifest.json,
+catalog-verification-1.json,sdk-verification-3.json,clippy-4-terminal.json}`. All 904 build
+input hashes and signed executable identities verify stable. The shipping native images
+are rebuilding next; public catalog observations, broad SQL/shell/selected-client/ADBC/
+storage-WAL and coupled performance gates must refresh before final acceptance.

@@ -20,6 +20,22 @@ The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swi
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
 
+## Latest catalog component checkpoint (2026-10-26)
+
+The working tree now registers 214 typed extension overloads across 42 real scalar sets
+before ordinary built-ins, with provider loading and delegation at bind time. Ordinary
+attached catalogs expose their real provisional identity during initialization, followed
+by once-only registered identity assignment. No numeric offsets or dummy objects were
+introduced. All 18 signed catalog unit tests and three signed SDK tests pass; three
+independent main databases expose the frozen C++ identity 20624, real date/list calls work,
+and lazy ICU loading preserves timezone behavior. Workspace/all-target Clippy passes.
+
+This is component evidence. Shipping CLI/SQL-runner/C API images are rebuilding;
+prior full shell, Go, C API and Python checkpoints below predate this catalog stage.
+Later dependency/merge lifecycles and final SQL/shell/selected-client/ADBC/storage-WAL/
+coupled-performance gates remain open. See [catalog evidence](catalog-oid-parity.md) and
+external `extension-overloads-20261026/{catalog-verification-1.json,sdk-verification-3.json}`.
+
 ## Latest main-context native checkpoint (2026-10-26)
 
 Main startup now uses its actual connection, transaction and file-opener context, fixing
