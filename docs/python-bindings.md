@@ -1671,3 +1671,36 @@ The next source stage removes the WAL's unused read-open flag, matching the froz
 Clippy passes, source snapshot 5 is archived and Python wheel 2 is building. Public
 installed-package policy/flag/recovery controls and final full-release gates remain open;
 the seven SDK results above refer specifically to source snapshot 4.
+
+
+## Signed policy closure and registered recovery controls (2026-10-26)
+
+Source-5 signed wheel 2 installs with the pinned dependencies, a verified native hash
+and exactly one loaded engine. All four public Python storage/policy controls now match
+C++ in return values, errors, rows and exported file sets. Disabling the backend rejects
+the commit before a WAL callback, general external-access disablement still permits
+writes to the attached database, and a new WAL opens with `wb`. The ordinary database
+and nonempty WAL bytes match C++ for the three-row integer/string fixture. Backend magic
+read counts remain separately visible. Receipt: external
+`registered-storage-20261026/package-verification-2.json`.
+
+Three of four registered-backend checkpoint/WAL receiver-write/readback journeys pass
+completely. The Rust-to-C++ nonempty-WAL journey reads and writes all rows in the C++
+receiver but loses the earlier WAL row in its durable snapshot. An independent C++-only
+replay/write/readback control reproduces the same loss: its existing WAL opens with
+`wb`, replacing the earlier commit. The Rust-only control retains both commits. This is
+an unaccepted reference durability defect, not a passing four-journey gate; no checkpoint
+was inserted to hide it, and Rust's non-truncating existing-WAL behavior is preserved.
+All raw snapshots, requested modes, queries and stage outcomes remain in
+`registered-interop-verification-1.json` and `registered-self-recovery-1-index.json`.
+The earlier independent C++ post-unregister crash remains separately recorded.
+
+Further paired controls expose a distinct Rust classification gap: C++ can explicitly
+READ_WRITE-attach registered CSV/JSON/Parquet files as virtual databases, while Rust
+attempts to open database blocks. Automatic remote attachment gives C++'s read-only
+in-memory catalog error. Source snapshot 6 now routes the magic-byte read through the
+registered filesystem, preserves the URI for virtual views and applies the same automatic
+access-mode rule. Permission checks precede callbacks. Workspace/all-target Clippy passes;
+an eighth SDK regression covers all three formats, both virtual-view names and metadata.
+Its signed executable is building; fresh Python and broader final acceptance remain open.
+Evidence: `attach-data-{1,2}-index.json`, the paired reports and `source-6/manifest.json`.
