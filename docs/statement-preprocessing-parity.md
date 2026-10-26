@@ -72,3 +72,25 @@ synthetic BEGIN and CREATE, fails preparing COPY, verifies that the transaction 
 active/aborted, then verifies that the owning query observes the abort and rolls back.
 All 15 current tests and all 908 source hashes verify unchanged. Shipping native build 2
 is running; the seven public C API journeys must refresh before closure is accepted.
+
+
+## Signed public ownership refresh (2026-10-27)
+
+Shipping build 2 completes successfully. Its immutable library SHA-256 is
+`38603874f849b13c24ee23ec8cd6107294860c602bda19d63d3ad87bf8df622a`; all 547 C API
+exports remain and no ADBC test-bridge symbol is present. All 908 source hashes and
+strict image signatures verify unchanged.
+
+The refreshed public C API now matches C++ in all five extraction contexts and all seven
+step-by-step prepare/execute journeys. This includes implicit/active/chained success,
+implicit/active bind failures and implicit/active COPY data failures. Statement types,
+error text, rows, transaction aborts and rollback outcomes agree after mapping only each
+case's known fixture-directory root. The previously failing prepare-owner case now agrees;
+its old mismatch remains preserved as the negative control.
+
+Evidence: external `import-preprocessing-20261027/{native-images-2.json,
+public-import-2-index.json,public-import-comparison-2.json}`. The fresh Python wheel is
+building to refresh registered-memory imports and policy behavior through the installed
+binding. Broader SQL/shell/C API/ADBC/Go/Swift, selected Python matrices, storage/WAL and
+coupled performance acceptance still remain; this public gate is scoped to import
+preprocessing and its transaction ownership.

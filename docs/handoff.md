@@ -30,10 +30,11 @@ cases pass (six import/preprocessing and nine registered storage), including raw
 and implicit/explicit failure atomicity. Source 4 has 908 verified inputs in a complete
 909-entry overlay. See [statement preprocessing evidence](statement-preprocessing-parity.md).
 
-The first public C API refresh matches all five extraction counts. Six of seven execution
-journeys match; one exposed prepare-versus-query rollback ownership. The corrected source
-passes its new signed regression, and shipping images are rebuilding for the public
-refresh. Python registered-import controls also remain required before closure. The
+The second signed shipping refresh now matches C++ in all five public extraction contexts
+and all seven step-by-step prepare/execute journeys, including the prepare-versus-query
+rollback distinction. All 908 source hashes and selected signed native images verify.
+The fresh Python wheel is building; registered-import controls through that binding and
+broader current-source regression gates still remain. The
 broader final corpus/shell/selected-client/ADBC/storage-WAL and coupled performance gates
 remain open. No cache policy changed.
 
