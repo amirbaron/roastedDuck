@@ -1656,3 +1656,18 @@ Clippy passes. A new seven-case signed SDK executable is building; fresh install
 and paired policy validation are still required. The earlier five-case SDK/source-3 wheel
 results remain scoped to their immutable images. Full release/engine/client/ADBC and
 coupled performance acceptance remain open.
+
+
+The policy-fix checkpoint now passes all seven signed SDK regressions. It rejects a newly
+opened WAL after disabling its retained backend before any backend callback, reports the
+same transaction-error message as C++, and rolls back the row. Turning off general
+external access after attachment still permits the write and creates a nonempty WAL.
+All 902 build-input hashes, the native executable hash/signature and workspace/all-target
+Clippy verify. Receipt: external `registered-storage-20261026/sdk-verification-4.json`.
+
+The next source stage removes the WAL's unused read-open flag, matching the frozen C++
+`WriteAheadLog::Initialize` write/create/append intent and requesting `wb` rather than
+`wb+` for newly created Python WAL files. Existing WAL opens remain non-truncating.
+Clippy passes, source snapshot 5 is archived and Python wheel 2 is building. Public
+installed-package policy/flag/recovery controls and final full-release gates remain open;
+the seven SDK results above refer specifically to source snapshot 4.
