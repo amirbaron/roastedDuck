@@ -39,6 +39,10 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      fails opening schema.sql locally on the preserved signed main-context Rust wheel.
      This before-fix package control is separate from current catalog package acceptance:
      `import-preprocessing-20261027/registered-import-before-1-index.json`.
+     The implementation now passes 14 signed component tests for actual expansion,
+     implicit rollback, active-transaction invalidation, snapshot/reset lifetimes and
+     registered byte-valued imports. Fresh shipping C API/Python controls remain required
+     before closure; see `docs/statement-preprocessing-parity.md`.
 17. **Complete language clients.** Owner-confirmed scope (2026-10-25): Python, Go
    and Swift only. Preserve existing C API and ADBC functionality; other language
    clients are outside this goal. Inventory the versioned API surfaces and packages,

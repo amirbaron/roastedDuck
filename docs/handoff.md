@@ -20,6 +20,21 @@ The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swi
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
 
+## Latest import/preprocessing component checkpoint (2026-10-27)
+
+The working implementation now expands actual import/PRAGMA statements with C++ transaction
+wrapping and invalidation, and reads export files through local or registered filesystems
+without losing path/name bytes. Runtime rollback, policy setting/reset and validated config
+snapshot lifetimes are implemented. Workspace/all-target Clippy passes; all 14 signed SDK
+cases pass (five import/preprocessing and nine registered storage), including raw-byte names
+and implicit/explicit failure atomicity. Source 4 has 908 verified inputs in a complete
+909-entry overlay. See [statement preprocessing evidence](statement-preprocessing-parity.md).
+
+Shipping images are rebuilding. The preserved public C API/Python counterexamples below
+must be refreshed against them before these functional gaps are accepted as closed. The
+broader final corpus/shell/selected-client/ADBC/storage-WAL and coupled performance gates
+remain open. No cache policy changed.
+
 ## Current next functional gap (2026-10-27)
 
 The expanded signed current-core SQL cohort is verified: 785 exact files, 767 passes,
