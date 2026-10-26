@@ -39,7 +39,7 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      fails opening schema.sql locally on the preserved signed main-context Rust wheel.
      This before-fix package control is separate from current catalog package acceptance:
      `import-preprocessing-20261027/registered-import-before-1-index.json`.
-     The implementation now passes 14 signed component tests for actual expansion,
+     The implementation now passes 15 signed component tests for actual expansion,
      implicit rollback, active-transaction invalidation, snapshot/reset lifetimes and
      registered byte-valued imports. Fresh shipping C API/Python controls remain required
      before closure; see `docs/statement-preprocessing-parity.md`.

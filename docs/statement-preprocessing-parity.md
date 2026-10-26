@@ -1,6 +1,7 @@
 # Statement preprocessing and import parity
 
-Current component checkpoint: 2026-10-27. Shipping/native and Python verification is pending.
+Current component checkpoint: 2026-10-27. Source 5 passes 15 signed tests; the
+shipping/public ownership refresh and Python verification remain pending.
 
 The frozen C++ C API exposes real import statements and transaction handling. A one-table
 export (CREATE TABLE plus COPY) produces four extracted statements, versus one on the
@@ -28,24 +29,26 @@ reader serves direct statement execution. No file snapshot cache or table-block 
 was added.
 
 TransactionInfo's invalidation and automatic-rollback flags now reach transaction execution.
-Client binding/registration/appender operations apply the same policy and clean up rolled
-back attachments. Closing an unread result still respects its explicit no-invalidation
+Client binding/registration/appender operations invalidate a failed synthetic transaction
+without taking over its query owner's rollback. Query execution handles automatic rollback
+and cleans up rolled-back attachments. Closing an unread result still respects its explicit no-invalidation
 path. The runtime policy setter/reset changes the active transaction; fresh startup policy
 assignments reject C++'s exact context-required message. Validated config snapshots retain
 the stored policy value separately from live transaction state. A signed C++ control copying
 DBConfig options/user_settings proves that the value survives while a fresh BEGIN uses
 standard error behavior (`cpp-policy-snapshot-verification.json`).
 
-Workspace/all-target Clippy with warnings denied passes. Fourteen signed release tests
-pass on immutable executables: five import/preprocessing cases and all nine registered
-storage cases. They cover extracted statement shape, successful COPY/commit, rollback of
+Workspace/all-target Clippy with warnings denied passes. The initial source-4 checkpoint passes 14 signed release tests. After the public ownership
+control below exposed a prepare/query distinction, current source 5 passes all 15 cases:
+six import/preprocessing and nine registered-storage tests. They cover extracted statement shape, successful COPY/commit, rollback of
 created objects on an implicit bind failure, explicit-transaction abort versus ordinary
 non-invalidating errors, startup/snapshot/reset lifetimes, and registered schema/load/CSV
 files with a raw-byte table name. All 908 source hashes, executable hashes, case IDs and
 strict signatures verify unchanged.
 
 Evidence: external `import-preprocessing-20261027/{source-4/manifest.json,
-sdk-verification-1.json,clippy-4-terminal.json}`. Source 4 is the first complete overlay;
+sdk-verification-2.json,clippy-5-terminal.json}`. The current source snapshot is
+`source-5/manifest.json`; source 4 remains the initial complete before-ownership-fix stage. Source 4 is the first complete overlay;
 earlier draft overlays are explicitly excluded from release provenance. The new shipping
 images are rebuilding. Public C API counts/execution, Python registered imports and policy
 controls, broader SQL/shell/selected-client/ADBC/storage-WAL and coupled speed/memory gates
@@ -62,3 +65,10 @@ active-transaction cases already agree. Preserve this distinction between client
 and query execution before closing the gap. Evidence:
 `import-preprocessing-20261027/public-import-comparison-1.json`; the source-4 shipping
 library SHA is `47944c2d842c7c7174afb07bfb78cf14e5b79be336c112129f4f46b9ade35c12`.
+
+
+The ownership correction now has a signed SDK regression that prepares/executes the
+synthetic BEGIN and CREATE, fails preparing COPY, verifies that the transaction is still
+active/aborted, then verifies that the owning query observes the abort and rolls back.
+All 15 current tests and all 908 source hashes verify unchanged. Shipping native build 2
+is running; the seven public C API journeys must refresh before closure is accepted.

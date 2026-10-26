@@ -25,13 +25,15 @@ are outside this goal. `docs/language-bindings.md` records the current scope.
 The working implementation now expands actual import/PRAGMA statements with C++ transaction
 wrapping and invalidation, and reads export files through local or registered filesystems
 without losing path/name bytes. Runtime rollback, policy setting/reset and validated config
-snapshot lifetimes are implemented. Workspace/all-target Clippy passes; all 14 signed SDK
-cases pass (five import/preprocessing and nine registered storage), including raw-byte names
+snapshot lifetimes are implemented. Workspace/all-target Clippy passes; all 15 signed SDK
+cases pass (six import/preprocessing and nine registered storage), including raw-byte names
 and implicit/explicit failure atomicity. Source 4 has 908 verified inputs in a complete
 909-entry overlay. See [statement preprocessing evidence](statement-preprocessing-parity.md).
 
-Shipping images are rebuilding. The preserved public C API/Python counterexamples below
-must be refreshed against them before these functional gaps are accepted as closed. The
+The first public C API refresh matches all five extraction counts. Six of seven execution
+journeys match; one exposed prepare-versus-query rollback ownership. The corrected source
+passes its new signed regression, and shipping images are rebuilding for the public
+refresh. Python registered-import controls also remain required before closure. The
 broader final corpus/shell/selected-client/ADBC/storage-WAL and coupled performance gates
 remain open. No cache policy changed.
 
