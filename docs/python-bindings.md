@@ -1569,3 +1569,29 @@ Decimal raw outcomes, typing outputs and persistence artifacts. This is current 
 verification. It does not waive unresolved unsafe/unstable CPP reference outcomes or
 complete broader signature/lifetime/nonfast/configured extension/backend/platform and
 whole-port coupled performance acceptance gates.
+
+
+## Registered database-storage reference calibration (2026-10-26)
+
+A new isolated control confirms that C++ supports database reads through a registered
+fsspec backend using a recognized remote prefix. A local in-memory test backend handles
+`s3://` without network access: automatic and explicit READ_ONLY attachment both return
+all three fixture rows, retain the remote path in catalog metadata and preserve source
+bytes. Missing remote databases report read-only absence, and disabled-filesystem checks
+report permission errors. The backend itself rejects C++'s `rb+` mode for the two explicit
+read-write cases; those are backend capability observations, not engine acceptance.
+
+The historical signed Rust Python package fails these attachments after canonicalizing
+the URI into a local path. Current source still uses local OS files for block storage
+and WAL. This establishes an implementation audit, not current-package test acceptance;
+the Python image predates the latest accepted restart core checkpoint. A fresh package
+and real storage-path verification remain required. Streaming CSV/JSON/Parquet coverage
+does not close this database-storage gap.
+
+One separate C++ subprocess segfaults when querying an attached registered database after
+unregistering and garbage-collecting its backend. The raw fatal trace and started-case
+receipt are retained. This reference lifetime failure is unaccepted and must not be
+reproduced in Rust. The first combined probe and initial prefix-calibration failures
+also remain preserved; isolation gives seven normal exits and that one signal-11 exit.
+Evidence: external `registered-storage-20261026/{calibration-1.json,cpp-s3-isolated-index.json,
+rust-prior-s3-isolated-index.json}`, probe snapshots and per-case logs.
