@@ -622,3 +622,24 @@ option definitions without module loading, local/global isolation, search-path r
 callback lifetime, reset propagation and the disabled temp path. Workspace/all-target
 checking and Clippy pass; the first Clippy run's doc-markdown issue was corrected. Signed
 runtime and frozen SQL rechecks remain pending for this implementation.
+
+
+The first signed restart SDK executable passes all four new regressions. Retained
+extension definitions/global values survive independently from client overrides;
+callback lifetime survives closure of the original instance without revalidation;
+search paths restore; explicit resets reach untouched/new connections and configuration
+snapshots; NULL temp_directory reports an empty disabled path. The fresh-config
+negative control still rejects an extension startup option with autoload disabled.
+Receipt: restart-sdk-terminal-1.json and restart-sdk-run-1.log. A new SQL runner/native
+build is in progress for the two exact frozen failing files and public C API controls.
+
+
+The new signed runner passes both exact frozen regression files unchanged. The broader
+421-file cohort completes with 409 pass, two previously documented failures and ten exact
+C++-matching skips; every verdict matches the earlier accepted complete run. This includes
+all selected files containing restart directives plus settings, GeoParquet and temporary
+storage cases. Changed-source and signed-runner hashes remain stable. The public C API
+reset control now matches C++ on all three connections (14,14,14 after reset), versus the
+preserved pre-fix 14,2,2. Evidence: restart-regressions-1, restart-related-1/verification.json,
+and global-reset-rust-after-1.json. Fresh broad clients and a complete corpus run are still
+required before transferring whole-source acceptance.
