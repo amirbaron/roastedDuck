@@ -1621,6 +1621,11 @@ Python-wheel or complete engine acceptance.
 
 A follow-up preserves callback error types/subtypes/metadata through standard streams,
 retains local permission errors on missing-file checks, and validates partial I/O counts.
-Workspace/all-target Clippy passes with warnings denied. Source snapshot 3 and a fifth SDK
-regression cover this follow-up; its signed runtime check is still pending. Fresh Python,
-full SQL/shell/native client/ADBC and coupled performance gates remain required.
+Workspace/all-target Clippy passes with warnings denied. The signed executable from
+source snapshot 3 passes all five SDK tests, including exact callback error equality and
+partial I/O in every database/WAL journey. All 902 build-input hashes and the signed
+executable identity verify unchanged. Evidence: external
+`registered-storage-20261026/sdk-verification-3.json`. The current Python release wheel
+is building; fresh full SQL/shell/native client/ADBC and coupled performance gates remain
+required. Live policy changes after attachment and broader backend capabilities still
+need paired public-client controls.
