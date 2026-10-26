@@ -60,3 +60,10 @@ found only assert_is_empty in the new unit test; the assertion is rewritten as s
 with no production change. Receipt verification-2.json preserves both the executed binary/
 source checkpoint and that test-only follow-up. Next investigate OID allocation through
 public multi-instance/catalog lifecycle controls before changing catalog implementation.
+
+
+The 2026-10-27 typed-placeholder/provisional-attachment checkpoint closes the specific
+PRAGMA database_list difference: a signed literal differential run returns 20624 and
+matches C++ bytes exactly. Its obsolete known-difference allowance is removed next.
+This does not waive later catalog identity differences or claim a new full shell gate.
+Evidence: external `extension-overloads-20261026/shell-catalog-startup-1/`.

@@ -884,3 +884,29 @@ catalog-verification-1.json,sdk-verification-3.json,clippy-4-terminal.json}`. Al
 input hashes and signed executable identities verify stable. The shipping native images
 are rebuilding next; public catalog observations, broad SQL/shell/selected-client/ADBC/
 storage-WAL and coupled performance gates must refresh before final acceptance.
+
+
+## Public typed-placeholder/attachment checkpoint (2026-10-27)
+
+The rebuilt immutable shipping images verify all 904 build inputs unchanged and retain
+547 C API exports with no ADBC test-bridge symbols. The library SHA-256 is
+`1873e77f7da3ef88fdc0b36260dc41888752979f218f3ce31d5ddd2373b91ea1`.
+Fresh separate C++/Rust C API probes verify actual loaded images and show identical main
+identity 20624 and main-schema identity 20622 across three independent instances. All
+2,953 function name/type rows and per-name/type counts agree. Later identities remain
+explicit differences: the temporary catalog is 22041 versus C++ 22064, and subsequent
+user DDL has dependency-entry lifecycle differences. Registration order also differs for
+built-in table functions and parts of JSON/ICU. Every raw observation and per-function
+identity delta is retained; these are open audits, not waived numeric parity.
+
+All 652 pinned Go cases pass with exactly the frozen C++ case IDs and verdicts. All 30
+C API files pass: 155 cases and 743,370 assertions, with each executable's selected library,
+hashes and strict signatures verified. Four native bidirectional scalar-expression
+checkpoint/nonempty-WAL journeys pass on the same image. The formerly differing shell
+PRAGMA database_list case now matches literally with --show (no known-difference
+allowance); its obsolete waiver will be removed to enforce that result.
+
+Evidence: external `extension-overloads-20261026/{native-images-1.json,
+public-catalog-comparison-1.json,go-comparison-1.json,capi-suite-1/summary.json,
+storage-1/summary.json,shell-catalog-startup-1/}`. Broader current-source full SQL/shell,
+selected Python/Swift/native ADBC and storage/WAL/performance acceptance remain open.

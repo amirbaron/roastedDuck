@@ -30,8 +30,13 @@ introduced. All 18 signed catalog unit tests and three signed SDK tests pass; th
 independent main databases expose the frozen C++ identity 20624, real date/list calls work,
 and lazy ICU loading preserves timezone behavior. Workspace/all-target Clippy passes.
 
-This is component evidence. Shipping CLI/SQL-runner/C API images are rebuilding;
-prior full shell, Go, C API and Python checkpoints below predate this catalog stage.
+The new shipping images are signed and immutable. Fresh public probes confirm main
+20624/schema20622 on three instances and all 2,953 function name/type rows. Go 652 cases,
+C API 30 files/155 cases/743,370 assertions and four native scalar checkpoint/WAL journeys
+pass on the selected image. The shell PRAGMA database_list case now matches literally;
+its obsolete OID waiver is being removed. Other identities still differ, including the
+temporary catalog and dependency-created entries. Prior full SQL/shell and Python/Swift
+checkpoints below predate this stage.
 Later dependency/merge lifecycles and final SQL/shell/selected-client/ADBC/storage-WAL/
 coupled-performance gates remain open. See [catalog evidence](catalog-oid-parity.md) and
 external `extension-overloads-20261026/{catalog-verification-1.json,sdk-verification-3.json}`.
