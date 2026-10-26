@@ -817,3 +817,20 @@ Harness, source and both signed binary identities verify unchanged in
 `shell-diff-1/verification.json`. Full SQL corpus, ADBC, selected clients, broad
 persistence/WAL journeys and coupled speed/memory acceptance remain open. No performance
 cache change was made.
+
+
+## Next core stage: typed extension placeholders
+
+The frozen `BuiltinFunctions::Initialize` registers its three collations, then
+`RegisterExtensionOverloads`, before the generated ordinary function list. The overload
+records are grouped by name and provider into actual internal scalar function sets, each
+with its declared argument/return types and a bind callback. The callback loads its
+provider, resolves the real overload by the placeholder's declared arguments, replaces
+the bound descriptor, and delegates to that implementation's bind callback.
+
+Port these entries from `EXTENSION_FUNCTION_OVERLOADS` in the frozen source, including
+multiline records. Preserve source order, real ordinary catalog chains, extension merge
+semantics and bind-time behavior when ordinary extension loading is disabled. Validate
+actual calls, visible metadata and retained entry versions; numeric identity improvement
+alone is insufficient. Existing signed main-context images remain the before-stage
+controls. No placeholder implementation or acceptance is claimed by this planning note.
