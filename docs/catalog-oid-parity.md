@@ -910,3 +910,15 @@ Evidence: external `extension-overloads-20261026/{native-images-1.json,
 public-catalog-comparison-1.json,go-comparison-1.json,capi-suite-1/summary.json,
 storage-1/summary.json,shell-catalog-startup-1/}`. Broader current-source full SQL/shell,
 selected Python/Swift/native ADBC and storage/WAL/performance acceptance remain open.
+
+
+## Expanded current-core SQL checkpoint (2026-10-27)
+
+The signed SQL runner completes the expanded 785-file cohort with 767 passes, two existing
+failures, 16 exact C++ skips, and no crashes/timeouts. This includes the prior restart/
+settings/storage selection plus all frozen catalog/date/timestamp/interval/collation and
+ICU-named files. Every verdict matches the prior accepted full-corpus checkpoint. All
+904 build inputs, signed runner/reference identities, and full 4,870 SQL/1,522 data fixture
+sets verify unchanged. Evidence: external
+`extension-overloads-20261026/targeted-sql-1/verification.json`. This is a targeted gate,
+not final whole-corpus acceptance.

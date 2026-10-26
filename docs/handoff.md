@@ -20,6 +20,22 @@ The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swi
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
 
+## Current next functional gap (2026-10-27)
+
+The expanded signed current-core SQL cohort is verified: 785 exact files, 767 passes,
+two existing failures, 16 exact C++ skips, no crashes/timeouts, and every verdict unchanged.
+Source, images and complete SQL/data fixtures verify stable. Go 652/C API 155 and the four
+native scalar checkpoint/WAL journeys below remain current for this source.
+
+A fresh paired C API probe verifies an open import-extraction gap: one-table imports expose
+four statements on C++ versus one on Rust; chained/repeated imports are 6/8 versus 3/2,
+and active transactions also differ. Identical schema/load/CSV fixtures and native image
+identities are preserved under `extension-overloads-20261026/import-extract-before-1-*`.
+Port actual preprocessing, transaction wrappers/invalidation and import file expansion,
+preserving byte-valued paths and checking registered-backend access and rollback. This
+is next functional work; later numeric dependency/registration-order audits remain separate.
+No final release/client/corpus/storage/performance completion is claimed.
+
 ## Latest catalog component checkpoint (2026-10-26)
 
 The working tree now registers 214 typed extension overloads across 42 real scalar sets

@@ -27,9 +27,14 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      client verification; Python's producer tests alone do not close this gate.
    - Result Arrow settings snapshots are implemented and covered by the current signed
      30-file/155-case C API checkpoint; preserve that behavior in the final release gate.
-   - `parse_statements` hands a PRAGMA's expansion of several statements out as one
-     multi-statement, where DuckDB's `StatementPreprocessor` adds `BEGIN`/`COMMIT`
-     statements around them, so `duckdb_extract_statements` counts fewer statements.
+   - Multi-statement PRAGMA extraction is a verified current functional gap. A real
+     one-table import reports four extracted statements on C++ versus one on Rust;
+     chained/repeated contexts are 6/8 versus 3/2. Active-transaction imports also differ.
+     Port `StatementPreprocessor` transaction wrapping/invalidation and actual import
+     expansion; preserve raw file/name bytes and validate registered filesystem access,
+     atomic rollback and statement-object/ADBC behavior. Do not merely adjust a count.
+     Frozen paired C API counterexamples and identical export fixtures:
+     `extension-overloads-20261026/import-extract-before-1-comparison.json`.
 17. **Complete language clients.** Owner-confirmed scope (2026-10-25): Python, Go
    and Swift only. Preserve existing C API and ADBC functionality; other language
    clients are outside this goal. Inventory the versioned API surfaces and packages,
