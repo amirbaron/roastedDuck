@@ -35,6 +35,10 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      atomic rollback and statement-object/ADBC behavior. Do not merely adjust a count.
      Frozen paired C API counterexamples and identical export fixtures:
      `extension-overloads-20261026/import-extract-before-1-comparison.json`.
+     A paired registered-memory filesystem import also succeeds on frozen C++ but
+     fails opening schema.sql locally on the preserved signed main-context Rust wheel.
+     This before-fix package control is separate from current catalog package acceptance:
+     `import-preprocessing-20261027/registered-import-before-1-index.json`.
 17. **Complete language clients.** Owner-confirmed scope (2026-10-25): Python, Go
    and Swift only. Preserve existing C API and ADBC functionality; other language
    clients are outside this goal. Inventory the versioned API surfaces and packages,
