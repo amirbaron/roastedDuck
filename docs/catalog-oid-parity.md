@@ -723,3 +723,42 @@ must not be blindly flattened into startup parameters. Preserve runtime SET beha
 configuration equality/C API caching, signed regressions and current source provenance.
 Current Python matrices are verified for the signed before-fix checkpoint; broader final
 release/corpus/client/performance acceptance remains open.
+
+
+## Real main startup client and startup-setting layers (2026-10-26)
+
+The working implementation now creates the actual startup connection, begins its
+transaction, uses its file-opener scope for main type detection/attachment and default
+database assignment, and commits before releasing that client. Ordinary static extensions
+still load afterward in the frozen order. This supplies the main block manager with the
+live disabled-filesystem registry and consumes only the real temporary catalog/schema
+identities. No allocator offset or discarded placeholder object was introduced.
+
+Paired startup controls establish nine instance-dependent setters that C++ rejects before
+startup: disabled_filesystems, enable_logging, logging_mode, logging_level, logging_storage,
+enabled_log_types, disabled_log_types, allowed_paths and allowed_directories. Fresh Rust
+configuration setters and direct Config option vectors now reject them with the matching
+message. Config structure/equality and C API cache keys remain unchanged.
+
+A separately compiled, signed C++ control copies exactly DBConfig options/user_settings,
+as RestartCommand does. It proves that logging and disabled-filesystem managers reset,
+while path allowlists persist and still permit the allowed CSV after external access is
+disabled. Rust's opaque configuration snapshot now retains those validated database
+options separately from fresh setter assignments; instance manager state is not replayed
+as startup configuration. Client session restoration remains a separate layer.
+
+The initial main path, its WAL/checkpoint/recovery paths and its configured temporary
+directory are explicitly allowlisted when startup external access is false, matching
+Configure. This preserves main database and main CSV access without granting general
+external access. The disabled_filesystems getter exposes C++'s empty value while registry
+policy remains enforced independently.
+
+Workspace/all-target Clippy passes. Four signed focused SDK regressions pass, covering
+main-file rejection/rollback, nine runtime-only startup settings through setter/direct
+configuration, mixed snapshot lifetimes with session restoration, and existing/new main
+DB plus CSV access with external access disabled. Source and signed-image hashes remain
+stable. The broader settings/persistence/registered-storage/restart SDK build is active;
+public Python/C API/Go controls and current numeric OID observations still require refresh.
+Evidence: external `main-context-20261026/{sdk-verification-1.json,source-1/manifest.json,
+cpp-snapshot-state-terminal.json,startup-runtime-before-index.json}`. The whole port goal
+and final signed release/corpus/client/performance gates remain open.
