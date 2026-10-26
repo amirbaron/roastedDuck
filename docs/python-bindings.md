@@ -1629,3 +1629,30 @@ executable identity verify unchanged. Evidence: external
 is building; fresh full SQL/shell/native client/ADBC and coupled performance gates remain
 required. Live policy changes after attachment and broader backend capabilities still
 need paired public-client controls.
+
+
+## Signed Python storage control and live-policy regression (2026-10-26)
+
+The source-3 release wheel builds and its separate signed copy installs with the exact
+30 pinned dependencies. Installed native SHA `cbe3581fd7a3f912a5a03934ba51baea4aa938484ed87071ca682f52dcf9d12f`
+passes strict signature and single-loaded-engine verification. Paired isolated public
+Python controls now complete registered-backend writes, checkpoint/reopen and writes to
+an already attached database after disabling general external access. The ordinary
+nonempty WAL and database files are byte-identical to C++ for this fixture.
+
+The controls expose a real remaining policy regression: disabling the registered backend
+after attachment makes C++ reject the next commit before opening its WAL, but Rust still
+opens/writes the WAL and returns success. The raw rows and file snapshots remain preserved;
+this is not accepted as parity. Backend open-call counts/modes also remain separately
+recorded rather than normalized away. Evidence: external
+`registered-storage-20261026/{wheel-manifest-1.json,identity-1.json,write-policy-comparison-1.json}`
+and all per-engine/per-case logs and file snapshots.
+
+The current working source retains the live disabled-filesystem registry with storage and
+checks it for new backend file operations, including after attachment or registry removal.
+It deliberately separates that policy from general external access, which C++ permits
+turning off while continuing writes to an already attached database. Workspace/all-target
+Clippy passes. A new seven-case signed SDK executable is building; fresh installed-wheel
+and paired policy validation are still required. The earlier five-case SDK/source-3 wheel
+results remain scoped to their immutable images. Full release/engine/client/ADBC and
+coupled performance acceptance remain open.
