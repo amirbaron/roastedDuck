@@ -1595,3 +1595,32 @@ reproduced in Rust. The first combined probe and initial prefix-calibration fail
 also remain preserved; isolation gives seven normal exits and that one signal-11 exit.
 Evidence: external `registered-storage-20261026/{calibration-1.json,cpp-s3-isolated-index.json,
 rust-prior-s3-isolated-index.json}`, probe snapshots and per-case logs.
+
+
+## Registered database and WAL implementation (2026-10-26)
+
+Database storage now retains its registered filesystem independently of the registry.
+Positional block I/O, WAL append/sync/truncate, checkpoint-WAL rename/removal and recovery
+merge operations route through retained handles. Local files retain their OS positional
+reads and vectored writes. Explicit open flags distinguish reads, non-truncating writes,
+creation and truncation; Python callbacks translate these modes without turning a WAL
+reopen into truncation. This does not add whole-file snapshots or a block cache.
+
+Recognized remote database paths retain URI canonicalization and default to read-only
+attachment. Registered write access now uses the backend's permission checks instead of
+requiring HTTPFS. The first signed SDK control exposed that write-guard bug before any
+fixture could be created; its failing executable and logs remain intact.
+
+The second signed SDK executable passes four real database regressions: default read-only
+attachment with backend ownership after unregister/collection, checkpoint and committed
+nonempty-WAL replay, WAL creation after unregister, torn-WAL truncation before receiver
+writes, and disabled-filesystem rejection before callbacks. Source snapshot 2 records
+that exact stage. Evidence: external `registered-storage-20261026/{sdk-run-2-terminal.json,
+sdk-run-2.log,source-2/manifest.json}`. These native SDK checks do not yet establish current
+Python-wheel or complete engine acceptance.
+
+A follow-up preserves callback error types/subtypes/metadata through standard streams,
+retains local permission errors on missing-file checks, and validates partial I/O counts.
+Workspace/all-target Clippy passes with warnings denied. Source snapshot 3 and a fifth SDK
+regression cover this follow-up; its signed runtime check is still pending. Fresh Python,
+full SQL/shell/native client/ADBC and coupled performance gates remain required.
