@@ -262,3 +262,27 @@ query-owned rollback after a failed extracted prepare.
 
 The current full 4,870-file corpus is running. This gate does not establish final whole-port
 performance, other platforms, or all broader client/backend/lifetime coverage.
+
+## Source-8 full native checkpoint (2026-10-27)
+
+Fresh native Rust and C++ runs pass all 64 frozen upstream cases and 3,040
+assertions each, with identical ordered case IDs and adapted-source hashes.
+The harness records actual native loader paths and checks exactly one selected
+engine before and after execution. Every upstream assertion is retained; only
+two private helper bodies and one private autocommit read use the recorded test
+bridge adaptation. Feature-enabled all-target Clippy passes with warnings denied.
+
+The bridge-enabled Rust image is copied and signed separately. Before either
+harness runs, the default shipping library is restored, signed and verified at
+547 C API exports with zero test hooks. The immutable shipping image remains
+unchanged; the post-run audit repeats those checks. Test-only bridge symbols
+are never added to the shipped Python module or Swift distribution.
+
+Evidence: external `batch-copy-memory-20261027/adbc-native-1/{verification.json,
+shipping-verification.json,test-lib-manifest.json,runner-manifest.json,
+runner-adaptation.patch,clippy-terminal.json,rust-suite/test.log,cpp-suite/test.log}`.
+The shipping library SHA-256 is
+`2c96baa818920f6be19daaebea5ed3e3cbcf833a0a308139329ff0184bebca0c`.
+Installed Python/ADBC handoffs on Arrow 19/21 also pass with one Rust image each;
+these package receipts remain separate from the native 64-case gate. Broader
+applicable platform/version matrices and whole-goal final acceptance remain open.
