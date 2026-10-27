@@ -50,8 +50,11 @@ A fresh public hash audit confirms all 30 VARIANT control expressions still diff
 from C++. Frozen C++ recursively combines nested STRUCT fields and folds LIST/ARRAY
 children into the existing seed; Rust currently reduces nested fields first and
 combines once. Follow `docs/nested-hash-parity.md` and external
-`nested-hash-parity-20261027/before-manifest.json`. This is next correctness work.
-Do not run redundant final-artifact gates on the encryption image before resolving
+`nested-hash-parity-20261027/before-manifest.json`. The working nested-combine fix now passes workspace/all-target checking,
+Clippy and all 25 signed row-layer unit tests. Its release SDK test is building
+against 48 frozen C++ controls across constant/stored/selected and multi-argument
+hashes. Source2 has 906 overlay files/905 inputs (Python bytecode caches excluded).
+This component remains under verification. Do not run redundant final-artifact gates on the encryption image before resolving
 this confirmed core gap. Final performance acceptance still remains required.
 
 ## Current integrated checkpoint and active full corpus (2026-10-27)
