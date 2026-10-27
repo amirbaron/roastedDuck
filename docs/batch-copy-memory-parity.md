@@ -269,3 +269,18 @@ memory-bound COPY tradeoff if the full TPC-H/ClickBench baseline remains within
 the approved range. No response or performance acceptance is inferred. Continue
 independent functionality/regression gates while that preference is pending.
 Final aggregate speed/RSS and individual-outlier acceptance are still open.
+
+The source-8 shipping C API refresh passes all 30 files/155 cases/725,896 assertions.
+Each loader selects the stage-2 immutable library, and signatures/harness/source
+hashes verify. Both supplemental encrypted-Parquet SQL files also pass on each
+engine, including encrypted SF1 export/import and all 22 TPC-H answers through
+imported tables and encrypted views. Only the HTTPFS prerequisite is replaced
+with the explicit reference crypto fallback switch; original SQL/answers and
+fixture hashes remain unchanged. Evidence: `capi-suite-2/verification.json`,
+`encryption-sql-2/verification.json`.
+
+The expanded 1,059-file frozen regression cohort is active (the prior 760 paths
+plus 299 CSV files). It preserves normal engine threads with one worker, checks
+complete 4,870 SQL/1,522 data fixture identities and compares every selected
+verdict/shared skip reason with the accepted reference. Its final outcome is
+pending, as are broader final release and performance acceptance gates.
