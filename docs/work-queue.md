@@ -180,9 +180,12 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      their actual matchers, including streaming extDict and reset/index lifecycles.
      Signed debug/release each pass19 codec tests; the newest tree stage adds257
      exact fresh frames,514 opposite decodes and32 actual C++ context frames.
-     All prior small-window/row/default controls remain green. Optimal parser/tree
-     strategies and high-level splitting still fall back and remain required;
-     shipping Parquet/spill/storage and final release gates need refresh. See
+     All prior small-window/row/default controls passed at that checkpoint. Working
+     optimal parser/tree and splitting code is now present.768 default small-window
+     parser frames match C++; the larger default cohort remained9/29 before adding
+     the splitter. The new splitter build/runtime gates await restored SSD access
+     after EPERM denied artifact reads/writes. Shipping Parquet/spill/storage and
+     final release gates remain open. See
      `docs/zstd-strategy-parity.md` for exact scope and individual speed/RSS diagnostics.
    - FSST segments of the same strings hold slightly different counts than DuckDB's
      (5878 against 5877 strings in a 256 KiB segment): the symbol tables differ.

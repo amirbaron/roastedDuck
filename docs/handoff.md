@@ -20,6 +20,19 @@ The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swi
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
 
+## Current working optimal-parser stage and access condition (2026-10-27)
+
+The working optimal parser passes768 default small-window C++ frames and1536
+opposite decodes. Explicit C++ no-split diagnostics pass41 larger/stream frames;
+those diagnostics do not waive default splitting. The retained default larger
+cohort is9/29 before the new splitter. A splitter implementation is now written
+but has not compiled or run: macOS denies reading/writing the external artifact
+directory with EPERM despite the correct mounted/writable volume and252GiB free.
+Restoration of Conductor's SSD access was requested. No large-output fallback or
+permission/mount/link changes were made. Small source/provenance notes are local.
+Continue .context/optimal-next.md after verifying access; old signed source4 is a
+before-optimal control. Goal remains active; no final codec/release claim.
+
 ## Latest EXPORT and compression audit checkpoints (2026-10-27)
 
 The confirmed EXPORT gaps are fixed in the retained pre-ZSTD shipping checkpoint:

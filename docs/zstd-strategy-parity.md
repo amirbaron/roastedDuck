@@ -165,3 +165,44 @@ level14 is18.057/19.578ms with13.11/10.58MiB; level15 is18.951/22.283ms with13.1
 Frames are identical. These single native samples include process/DLL overhead in
 RSS and are not final TPC-H/ClickBench acceptance or isolated working-table savings.
 Default Fast/DFast allocation remains unchanged; there is no new table caching.
+
+## Working optimal parser and splitter; SSD access interruption
+
+The working source now adds adaptive optimal pricing, the optimal all-match tree
+including three-byte lookups, repeat-history shortest-path reconstruction and
+Ultra2's first-block statistics pass. The original strategy caps have been removed.
+A signed standalone parser build passes seven default C++ small-window smoke frames
+and all768 four-payload/sixteen-size/levels11..22 default C++ controls, with1536
+opposite decodes. These small windows do not enable the reference block splitter.
+
+The preserved default large-input cohort is still incomplete: opt-known-1 matches
+only9/29 default C++ frames, although all58 opposite decodes pass. The inspected
+mismatches have additional C++ intra-block partitions. Two explicit diagnostic
+oracles disable C++ splitting only to isolate parsing: opt-nosplit-1 matches29/29
+frames, and opt-stream-nosplit-1 matches12/12 nine-MB streaming cases (including
+external-dictionary wraps), with82 opposite decodes combined. Those diagnostic
+flags are not a product setting or a waiver of default C++ parity.
+
+The working split.rs source now implements entropy-cost estimates, recursive
+partition derivation and raw/RLE/compressed partition emission with separate
+coding/decoding repcode histories. Its build has NOT started: macOS denied creation
+of the next external artifact directory with EPERM, then denied reading existing
+SSD evidence as well. The volume remains mounted at its required path, reports
+writable media and about252GiB free. Process ancestry is Conductor/runtime/Codex/
+Python. The access cause is not conclusively diagnosed; restoration of access was
+requested. No permissions, mounts, links or large-output destinations were changed.
+
+While access is pending, a small source fixture was generated in RAM from the
+existing internal signed C++ reference library, whose SHA256 and actual loaded
+path match the preserved reference. Three original input/frame pins calibrate the
+independent Python generator. optimal_small_1.5.6.tsv contains768 default fresh
+frames and32 actual chronological default C++ context frames; the new Rust tests
+have not yet run. Small generator/provenance notes are in .context. Cross-check
+these768 source goldens against the already-preserved SSD raw controls and archive
+the context controls after access returns.
+
+Source formatting checks pass. There is no new full type/Clippy/test or shipping
+verification claim for the splitter source, no post-optimal full-source snapshot
+yet, and no final performance acceptance. The previous source4 signed19-test stage
+remains a before-optimal control. The goal remains active; this is the first goal
+turn with the SSD access condition, not a completed or paused goal.
