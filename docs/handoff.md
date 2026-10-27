@@ -20,6 +20,18 @@ The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swi
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
 
+## Current integrated checkpoint and active full corpus (2026-10-27)
+
+[Current-source verification](current-source-verification.md) is the consolidated index.
+Source 5 has 908 verified build inputs. Current SDK15, C API155, ADBC64, Go652,
+Swift132+identity, both complete Python fast matrices, full shell and the scalar/Swift/
+15-column Python persistence-WAL cohorts pass their scoped gates. Native ADBC matches
+C++64/3,040; its shipping build is restored with 547 exports and zero test hooks.
+The full current 4,870-file SQL run is active; performance acceptance remains pending.
+Broader contract audits and explicit exceptions remain required. Do not mark the goal
+complete from the completed component/client gates. External index:
+`import-preprocessing-20261027/verification-checkpoint-1.json`.
+
 ## Latest import/preprocessing component checkpoint (2026-10-27)
 
 The working implementation now expands actual import/PRAGMA statements with C++ transaction
