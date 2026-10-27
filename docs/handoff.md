@@ -81,8 +81,11 @@ comparison mask. See `docs/nested-hash-parity.md` and external
 The current C API suite passes 30 files/155 cases/727,530 assertions with actual
 loader-path/signature/source verification. The affected 760-file SQL cohort passes: 752 pass, seven exact C++ skips, one
 existing avoided-OOM failure, with every verdict unchanged and complete fixture/
-source/signature verification. The next audit measures ordered COPY memory before
-porting the listed missing manager. Full final gates/performance remain open.
+source/signature verification. The ordered COPY audit now confirms the listed missing manager: repeated
+14-thread/256MB controls show Rust 666.1 MB median versus C++ 426.0 MB, with Rust
+93.9 ms versus C++ 246.3 ms. Skewed Rust copies reach 905.3 MB; C++ returns OOM.
+See `docs/batch-copy-memory-parity.md` for exact scope, safeguards and next
+implementation. Full final gates/performance remain open.
 
 ## Current integrated checkpoint and active full corpus (2026-10-27)
 

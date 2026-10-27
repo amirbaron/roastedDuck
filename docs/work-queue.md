@@ -161,7 +161,11 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    (`skip_wal_write_due_to_checkpoint`). Left:
    - `PhysicalBatchCopyToFile` buffers its raw batches without DuckDB's
      `BatchMemoryManager`, so an ordered `COPY ... TO` of a large table does not
-     throttle the threads ahead of the lowest batch.
+     throttle the threads ahead of the lowest batch. Fresh native paired controls
+     confirm regular 14-thread/256 MB COPY peaks at Rust 666.1 MB median versus
+     C++ 426.0 MB, with Rust 93.9 ms versus C++ 246.3 ms. The skewed Rust case reaches
+     905.3 MB while C++ returns OOM. See `docs/batch-copy-memory-parity.md`; evaluate
+     the manager port against both timing and memory and preserve every outlier.
 5. **Compression parity, the rest.** ZSTD, roaring and hugeint bitpacking segments are
    DuckDB's (`zstd_compression_ratio`, `roaring_compression_ratio`,
    `roaring_bool_compression_ratio`, `bitpacking_compression_ratio_hugeint` pass;
