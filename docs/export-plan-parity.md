@@ -71,3 +71,29 @@ Evidence: external `export-plan-parity-20261027/{source-4/manifest.json,
 codegen-check-1-terminal.json,cpp-wire-1/verification.json,wire-verification-1.json,
 check-build-2-terminal.json,clippy-build-3-terminal.json,sdk-build-1-manifest.json}`.
 Earlier failed check/style snapshots remain separate.
+
+## Signed SDK checkpoint and registered-backend counterexample
+
+The first immutable signed release SDK passes all three plan/execution
+regressions in 0.04 seconds with all 912 inputs/signatures unchanged. This covers
+empty/default metadata, a four-child logical UNION, and actual CSV/Parquet
+export/import preserving defaults, foreign keys and generated columns.
+Evidence: `sdk-verification-1.json`. Public full-plan equality remains pending.
+
+A separate signed C++/before-stage Rust-wheel probe confirms a co-located
+runtime bug: C++ EXPORT to a registered memory filesystem creates the data file,
+schema.sql and load.sql and imports them successfully for CSV/Parquet with new
+and preexisting directories. Rust reports EXPORT success with only the data
+file in the registered backend; its metadata is written under a local memory:
+directory instead, so import cannot find schema.sql. The isolated probe cwd is
+on the external SSD, and these misrouted files remain evidence. This is not a
+shared C++ limit. Evidence: `memory-before-1-index.json`,
+`{cpp,rust}-memory-before-1/report.json`.
+
+Route directory existence/creation and both metadata writes through the
+registered filesystem when one handles the path, preserving native paths
+otherwise. Use existing opener/access-policy and streamed-output helpers, and
+retain backend error type/metadata through failures. Add actual registered
+CSV/Parquet export/import and empty-export metadata-error regressions using
+the existing test backend; do not disguise the URI as a local path. Reverify
+component and public installed-package behavior before closure.
