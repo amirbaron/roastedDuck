@@ -43,6 +43,17 @@ source-5 full corpus/client/performance checkpoints below remain preserved befor
 controls and cannot substitute for final verification of these changes. See
 [encrypted Parquet evidence](parquet-encryption-parity.md). The goal remains active.
 
+## Next confirmed core gap (2026-10-27)
+
+The encryption-stage C API refresh passes 30 files/155 cases/747,516 assertions.
+A fresh public hash audit confirms all 30 VARIANT control expressions still differ
+from C++. Frozen C++ recursively combines nested STRUCT fields and folds LIST/ARRAY
+children into the existing seed; Rust currently reduces nested fields first and
+combines once. Follow `docs/nested-hash-parity.md` and external
+`nested-hash-parity-20261027/before-manifest.json`. This is next correctness work.
+Do not run redundant final-artifact gates on the encryption image before resolving
+this confirmed core gap. Final performance acceptance still remains required.
+
 ## Current integrated checkpoint and active full corpus (2026-10-27)
 
 [Current-source verification](current-source-verification.md) is the consolidated index.

@@ -114,3 +114,11 @@ corpus requirements/skips remain unchanged.
 The supported footer-key component now has independent cross-engine/file/backend/
 corruption evidence. C API is refreshing on the shipping library; ADBC, Go/Swift, full
 canonical SQL/shell, persistence/WAL and coupled final performance still remain gates.
+
+The refreshed C API suite now passes all 30 files/155 cases/747,516 assertions on
+the signed shipping image. Each loader log confirms the selected library; all
+source/harness hashes and executable/library strict signatures verify. Evidence:
+external `parquet-encryption-20261027/capi-suite-1/verification.json`. A fresh
+completion audit next confirms the previously listed VARIANT hash gap; see
+[nested hash parity](nested-hash-parity.md). Further source changes will require
+new final-artifact verification rather than transferring this checkpoint.
