@@ -82,3 +82,46 @@ These short samples are noisy diagnostics, not performance acceptance. Default c
 frames are unchanged, and no caching or memory increase is introduced to chase speed.
 Actual Parquet/spill/storage shipping integration and final SQL/client/performance
 gates remain pending after the remaining strategies are implemented.
+
+## Row-hash and streaming dictionary implementation checkpoint
+
+The source now ports salted row matching for Greedy/Lazy/Lazy2: automatic
+platform/window selection, 16/32/64-entry tag rows, eight-position hash cache,
+long-match update skipping, bounded circular candidate search and entropy-driven
+salt advancement across context resets. Row matching allocates its actual tag/hash
+working tables and omits the hash-chain table. The shared lazy parser now handles
+external-dictionary repeats, segment boundaries, backward extension and the
+reference's distinct incompressible-skip threshold. Binary-tree/optimal strategies
+still use the explicit fallback and remain required work.
+
+The first known-size row comparison improves the broad40-case cohort to28 exact
+frames, with all80 opposite decodes passing; unresolved binary-tree/optimal cases
+remain visible. `stream-1/verification.json` then proves84/84 byte-identical one-shot/
+stream frames and168 opposite decodes, including2.5MB input-buffer wraps and levels
+exercising all three row sizes. `stream-edges-1` adds108/108 exact frames and216
+opposite decodes for0..17byte final blocks, both tiny streams and the2,228,224byte
+buffer-wrap boundary. Default-level controls remain literal C++ matches.
+
+`reuse-2/verification.json` separately verifies32 actual chronological C++/Rust
+same-context frames: repeated inputs, changed levels, hash-chain/row/default path
+switches, and one-shot/stream transitions over two rounds. The loader log identifies
+the frozen native C++ library. These goldens come from that retained C++ sequence;
+they do not assume reused salt state writes fresh-context bytes.
+
+The224 new C++ goldens are retained in `lazy_rows_1.5.6.tsv` with raw frames/provenance
+external. Signed debug and release builds each pass all16 codec tests, including
+864 explicit small-window/row/context goldens plus original default/stream/string
+reference and decoder checks. Workspace/all-target Clippy passes after one retained
+documentation-style correction. Source3 preserves925 overlay entries/924 verified
+build inputs. Evidence: tests-{debug,release}-2/verification.json, clippy-3-terminal.json,
+row-golden-provenance-1.json, source-3/manifest.json.
+
+Per-case coupled diagnostics remain explicit in row-speed-memory-diagnostic-1.json.
+For300KB text, C++/Rust level5 is1.391/1.735ms with7.70/5.06MiB whole-process RSS;
+level8 is3.182/4.491ms with10.14/7.55MiB; level12 is6.237/8.480ms with10.12/7.55MiB.
+Each produces identical compressed bytes. These are single codec samples, not
+TPC-H/ClickBench acceptance; their individual slowdowns are not hidden in averages.
+Higher requested strategies now use their real working tables instead of a capped
+DFast substitute. Default Fast/DFast table allocation remains unchanged; no table
+caching is introduced to close a speed gap. Shipping integration/final performance
+and the remaining binary-tree/optimal paths remain open.
