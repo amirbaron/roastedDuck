@@ -61,7 +61,8 @@ converter omits it, unlike the ordinary typed VARIANT converter. See the nested
 hash document for retained counterexamples. The full diagnostic isolates only
 empty JSON objects among the initial48 controls. The JSON layout correction and
 seven added stable C++ JSON controls are now in source4; Clippy passes and the
-55-control release SDK is building. Four C++ storage self-controls pass after
+55-control signed release SDK now passes all 660 expected hash comparisons. Shipping
+CLI/C API/SQL runner images are rebuilding from source4. Four C++ storage self-controls pass after
 explicitly selecting required v1.5.0 storage. This component remains under
 verification. Do not run redundant final-artifact gates on the encryption image before resolving
 this confirmed core gap. Final performance acceptance still remains required.

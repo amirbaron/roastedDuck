@@ -95,3 +95,19 @@ VARIANT columns. The initial default-v1.0 rejection is preserved before any
 VARIANT table was created (`cpp-storage-controls-1`); the corrected reference
 controls all pass (`cpp-storage-controls-2/verification.json`). Cross-engine
 journeys require a new signed shipping library after the SDK gate passes.
+
+## Signed SDK source-4 acceptance checkpoint
+
+The immutable signed release SDK execution now passes all 55 exact C++ controls:
+standalone and multi-argument hashes for constants, three stored rows and two
+filtered selections (660 expected hash comparisons). This includes the seven
+additional empty/nested JSON shapes. The prior empty-object failures remain
+preserved independently. All 905 source inputs and the signed SDK identity
+verify unchanged before/after execution. Evidence: external
+`nested-hash-parity-20261027/{sdk-verification-3.json,sdk-run-3.log}`.
+
+The supported nested-combination and empty JSON-container fixes now pass this
+component gate. Shipping CLI/C API/SQL runner images are rebuilding from source4
+for independent public-API and eight bidirectional plain/encrypted persistence/WAL
+journeys. Final full SQL/shell/selected clients/ADBC and coupled performance
+acceptance remain open; no whole-port completion is claimed.
