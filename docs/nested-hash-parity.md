@@ -51,3 +51,23 @@ combine-oracle-1.json}`. Source 2 records 906 overlay files/905 build inputs. Ni
 Python bytecode cache files from the previous overlay are deliberately excluded;
 the newly changed tracked row/hash source and new SDK test are included. The
 source-1 checkpoint differs only in oracle-literal formatting and is retained.
+
+## SDK counterexample retained
+
+The first signed SDK execution fails at JSON `'{}'::JSON::VARIANT`: actual
+standalone hash 471934738805923757 versus C++ 17009719232678247413. Earlier
+controls complete before that assertion, but this does not prove the whole set.
+The source-2 SDK failure is retained in `sdk-run-1.log` and
+`sdk-verification-1.json`; no shipping build or closure is authorized by that
+failed component gate. A diagnostic source-3 SDK build now accumulates all
+control mismatches rather than stopping at the first.
+
+The frozen C++ `to_variant_fwd.hpp::WriteContainerData` always advances the BLOB
+offset by both the length-varint width and children-offset-varint width, even
+when length is zero and it writes only the length. C++'s inline string buffer
+is zero-initialized. Rust's ordinary typed VARIANT converter already reserves
+that space, but `json_to_variant.rs::VariantBuilder::container` currently omits
+it for empty JSON containers. Check and correct that physical representation
+after the diagnostic run, retaining safe initialization of unused bytes. Recheck
+all original controls and add empty/nested JSON-container coverage; do not waive
+JSON-derived values from the hash requirement.

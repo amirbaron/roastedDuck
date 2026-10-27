@@ -54,7 +54,12 @@ combines once. Follow `docs/nested-hash-parity.md` and external
 Clippy and all 25 signed row-layer unit tests. Its release SDK test is building
 against 48 frozen C++ controls across constant/stored/selected and multi-argument
 hashes. Source2 has 906 overlay files/905 inputs (Python bytecode caches excluded).
-This component remains under verification. Do not run redundant final-artifact gates on the encryption image before resolving
+The first signed SDK execution exposed a JSON-empty-object hash counterexample;
+its failure is preserved. Source3 builds a diagnostic SDK that reports every
+mismatch. C++ reserves an offset-width slot even for empty containers; the JSON
+converter omits it, unlike the ordinary typed VARIANT converter. See the nested
+hash document before changing representation. This component remains under
+verification. Do not run redundant final-artifact gates on the encryption image before resolving
 this confirmed core gap. Final performance acceptance still remains required.
 
 ## Current integrated checkpoint and active full corpus (2026-10-27)
