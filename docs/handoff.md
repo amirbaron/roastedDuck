@@ -85,7 +85,11 @@ source/signature verification. The ordered COPY audit now confirms the listed mi
 14-thread/256MB controls show Rust 666.1 MB median versus C++ 426.0 MB, with Rust
 93.9 ms versus C++ 246.3 ms. Skewed Rust copies reach 905.3 MB; C++ returns OOM.
 See `docs/batch-copy-memory-parity.md` for exact scope, safeguards and next
-implementation. Full final gates/performance remain open.
+implementation. The first candidate now uses buffer-managed raw collections,
+reservation-derived worker caps, raw/prepared accounting and streaming format
+preparation. Workspace checking/Clippy pass; four release SDK regressions are
+building from source4 (910 files/909 inputs). Runtime and before/after acceptance
+remain unproven. Full final gates/performance remain open.
 
 ## Current integrated checkpoint and active full corpus (2026-10-27)
 

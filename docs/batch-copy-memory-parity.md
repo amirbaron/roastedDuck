@@ -62,3 +62,36 @@ then verify signed SDK/public output and existing batched Parquet SQL tests.
 Repeat coupled timing/RSS on the same frozen input, retaining each sample and
 individual skewed behavior; evaluate memory improvement and runtime cost
 together. Refresh broader final artifact gates after remaining core changes.
+
+## First implementation component stage
+
+The working COPY sink now uses the existing BatchMemoryManager reservation, a
+reservation-derived worker cap, raw/prepared charge transfer, ordered-flush
+release, minimum-index progress and zero-at-finalize check. Blocking rechecks
+available memory under the callback lock after helping queued tasks, preventing
+a flush-before-registration wakeup loss. Raw batches now use buffer-managed
+ColumnDataCollection with partition 0 eviction priority. Repartition scans and
+appends one chunk at a time and preserves C++'s charge-transfer lifecycle.
+
+A replayable CopyBatch interface lets format writers scan managed rows without
+introducing a function/row dependency cycle (row already depends on function).
+CSV encodes one scanned chunk at a time. Parquet replays selected columns for
+analyze, prepare and write phases instead of materializing all flat heap chunks
+at once. A scan pins one raw chunk's blocks and copies selected columns; it does
+not claim per-column block-level pin isolation. The ordinary non-batched path
+and table-cache policy are unchanged.
+
+Workspace/all-target checking passes after correcting one private-module import;
+final workspace/all-target Clippy with warnings denied also passes after a
+bit-width style correction. Source 4 has 910 overlay files/909 build inputs. The first
+three snapshots and failed check/style logs remain preserved; source 4 is the
+current candidate. Four SDK regressions cover memory-pressure ordered Parquet,
+uneven/final batches, nullable Unicode CSV and worker-error cleanup/recovery.
+Their release build is active and runtime verification remains pending. No
+memory reduction, runtime acceptance or completed manager port is claimed yet.
+
+Evidence: external `batch-copy-memory-20261027/{source-4/manifest.json,
+check-build-2-terminal.json,clippy-build-2-terminal.json,sdk-build-1-manifest.json}`.
+Next: sign/run the completed SDK binary with its watchdog, fix any failures,
+then build/sign shipping images and repeat the frozen coupled timing/RSS
+controls plus independent C++/Rust output, CSV/Parquet SQL and broader gates.
