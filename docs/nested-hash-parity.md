@@ -152,3 +152,16 @@ join/ART/JSON paths from the frozen corpus. It uses one worker with normal engin
 threading, preserves complete fixture hashes and compares every selected verdict
 against the prior accepted full run plus literal C++ skip reasons. Its final
 verdict remains pending; this does not replace final full 4,870-file verification.
+
+## Affected SQL acceptance checkpoint
+
+The 760-file affected cohort finishes and passes its scoped regression gate:
+752 pass, seven exact C++ skips and one existing documented failure
+(`read_json_memory_usage`: query succeeds within the limit where C++ expects OOM).
+No file verdict changes, crashes, timeouts or skip-reason differences occur.
+All 905 inputs, signed runner and complete 4,870 SQL/1,522 data fixtures verify stable
+before/after. Evidence: `affected-sql-1/verification.json` and fixture reports.
+This is affected coverage, not final full-corpus/client/shell/performance acceptance.
+The next core audit measures the live work queue's batched COPY memory-manager gap
+before selecting its implementation; existing memory SQL tests alone do not
+measure actual peak RSS or prove the internal manager is present.

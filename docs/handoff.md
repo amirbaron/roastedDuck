@@ -79,8 +79,10 @@ all normalized hashes match. This is a narrow documented exception, not a broad
 comparison mask. See `docs/nested-hash-parity.md` and external
 `nested-hash-parity-20261027/{public-hashes-2/verification.json,storage-1/verification.json}`.
 The current C API suite passes 30 files/155 cases/727,530 assertions with actual
-loader-path/signature/source verification. The affected 760-file SQL cohort is active,
-with normal engine threads and one worker. Full final gates/performance remain open.
+loader-path/signature/source verification. The affected 760-file SQL cohort passes: 752 pass, seven exact C++ skips, one
+existing avoided-OOM failure, with every verdict unchanged and complete fixture/
+source/signature verification. The next audit measures ordered COPY memory before
+porting the listed missing manager. Full final gates/performance remain open.
 
 ## Current integrated checkpoint and active full corpus (2026-10-27)
 
