@@ -2,7 +2,8 @@
 
 Updated 2026-10-27. **The port goal remains active.** The current source-5 overlay has
 909 entries and 908 verified build inputs. The fresh full 4,870-file SQL run passes its documented-exception gate;
-coupled performance acceptance is pending. Earlier historical
+source-5 aggregate performance measurements fit the approved tradeoff, with outlier
+repeats and final-artifact acceptance still pending. Earlier historical
 checkpoints do not substitute for these gates.
 
 Required clients are Python, Go and Swift. C API/ADBC are preserved. Other language
@@ -60,3 +61,11 @@ Reconcile remaining contract evidence and exceptions, and record coupled
 TPC-H/ClickBench timing and memory against the preserved
 uncached baseline and C++, with individual query outliers. Exact performance parity or
 outperformance is not required. No table cache was introduced to erase small speed gaps.
+
+
+The source-5 performance checkpoint now checks all 130 TPC-H/ClickBench query/thread
+configurations and fits the approved aggregate policy; see [measured performance](performance-acceptance.md).
+The completion audit nevertheless identifies required functional work: the Parquet writer
+still rejects supported footer-key encryption. The `column_keys` rejection matches frozen
+C++ and is not a request to exceed its functionality. This gap and other open contract
+items prevent declaring the overall port complete despite the green scoped gates.

@@ -1,6 +1,7 @@
 # Performance acceptance
 
-Policy approved by the owner on 2026-10-23. Final-binary verification is pending.
+Policy approved by the owner on 2026-10-23. Source-5 measurements below satisfy
+the aggregate tradeoff; outlier control repeats and final-artifact acceptance remain pending.
 This policy supersedes both the original outperformance targets and the later
 independent speed/memory parity gates.
 
@@ -169,3 +170,43 @@ is substituted). This isolated check is necessary while the workspace's name mig
 is unfinished; the full workspace and final performance runs remain pending. Test logs,
 verifier sources and dependency lockfile are retained under
 `.context/artifacts/performance-policy-20261023/`.
+
+
+## Current source-5 measured checkpoint (2026-10-27)
+
+The strictly signed shipping library `38603874…` completes all 130 query/thread
+configurations below with checked results: TPC-H SF10's 22 queries and all 43 ClickBench
+queries, each at one/14 threads. Each engine/query runs in its own process with one
+checked warmup and three timed repetitions. The original harness's best-wall/CPU and
+peak-RSS definitions are retained; all timing samples and result dumps are preserved.
+The external harness adaptation pins the signed CLI used for tie checks, verifies the
+actual C ABI image with dladdr, and records samples. Library hashing stays outside the
+measured child to avoid inflating its RSS. Source, image/signature and dataset hashes
+verify unchanged before/after each configuration.
+
+| Suite | Threads | C++ time / Rust time | Rust execution longer | Adjusted Rust/C++ RSS | Less adjusted RSS |
+|---|---:|---:|---:|---:|---:|
+| TPC-H SF10 | 1 | 0.943× | 6.0% | 0.225× | 77.5% |
+| TPC-H SF10 | 14 | 0.881× | 13.5% | 0.302× | 69.8% |
+| ClickBench | 1 | 0.892× | 12.1% | 0.313× | 68.7% |
+| ClickBench | 14 | 0.876× | 14.2% | 0.373× | 62.7% |
+
+These aggregate geometric means satisfy the owner's policy. They do not hide individual
+outliers: ClickBench q19 is about 0.37–0.41× speed; q28 at one thread is 46.9 s versus
+31.4 s; q00 adds roughly 6 MB whole-process RSS at 14 threads; q32 at one thread peaks
+at 13.1 GB versus C++ 12.5 GB. Historical q32 Rust RSS was also 13.1 GB while C++ was
+14.1 GB, so both raw bytes and fresh same-host control repeats are required before
+attributing the ratio change. Notable TPC-H timing/RSS changes are also selected for
+paired current/uncached-control repeats. Those repeats are currently active.
+
+Evidence: external `performance-acceptance-20261027/initial-four-configurations.json`,
+per-configuration manifests/results/dumps/verification, and `outlier-followups.json`.
+All datasets and output are on the external SSD; workloads are serialized. No table
+cache or memory-retention optimization was introduced.
+
+This is a source-5 performance checkpoint, not final goal completion. The completion
+audit found a real Parquet footer-key encrypted-writing gap still returning
+NotImplemented in Rust. C++ 1.5.6 supports that path; its `column_keys` rejection is a
+shared limitation and does not require implementing more than C++. Functional gaps must
+be closed, final signed artifacts reverified, and outlier evidence retained before the
+final release acceptance is claimed.
