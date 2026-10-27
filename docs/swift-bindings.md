@@ -298,3 +298,33 @@ test/summary.json,sdk/summary.json,consumer/summary.json,standalone/summary.json
 interop-2/summary.json}`. This is current-host macOS arm64 evidence, not an assertion of
 other platform coverage. The full current SQL corpus and coupled performance acceptance
 remain pending; the broader port goal stays active.
+
+## Source-8 current-host SDK checkpoint (2026-10-27)
+
+The pinned wrapper is rebuilt against the immutable source-8 Rust C API library.
+Fresh Rust and C++ executions both pass all 132 upstream XCTest cases plus the
+separate native-identity case, with exact case IDs and verdicts. The source/header
+pins, native artifacts, 909 core input hashes and strict signatures verify stable.
+The Foundation probe is reused only after verifying its unchanged source/binary
+hashes and signature; it runs fresh against the new SSD-backed cache/tmp/fixtures.
+
+The generated macOS arm64 framework uses a relative install name and strict
+signatures. Its relocated SwiftPM consumer, standalone executable/framework
+distribution and all four bidirectional checkpoint/nonempty-WAL journeys pass.
+Receiver mutations are checkpointed and read back by the original writer; snapshots
+precede replay, and consumers identify only the selected Rust framework image.
+
+The local C++ identity report literally says `v0.0.1` for build-version metadata,
+while its source/header pin is 1.5.6 and Rust reports `v1.5.6`. That provenance is
+recorded separately; the identity records are not claimed byte-identical. The
+official C++ Python 1.5.6 controls independently cover release-version behavior.
+
+Evidence: external `batch-copy-memory-20261027/swift-1/{case-comparison.json,
+verification.json,test/summary.json,cpp-test/summary.json,sdk/summary.json,
+consumer/summary.json,standalone/summary.json,interop/summary.json}`. The parent
+Rust library SHA-256 is
+`2c96baa818920f6be19daaebea5ed3e3cbcf833a0a308139329ff0184bebca0c`; the
+relocatable signed framework image is
+`c672efaa028f77aa0dd1c0a59f82c88b933019723b2fc9cff824d35d5941d18e`.
+These receipts prove current-host scoped runtime/distribution/file journeys;
+other supported platform/API and whole-release/performance gates remain separate.

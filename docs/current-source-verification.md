@@ -24,7 +24,8 @@ remain outside the owner's scope. The frozen engine contract is DuckDB 1.5.6.
 | Python non-fast / installed ADBC | Fresh non-fast 71 pass/eight shared skips; both installed ADBC/file/UDF handoffs pass; 547 API exports/zero test hooks |
 | Python persistence/WAL | Eight 15-column append/checkpoint/nonempty-WAL/mutation/readback journeys pass across both Arrow environments |
 | Go | Complete pinned root suite with Arrow: 652 passes, exact C++ IDs/verdicts; 79 source files and actual selected DLL verified |
-| Native ADBC / Swift | Refresh required; Swift package is now rebuilding against selected source-8 library |
+| Swift | Fresh Rust/C++ 132 upstream plus identity pass with exact IDs; relative framework, relocated/standalone consumers and four checkpoint/WAL journeys pass |
+| Native ADBC | Fresh full native suites running; separate test-feature image signed, feature-free shipping library restored/verified before harness |
 | Native/client persistence/WAL | Refresh required on final images; prior scoped journeys remain controls |
 | Full TPC-H/ClickBench timing/RSS/outliers | Final-candidate measurement and documented acceptance still required |
 

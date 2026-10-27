@@ -116,7 +116,10 @@ handoffs and all eight15-column cross-engine persistence/WAL journeys across
 both environments. See `docs/python-bindings.md` for scope; configured-extension/
 HTTPFS and broader API/platform audits remain. Go now passes all 652 pinned
 root-suite cases exactly matching C++ IDs/verdicts on the signed library, with
-79 upstream files/loader identity verified. Swift is rebuilding next.
+79 upstream files/loader identity verified. Swift passes fresh 132+identity
+cases on both engines, relocated/standalone distribution and four file/WAL
+journeys. Native ADBC suites are running; test hooks remain isolated and the
+feature-free shipping library was restored/verified before the harness.
 Final acceptance remains open. Full final gates/performance remain open.
 
 ## Current integrated checkpoint and active full corpus (2026-10-27)
