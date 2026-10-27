@@ -136,3 +136,23 @@ The original low-budget validation failures are preserved as reference controls,
 not reported as COPY failures. Evidence: `cpp-sdk-controls-2/report.json` and
 `clippy-build-3-terminal.json`. Source 5 records 910 files/909 inputs; SDK build 2 is
 active and its signed runtime outcome is still pending.
+
+## Signed source-5 component acceptance checkpoint
+
+SDK build 2 exits successfully; its immutable signed binary passes all four
+regressions in 0.67 seconds, including the pressure COPY that deadlocked in
+source 4. The 180-second watchdog does not fire. All 909 source hashes and strict
+binary signatures verify before/after. All 25 signed row-layer unit tests also
+pass, including buffer-managed collection round trips, strings/nested data,
+layout and hash regressions. The C++ controls-2 receipt independently verifies
+all four reference scenarios and its native signature.
+
+Evidence: external `batch-copy-memory-20261027/{sdk-verification-2.json,
+row-units-verification-1.json,cpp-sdk-controls-2/verification.json}`. The first
+failed candidate remains retained separately; no source-4 gate is relabeled.
+
+Shipping CLI/C API/SQL runner images are rebuilding from source 5 for independent
+COPY output and repeated timing/RSS on the same before fixture. These passing
+component tests establish runtime progress, not a measured memory improvement
+or final performance acceptance. Broader CSV/Parquet SQL, C API/ADBC, selected
+clients, full corpus/shell, persistence/WAL and final benchmark gates remain.

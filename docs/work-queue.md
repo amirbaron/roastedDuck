@@ -166,6 +166,11 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      C++ 426.0 MB, with Rust 93.9 ms versus C++ 246.3 ms. The skewed Rust case reaches
      905.3 MB while C++ returns OOM. See `docs/batch-copy-memory-parity.md`; evaluate
      the manager port against both timing and memory and preserve every outlier.
+     The source5 candidate now uses managed collections and streaming format
+     preparation, accounts raw/prepared data and advances/wakes blocked work on
+     worker finish. Clippy, four signed SDK cases and 25 signed row tests pass
+     after a retained first-candidate pressure deadlock. Shipping images are
+     rebuilding; independent output and actual before/after memory remain unproven.
 5. **Compression parity, the rest.** ZSTD, roaring and hugeint bitpacking segments are
    DuckDB's (`zstd_compression_ratio`, `roaring_compression_ratio`,
    `roaring_bool_compression_ratio`, `bitpacking_compression_ratio_hugeint` pass;
