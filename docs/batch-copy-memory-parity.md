@@ -191,3 +191,10 @@ accounting and buffer management, then reverify correctness and repeat the
 same coupled controls. Do not raise memory to recover the old speed. Evidence:
 `profile-1/{sample.txt,ready.json,terminal.json}`. This is a diagnosed candidate
 change, not a proven performance fix.
+
+The conditional C++ helper handoff is now implemented without changing memory
+reservations or raw/prepared accounting. Source-6 workspace/all-target Clippy
+passes; SDK build 3 is active for the same four regressions. New build/freeze/
+measurement stages use explicit stage/source arguments and preserve all
+source-5 images/results. This handoff has not yet passed runtime or performance
+verification. No rejected source-5 performance result is relabeled as accepted.
