@@ -136,3 +136,30 @@ public2 retained64 parser errors from an incorrect explicit-catalog fixture; the
 frozen grammar requires EXPORT DATABASE memory TO 'path'. The corrected probe uses
 that literal grammar. The C API library is rebuilding from source7 before Rust plan
 comparison; no public equality or whole-port completion is asserted yet.
+
+## First signed C API comparison and next binder correction
+
+The source7 C API-only release build exited0, then was copied/signed/strictly verified
+as capi-signed-1/libduckdb.dylib (SHA256
+919ba59b2eb882d15ef6284162d6fa77135d8855b58dd80a4e0f25619191fa19), retaining
+547 shipping exports/zero ADBC test hooks. All912 build inputs remain unchanged.
+Both engines serialize all128 public cases successfully. Full comparison finds96
+mismatching cases, exclusively root CopyInfo option-array iteration order; every
+other field, child COPY, UNION, bound table, default and explicit catalog matches.
+No key/order is filtered from comparison. Evidence: public-comparison-3.json and
+{cpp,rust}-public-3/report.json.
+
+The binder currently appends evaluated/default options to the ordered transport
+container, whereas frozen C++ inserts into case_insensitive_map_t. Preserve that
+actual map lifecycle with the existing libc++ CIHash/order model, including erased
+write-only options and CSV defaults; store the resulting bound map for both real
+load.sql and plan serialization. Do not sort/reverse JSON arrays to conceal it.
+Add literal frozen option-order assertions and reverify signed components/public
+plans. No complete EXPORT plan parity is claimed by the current mismatch.
+
+Separately runtime-1 passes all eight CSV/Parquet export/import journeys in both
+engine directions, four exports per writer (default/explicit catalog). Three-table
+exports preserve view/index/generated column/default/Unicode/NULL rows and both
+primary/foreign-key enforcement after the opposite engine imports. This validates
+the signed image above, not a future binder correction. Keep the reports/files
+and preserve the source7 control before rebuilding.
