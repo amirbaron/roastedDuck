@@ -20,7 +20,10 @@ remain outside the owner's scope. The frozen engine contract is DuckDB 1.5.6.
 | Expanded affected SQL | 1,059 files: 1,047 pass, 11 exact C++ skips, one documented avoided-OOM assertion; all verdicts and failure payload unchanged |
 | Full 4,870-file SQL / full unit suite | Fresh final-candidate verification still required |
 | Shell | Fresh final-candidate upstream/differential/PTY verification still required |
-| Native ADBC / Python / Go / Swift | Final-candidate rebuilt packages and complete selected-client gates still required |
+| Python Arrow 19/21 fast | 3,241/3,492 records, exact C++ IDs/verdicts/skip reasons; signed source-8 wheel installed in both environments |
+| Python non-fast / installed ADBC | Fresh non-fast 71 pass/eight shared skips; both installed ADBC/file/UDF handoffs pass; 547 API exports/zero test hooks |
+| Python persistence/WAL | Eight 15-column append/checkpoint/nonempty-WAL/mutation/readback journeys pass across both Arrow environments |
+| Native ADBC / Go / Swift | Final-candidate refresh required; Go executable now building against selected signed source-8 library |
 | Native/client persistence/WAL | Refresh required on final images; prior scoped journeys remain controls |
 | Full TPC-H/ClickBench timing/RSS/outliers | Final-candidate measurement and documented acceptance still required |
 
@@ -29,8 +32,10 @@ The immutable signed shipping library SHA-256 is
 The CLI is `6527e7f76b907296ff05c5f2a019407480065e04fb49c5561b554850a82a88ec`;
 the SQL runner is `02e16760f696206437040c7104c239a67539150879417b0070f21f4f801e05a7`.
 Evidence is under external `batch-copy-memory-20261027/`, including source, signatures,
-SDK/C API, `encryption-sql-2`, `after-probe-2` and accepted `affected-sql-2` receipts. The source-8 Python wheel
-is now rebuilding for installed-package verification.
+SDK/C API, `encryption-sql-2`, `after-probe-2` and accepted `affected-sql-2` receipts. The source-8 Python native image is
+`a6d88586d08536c79addc1d9545f891145165d876a8c7ce83df975b6293f4d14`.
+Its fast/non-fast/installed-ADBC and persistence receipts are current scoped evidence;
+applicable broader contract/platform/extension audits remain.
 
 COPY is an explicit performance outlier. At 14 threads/256 MB the corrected path is
 303.0 ms/459.5 MB versus C++ 246.6 ms/463.8 MB, and the old unaccounted Rust path

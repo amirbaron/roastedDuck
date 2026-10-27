@@ -110,7 +110,11 @@ is pending. The current C API suite passes 30 files/155 cases/725,896 assertions
 both supplemental encrypted-Parquet SQL files pass on each engine. Expanded
 1,059-file SQL coverage passes: 1,047 pass, 11 shared skips, one documented
 avoided-OOM assertion; every verdict/failure payload is unchanged, with all
-fixture/source/signature guards. The source8 Python wheel is rebuilding next.
+fixture/source/signature guards. The signed source8 Python wheel now matches both
+complete Arrow fast matrices, all79non-fastrecords, installed ADBC/file/UDF
+handoffs and all eight15-column cross-engine persistence/WAL journeys across
+both environments. See `docs/python-bindings.md` for scope; configured-extension/
+HTTPFS and broader API/platform audits remain. Go is rebuilding next.
 Final acceptance remains open. Full final gates/performance remain open.
 
 ## Current integrated checkpoint and active full corpus (2026-10-27)

@@ -1541,7 +1541,7 @@ The core progress-publication and partial-close metadata changes described in
 [query progress parity](query-progress-parity.md) postdate signed wheel4. Its fast-suite
 and rendering outcomes remain valid for that preserved image, not current-core package
 acceptance. Three signed SDK regressions and12public C API lifecycle paths now pass
-for the new core. A fresh wheel5/installed-image/Arrow19/21 fast-suite checkpoint is
+for the new core. A fresh wheel5/installed-image/Arrow 19/21 fast-suite checkpoint is
 required before transferring the Python acceptance evidence. Existing Decimal/reference
 discrepancies and broader client/environment/storage/performance gates remain open.
 
@@ -1549,7 +1549,7 @@ discrepancies and broader client/environment/storage/performance gates remain op
 ## Current core signed package refresh (2026-10-25)
 
 A new wheel on the accepted post-Go-fix core is built, signed and installed into new
-Arrow19/21environments with the same30pinned dependencies. Native image SHA
+Arrow 19/21environments with the same30pinned dependencies. Native image SHA
 ced8441fe4684dfe4ef42e27a8fba6f9accd32999056d8b571680a56ded9bcce
 matches the signed wheel entry in both environments, with exactly one Rust engine image
 and strict signatures unchanged after testing. No prior wheel/environment is overwritten.
@@ -1840,3 +1840,50 @@ hashes are preserved before replay. Every child process verifies its intended na
 before/after execution; the WAL writer still performs the real unclean process exit.
 Evidence: external `import-preprocessing-20261027/python-persistence-1/verification.json`.
 Native ADBC now also passes its current 64/3,040 gate on both engines; see [ADBC](adbc.md).
+
+## Source-8 signed package refresh (2026-10-27)
+
+The fresh source-8 release wheel is signed and installed in pinned Arrow 19/21
+environments. Native SHA-256 is
+`a6d88586d08536c79addc1d9545f891145165d876a8c7ce83df975b6293f4d14`.
+Each environment loads exactly one Rust engine image. The installed native
+module exports the same 547 C API functions as the shipping library and zero
+ADBC test hooks. All 909 source inputs, archive/fixture hashes and strict signatures
+verify stable. Seven installed stubs per environment and all 300 frozen upstream
+test/data files match their pins.
+
+The complete fast suites match C++ literally in case IDs, verdicts and skip
+reasons: Arrow 19 has 3,241 records (3,205 pass/27 skip/8 xfail/1 existing XPASS),
+Arrow 21 has 3,492 (3,455 pass/28 skip/8 xfail/1 existing XPASS). Their 294 Spark
+compatibility cases are already included: 289 pass/four shared skips/one existing
+xfail in each environment; no duplicate Spark rerun is counted as new coverage.
+
+Installed encrypted-Parquet journeys pass 24 cases per environment, including
+local/registered-memory output, three key sizes, independent cross-engine reads,
+COPY FROM, complete nested-row equality and prepared/plan paths. All paired
+wrong/missing-key and page/footer/truncation error types/full messages match
+C++ without normalization. Both installed Python/ADBC file/UDF/parameter/
+rollback/commit/reopen handoffs also pass with one Rust image each.
+
+The seven-file non-fast cohort freshly matches C++ 71 passes/eight identical
+skips across 79 records, including materialization, concurrent connections and
+H2O Arrow. Its upstream tests are unchanged. Only five official H2O HTTP
+responses are recorded/replayed from exact prior payload SHA/size pins; both
+engines consume identical official data and the transport receipt is retained.
+The disabled HTTPFS/configured-extension paths remain unverified, despite the
+upstream default suite's pass/skip counters.
+
+Eight fresh 15-column native-dataframe append persistence journeys pass across
+both Arrow environments: both engine directions, checkpoint and crash-preserved
+nonempty WAL, receiver mutation/checkpoint and original-writer readback. Every
+child's signed image is checked before/after and database/WAL snapshots precede
+replay. These are real file journeys, not serialization-only assertions.
+
+Evidence is external `batch-copy-memory-20261027/{wheel-manifest-1.json,
+python-refresh-verification-1.json,python-abi-verification-1.json,
+python-encryption-arrow19-2/verification.json,python-encryption-arrow21-2/verification.json,
+adbc-package-1-verification.json,nonfast-1/verification.json,
+spark-fast-coverage-1.json,python-persistence-1/verification.json}`.
+Broader applicable API/signature/lifetime/backend/platform/configured-extension
+audits and whole-goal final acceptance remain separate; none is inferred from
+export presence or these current-host counts.
