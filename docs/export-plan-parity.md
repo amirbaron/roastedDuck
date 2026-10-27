@@ -118,3 +118,21 @@ is retained. The corrected probe creates one absolute shared fixture parent and
 compares every plan field for both engines without JSON/path rewriting. These
 component corrections require new snapshots/builds; no final artifact or public
 plan parity is claimed yet.
+
+## Registered routing signed SDK pass
+
+Source7 passes workspace/all-target Clippy6 and all14 tests in immutable signed
+release SDK3 (0.13seconds), with all912 build inputs and the signed image unchanged.
+The corrected reserved-name literals now match the frozen C++ schema/load output.
+CSV/Parquet backend data and metadata round-trip into a new registered connection,
+including Unicode/NULL rows, primary-key enforcement and defaults. Empty EXPORT
+preserves callback error kind/subtype/native extra metadata and permits subsequent
+successful export/query. The nine existing backend checkpoint/WAL/access tests also
+pass. The SDK's isolated external cwd remains empty, so no URI directory was created
+locally. Evidence: sdk-verification-3.json, sdk-run-3.log, source-7/manifest.json.
+
+The C++ public3 probe records128 successful complete plans with no JSON errors.
+public2 retained64 parser errors from an incorrect explicit-catalog fixture; the
+frozen grammar requires EXPORT DATABASE memory TO 'path'. The corrected probe uses
+that literal grammar. The C API library is rebuilding from source7 before Rust plan
+comparison; no public equality or whole-port completion is asserted yet.
