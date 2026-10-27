@@ -143,3 +143,12 @@ identity are preserved in `storage-1/verification.json`. Each uses v1.5.0 storag
 required by C++ for VARIANT and the explicit reference crypto-write fallback
 setting with synthetic keys. These are real file journeys, not serialization-only
 checks. Broader corpus/C API/ADBC/selected clients/shell/performance gates remain.
+
+The new signed shipping C API suite passes all 30 files/155 cases/727,530 assertions.
+Each executable's loader log selects the immutable library; its source/harness
+hashes and strict signatures verify. Evidence: `capi-suite-1/verification.json`.
+The affected 760-file SQL cohort is active, selected by VARIANT/Parquet/aggregate/
+join/ART/JSON paths from the frozen corpus. It uses one worker with normal engine
+threading, preserves complete fixture hashes and compares every selected verdict
+against the prior accepted full run plus literal C++ skip reasons. Its final
+verdict remains pending; this does not replace final full 4,870-file verification.
