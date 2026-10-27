@@ -312,8 +312,13 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
     - Parquet reads only the needed struct fields when the file's column has the
       requested type; with schema evolution (a cast per file) it reads the column whole,
       where `MultiFileColumnMapper` maps the fields.
-    - `hash()` of a VARIANT differs from DuckDB's (also for unshredded values, so not a
-      layout difference).
+    - The nested/VARIANT hash combination gap is closed for defined values in the
+      source4 component: 55 public C++ controls, 5,000 mixed rows and eight native
+      cross-engine checkpoint/WAL journeys pass. The JSON converter also reserves
+      the empty-container physical slot C++ uses. C++ raw hash instability from
+      uninitialized NULL padding remains an explicit limited exception in
+      `conformance/divergences.md`. See `docs/nested-hash-parity.md`; broader final
+      artifact/corpus/client/performance verification still remains.
 14. **Buffer eviction parity under tight limits, the rest.** `max_swap_space_error.test`
     passes (20 of 20 runs, alone and beside a directory run): an append that starts a new
     row group unpins the full row group's segments before it allocates the new ones, as

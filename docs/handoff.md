@@ -67,6 +67,19 @@ explicitly selecting required v1.5.0 storage. This component remains under
 verification. Do not run redundant final-artifact gates on the encryption image before resolving
 this confirmed core gap. Final performance acceptance still remains required.
 
+## Signed nested-hash public/storage checkpoint (2026-10-27)
+
+New signed shipping images preserve 547 C API exports/zero ADBC test hooks. All 55 public
+hash/group/join controls and fully initialized 5,000 mixed rows match C++ literally.
+All eight plain/encrypted bidirectional checkpoint/nonempty WAL journeys pass, including
+hash indexes/generated columns/constraints/receiver mutation/original-writer readback.
+The raw padded-VARIANT hash counterexample is C++ allocator instability, confirmed
+by 423/5,000 differences between identical C++ processes; logical bytes/metadata and
+all normalized hashes match. This is a narrow documented exception, not a broad
+comparison mask. See `docs/nested-hash-parity.md` and external
+`nested-hash-parity-20261027/{public-hashes-2/verification.json,storage-1/verification.json}`.
+CAPI and affected SQL refreshes are next; full final gates/performance remain open.
+
 ## Current integrated checkpoint and active full corpus (2026-10-27)
 
 [Current-source verification](current-source-verification.md) is the consolidated index.
@@ -301,7 +314,7 @@ actual Swift build/tests have not yet established parity.
 Signed wheel6 closes the three remaining fast-suite Decimal failures. Both Arrow19/21
 complete fast suites match frozen CPPnodes/verdicts with zero failures;336focused
 Decimal outcomes, runtime385exports, exact stubs and strict typing checks pass. Four
-current15column checkpoint/nonemptyWAL/receiver-write/writer-readback journeys pass.
+current15column checkpoint/nonempty WAL/receiver-write/writer-readback journeys pass.
 See [Python Decimal verification](python-decimal-parity.md) and SSD
 `shell-argv-20261025/python-validation-6.json`. Other documented reference/client/
 environment/storage/performance gates remain open; this is not whole-port completion.

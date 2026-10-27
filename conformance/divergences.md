@@ -27,3 +27,24 @@ Rust engine cannot load them. Tests that `LOAD` the extension files of the C++ b
 `consistent_semicolon_extension_parse.test`, `install_extension.test_slow`,
 `concurrent_load_extension.test`) fail with
 "Not implemented: loading the extension file".
+
+## Uninitialized reference VARIANT padding
+
+C++ 1.5.6 can include uninitialized bytes in a VARIANT BLOB when a NULL
+primitive follows a non-NULL value during conversion. Its primitive converter
+retains the previous payload size and advances the NULL row's offset without
+writing those bytes. Public raw `hash(v)` consequently depends on allocator
+contents for these inputs. Two identical native C++ processes differ in 423
+of 5,000 hashes; the physical probe verifies that all differences from Rust
+are confined to eight unused BLOB bytes after the final VARIANT_NULL entry.
+Logical payloads/metadata match, and every normalized hash matches across both
+C++ repeats and Rust. Rust initializes unused bytes and does not reproduce
+process memory contents.
+
+This exception is limited to raw hashes of those undefined padding bytes.
+The 55 defined-value hash controls, a separate 5,000-row fully initialized
+VARIANT workload's raw hashes, and logical grouping/join results match C++
+literally. The original failed raw comparison remains preserved rather than
+being normalized away. Evidence: external
+`nested-hash-parity-20261027/{physical-2/padding-verification.json,
+public-hashes-1/differences.json,public-hashes-2/verification.json}`.

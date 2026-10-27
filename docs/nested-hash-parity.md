@@ -111,3 +111,35 @@ component gate. Shipping CLI/C API/SQL runner images are rebuilding from source4
 for independent public-API and eight bidirectional plain/encrypted persistence/WAL
 journeys. Final full SQL/shell/selected clients/ADBC and coupled performance
 acceptance remain open; no whole-port completion is claimed.
+
+## Signed shipping/public and persistence checkpoint
+
+The native release build exits successfully; immutable CLI, SQL runner and C API
+library copies are signed and strictly verified. The shipping library retains
+547 C API exports and zero ADBC test hooks; SHA-256 is
+`889c74d3bb17a0615a6898eea1a8457cbdf0b9dee47bf759290865b14e93a1ad`.
+All 55 public hash/group/join controls match C++ literally. A fully initialized
+5,000-row mixed VARIANT/nested-struct workload matches all hashes, 3,623 grouped
+rows, selected hashes and join results. All 905 source inputs/signatures remain
+stable. Evidence: `native-images-1.json`, `public-hashes-2/verification.json`.
+
+The first mixed workload includes NULL primitive padding: its raw hashes differ
+from C++. Independent native physical probes establish that C++ repeats differ
+from each other (423/5,000 hashes), entirely due to unused BLOB memory; logical
+bytes/metadata match and all normalized hashes agree. Rust retains initialized
+bytes. The exception is explicitly limited in `conformance/divergences.md`.
+The first raw failure stays preserved in `public-hashes-1`; accepted stage2
+separately checks fully initialized raw hashes plus explicit padded-value
+normalized hashes and literal logical grouping/join results. No broad hash
+normalization or expected-value masking is applied. The initial physical probe
+failed in the probe reader on invalid NULL-parent list offsets; the corrected
+reader respects validity and its results are retained in `physical-2`.
+
+All eight native cross-engine storage journeys pass: both directions, plaintext/
+encrypted, checkpoint/nonempty crash-preserved WAL, hash-expression indexes,
+generated hash columns, stored-hash check constraints, receiver insertion/update
+and original-writer readback. Pre-replay file/WAL snapshots and every child image
+identity are preserved in `storage-1/verification.json`. Each uses v1.5.0 storage
+required by C++ for VARIANT and the explicit reference crypto-write fallback
+setting with synthetic keys. These are real file journeys, not serialization-only
+checks. Broader corpus/C API/ADBC/selected clients/shell/performance gates remain.
