@@ -28,17 +28,17 @@ cases pass, eight cross-engine export/import journeys pass, and installed Python
 Arrow19/21 registered fsspec exports match C++ metadata/rows without local URI files.
 See `docs/export-plan-parity.md`. This is not final whole-port acceptance.
 
-The current ZSTD source now implements Greedy/Lazy/Lazy2 hash-chain and salted row
-matching, streaming extDict and context-salt lifecycle. All192 fresh row/stream and
-32 chronological C++ context-sequence frames match;384 opposite decodes pass. The
-320 small-window goldens remain green. All16 codec tests pass in both signed debug/
-release builds, and workspace/all-target Clippy passes. External
-`zstd-strategy-parity-20261027/source-3` preserves925entries/924build inputs.
-Binary-tree/optimal and high-level splitting remain open. Shipping artifacts have
-not been rebuilt for these codec changes. Continue `docs/zstd-strategy-parity.md`
-and `.context/zstd-next.md`; all earlier full corpus/client/shell/performance
-checkpoints remain before-stage evidence. Final acceptance is still required.
-Goal active.
+The current ZSTD source implements hash-chain/row Greedy/Lazy/Lazy2 plus delayed
+binary-tree BtLazy2, including streaming extDict and reset/index lifecycles.
+The newest tree stage adds257 exact fresh C++ frames,514 opposite decodes and32
+chronological context frames. All prior small-window/row/default controls remain
+green. Signed debug/release each pass19 codec tests; workspace/all-target Clippy
+passes. External `zstd-strategy-parity-20261027/source-4` preserves928entries/
+927build inputs. Optimal parsing/tree matching and high-level splitting remain
+open. Shipping artifacts have not been rebuilt for these codec changes. Continue
+`docs/zstd-strategy-parity.md` and `.context/zstd-next.md`; earlier full corpus/
+client/shell/performance checkpoints remain before-stage evidence. Goal active;
+final signed release and coupled performance acceptance remain required.
 
 ## Latest encrypted-Parquet component stage (2026-10-27)
 

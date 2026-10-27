@@ -125,3 +125,43 @@ Higher requested strategies now use their real working tables instead of a cappe
 DFast substitute. Default Fast/DFast table allocation remains unchanged; no table
 caching is introduced to close a speed gap. Shipping integration/final performance
 and the remaining binary-tree/optimal paths remain open.
+
+## Delayed binary-tree lazy strategy checkpoint
+
+`bt_lazy.rs` now ports the actual delayed unsorted binary tree used by BtLazy2:
+unsorted preceding-position insertion, reverse-chain candidate stacking, delayed
+sorting, smaller/larger links, prefix/extDict suffix comparison, bounded tree
+search, offset-price tie decisions and repetitive-pattern update skipping. The
+shared lazy parser selects it at depth2. The strategy now retains its real level
+parameters rather than DFast caps. Index reduction preserves its reserved unsorted
+marker; an explicit reduction unit covers the frozen reference rule. Optimal
+parsing/tree search and high-level splitting still remain required work.
+
+`bt-1` proves51/51 byte-identical one-shot/stream frames and102 opposite decodes.
+`bt-edges-2` proves206/206 additional exact frames and412 opposite decodes: all four
+small-window payload types, requested levels across source-size ranges,4.5MB text/
+random/zero/overlap inputs, real4MB-window streaming wraps and0..17byte final blocks.
+The oracle records actual ZSTD_getCParams strategy6 for active matcher cases.
+The earlier bt-edges-1 harness stopped before compression because standalone
+ZSTD_getCParams(size=0) means unknown-size, not a known-empty frame. That failure
+is preserved; empty frames need no match-finder selection and remain controls.
+
+`bt-reuse-1` proves32/32 chronological reused-context frames, mixing tree, row-hash,
+default, one-shot and wrapped streaming paths over two rounds. The actual frozen
+C++ library loader path is verified. All289 new C++ size/hash goldens are retained
+in `bt_lazy_1.5.6.tsv`, with full raw frames, input hashes and provenance external.
+
+Workspace/all-target Clippy passes. Six immutable signed codec executables in each
+of debug/release pass all19 tests,0ignored, including1153 explicit small-window/
+row/tree goldens per build and original reference/decoder/overflow controls.
+All927 source inputs remain verified; source4 preserves928 overlay entries.
+Evidence: tests-{debug,release}-3/verification.json, clippy-4-terminal.json,
+bt-golden-provenance-1.json, source-4/manifest.json. These are codec component checks;
+shipping Parquet/spill/storage integration has not been refreshed for this source.
+
+Per-case speed/RSS is retained in bt-speed-memory-diagnostic-1.json without averages.
+For300KB text, C++/Rust level13 is14.756/16.871ms with13.11/10.59MiB whole-process RSS;
+level14 is18.057/19.578ms with13.11/10.58MiB; level15 is18.951/22.283ms with13.11/10.59MiB.
+Frames are identical. These single native samples include process/DLL overhead in
+RSS and are not final TPC-H/ClickBench acceptance or isolated working-table savings.
+Default Fast/DFast allocation remains unchanged; there is no new table caching.

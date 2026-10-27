@@ -176,14 +176,14 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    `roaring_bool_compression_ratio`, `bitpacking_compression_ratio_hugeint` pass;
    `crates/zstd` ports zstd 1.5.6's encoder and decoder, partial blocks are shared as
    `PartialBlockManager` shares them). Left:
-   - ZSTD Greedy/Lazy/Lazy2 now has hash-chain and salted row-hash matching, including
-     streaming extDict and context-salt lifecycles. Signed debug/release each pass16
-     codec tests;192 fresh and32 actual C++ context-sequence frames match, with384
-     additional opposite decodes; the earlier320 small-window controls remain green.
-     Default frames remain unchanged. Binary-tree/optimal matchers and high-level
-     splitting still fall back and remain required; shipping Parquet/spill/storage
-     artifacts and final release gates still need refresh. See
-     `docs/zstd-strategy-parity.md` for exact scope and coupled codec diagnostics.
+   - ZSTD hash-chain/row Greedy/Lazy/Lazy2 and delayed binary-tree BtLazy2 now have
+     their actual matchers, including streaming extDict and reset/index lifecycles.
+     Signed debug/release each pass19 codec tests; the newest tree stage adds257
+     exact fresh frames,514 opposite decodes and32 actual C++ context frames.
+     All prior small-window/row/default controls remain green. Optimal parser/tree
+     strategies and high-level splitting still fall back and remain required;
+     shipping Parquet/spill/storage and final release gates need refresh. See
+     `docs/zstd-strategy-parity.md` for exact scope and individual speed/RSS diagnostics.
    - FSST segments of the same strings hold slightly different counts than DuckDB's
      (5878 against 5877 strings in a 256 KiB segment): the symbol tables differ.
    - zstd throughput is 0.88–1.0× DuckDB's (`docs/perf-backlog.md`).
