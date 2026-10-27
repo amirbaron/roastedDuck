@@ -1,16 +1,60 @@
 # Current-source verification
 
-Updated 2026-10-27. **The port goal remains active.** The current source-5 overlay has
-909 entries and 908 verified build inputs. The fresh full 4,870-file SQL run passes its documented-exception gate;
-source-5 aggregate performance measurements fit the approved tradeoff, with outlier
-repeats and final-artifact acceptance still pending. Earlier historical
-checkpoints do not substitute for these gates.
+Updated 2026-10-27. **The port goal remains active.** The live candidate is
+`batch-copy-memory-20261027/source-8/manifest.json`: 910 overlay entries and 909
+verified build inputs. It includes the import/native-byte work, footer-key Parquet
+encryption, nested/VARIANT hash fixes and the complete ordered-COPY helper lifecycle.
+Required clients are Python, Go and Swift; preserve C API/ADBC. Other language clients
+remain outside the owner's scope. The frozen engine contract is DuckDB 1.5.6.
 
-Required clients are Python, Go and Swift. C API/ADBC are preserved. Other language
-clients are outside the owner's goal. The target is frozen DuckDB 1.5.6. Preserve the
-accepted uncached lower-memory tradeoff; see [performance policy](performance-acceptance.md).
+## Live candidate gates
 
-| Current checkpoint | Verified result |
+| Source-8 checkpoint | Verified state |
+|---|---|
+| Workspace/all-target Clippy | Pass, warnings denied (`clippy-build-6`) |
+| Signed ordered-COPY SDK | Four passes (`sdk-verification-4`), including pressure, ordering and failure recovery |
+| Signed shipping artifacts | Strict signatures; 547 C API exports; zero ADBC test hooks (`native-images-2`) |
+| C API | 30 files/155 cases/725,896 assertions; actual selected-library loader paths verified |
+| Supplemental encrypted-Parquet SQL | Both tests pass on Rust and C++, including encrypted SF1 export/import and 22 TPC-H answers through tables/views |
+| Coupled COPY diagnostics | 36 samples completed against C++ and preserved old Rust; all 33 successful files independently cross-read for every payload and order |
+| Expanded affected SQL | 1,059 frozen files currently running; final verdict pending |
+| Full 4,870-file SQL / full unit suite | Fresh final-candidate verification still required |
+| Shell | Fresh final-candidate upstream/differential/PTY verification still required |
+| Native ADBC / Python / Go / Swift | Final-candidate rebuilt packages and complete selected-client gates still required |
+| Native/client persistence/WAL | Refresh required on final images; prior scoped journeys remain controls |
+| Full TPC-H/ClickBench timing/RSS/outliers | Final-candidate measurement and documented acceptance still required |
+
+The immutable signed shipping library SHA-256 is
+`2c96baa818920f6be19daaebea5ed3e3cbcf833a0a308139329ff0184bebca0c`.
+The CLI is `6527e7f76b907296ff05c5f2a019407480065e04fb49c5561b554850a82a88ec`;
+the SQL runner is `02e16760f696206437040c7104c239a67539150879417b0070f21f4f801e05a7`.
+Evidence is under external `batch-copy-memory-20261027/`, including source, signatures,
+SDK/C API, `encryption-sql-2`, `after-probe-2` and active `affected-sql-2` receipts.
+
+COPY is an explicit performance outlier. At 14 threads/256 MB the corrected path is
+303.0 ms/459.5 MB versus C++ 246.6 ms/463.8 MB, and the old unaccounted Rust path
+87.4 ms/665.0 MB. At 512 MB it is 222.5 ms/565.0 MB versus C++ 152.9 ms/683.8 MB.
+CPU concurrency follows C++ budgeted throttling. The user preference question about
+this documented tradeoff is pending; no answer or approval is inferred. The first
+shipping candidate's larger runtime regression remains rejected and preserved.
+See [COPY measurements and lifecycle](batch-copy-memory-parity.md).
+
+The accepted lower-memory TPC-H/ClickBench policy remains unchanged; no table cache
+was introduced to close small speed gaps. Preserve individual query outliers and
+whole-process plus interpreter-adjusted RSS. See [performance policy](performance-acceptance.md).
+A narrow C++ uninitialized-VARIANT-padding raw-hash exception is documented in
+`conformance/divergences.md`; defined payloads, normalized hashes and independent
+file journeys have separate evidence in [nested hashing](nested-hash-parity.md).
+
+## Before-stage complete integrated control
+
+The following import-source-5 checkpoint predates encrypted-Parquet/nested-hash/COPY
+changes. Its 909-entry/908-input overlay, full SQL/shell/client/runtime/packaging/
+persistence and performance evidence remain preserved, and do not substitute for the
+new candidate's final gates. Its Python image and all other identities below belong
+to that before-stage checkpoint.
+
+| Prior import-source-5 checkpoint | Verified result |
 |---|---|
 | Workspace/all-target Clippy | Pass, warnings denied |
 | Signed import/registered-storage SDK | 15 pass |
@@ -65,7 +109,7 @@ outperformance is not required. No table cache was introduced to erase small spe
 
 The source-5 performance checkpoint now checks all 130 TPC-H/ClickBench query/thread
 configurations and fits the approved aggregate policy; see [measured performance](performance-acceptance.md).
-The completion audit nevertheless identifies required functional work: the Parquet writer
-still rejects supported footer-key encryption. The `column_keys` rejection matches frozen
-C++ and is not a request to exceed its functionality. This gap and other open contract
-items prevent declaring the overall port complete despite the green scoped gates.
+That before-stage checkpoint predates the encrypted-Parquet, nested-hash and ordered-COPY
+changes now under verification. Supported footer-key encryption is implemented and has
+independent cross-read/corruption/SQL evidence; column_keys retains the shared C++ limit.
+The newer core/client/final-performance gates below must be completed on their own images.
