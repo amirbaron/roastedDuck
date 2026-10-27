@@ -20,6 +20,24 @@ The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swi
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
 
+## Latest EXPORT and compression audit checkpoints (2026-10-27)
+
+The confirmed EXPORT gaps are fixed in the retained pre-ZSTD shipping checkpoint:
+160 complete public plans match C++ literally, all14 signed SDK tests and155 C API
+cases pass, eight cross-engine export/import journeys pass, and installed Python
+Arrow19/21 registered fsspec exports match C++ metadata/rows without local URI files.
+See `docs/export-plan-parity.md`. This is not final whole-port acceptance.
+
+The next source now implements ZSTD small-window hash-chain Greedy/Lazy/Lazy2.
+All320 frozen C++ boundary frames match, all80 paired codec cross-decodes pass,
+and all14 codec tests pass in both signed debug/release builds. Workspace/all-target
+Clippy passes. Source1 of external `zstd-strategy-parity-20261027` preserves919
+entries/918 build inputs. Row-hash, binary-tree/optimal and streaming state remain
+open; shipping artifacts have not been rebuilt for this codec change. Continue
+`docs/zstd-strategy-parity.md` and `.context/zstd-next.md`. All earlier full corpus,
+client, shell and performance checkpoints remain before-stage evidence; final
+signed release/coupled performance acceptance is still required. Goal active.
+
 ## Latest encrypted-Parquet component stage (2026-10-27)
 
 A completion audit and fresh C++/Rust probes exposed supported footer-key encrypted
