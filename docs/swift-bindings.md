@@ -270,3 +270,31 @@ Current receipt: `.context/artifacts/swift-client-20261025/current-verification-
 raw suites/builds: rust-{build-3,test-2}; portable package/journeys: sdk-package-2,
 sdk-consumer-3, sdk-deployment-2 and sdk-interop-2. This refresh covers the current verified
 core on macOSarm64; broader API/platform and release packaging gates remain separate.
+
+
+## Current source-5 SDK/distribution refresh (2026-10-27)
+
+The complete pinned wrapper suite passes on both current Rust and frozen C++: 132 upstream
+cases plus one separate identity test, with exact case IDs and no failures. The current
+Rust suite verifies only the selected signed shipping library (SHA-256
+`38603874f849b13c24ee23ec8cd6107294860c602bda19d63d3ad87bf8df622a`). The wrapper/license
+pin and unchanged test assertions verify; only the documented dedicated-fixture path
+adaptation and additional identity test are applied.
+
+The relative macOS arm64 framework, relocated package consumer and standalone copied
+consumer/framework all pass on the current image. Prepared statements, appenders,
+rollback, checkpoint/reopen, Unicode/NULL values and result ownership complete with only
+the selected Rust framework loaded. Four fresh C++/Swift checkpoint/nonempty-WAL journeys
+pass with receiver writes and writer readback. The first interop invocation used a directory
+instead of the executable and failed before starting any journey; the corrected actual
+Consumer executable completes all four, with both logs preserved.
+
+The unchanged signed Foundation storage probe is reused after verifying its source/binary
+hashes and signature. Its actual cache/temp/fixture checks pass inside the dedicated SSD
+root. All current Swift builds, module caches, test data and logs remain on the SSD.
+
+Evidence: external `import-preprocessing-20261027/swift-1/{case-comparison.json,
+test/summary.json,sdk/summary.json,consumer/summary.json,standalone/summary.json,
+interop-2/summary.json}`. This is current-host macOS arm64 evidence, not an assertion of
+other platform coverage. The full current SQL corpus and coupled performance acceptance
+remain pending; the broader port goal stays active.

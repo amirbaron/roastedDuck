@@ -1829,3 +1829,14 @@ prepare/execute journeys; its complete C API suite passes 30 files/155 cases/744
 assertions. Broader Go/Swift/native ADBC/full SQL/shell/storage-WAL and coupled performance
 acceptance remain open. Earlier reference-defect and callback-concurrency exceptions remain
 explicit. The accepted uncached lower-memory policy is unchanged.
+
+
+The current source-5 package also passes all four fresh 15-column cross-engine append
+journeys: each engine writes checkpointed and crash-left nonempty-WAL data; the other
+reads three rows, writes/checkpoints a fourth, and the original writer reads it back.
+The cohort covers integer, Unicode/NUL VARCHAR, BLOB, DECIMAL, timestamp/date, boolean,
+list/array/struct/map, UUID, BIT, interval and ENUM defaults. Database/WAL snapshots and
+hashes are preserved before replay. Every child process verifies its intended native image
+before/after execution; the WAL writer still performs the real unclean process exit.
+Evidence: external `import-preprocessing-20261027/python-persistence-1/verification.json`.
+Native ADBC now also passes its current 64/3,040 gate on both engines; see [ADBC](adbc.md).

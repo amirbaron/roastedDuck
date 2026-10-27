@@ -242,3 +242,23 @@ symbol/dependency records, `adbc-pivot-{cpp,rust}.log`,
 `adbc-pivot-runtime-tests-1-summary.json`, `adbc-upstream-capi-unit-tests-1-summary.json`,
 `adbc-upstream-shipping-capi.log`, `adbc-upstream-clippy-{default,test-api}-1.jsonl`,
 `adbc-upstream-workspace-check-1.jsonl`. Harness details: `scripts/adbc-tests/README.md`.
+
+
+## Current source-5 native refresh (2026-10-27)
+
+The complete frozen native suite passes again on current Rust and frozen C++:
+64 cases and 3,040 assertions each. Ordered case starts and source/adaptation hashes match;
+the selected engine image is verified before and after both suites. The optional bridge
+library is preserved separately. The default shipping build was restored, signed and
+verified to expose 547 C API functions and zero test hooks **before** the harness ran.
+Current source has 908 verified build inputs; all hashes remain stable.
+
+Evidence: external `import-preprocessing-20261027/adbc-native-1/verification.json`,
+per-engine complete logs, manifests, test-library identity and shipping restoration receipt.
+The installed Python/ADBC file journeys and two import/rollback controls also pass on both
+Arrow environments. Non-SELECT import/PRAGMA preprocessing is now covered by five exact
+public extraction contexts and seven complete prepare/execute C API journeys, including
+query-owned rollback after a failed extracted prepare.
+
+The current full 4,870-file corpus is running. This gate does not establish final whole-port
+performance, other platforms, or all broader client/backend/lifetime coverage.
