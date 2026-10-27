@@ -98,8 +98,10 @@ regressions: regular14-thread/256MB saves33.9% versus old Rust for4.47times
 the runtime;512MB saves8.8% for3.81times. All33successful files cross-read and
 all payloads/order match. A profile and frozen C++ handoff review identify
 unconditional local preparation after waking helper tasks; next restore the
-C++ conditional handoff and remeasure without raising memory. Final acceptance
-remains open. Full final gates/performance remain open.
+C++ conditional handoff and retained PROCESSING_TASKS resume phase. The handoff
+alone passes all four signed SDK cases (source6); the completed resume-state
+source8 passes Clippy and SDK build4 is active. Remeasure without raising memory.
+Final acceptance remains open. Full final gates/performance remain open.
 
 ## Current integrated checkpoint and active full corpus (2026-10-27)
 

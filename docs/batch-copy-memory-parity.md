@@ -208,3 +208,13 @@ pressure/minimum status and retains no processing phase. Complete that state
 transition before the next shipping build, preserving the accepted component
 evidence and all failed performance controls. Runtime/performance improvement
 remains unproven.
+
+The resumed-task processing phase is now retained in CopyLocal across blocked
+sink calls. Woken helpers drain queued preparation/flush work before resuming
+input, including when their batch becomes the minimum, matching the frozen
+C++ PROCESSING_TASKS/SINKING_DATA lifecycle. Memory reservations/accounting are
+unchanged. Source-7 Clippy reports only a collapsible-if style issue; source 8
+collapses that condition and full workspace/all-target Clippy passes. Source-8
+SDK build 4 is active for the same four regressions. Source 6's passing SDK and
+source 5's rejected shipping performance evidence remain preserved separately.
+This lifecycle revision has no runtime/performance acceptance yet.
