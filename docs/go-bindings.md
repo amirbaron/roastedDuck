@@ -229,3 +229,20 @@ never executed and remains explicitly rejected with its original manifest. Sourc
 archive is reused only after verifying every input hash; the rejected library is not
 current-build proof. CLI/Slt rebuild is active; fresh full corpus/shell/Python/Swift and
 remaining client/package/platform/performance acceptance are still open.
+
+## Source-8 signed-library checkpoint (2026-10-27)
+
+The pinned Go client is rebuilt with Arrow against the selected immutable signed
+source-8 Rust library. All 652 root-suite cases, including subtests, pass with exact
+frozen C++ case IDs and verdicts. All 79 pinned upstream files and the bindings C
+header verify unchanged; the signed test executable's load commands and runtime
+loader log select only the intended engine. All 909 core source hashes and native
+signatures verify stable before/after. No bundled C++ engine is used.
+
+Evidence is external `batch-copy-memory-20261027/{go-build-1/summary.json,
+go-test-1/summary.json,go-comparison-1.json}`. Library SHA-256 is
+`2c96baa818920f6be19daaebea5ed3e3cbcf833a0a308139329ff0184bebca0c`.
+This is complete pinned root-suite evidence on the current macOS arm64 host;
+applicable broader API/platform/distribution and whole-goal release acceptance
+remain separate. It does not transfer older Swift/ADBC/shell/corpus results to
+this candidate.

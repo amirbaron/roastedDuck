@@ -114,7 +114,9 @@ fixture/source/signature guards. The signed source8 Python wheel now matches bot
 complete Arrow fast matrices, all79non-fastrecords, installed ADBC/file/UDF
 handoffs and all eight15-column cross-engine persistence/WAL journeys across
 both environments. See `docs/python-bindings.md` for scope; configured-extension/
-HTTPFS and broader API/platform audits remain. Go is rebuilding next.
+HTTPFS and broader API/platform audits remain. Go now passes all 652 pinned
+root-suite cases exactly matching C++ IDs/verdicts on the signed library, with
+79 upstream files/loader identity verified. Swift is rebuilding next.
 Final acceptance remains open. Full final gates/performance remain open.
 
 ## Current integrated checkpoint and active full corpus (2026-10-27)
