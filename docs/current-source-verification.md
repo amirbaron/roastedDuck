@@ -17,7 +17,7 @@ remain outside the owner's scope. The frozen engine contract is DuckDB 1.5.6.
 | C API | 30 files/155 cases/725,896 assertions; actual selected-library loader paths verified |
 | Supplemental encrypted-Parquet SQL | Both tests pass on Rust and C++, including encrypted SF1 export/import and 22 TPC-H answers through tables/views |
 | Coupled COPY diagnostics | 36 samples completed against C++ and preserved old Rust; all 33 successful files independently cross-read for every payload and order |
-| Expanded affected SQL | 1,059 frozen files currently running; final verdict pending |
+| Expanded affected SQL | 1,059 files: 1,047 pass, 11 exact C++ skips, one documented avoided-OOM assertion; all verdicts and failure payload unchanged |
 | Full 4,870-file SQL / full unit suite | Fresh final-candidate verification still required |
 | Shell | Fresh final-candidate upstream/differential/PTY verification still required |
 | Native ADBC / Python / Go / Swift | Final-candidate rebuilt packages and complete selected-client gates still required |
@@ -29,7 +29,8 @@ The immutable signed shipping library SHA-256 is
 The CLI is `6527e7f76b907296ff05c5f2a019407480065e04fb49c5561b554850a82a88ec`;
 the SQL runner is `02e16760f696206437040c7104c239a67539150879417b0070f21f4f801e05a7`.
 Evidence is under external `batch-copy-memory-20261027/`, including source, signatures,
-SDK/C API, `encryption-sql-2`, `after-probe-2` and active `affected-sql-2` receipts.
+SDK/C API, `encryption-sql-2`, `after-probe-2` and accepted `affected-sql-2` receipts. The source-8 Python wheel
+is now rebuilding for installed-package verification.
 
 COPY is an explicit performance outlier. At 14 threads/256 MB the corrected path is
 303.0 ms/459.5 MB versus C++ 246.6 ms/463.8 MB, and the old unaccounted Rust path

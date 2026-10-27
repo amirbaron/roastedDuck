@@ -108,8 +108,9 @@ New/C++ averagebusycores match1.69/1.72, while oldunaccountedpath uses5.98.
 The512MB/skew costs remain explicit; user preference on documented COPY tradeoff
 is pending. The current C API suite passes 30 files/155 cases/725,896 assertions;
 both supplemental encrypted-Parquet SQL files pass on each engine. Expanded
-1,059-file SQL coverage is active (old760plus299CSV), with all fixture/source/
-signature guards.
+1,059-file SQL coverage passes: 1,047 pass, 11 shared skips, one documented
+avoided-OOM assertion; every verdict/failure payload is unchanged, with all
+fixture/source/signature guards. The source8 Python wheel is rebuilding next.
 Final acceptance remains open. Full final gates/performance remain open.
 
 ## Current integrated checkpoint and active full corpus (2026-10-27)

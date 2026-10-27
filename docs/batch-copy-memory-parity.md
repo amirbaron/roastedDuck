@@ -284,3 +284,20 @@ plus 299 CSV files). It preserves normal engine threads with one worker, checks
 complete 4,870 SQL/1,522 data fixture identities and compares every selected
 verdict/shared skip reason with the accepted reference. Its final outcome is
 pending, as are broader final release and performance acceptance gates.
+
+## Expanded SQL regression acceptance checkpoint
+
+The 1,059-file affected SQL cohort completes and passes its scoped gate:
+1,047 pass, 11 exact C++ skips and the one existing documented avoided-OOM JSON
+assertion. Every file verdict matches the prior accepted full run; shared skip
+reasons and the existing failure payload match literally. No crash or timeout
+occurs. All 909 source inputs, signed runner and complete 4,870 SQL/1,522 data
+fixture identities verify unchanged before/after. Evidence:
+`affected-sql-2/{verification.json,failure-payload-verification.json,fixture-after.json}`.
+
+This includes all 299 CSV files in addition to the prior 760 affected paths,
+covering batched/mixed output, TPC-H CSV, Parquet, aggregate, ART, join, JSON
+and VARIANT storage workloads. The source-8 Python wheel is now rebuilding for
+installed-package and complete fast-suite verification; earlier package/client
+results remain before-stage controls. COPY preference and final performance
+acceptance remain pending. No final full-corpus/client completion is claimed.
