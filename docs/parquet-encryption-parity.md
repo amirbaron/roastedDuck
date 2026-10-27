@@ -49,3 +49,20 @@ sdk-verification-1.json,units-verification-1.json,clippy-1-terminal.json}`. The 
 overlay has 913 entries/912 verified build inputs. Shipping images are rebuilding;
 independent C++/Rust cross-read/copy and broader final artifact verification remain
 pending. This is component evidence, not a completed encryption or overall port claim.
+
+## Signed shipping cross-engine checkpoint
+
+The native release build exited successfully, then immutable copies were signed and
+strictly verified. The shipping library retains all 547 C API exports and zero ADBC
+test-hook exports. Fresh separate C++ Python and Rust C ABI processes verify 48 file
+cases: each writer's 12 key/codec combinations is read by both engines. Every complete
+5,000-row EXCEPT ALL comparison and COPY FROM comparison passes, including nullable
+Unicode, lists, structs and decimals over multiple row groups. Missing and incorrect
+keys are rejected by both engines. Each process verifies exactly one selected engine
+image; all 912 build-input hashes and shipping signatures remain stable.
+
+Evidence: external `parquet-encryption-20261027/{native-images-1.json,cross-1/verification.json}`.
+Signed library SHA-256: `64c4931b39d048c954332b4768ccfd5631367401a4e1f864a2963e3cfd674528`.
+Corruption controls, registered-backend Python journeys and broader final artifact gates
+remain pending. These cross-engine results do not transfer the earlier complete
+source-5 corpus/client/performance results to the new images.

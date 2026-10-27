@@ -29,7 +29,10 @@ configuration serialization. Three signed end-to-end SDK tests and 38 signed cry
 Parquet unit tests pass, with two existing ignored Snappy tools. Workspace/all-target
 check and Clippy pass. The complete overlay has 913 entries/912 build inputs.
 
-Shipping images are rebuilding for independent C++/Rust cross-read/copy tests. All prior
+Shipping images are signed; all 48 separate-process C++/Rust cross-read/COPY FROM
+file cases pass (three key sizes, four codecs, both writers/readers). Shipping C API
+retains 547 exports and zero test hooks. Python is rebuilding for registered-backend
+and corruption controls. All prior
 source-5 full corpus/client/performance checkpoints below remain preserved before-stage
 controls and cannot substitute for final verification of these changes. See
 [encrypted Parquet evidence](parquet-encryption-parity.md). The goal remains active.

@@ -1,7 +1,9 @@
 # Performance acceptance
 
 Policy approved by the owner on 2026-10-23. Source-5 measurements below satisfy
-the aggregate tradeoff; outlier control repeats and final-artifact acceptance remain pending.
+the aggregate tradeoff; paired outlier controls are complete and documented in
+[the individual-query report](performance-outliers-20261027.md). Final-artifact acceptance
+remains pending after the encrypted-Parquet changes.
 This policy supersedes both the original outperformance targets and the later
 independent speed/memory parity gates.
 
