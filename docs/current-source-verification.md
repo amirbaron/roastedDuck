@@ -19,7 +19,8 @@ remain outside the owner's scope. The frozen engine contract is DuckDB 1.5.6.
 | Coupled COPY diagnostics | 36 samples completed against C++ and preserved old Rust; all 33 successful files independently cross-read for every payload and order |
 | Expanded affected SQL | 1,059 files: 1,047 pass, 11 exact C++ skips, one documented avoided-OOM assertion; all verdicts and failure payload unchanged |
 | Full 4,870-file SQL / full unit suite | Fresh final-candidate verification still required |
-| Shell | Source-8 upstream run active; full differential/PTY refresh follows |
+| Shell upstream | Fresh Rust/C++ 392 passes/three exact shared skips using existing SSD lexical-alias fixture; initial shared unquoted-space-path failures retained |
+| Shell differential/PTY | Full source-8 768-case/46-PTY run active; final result pending |
 | Python Arrow 19/21 fast | 3,241/3,492 records, exact C++ IDs/verdicts/skip reasons; signed source-8 wheel installed in both environments |
 | Python non-fast / installed ADBC | Fresh non-fast 71 pass/eight shared skips; both installed ADBC/file/UDF handoffs pass; 547 API exports/zero test hooks |
 | Python persistence/WAL | Eight 15-column append/checkpoint/nonempty-WAL/mutation/readback journeys pass across both Arrow environments |
@@ -121,3 +122,23 @@ That before-stage checkpoint predates the encrypted-Parquet, nested-hash and ord
 changes now under verification. Supported footer-key encryption is implemented and has
 independent cross-read/corruption/SQL evidence; column_keys retains the shared C++ limit.
 The newer core/client/final-performance gates below must be completed on their own images.
+
+## Upstream shell path calibration and current pass
+
+The first source-8 upstream run produced nine failures because the upstream tests
+interpolate temporary filenames into unquoted dot commands, while the physical SSD
+path contains spaces. C++ reproduces the identical 395-case verdict set and the
+same nine failures. That counterexample is retained separately.
+
+Using the repository's existing `shell_ssd_tmp_path` fixture, both engines now
+pass all 392 upstream cases with the same three skips and literal skip reasons.
+The fixture delegates pytest's original lifecycle and returns only a whitespace-free
+workspace symlink path to the same verified external storage. No test body,
+assertion or shell tokenization changed. JUnit collection-path prefixes are mapped
+only before the fixed `tools.shell.tests` module names; case names/verdicts remain
+unchanged. All 909 source inputs, native CLI hashes and signatures verify stable.
+
+Evidence is external `batch-copy-memory-20261027/{shell-upstream-1/path-control-comparison.json,
+shell-upstream-alias-verification-2.json,shell-upstream-rust-alias-2/,
+shell-upstream-cpp-alias-2/}`. Full 768-case/46-PTY differential verification is now
+running on the source-8 CLI; its final verdict is still pending.

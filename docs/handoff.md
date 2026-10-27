@@ -121,7 +121,9 @@ cases on both engines, relocated/standalone distribution and four file/WAL
 journeys. Native ADBC passes 64 cases/3,040 assertions on each engine with
 exact ordered IDs and loader/source verification; feature Clippy passes. Test
 hooks remain isolated and shipping default547/0 was restored before harness.
-The source8 upstream shell run is active; differential/PTY refresh follows.
+The source8 upstream shell now passes 392/three shared skips on each engine
+with the existing SSD lexical-alias fixture; initial nine unquoted-space-path
+failures reproduced on C++ and remain preserved. Full768/46PTY differential is active.
 Final acceptance remains open. Full final gates/performance remain open.
 
 ## Current integrated checkpoint and active full corpus (2026-10-27)
