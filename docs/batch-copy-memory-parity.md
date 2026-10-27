@@ -198,3 +198,13 @@ passes; SDK build 3 is active for the same four regressions. New build/freeze/
 measurement stages use explicit stage/source arguments and preserve all
 source-5 images/results. This handoff has not yet passed runtime or performance
 verification. No rejected source-5 performance result is relabeled as accepted.
+
+The signed source-6 SDK also passes all four regressions (0.66 seconds). A final
+C++ lifecycle comparison identifies the paired helper-resume requirement:
+FixedBatchCopyLocalState retains PROCESSING_TASKS across a blocked sink and
+executes queued work when resumed even if its batch has meanwhile become the
+minimum. The Rust candidate currently recomputes assistance only from memory
+pressure/minimum status and retains no processing phase. Complete that state
+transition before the next shipping build, preserving the accepted component
+evidence and all failed performance controls. Runtime/performance improvement
+remains unproven.
