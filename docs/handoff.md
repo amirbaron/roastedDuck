@@ -123,7 +123,11 @@ exact ordered IDs and loader/source verification; feature Clippy passes. Test
 hooks remain isolated and shipping default547/0 was restored before harness.
 The source8 upstream shell now passes 392/three shared skips on each engine
 with the existing SSD lexical-alias fixture; initial nine unquoted-space-path
-failures reproduced on C++ and remain preserved. Full768/46PTY differential is active.
+failures reproduced on C++ and remain preserved. Full768/46PTY differential now
+passes with zero unexpected differences and the one native-frame-body exception.
+A fresh paired public probe confirms the next real functional gap: CSV/Parquet
+EXPORT plans serialize on C++ and return NotImplemented on Rust. Follow
+`docs/export-plan-parity.md` and external `export-plan-parity-20261027/before-2-index.json`.
 Final acceptance remains open. Full final gates/performance remain open.
 
 ## Current integrated checkpoint and active full corpus (2026-10-27)

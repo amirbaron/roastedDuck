@@ -20,7 +20,7 @@ remain outside the owner's scope. The frozen engine contract is DuckDB 1.5.6.
 | Expanded affected SQL | 1,059 files: 1,047 pass, 11 exact C++ skips, one documented avoided-OOM assertion; all verdicts and failure payload unchanged |
 | Full 4,870-file SQL / full unit suite | Fresh final-candidate verification still required |
 | Shell upstream | Fresh Rust/C++ 392 passes/three exact shared skips using existing SSD lexical-alias fixture; initial shared unquoted-space-path failures retained |
-| Shell differential/PTY | Full source-8 768-case/46-PTY run active; final result pending |
+| Shell differential/PTY | Full source-8 768 cases/46 PTY pass: zero unexpected differences, one known native-frame-body exception |
 | Python Arrow 19/21 fast | 3,241/3,492 records, exact C++ IDs/verdicts/skip reasons; signed source-8 wheel installed in both environments |
 | Python non-fast / installed ADBC | Fresh non-fast 71 pass/eight shared skips; both installed ADBC/file/UDF handoffs pass; 547 API exports/zero test hooks |
 | Python persistence/WAL | Eight 15-column append/checkpoint/nonempty-WAL/mutation/readback journeys pass across both Arrow environments |
@@ -140,5 +140,14 @@ unchanged. All 909 source inputs, native CLI hashes and signatures verify stable
 
 Evidence is external `batch-copy-memory-20261027/{shell-upstream-1/path-control-comparison.json,
 shell-upstream-alias-verification-2.json,shell-upstream-rust-alias-2/,
-shell-upstream-cpp-alias-2/}`. Full 768-case/46-PTY differential verification is now
-running on the source-8 CLI; its final verdict is still pending.
+shell-upstream-cpp-alias-2/}`. Full 768-case/46-PTY differential verification now passes on the source-8 CLI
+with zero unexpected differences and one native-frame-body exception. Case/driver
+hashes, all 909 inputs and both CLI signatures verify unchanged.
+
+## Next confirmed functionality gap
+
+A fresh public C++/Rust probe confirms that CSV/Parquet EXPORT logical plans
+serialize successfully on C++ while Rust returns NotImplemented. See
+[EXPORT plan contract](export-plan-parity.md). The green source-8 component/client/
+shell gates do not establish whole-port completion while that supported gap and
+other contract/final-performance gates remain open.
