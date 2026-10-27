@@ -20,6 +20,20 @@ The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swi
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
 
+## Latest encrypted-Parquet component stage (2026-10-27)
+
+A completion audit and fresh C++/Rust probes exposed supported footer-key encrypted
+Parquet writing/COPY FROM still unimplemented in Rust. The working implementation now
+uses shared RustCrypto AES-GCM for 16/24/32-byte keys, matching module/footer framing and
+configuration serialization. Three signed end-to-end SDK tests and 38 signed crypto/
+Parquet unit tests pass, with two existing ignored Snappy tools. Workspace/all-target
+check and Clippy pass. The complete overlay has 913 entries/912 build inputs.
+
+Shipping images are rebuilding for independent C++/Rust cross-read/copy tests. All prior
+source-5 full corpus/client/performance checkpoints below remain preserved before-stage
+controls and cannot substitute for final verification of these changes. See
+[encrypted Parquet evidence](parquet-encryption-parity.md). The goal remains active.
+
 ## Current integrated checkpoint and active full corpus (2026-10-27)
 
 [Current-source verification](current-source-verification.md) is the consolidated index.
