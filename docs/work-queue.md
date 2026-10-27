@@ -269,8 +269,11 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    - Equal aggregates are shared when their functions have the same name; DuckDB
      compares the functions' callbacks, so `median(x)` and `quantile_cont(x, 0.5)` are
      one aggregate there.
-   - A scan of encrypted Parquet files cannot be serialized: rustdb resolves the footer
-     key's name to the key while binding.
+   - Encrypted-Parquet scan/COPY key serialization is now implemented. Current
+     installed source8 Python controls on Arrow19/21 verify encrypted scan-plan
+     serialization and paired C++ behavior; this earlier limitation is closed
+     for the supported footer-key path. See `docs/parquet-encryption-parity.md`
+     and `batch-copy-memory-20261027/python-encryption-arrow{19,21}-2/`.
    - Not comparable: `SELECT $1` and the optimized plans DuckDB fails to bind ("Failed
      to bind column reference ... inequal num bindings/types", e.g. TPC-H 2, 5, 7, 8, 9,
      12, 21 and `SUMMARIZE`) are DuckDB internal errors with stack addresses, and
