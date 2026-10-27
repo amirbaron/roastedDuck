@@ -71,3 +71,27 @@ it for empty JSON containers. Check and correct that physical representation
 after the diagnostic run, retaining safe initialization of unused bytes. Recheck
 all original controls and add empty/nested JSON-container coverage; do not waive
 JSON-derived values from the hash requirement.
+
+## Complete diagnostic and JSON layout correction
+
+The signed source-3 diagnostic completes all 48 controls: the only mismatching
+expression is the empty JSON object, in both hash columns for constant/stored/
+selected representations. All other 47 controls match. The full mismatch list
+is retained in `sdk-run-2.log`; the component gate remains failed there.
+
+The JSON converter now reserves a safely zero-initialized offset-width slot for
+empty containers. Seven additional empty/nested JSON inputs are captured from
+C++: each is stable in five independent connection trials, both constant and
+stored-row hashing. The SDK test now covers all 55 controls. Source4 workspace/
+all-target Clippy passes and its release SDK is building. This stage has not yet
+passed runtime verification. Evidence: `oracle-json-extra-1.json`,
+`source-4/manifest.json`, `clippy-build-4-terminal.json`.
+
+The native storage journey is calibrated against C++ alone for all four plain/
+encrypted checkpoint/nonempty-WAL controls, including receiver mutation and
+readback, hash indexes, generated hash columns and stored-hash check constraints.
+These controls explicitly select storage version v1.5.0, which C++ requires for
+VARIANT columns. The initial default-v1.0 rejection is preserved before any
+VARIANT table was created (`cpp-storage-controls-1`); the corrected reference
+controls all pass (`cpp-storage-controls-2/verification.json`). Cross-engine
+journeys require a new signed shipping library after the SDK gate passes.
