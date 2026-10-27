@@ -95,3 +95,26 @@ check-build-2-terminal.json,clippy-build-2-terminal.json,sdk-build-1-manifest.js
 Next: sign/run the completed SDK binary with its watchdog, fix any failures,
 then build/sign shipping images and repeat the frozen coupled timing/RSS
 controls plus independent C++/Rust output, CSV/Parquet SQL and broader gates.
+
+## First signed runtime counterexample
+
+The source-4 SDK run passes injected-error cleanup/recovery and the nullable
+Unicode CSV round trip, then stalls in the pressure COPY with a partial output
+file. A bounded native thread sample shows the query waiting and all three
+worker threads idle. The 180-second SDK watchdog will preserve the failed gate;
+no shipping build or performance acceptance follows this run. Evidence:
+`sdk-run-1.log`, `sdk-pressure-sample-1.txt` and the SDK terminal/verification.
+
+Lifecycle review identifies a missing worker-finish handoff: frozen C++ COPY
+Combine updates the memory manager's minimum batch index after submitting
+remaining rows, then executes queued tasks. The new Rust candidate added
+blocking but its old Combine path does not advance that minimum or wake
+remaining blocked sinks. Correct that lifecycle instead of forcing one thread
+or disabling the memory limit. Retain before/after regression evidence.
+
+Fresh C++ controls also establish that the pressure COPY itself and order check
+succeed at 96 MB, while its later EXCEPT ALL validation hits OOM at that budget.
+The uneven-batch and injected-error controls pass. CSV's initial combined
+control also hits OOM; stage-specific follow-up is needed to distinguish COPY
+from CSV validation. Preserve the 96 MB COPY budget while giving complete-result
+validation its own budget, as the measured before-probe already does.
