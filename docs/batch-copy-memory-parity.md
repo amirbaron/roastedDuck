@@ -229,3 +229,43 @@ not fire, and all 909 source hashes/signatures verify stable. Evidence:
 from source 8 with the explicit stage-2 source guard. Repeat the same coupled
 controls only after successful completion and signing; no performance
 improvement or tradeoff acceptance is claimed by this component result.
+
+## Second shipping coupled measurements
+
+Source-8 shipping build 2 exits successfully. Immutable signed CLI/library/runner
+images preserve 547 C API exports and zero ADBC test hooks. All 36 paired samples
+against C++/old Rust/new Rust complete with all 909 source inputs/input/image signatures
+stable. All 33 successful output files are cross-read by the opposite engine,
+checking every payload and physical row order over two million rows each.
+Evidence: `native-images-2.json`, `after-probe-2/verification.json` and
+`after-probe-2/coupled-analysis.json`. The new library SHA-256 is
+`2c96baa818920f6be19daaebea5ed3e3cbcf833a0a308139329ff0184bebca0c`.
+
+| Configuration | C++ median ms / MB | Old Rust median ms / MB | New Rust median ms / MB |
+|---|---:|---:|---:|
+| 1 thread, 256 MB | 283.6 / 119.0 | 393.4 / 162.7 | 390.1 / 162.5 |
+| 14 threads, 256 MB | 246.6 / 463.8 | 87.4 / 665.0 | 303.0 / 459.5 |
+| 14 threads, 512 MB | 152.9 / 683.8 | 79.4 / 636.4 | 222.5 / 565.0 |
+| 14 threads, 256 MB,skew | OOM in 3/3 | 105.5 / 918.5 | 327.8 / 658.5 |
+
+The complete C++ helper lifecycle improves candidate 1 times 370.1 to 303.0 ms at
+256 MB, 310.2 to 222.5 ms at 512 MB and 446.4 to 327.8 ms for skew. The old unaccounted
+path remains faster: the new regular parallel path is 3.47 times/2.80 times its
+wall time with 30.9%/11.2% less peak RSS. The skewed path is 3.11 times slower than
+old Rust with 28.3% less RSS. These individual regressions remain explicit.
+Against C++, the successful regular copies are 22.9% longer at 256 MB with 0.9% less
+RSS, and 45.5% longer at 512 MB with 17.4% less RSS. Error timings/RSS are retained
+for C++ skew and no successful-speed comparison is made against failure.
+
+CPU evidence distinguishes throttling from extra CPU work: at 256 MB, C++/new Rust
+average 1.72/1.69 busy cores versus old Rust 5.98; at 512 MB they average 2.55/2.53
+versus old Rust 6.31. The new budgeted concurrency follows C++ rather than the old
+uncounted raw-batch throughput. SQL memory_limit governs engine-accounted memory;
+whole-process RSS also includes runtime/codec/other allocations, and no hard
+physical-RSS cap is claimed. Both raw RSS and every timing/CPU sample are kept.
+
+A user preference question is pending on accepting this explicitly documented
+memory-bound COPY tradeoff if the full TPC-H/ClickBench baseline remains within
+the approved range. No response or performance acceptance is inferred. Continue
+independent functionality/regression gates while that preference is pending.
+Final aggregate speed/RSS and individual-outlier acceptance are still open.

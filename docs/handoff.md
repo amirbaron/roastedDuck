@@ -101,7 +101,12 @@ unconditional local preparation after waking helper tasks; next restore the
 C++ conditional handoff and retained PROCESSING_TASKS resume phase. The handoff
 alone passes all four signed SDK cases (source6); the completed resume-state
 source8 passes Clippy and all four signed SDK cases (0.66 seconds). The second
-shipping build is active from source8. Remeasure without raising memory.
+shipping build is signed and the36samplecohort completes with33successful
+files independently cross-read for every payload/order. Regular14-thread256MB
+newRust303.0ms459.5MB versus C++246.6ms463.8MB; oldRust87.4ms665.0MB.
+New/C++ averagebusycores match1.69/1.72, while oldunaccountedpath uses5.98.
+The512MB/skew costs remain explicit; user preference on documented COPY tradeoff
+is pending. C API and expanded1059-file SQL/encrypted-Parquet gates are next.
 Final acceptance remains open. Full final gates/performance remain open.
 
 ## Current integrated checkpoint and active full corpus (2026-10-27)
