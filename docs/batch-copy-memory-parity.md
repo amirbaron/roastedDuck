@@ -218,3 +218,14 @@ collapses that condition and full workspace/all-target Clippy passes. Source-8
 SDK build 4 is active for the same four regressions. Source 6's passing SDK and
 source 5's rejected shipping performance evidence remain preserved separately.
 This lifecycle revision has no runtime/performance acceptance yet.
+
+## Signed complete helper-lifecycle component checkpoint
+
+The source-8 release SDK build exits successfully and its immutable signed
+binary passes all four regressions in 0.66 seconds, including memory-pressure
+COPY, uneven/final batches, CSV and error cleanup/recovery. The watchdog does
+not fire, and all 909 source hashes/signatures verify stable. Evidence:
+`sdk-verification-4.json`, `sdk-run-4.log`. The second shipping build is active
+from source 8 with the explicit stage-2 source guard. Repeat the same coupled
+controls only after successful completion and signing; no performance
+improvement or tradeoff acceptance is claimed by this component result.

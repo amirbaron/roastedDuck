@@ -100,7 +100,8 @@ all payloads/order match. A profile and frozen C++ handoff review identify
 unconditional local preparation after waking helper tasks; next restore the
 C++ conditional handoff and retained PROCESSING_TASKS resume phase. The handoff
 alone passes all four signed SDK cases (source6); the completed resume-state
-source8 passes Clippy and SDK build4 is active. Remeasure without raising memory.
+source8 passes Clippy and all four signed SDK cases (0.66 seconds). The second
+shipping build is active from source8. Remeasure without raising memory.
 Final acceptance remains open. Full final gates/performance remain open.
 
 ## Current integrated checkpoint and active full corpus (2026-10-27)
