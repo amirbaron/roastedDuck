@@ -93,7 +93,13 @@ wakeup handoff is now corrected. Source5 Clippy, all four signed SDK cases and
 all 25 signed row-layer units pass (910 files/909 inputs). C++ controls pass all
 four scenarios with COPY still at 96 MB and separate validation at 512 MB. Shipping
 images are rebuilding for independent output and coupled before/after timing/RSS.
-Memory improvement and final acceptance remain unproven. Full final gates/performance remain open.
+The first shipping measurement confirms lower memory but unacceptable runtime
+regressions: regular14-thread/256MB saves33.9% versus old Rust for4.47times
+the runtime;512MB saves8.8% for3.81times. All33successful files cross-read and
+all payloads/order match. A profile and frozen C++ handoff review identify
+unconditional local preparation after waking helper tasks; next restore the
+C++ conditional handoff and remeasure without raising memory. Final acceptance
+remains open. Full final gates/performance remain open.
 
 ## Current integrated checkpoint and active full corpus (2026-10-27)
 

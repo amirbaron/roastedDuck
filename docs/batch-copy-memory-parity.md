@@ -156,3 +156,38 @@ COPY output and repeated timing/RSS on the same before fixture. These passing
 component tests establish runtime progress, not a measured memory improvement
 or final performance acceptance. Broader CSV/Parquet SQL, C API/ADBC, selected
 clients, full corpus/shell, persistence/WAL and final benchmark gates remain.
+
+## First shipping measurements: performance acceptance rejected
+
+The source-5 shipping CLI/library/runner are signed and immutable; 547 C API
+exports and zero ADBC test hooks are preserved. All 36 coupled samples complete
+against C++ and the preserved old Rust image, with three trials per engine at
+each configuration and rotated engine order. Each of 33 successful output files
+is read by the opposite engine and every one of its two million payloads and
+physical row IDs is checked. All 909 source inputs/library signatures/input hashes remain
+stable. Evidence: `native-images-1.json`, `after-probe-1/verification.json`.
+
+| Configuration | C++ median ms / MB | Old Rust median ms / MB | Candidate median ms / MB |
+|---|---:|---:|---:|
+| 1 thread, 256 MB | 292.2 / 150.6 | 391.9 / 162.8 | 393.1 / 162.6 |
+| 14 threads, 256 MB | 235.8 / 459.3 | 82.9 / 665.5 | 370.1 / 439.9 |
+| 14 threads, 512 MB | 147.2 / 698.9 | 81.4 / 690.2 | 310.2 / 629.7 |
+| 14 threads, 256 MB,skew | OOM in 3/3 | 106.4 / 907.5 | 446.4 / 637.9 |
+
+Memory decreases 33.9% at 14 threads/256 MB against old Rust, while time increases
+4.47 times. At 512 MB the candidate saves 8.8% memory for 3.81 times the runtime;
+the skewed successful copies save 29.7% memory for 4.20 times the runtime. Those
+large regressions are not accepted or hidden in an aggregate. Error timings
+and RSS are retained for C++ skew but no successful speedup ratio is computed
+against its failed copies. Final TPC-H/ClickBench acceptance remains separate.
+
+A bounded repeated-COPY native profile shows many idle worker stacks while
+encoding/managed scans execute. Review identifies another difference from
+frozen C++ AddLocalBatch: C++ wakes blocked helper tasks and executes prepare/
+flush locally only when no helper was woken. The current Rust candidate wakes
+helpers and always performs preparation on the handing-off worker, delaying
+minimum-batch progress. Restore the C++ conditional handoff, retain the memory
+accounting and buffer management, then reverify correctness and repeat the
+same coupled controls. Do not raise memory to recover the old speed. Evidence:
+`profile-1/{sample.txt,ready.json,terminal.json}`. This is a diagnosed candidate
+change, not a proven performance fix.
