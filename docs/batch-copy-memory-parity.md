@@ -118,3 +118,21 @@ The uneven-batch and injected-error controls pass. CSV's initial combined
 control also hits OOM; stage-specific follow-up is needed to distinguish COPY
 from CSV validation. Preserve the 96 MB COPY budget while giving complete-result
 validation its own budget, as the measured before-probe already does.
+
+## Worker-finish correction and calibrated validation
+
+The first SDK watchdog expires at 180 seconds and records exit 124 after its
+first two cases pass. Its signed source-4 image, thread sample and partial
+pressure files remain preserved; the gate is failed. The worker-finish path
+now advances the manager's minimum index after handing off final rows, flushes
+queued work and wakes blocked tasks. NextBatch likewise hands off rows before
+adjusting the manager minimum. Source-5 workspace/all-target Clippy passes.
+
+The SDK pressure/CSV tests retain their 96 MB COPY budget, then explicitly set
+512 MB for complete-result validation. The repeated C++ controls now pass all
+four scenarios, including successful pressure COPY/order/full equality, uneven
+batches, CSV equality/order and injected-error cleanup plus connection recovery.
+The original low-budget validation failures are preserved as reference controls,
+not reported as COPY failures. Evidence: `cpp-sdk-controls-2/report.json` and
+`clippy-build-3-terminal.json`. Source 5 records 910 files/909 inputs; SDK build 2 is
+active and its signed runtime outcome is still pending.

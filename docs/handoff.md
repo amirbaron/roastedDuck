@@ -87,8 +87,11 @@ source/signature verification. The ordered COPY audit now confirms the listed mi
 See `docs/batch-copy-memory-parity.md` for exact scope, safeguards and next
 implementation. The first candidate now uses buffer-managed raw collections,
 reservation-derived worker caps, raw/prepared accounting and streaming format
-preparation. Workspace checking/Clippy pass; four release SDK regressions are
-building from source4 (910 files/909 inputs). Runtime and before/after acceptance
+preparation. The first signed SDK passes error recovery and CSV, then hits its
+180-second watchdog in pressure COPY; the missing worker-finish minimum-index/
+wakeup handoff is now corrected. Source5 Clippy passes and SDK build2 is active
+(910 files/909 inputs). C++ controls pass all four scenarios with COPY still at
+96MB and separate validation at512MB. Runtime and before/after acceptance
 remain unproven. Full final gates/performance remain open.
 
 ## Current integrated checkpoint and active full corpus (2026-10-27)
