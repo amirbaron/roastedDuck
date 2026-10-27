@@ -163,3 +163,22 @@ exports preserve view/index/generated column/default/Unicode/NULL rows and both
 primary/foreign-key enforcement after the opposite engine imports. This validates
 the signed image above, not a future binder correction. Keep the reports/files
 and preserve the source7 control before rebuilding.
+
+## Bound option-map correction component pass
+
+The binder now replays evaluated options/default insertion with existing libc++
+CIHash/bucket-order modeling before write-only erasure, then retains that actual
+ordered bound map for metadata generation and serialization. No JSON rewriting is
+used. Five signed lightweight model fixtures match literal C++ root option order,
+including a larger CSV map with bucket growth and force_quote removal. C++ public5
+records160 successful plans. The earlier public4 fixture included ENCODING, which
+C++ permits only for reading; its24 writer-binding errors are preserved. The valid
+fixture removes that unsupported option and retains all other coverage.
+
+Source8 has913 overlay entries/912 build inputs. Workspace/all-target Clippy7 passes,
+and immutable signed SDK4 passes all14 tests in0.12seconds, including the three
+new literal C++ option-order assertions and the registered storage/WAL/export cases.
+Evidence: option-order-verification-1.json, sdk-verification-4.json,
+source-8/manifest.json, cpp-public-5/report.json. The C API-only release rebuild is
+active for full public equality and refreshed cross-engine runtime checks. These
+component passes do not close final whole-port gates.
