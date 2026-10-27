@@ -204,3 +204,25 @@ capi-image-2.json. Shell/SLT/Python images have not been refreshed by this CAPI-
 build. A source8 Python wheel build is now underway to verify the actual installed
 registered fsspec path before closing that public component. Whole-port/final
 release and performance acceptance remain open.
+
+## Installed Python registered-filesystem checkpoint
+
+Source8's release wheel build exited0, then a separately signed wheel was installed
+offline into fresh Arrow19/21 environments. Both load exactly one verified native
+image with SHA256 a42f669db8f2f1a8735d602583d7ec9e468700c2831c6cd7b72e960f788d5f86.
+The extension's547 shipping C API exports match capi-signed-2 exactly, with zero ADBC
+test hooks. Build/install/signature/identity evidence is retained separately.
+
+A fresh official C++ Python1.5.6 probe and both Rust installations each execute all
+four registered fsspec memory cases: CSV/Parquet, new/preexisting directories.
+Every Rust case field matches C++ literally, including file list, schema.sql,
+load.sql and imported Unicode/NULL rows. Both isolated Rust working directories
+remain empty; no local memory: URI directory is created. All912 source inputs and
+loaded-image identities/signatures remain verified. Evidence:
+memory-after-2-verification.json, {cpp,rust19,rust21}-memory-after-2/report.json,
+wheel-manifest-1.json, python-abi-verification-1.json.
+
+The confirmed EXPORT serialization/registered-backend gaps are fixed at this
+checkpoint. Preserve the raw before failures and earlier mismatch controls. This
+bounded component stage is not final full-corpus/shell/client/WAL/performance
+acceptance. Other core audit items and final signed artifact gates remain active.
