@@ -66,3 +66,26 @@ Signed library SHA-256: `64c4931b39d048c954332b4768ccfd5631367401a4e1f864a2963e3
 Corruption controls, registered-backend Python journeys and broader final artifact gates
 remain pending. These cross-engine results do not transfer the earlier complete
 source-5 corpus/client/performance results to the new images.
+
+## Installed Python and corruption checkpoint
+
+The fresh signed wheel installs successfully in both pinned Arrow 19/21 environments;
+its native SHA-256 is `c7f097194a8c5378ae9896d31fd370c499eaa7bed6cd540efd6eeeb2d43f62d3`.
+Each environment passes 24 installed-binding file journeys against separate C++ controls:
+local and registered-memory output/read/COPY FROM for all three key sizes, prepared COPY
+writes, scan-plan serialization and complete nested/nullable 5,000-row equality. Both
+engines cross-read each writer's files. Exactly one selected engine image is loaded in
+each process. All 912 build inputs and wheel signatures verify stable.
+
+For each file journey, wrong/missing keys, altered encrypted page bytes, altered footer
+bytes and truncated files are rejected. The final repeated controls use identical local
+and memory paths across processes: all 60 paired error types and full messages per Arrow
+environment match C++ literally, with no normalization. Preliminary Arrow 19 reports with
+different generated memory paths remain preserved separately as stage 1; accepted stage 2
+is the exact-path comparison.
+
+Evidence: external `parquet-encryption-20261027/{wheel-manifest-1.json,
+python-encryption-arrow19-2/verification.json,python-encryption-arrow19-2/error-comparison.json,
+python-encryption-arrow21-2/verification.json,python-encryption-arrow21-2/error-comparison.json}`.
+The full fast Python suites are refreshing next. Full corpus, C API/ADBC, Go/Swift,
+shell, persistence/WAL and final speed/RSS verification still remain separate gates.

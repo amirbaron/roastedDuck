@@ -31,8 +31,10 @@ check and Clippy pass. The complete overlay has 913 entries/912 build inputs.
 
 Shipping images are signed; all 48 separate-process C++/Rust cross-read/COPY FROM
 file cases pass (three key sizes, four codecs, both writers/readers). Shipping C API
-retains 547 exports and zero test hooks. Python is rebuilding for registered-backend
-and corruption controls. All prior
+retains 547 exports and zero test hooks. The signed Python wheel now passes 24 local/registered-memory encrypted-file
+journeys in each Arrow 19/21 environment. Cross-engine reads and five invalid-input
+controls per journey pass; all paired full error types/messages match C++ literally.
+The full Python fast suites are refreshing. All prior
 source-5 full corpus/client/performance checkpoints below remain preserved before-stage
 controls and cannot substitute for final verification of these changes. See
 [encrypted Parquet evidence](parquet-encryption-parity.md). The goal remains active.
