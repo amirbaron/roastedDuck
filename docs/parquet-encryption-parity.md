@@ -89,3 +89,28 @@ python-encryption-arrow19-2/verification.json,python-encryption-arrow19-2/error-
 python-encryption-arrow21-2/verification.json,python-encryption-arrow21-2/error-comparison.json}`.
 The full fast Python suites are refreshing next. Full corpus, C API/ADBC, Go/Swift,
 shell, persistence/WAL and final speed/RSS verification still remain separate gates.
+
+## Complete fast Python matrices and unskipped SQL checkpoint
+
+Both complete fast suites match the frozen C++ case IDs, verdicts and skip reasons:
+Arrow 19 has 3,241 records (3,205 pass, 27 skip, eight xfail, one existing XPASS);
+Arrow 21 has 3,492 (3,455 pass, 28 skip, eight xfail, one existing XPASS). All 300
+upstream test/data files match the pinned original archive; seven stubs per environment,
+source overlay, 912 build inputs and installed native signatures verify stable. Evidence:
+external `parquet-encryption-20261027/python-refresh-verification-1.json`. These results
+cover the complete fast suite, not every optional Python integration/platform.
+
+Both upstream `parquet_encryption.test` and `parquet_encryption_tpch.test_slow` now pass
+on the signed Rust runner and separate C++ oracle. The supplemental copies replace only
+`require httpfs` with `SET force_mbedtls_unsafe=true` to enable the frozen reference's
+fallback writer; all SQL statements and expected answers remain unchanged. The latter
+file exports/imports encrypted SF1 tables, checks all 22 TPC-H answers, then checks all
+22 again through encrypted-Parquet views. The first also covers invalid/base64 keys and
+the shared unsupported column-key configuration. Original and adapted file hashes, both
+engine verdicts and signed runner/oracle/reference identities are retained under external
+`parquet-encryption-20261027/sql-encryption-1/verification.json`. Original canonical
+corpus requirements/skips remain unchanged.
+
+The supported footer-key component now has independent cross-engine/file/backend/
+corruption evidence. C API is refreshing on the shipping library; ADBC, Go/Swift, full
+canonical SQL/shell, persistence/WAL and coupled final performance still remain gates.

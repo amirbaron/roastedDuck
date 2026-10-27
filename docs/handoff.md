@@ -34,7 +34,11 @@ file cases pass (three key sizes, four codecs, both writers/readers). Shipping C
 retains 547 exports and zero test hooks. The signed Python wheel now passes 24 local/registered-memory encrypted-file
 journeys in each Arrow 19/21 environment. Cross-engine reads and five invalid-input
 controls per journey pass; all paired full error types/messages match C++ literally.
-The full Python fast suites are refreshing. All prior
+Both full fast Python matrices match C++ exactly (3,241/3,492 records). Both
+upstream encrypted-Parquet SQL files also pass on each engine with the HTTPFS
+prerequisite explicitly replaced for these supplemental runs; SF1 export/import
+and all 22 answers through imported tables and Parquet views are covered. C API
+is refreshing on the new shipping library. All prior
 source-5 full corpus/client/performance checkpoints below remain preserved before-stage
 controls and cannot substitute for final verification of these changes. See
 [encrypted Parquet evidence](parquet-encryption-parity.md). The goal remains active.

@@ -189,14 +189,18 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      the cache (`PREFETCH_FALLBACK_BUFFERSIZE`).
    - `CachingFileSystemWrapper` (the JSON reader, `read_text`, `read_blob`) caches
      remote files only: there is nothing to port until a remote file system exists.
-15. **Parquet modular encryption, the rest.** Database encryption is ported
-    (`crates/crypto` on RustCrypto; database files, the WAL and temporary files; files
-    open in either engine for every cipher, encryption version and storage version, and
-    the encryption tests pass without their `require httpfs`). The Parquet writer's
-    `encryption_config` is not implemented (`parquet_encryption`,
-    `parquet_encryption_tpch`, which `require httpfs`), and the reader decrypts with its
-    own AES in `crates/parquet/src/crypto.rs`, which should move onto `crates/crypto`
-    (hardware AES, constant time).
+15. **Parquet modular encryption supported path verified (2026-10-27).** The
+    working writer/COPY FROM now supports footer-key AES-GCM encryption for all
+    three key sizes, with module/footer framing and prepared-plan serialization.
+    The reader now uses shared RustCrypto primitives rather than private AES.
+    Signed C++/Rust cross-reading, installed Python local/registered-memory
+    journeys and corruption controls pass. Both upstream encrypted-Parquet SQL
+    tests also pass on both engines after replacing only their HTTPFS prerequisite
+    with the explicit fallback-crypto test setting; encrypted SF1 export/import
+    and all 22 TPCH answers through imported tables and Parquet views are covered.
+    C++ also rejects column_keys, so that shared limit remains. See
+    `docs/parquet-encryption-parity.md`. The broader final signed release/client/
+    corpus/storage/performance gates still require refresh after this change.
 
 16. **Persisted ART reload, remaining paths.** Modern disk allocator metadata is now
     restored for plain and stored constraint indexes without a table scan. ART buffers
