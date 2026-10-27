@@ -182,3 +182,25 @@ Evidence: option-order-verification-1.json, sdk-verification-4.json,
 source-8/manifest.json, cpp-public-5/report.json. The C API-only release rebuild is
 active for full public equality and refreshed cross-engine runtime checks. These
 component passes do not close final whole-port gates.
+
+## Corrected signed C API full-plan and runtime checkpoint
+
+The source8 C API build exited0 and was frozen/strictly signed as capi-signed-2,
+SHA256 abea7bc06ae31138f676fbcc43c700719d51f6878d68deef0c0a05a4a909744e,
+547 exports/zero ADBC test hooks. All160 public plans now match every field/array
+entry against independent frozen C++ controls, with zero JSON errors and no path
+mapping or filtered fields. public-comparison-6.json records the comparison;
+cpp-public-6 is an explicitly documented byte-identical copy of cpp-public-5's
+independent report, not a claimed rerun. Raw mismatching prior stages remain.
+
+On this exact signed library, runtime-2 passes all eight bidirectional CSV/Parquet
+EXPORT/import journeys with default/explicit catalog and unchanged exported files.
+Rows, Unicode/NULL, view/index, generated/default columns and primary/foreign keys
+are checked after importing into the opposite engine. All912 build inputs and
+both native images remain unchanged. The full C API suite refresh passes30files,
+155cases and729564assertions; each signed executable's loader log names the selected
+immutable library. Evidence: runtime-2/verification.json, capi-suite-2/verification.json,
+capi-image-2.json. Shell/SLT/Python images have not been refreshed by this CAPI-only
+build. A source8 Python wheel build is now underway to verify the actual installed
+registered fsspec path before closing that public component. Whole-port/final
+release and performance acceptance remain open.
