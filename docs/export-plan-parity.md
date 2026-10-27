@@ -97,3 +97,24 @@ retain backend error type/metadata through failures. Add actual registered
 CSV/Parquet export/import and empty-export metadata-error regressions using
 the existing test backend; do not disguise the URI as a local path. Reverify
 component and public installed-package behavior before closure.
+
+## Registered routing implementation and retained SDK fixture correction
+
+Directory handling now dispatches to registered is_dir/mkdir, and metadata writes
+use the registered output stream with backend errors retained. Local writes keep
+the existing native-path/error rendering. The test target reuses nine registered
+storage/WAL cases and adds registered CSV/Parquet export/import plus empty-export
+metadata failure/recovery. Source6 workspace/all-target Clippy passes. Its signed
+SDK2 run passes13/14: the success-path assertion incorrectly expected unquoted
+sample, a reserved keyword. Frozen C++ memory-before1 records quote this name in
+both schema.sql and load.sql, as does Rust. Correct those two literal assertions;
+do not relax import/data/constraint/default checks. The backend error and all nine
+storage/WAL tests passed. Preserve sdk-verification-2.json and sdk-run-2.log as
+failed fixture evidence, not an engine pass.
+
+The first full C ABI plan probe also lacked its parent export directory; all128
+C++ cases returned IO errors before reaching serialization. cpp-public-1/report.json
+is retained. The corrected probe creates one absolute shared fixture parent and
+compares every plan field for both engines without JSON/path rewriting. These
+component corrections require new snapshots/builds; no final artifact or public
+plan parity is claimed yet.
