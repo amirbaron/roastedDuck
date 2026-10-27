@@ -27,10 +27,14 @@ Source 5 has 908 verified build inputs. Current SDK15, C API155, ADBC64, Go652,
 Swift132+identity, both complete Python fast matrices, full shell and the scalar/Swift/
 15-column Python persistence-WAL cohorts pass their scoped gates. Native ADBC matches
 C++64/3,040; its shipping build is restored with 547 exports and zero test hooks.
-The full current 4,870-file SQL run is active; performance acceptance remains pending.
+The full current 4,870-file SQL run is now accepted: 4,781 pass, 15 existing documented
+failures, 74 exact C++ skips, no crashes/timeouts and zero ratchet regressions. Every verdict
+is unchanged; only a generated worker-directory path differs in one failure payload,
+verified by an exact two-occurrence mapping. Source/fixture/image identities verify.
+Coupled performance measurement has started; acceptance remains pending.
 Broader contract audits and explicit exceptions remain required. Do not mark the goal
 complete from the completed component/client gates. External index:
-`import-preprocessing-20261027/verification-checkpoint-1.json`.
+`import-preprocessing-20261027/verification-checkpoint-2.json`.
 
 ## Latest import/preprocessing component checkpoint (2026-10-27)
 

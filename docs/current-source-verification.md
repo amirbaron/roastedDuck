@@ -1,8 +1,8 @@
 # Current-source verification
 
 Updated 2026-10-27. **The port goal remains active.** The current source-5 overlay has
-909 entries and 908 verified build inputs. A fresh full 4,870-file SQL run is active;
-its final verdicts and coupled performance acceptance are pending. Earlier historical
+909 entries and 908 verified build inputs. The fresh full 4,870-file SQL run passes its documented-exception gate;
+coupled performance acceptance is pending. Earlier historical
 checkpoints do not substitute for these gates.
 
 Required clients are Python, Go and Swift. C API/ADBC are preserved. Other language
@@ -14,7 +14,7 @@ accepted uncached lower-memory tradeoff; see [performance policy](performance-ac
 | Workspace/all-target Clippy | Pass, warnings denied |
 | Signed import/registered-storage SDK | 15 pass |
 | Targeted SQL | 785 files: 767 pass, two existing failures, 16 exact C++ skips; all prior verdicts unchanged |
-| Full SQL corpus | 4,870-file run active; acceptance pending |
+| Full SQL corpus | 4,781 pass / 15 existing documented failures / 74 exact C++ skips; zero crashes/timeouts, zero ratchet regressions |
 | Upstream shell | 392 pass, three unchanged skips |
 | Shell differential | 768 cases / 46 PTY, zero unexpected differences; one native-frame-body exception |
 | C API | 30 files / 155 cases / 744,074 assertions; selected signed library verified |
@@ -38,7 +38,7 @@ The signed Python image SHA-256 is
 `2d7481420e5015748dea8ef27bca89fc3972c721103b9b4253cef60868bfa05b`.
 
 The integrated evidence index is external
-`import-preprocessing-20261027/verification-checkpoint-1.json`, with hashes of 16 receipts.
+`import-preprocessing-20261027/verification-checkpoint-2.json`, including the accepted full-corpus receipt.
 The full corpus has its own immutable runner/source/reference/fixture manifest and logs
 under `full-corpus-1/`. The 15-column journeys preserve database and nonempty-WAL snapshots
 before replay and verify the actual native image before/after every child process.
@@ -50,7 +50,13 @@ unavailable extension functionality. Later catalog numeric dependency/registrati
 differences remain documented separately; startup main/schema identity and the literal
 shell database-list difference are closed. The obsolete OID waiver is removed.
 
-Finish and verify the full current corpus, reconcile remaining contract evidence and
-exceptions, then record coupled TPC-H/ClickBench timing and memory against the preserved
+The full corpus has exact file coverage and every prior verdict is unchanged. All failure
+payloads match except two occurrences of the generated worker-directory path in the
+documented avoided-OOM caching-operators case; the exact mapping and original rejected
+strict receipt are preserved. All 908 source/runner/reference/ratchet hashes, signatures
+and 4,870 SQL/1,522 data fixture identities verify unchanged.
+
+Reconcile remaining contract evidence and exceptions, and record coupled
+TPC-H/ClickBench timing and memory against the preserved
 uncached baseline and C++, with individual query outliers. Exact performance parity or
 outperformance is not required. No table cache was introduced to erase small speed gaps.
