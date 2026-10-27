@@ -41,3 +41,33 @@ Then build/sign immutable current artifacts and run meaningful SDK/public/affect
 SQL/client/persistence and final release gates. Source-8's full client and shell
 checkpoint is a preserved before-stage control. No implementation or completion
 is claimed by this before-fix contract.
+
+## First implementation component stage
+
+The working logical export now retains its actual bound CopyInfo. Runtime
+exported-table records use the generated ExportedTableData type, extended in
+the code generator to own ByteString names/paths and vectors of native column
+names. The serializer uses the existing ParseInfo/BoundExportData/property
+codecs. Requested/default catalog identity remains in serialized metadata;
+runtime lookup still uses the resolved catalog. Child COPY records preserve
+their real default auto-format flag. Multiple table copies now form one logical
+UNION with all children; physical planning already lowers that to binary unions.
+
+A signed generator check confirms all generated code matches its configuration.
+An independently compiled/signed native C++ oracle records seven exact
+ExportedTableData binary wires: empty/plain names, invalid UTF-8, embedded NUL,
+all byte values and a long name. The signed Rust wire regression decodes and
+re-encodes every wire byte-identically. Workspace/all-target check and Clippy
+with warnings denied pass after retained boxed-value/style corrections.
+
+Source 4 has 913 overlay entries/912 verified build inputs. The release SDK build is
+active for three regressions: empty metadata/default catalog, four-table UNION
+and bound metadata, and actual multi-table CSV/Parquet export/import with
+foreign keys/default/generated columns. Runtime SDK/public plan equality,
+prepared/options/raw-name edge cases and broader final gates remain pending.
+No complete EXPORT or whole-port parity is claimed by these component checks.
+
+Evidence: external `export-plan-parity-20261027/{source-4/manifest.json,
+codegen-check-1-terminal.json,cpp-wire-1/verification.json,wire-verification-1.json,
+check-build-2-terminal.json,clippy-build-3-terminal.json,sdk-build-1-manifest.json}`.
+Earlier failed check/style snapshots remain separate.

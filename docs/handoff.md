@@ -128,6 +128,10 @@ passes with zero unexpected differences and the one native-frame-body exception.
 A fresh paired public probe confirms the next real functional gap: CSV/Parquet
 EXPORT plans serialize on C++ and return NotImplemented on Rust. Follow
 `docs/export-plan-parity.md` and external `export-plan-parity-20261027/before-2-index.json`.
+The working implementation now retains CopyInfo/byte-owned generated exported
+metadata and a single n-ary logical UNION. Signed generator/wire checks and
+workspace Clippy pass; source4 (913 files/912 inputs) SDK build is active. Runtime
+SDK/public C++ plan equality and broader current-source gates remain pending.
 Final acceptance remains open. Full final gates/performance remain open.
 
 ## Current integrated checkpoint and active full corpus (2026-10-27)

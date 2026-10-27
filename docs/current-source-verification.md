@@ -1,6 +1,12 @@
 # Current-source verification
 
-Updated 2026-10-27. **The port goal remains active.** The live candidate is
+Updated 2026-10-27. **The port goal remains active.** An EXPORT serialization
+implementation is now under verification in `export-plan-parity-20261027/source-4`
+(913 overlay entries/912 inputs). Workspace checking/Clippy, signed generator check
+and seven independent C++ binary-wire cases pass; the three-case release SDK is
+building. Public plan equality and runtime closure remain unproven.
+
+The latest integrated signed before-stage candidate is
 `batch-copy-memory-20261027/source-8/manifest.json`: 910 overlay entries and 909
 verified build inputs. It includes the import/native-byte work, footer-key Parquet
 encryption, nested/VARIANT hash fixes and the complete ordered-COPY helper lifecycle.
