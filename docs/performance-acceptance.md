@@ -1,9 +1,11 @@
 # Performance acceptance
 
-Policy approved by the owner on 2026-10-23. Source-5 measurements below satisfy
-the aggregate tradeoff; paired outlier controls are complete and documented in
-[the individual-query report](performance-outliers-20261027.md). Final-artifact acceptance
-remains pending after the encrypted-Parquet changes.
+Policy approved by the owner on 2026-10-23. The current signed native candidate now
+passes all130 TPC-H/ClickBench query/thread configurations and preserves the accepted
+aggregate tradeoff. See [final native measurements and all query outliers](performance-final-native-20261029.md).
+Weighted sums, maximum RSS and the63 individually reported exceptions remain explicit;
+this is native performance acceptance, not whole-port completion. Source-5 results below
+remain historical controls in [the earlier query report](performance-outliers-20261027.md).
 This policy supersedes both the original outperformance targets and the later
 independent speed/memory parity gates.
 

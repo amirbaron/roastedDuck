@@ -279,7 +279,7 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    memory to copy C++ caching or close small speed gaps. The table-cache experiment is
    rejected, with its patch and evidence retained externally. Evaluate optimizations
    on both speed and memory, and report individual query outliers separately from
-   averages. Finish `docs/performance-acceptance.md` on the final signed binaries.
+   averages. Current signed native acceptance is documented in `docs/performance-final-native-20261029.md`: all130 configurations pass and preserve the approved aggregate tradeoff; weighted sums, peak RSS and all63 individual outliers are explicit. Remaining Python/platform/core-contract acceptance is separate.
    Remaining useful optimization candidates include cheaper reads without higher
    residency, aggregate lookups/resizes and join probes, subject to that policy.
 8. **Logical plan serialization, the rest.** `json_serialize_plan` writes logical plans
@@ -374,3 +374,17 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
     against 542,720 bytes with a buffer-managed result, 1,067,008 against 804,864 with a
     streaming one): DuckDB charges its pipelines' chunks to the buffer pool
     (`BufferAllocator`, tag `ALLOCATOR`), rustdb's vectors are plain heap memory.
+
+## Latest bounded accounting audit (2026-10-29)
+
+The Resident native candidate freshly reproduces item14's one-block residency
+exception: all eight one/14-thread,1/4MiB200k-row CTAS observations complete with
+correct counts. Rust/C++ IN_MEMORY_TABLE at1MiB is1,067,008/804,864 bytes; at4MiB
+both are2,377,728. Actual pipeline vectors still use untracked heap RawBuffer
+allocations; do not erase the discrepancy by changing counters or limits.
+Evidence: `final-verification-20261029/vector-accounting-1/`. Nested VARIANT parent
+statistics, extracted-field zonemaps and schema-evolved Parquet projection remain
+confirmed optimization differences needing observable impact/disposition; existing
+fallbacks return the same values. The Python-only object-buffer candidate addresses
+the separate release-wheel string-scan outlier and is not accepted before tests and
+coupled measurements. Core native bytes remain unchanged by that candidate.

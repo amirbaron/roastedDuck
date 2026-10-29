@@ -40,7 +40,11 @@ typing/installed ADBC and eight typed file/WAL journeys pass. Go652 plus externa
 consumer/four journeys and Swift132+identity, relocated/standalone distribution/four
 journeys pass. Native ADBC64/3040 passes. Client string scans retain1.73x/1.92x time
 outliers. See `docs/final-client-verification-20261029.md`. Full signed TPC-H/ClickBench
-run is active; final performance and broader core/backend acceptance remain pending. A release-platform clarification is pending user response;
+run is complete:130 configurations pass, with accepted aggregate speed–memory
+tradeoff and weighted sums/peak RSS/all63 outliers documented in
+`docs/performance-final-native-20261029.md`. Current Python-only object-buffer candidate
+is rebuilding separately; native engine bytes remain unchanged. Broader core/backend
+and platform acceptance remain pending. A release-platform clarification is pending user response;
 current-host evidence must not imply unverified platforms. Goal remains active.
 
 Earlier component checkpoints below retain their original evidence and artifact IDs.

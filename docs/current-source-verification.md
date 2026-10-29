@@ -33,8 +33,11 @@ with zero unexpected differences. Current Python Arrow19/21 fast matrices exactl
 C++; non-fast71/eight skips, installed ADBC, typing and eight 15-column file/WAL
 journeys pass. Go652 plus an external consumer/four journeys and Swift132+identity,
 relocated/standalone distribution/four journeys pass. Native ADBC64/3040 passes.
-See [current client evidence](final-client-verification-20261029.md). Final coupled
-benchmarks are running; platform and broader contract acceptance remain open.
+See [current client evidence](final-client-verification-20261029.md). All130 final native TPC-H/ClickBench configurations pass; geometric means preserve
+the accepted tradeoff, with weighted sums/peak RSS/all63 outliers explicit. See
+[final native performance](performance-final-native-20261029.md). The current Python-only
+object-buffer candidate is rebuilding separately; native core bytes remain unchanged.
+Platform and broader contract acceptance remain open.
 Shared reference limitations remain explicit in [divergences](../conformance/divergences.md).
 
 Retained dictionary source4 evidence: original 10/100 MB no-spill COPY budgets, four
