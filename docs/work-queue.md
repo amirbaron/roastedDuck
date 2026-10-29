@@ -176,15 +176,13 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    `roaring_bool_compression_ratio`, `bitpacking_compression_ratio_hugeint` pass;
    `crates/zstd` ports zstd 1.5.6's encoder and decoder, partial blocks are shared as
    `PartialBlockManager` shares them). Left:
-   - ZSTD hash-chain/row, delayed-tree, optimal parsing and entropy-cost splitting
-     now have working implementations. Default C++ optimal comparisons pass29/29
-     large frames,12/12 nine-MB streams and32/32 context frames. Signed debug/release
-     component suites pass23tests each; all-target Clippy passes. Automatic LDM at
-     windowLog>=27 remains missing: two default level22 mixed streams still differ.
-     A C++ diagnostic disabling only LDM matches both; this is not a waiver. Public
-     Parquet COPY of a70MiB value at level22 reaches that parameter range. Complete
-     LDM and refresh shipping Parquet/spill/storage plus final release gates. See
-     `docs/zstd-strategy-parity.md` for raw counterexamples and coupled diagnostics.
+   - All encoder strategy families, optimal splitting and automatic maximum-window
+     LDM now have implementations. The original default-LDM failures pass unchanged;
+     known70MiB,132MiB window-wrap, diverse and reused-context controls match C++.
+     Signed debug/release each pass25 codec tests; workspace/all-target Clippy passes.
+     Shipping CLI/C API/SQL-runner images are rebuilding from source9 before actual
+     Parquet/spill/storage integration. Final release/query performance acceptance
+     remains open; see `docs/zstd-strategy-parity.md` for exact scope/outliers.
    - FSST segments of the same strings hold slightly different counts than DuckDB's
      (5878 against 5877 strings in a 256 KiB segment): the symbol tables differ.
    - zstd throughput is 0.88–1.0× DuckDB's (`docs/perf-backlog.md`).

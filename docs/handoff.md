@@ -33,6 +33,18 @@ previous OS access denial was not reproduced in this check. The goal was marked
 blocked before this owner reply; the optimal/splitter checkpoint remains in
 `.context/optimal-next.md` for continuation.
 
+## Latest automatic-LDM component and shipping refresh (2026-10-29)
+
+Automatic LDM now matches the preserved default C++ counterexamples. The new
+known70MiB,132MiB window-wrap, diverse and chronological context controls pass;
+all46 new goldens are retained. Source9 preserves943entries/942build inputs.
+Workspace/all-target Clippy passes, and signed debug/release each pass25codec
+tests with0ignored. The shipping CLI/C API/SQL-runner release build is active;
+freeze/sign only after its actual parent exit0. No new shipping or whole-goal
+acceptance is claimed yet. Continue .context/ldm-next.md for handles/commands.
+Final SQL/shell/C API/ADBC/Python/Go/Swift/persistence/WAL/performance gates and
+other core audits remain open. The owner-accepted COPY tradeoff is preserved.
+
 ## Resumed optimal/splitter verification and remaining LDM (2026-10-29)
 
 SSD reads/writes now succeed and the user resumed the full goal. The working optimal

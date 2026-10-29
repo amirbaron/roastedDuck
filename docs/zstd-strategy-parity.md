@@ -275,3 +275,47 @@ whole-process RSS and exact compressed bytes. For300KB text, C++/Rust level16 is
 14,434,304/12,353,536bytes; level22 is55.562/86.050ms with14,434,304/12,288,000bytes.
 These individual slowdowns remain explicit. Single native samples and differing
 process/DLL overhead are diagnostic only, not final TPC-H/ClickBench acceptance.
+
+## Automatic long-distance matching checkpoint
+
+The working encoder now implements the frozen automatic-LDM path. It owns an
+independent window, exact256 gear constants, sampled64-byte XXH64 checksums,
+eight-entry hash buckets, staged candidates, forward/backward dictionary matches
+and optimal-parser raw-match candidates. The independent window avoids conflating
+Ultra2's virtual-index statistics pass with LDM history. Tables reset per frame;
+allocation occurs only when the optimal strategy/window activates the feature.
+Default Fast/DFast tables remain unchanged. The frozen gear-reset and raw-cursor
+advancement semantics are preserved and validated against actual C++ frame bytes.
+No reference features are disabled in the passing controls below.
+
+The original opt-mixed-2 failures now pass unchanged in opt-mixed-3:12/12 default
+C++ frames match, with24 opposite decodes, including both previously different
+level22 streams. ldm-wide-1 adds10/10 exact frames/20 opposite decodes:70MiB+17
+known-size input,132MiB+17 streams crossing the128MiB window at two chunk sizes,
+and empty/tiny final blocks. ldm-diverse-1 adds8/8 exact text/overlap/random/zero
+streams and16 opposite decodes. ldm-reuse-1 verifies16/16 actual chronological C++
+context frames over repetitions, level switches and known/streaming transitions.
+The prior counterexamples and diagnostic no-LDM outputs remain preserved.
+
+All46 new default C++ goldens and raw-frame provenance are retained in ldm_1.5.6.tsv
+and external ldm-golden-provenance-1.json. Exact constant extraction is independently
+checked in ldm-gear-verification-1.json. Source9 preserves943 overlay entries/942
+verified build inputs. Workspace/all-target Clippy8 passes. Nine immutable signed
+executables in each debug/release build pass25/25 tests,0ignored, including2072
+explicit frozen-frame comparisons plus original reference/decoder/overflow checks.
+Evidence: tests-{debug,release}-6/verification.json and source-9/manifest.json.
+
+Coupled per-case diagnostics remain in ldm-speed-memory-diagnostic-1.json. The
+70MiB control's C++/Rust native compression times are1.258/1.666seconds, whole-process
+times1.47/1.69seconds and peak RSS966,410,240/771,883,008bytes. The132MiB stream at
+4096byte chunks has whole-process time2.85/3.56seconds and RSS1,226,358,784/985,923,584
+bytes. At131071byte chunks it is2.74/3.59seconds and1,226,342,400/985,989,120bytes.
+Rust inner times are retained separately where C++ has no corresponding inner timer;
+no mismatched timer comparison, averages or outlier masking is used. These single
+codec samples include loader/read/write overhead and are not final query acceptance.
+
+The shipping CLI/C API/SQL-runner release build is now active against source9.
+No current shipping integration result is claimed until its parent exits0 and the
+images are frozen/signed/verified. The codec component counterexamples are closed
+at this checkpoint, while actual Parquet/spill/storage, full SQL/shell/client/WAL
+and final coupled speed/memory gates remain required. Goal active, not complete.
