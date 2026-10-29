@@ -1,5 +1,12 @@
 # Current-source verification
 
+**Latest source frontier:** the Python object-buffer component is verified, and a new
+Parquet schema-evolution candidate is in progress. Five signed SDK regressions pass,
+but broader inferred nested remapping remains open. Native integration/performance
+results below are preserved signed-artifact controls, not acceptance of that new core
+source. See [Python component](python-object-buffer-parity.md) and
+`.context/schema-projection-next.md`.
+
 Updated 2026-10-29. **The full port goal remains active.** The current signed native
 candidate is `art-resident-checkpoint-20261029/source-1/manifest.json`: 969 overlay
 entries / 967 guarded inputs. Native expression/CREATE INDEX/ALTER PRIMARY KEY WAL

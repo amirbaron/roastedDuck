@@ -20,6 +20,30 @@ The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swi
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
 
+## Latest source frontier (2026-10-29)
+
+Python object-buffer scanner component is verified: signed wheel3,17 permanent
+boundary outcomes in each Arrow19/21 CPP/Rust environment, both full fast matrices,
+non-fast71/eight shared skips, stubs/typing/installed ADBC, eight typed file/WAL and48
+encrypted-Parquet cases pass. String scans improve60.71→43.39ms and112.97→93.20ms,
+with essentially unchanged RSS;1.21x/1.61x timing outliers remain explicit. Candidate2
+was rejected despite full-fast green after a custom buffer protocol counterexample;
+source3 fixes it. See `docs/python-object-buffer-parity.md`.
+
+Current core work is a separate **unfinished** Parquet schema-evolution candidate.
+Frozen C++ ignores a damaged unselected sibling under inferred evolution while the
+preserved Rust library fails. Source3 recursively maps requested struct fields by
+name and preserves explicit-schema whole-column behavior and binder error category.
+Five signed SDK regressions pass. A broader inferred-schema control exposes another
+open case: disjoint nested fields should become NULL as C++ does, but generic whole
+STRUCT casts reject them. Continue the full mapping before release builds/gates;
+do not call the five-case checkpoint complete. Evidence and next steps are in
+`.context/schema-projection-next.md` and external `schema-evolution-projection-20261029/`.
+
+The signed native images and130-query performance acceptance below are preserved
+controls, predating this Parquet candidate. Final integrated verification must use
+its eventual signed artifacts. Goal remains active.
+
 ## Current native checkpoint and final validation (2026-10-29)
 
 Current signed native candidate is Resident source1 (969 overlay/967 guarded inputs).
