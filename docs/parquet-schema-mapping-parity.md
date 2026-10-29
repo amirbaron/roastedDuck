@@ -49,9 +49,10 @@ tests and108 affected tests with the same two ignored tools.
 Source9 additionally validates compact type tags before generated readers ignore
 fields or empty collections, matching C++ `getTType` diagnostics for invalid tags.
 It passes workspace Clippy, nine signed SDK tests in both debug and release, and
-109 affected tests with the same two ignored tools. Fresh native images, literal
-C API comparisons and coupled measurements are rebuilding/running in sequence;
-no final source9 artifact acceptance is claimed before those checks finish.
+109 affected tests with the same two ignored tools. Fresh native2 images now pass13 literal paired C API cases, including the two
+malformed-Thrift negative bodies. The coupled recheck removes the row-copy
+regression; the479-file affected SQL cohort is running. This is scoped component
+acceptance, not full release/platform acceptance.
 
 ## Rejected performance candidate
 
@@ -70,6 +71,35 @@ cache. All whole-process RSS and samples are retained. Source7 is performance-
 incomplete; no aggregate or policy acceptance conceals the regression. Source9's
 vector implementation must pass fresh coupled measurements before acceptance.
 
+## Vector remap recheck
+
+Fresh three-sample paired measurements retain the preserved build and rejected
+row candidate alongside C++ and source9. Every aggregate/count is checked, files
+and native signatures/hashes are stable, and the external file cache is disabled.
+Times are separate medians; RSS is whole-process decimal MB.
+
+| Scan / threads | C++ ms / MB | Preserved Rust ms / MB | Rejected row ms / MB | Vector source9 ms / MB |
+|---|---:|---:|---:|---:|
+| Projected /1 |0.50 /51.48|3.54 /60.69|6.48 /42.93|0.49 /42.65|
+| Whole /1 |16.09 /59.92|14.35 /60.13|22.23 /80.17|14.68 /60.75|
+| Projected /14 |0.55 /44.38|1.24 /83.62|6.88 /48.50|0.42 /46.61|
+| Whole /14 |2.92 /117.78|2.88 /119.14|8.52 /160.99|2.85 /119.72|
+
+The scoped mapping speed–memory tradeoff is accepted: selected-field reads improve,
+and whole-struct timing/RSS return to the preserved baseline without table caching.
+The remaining small whole-process differences are retained in raw samples, rather
+than being claimed as exact C++ performance parity. Full TPC-H/ClickBench and other
+release targets still need final-artifact verification.
+
+Current signed source9 library SHA256:
+`b0606c15349b8d284dfb5c2a76b3bfc1b2c08cb1ab18778582d1a2d60bef8371`.
+Shell: `6c9e179838988b0d64aa6c70b1040d31976ea1830714801fd917c9ce206caaea`.
+SQL runner: `17e28e9a13a6c4611ae93e2e32a01b7f6aca364b10b5f8c123394157271bb157`.
+All547 C API exports and absence of ADBC test hooks are verified. Build/sign/freeze
+and both checks finish with actual parent exit0 in `native-phase-2-terminal.json`.
+`native-matrix-2/verification.json` and `profile-2/{verification,acceptance-review}.json`
+retain the13 literal comparisons, all samples and the explicit scoped acceptance.
+
 ## Evidence and remaining gates
 
 External evidence: `.context/artifacts/schema-evolution-projection-20261029/` contains
@@ -78,9 +108,9 @@ affected-test receipts, native1 identities/matrix and `profile-1/verification.js
 The external root is
 `/Volumes/amirs ssd/ai context/conductor/duckdb-rust/ottawa-50198a764d3b1fdc/`.
 
-Remaining: release source9 SDK/native images, literal malformed-message comparison,
-repeat speed/RSS against both preserved and rejected candidates, expanded SQL and
-complete final integration. Earlier130-query TPC-H/ClickBench acceptance is a
+Remaining: the running479-file affected SQL cohort, complete final integration and
+the required Apple/Linux artifact matrix. Source9 release/native/literal-message and
+bounded coupled checks above are complete. Earlier130-query TPC-H/ClickBench acceptance is a
 preserved artifact control, not acceptance of this later core change. Required
 platforms now include macOS/iOS devices/simulators and Linux x86_64/arm64; the other
 Apple families and Windows are outside scope. See the release platform matrix.
