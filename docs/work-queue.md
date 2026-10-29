@@ -176,17 +176,15 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    `roaring_bool_compression_ratio`, `bitpacking_compression_ratio_hugeint` pass;
    `crates/zstd` ports zstd 1.5.6's encoder and decoder, partial blocks are shared as
    `PartialBlockManager` shares them). Left:
-   - ZSTD hash-chain/row Greedy/Lazy/Lazy2 and delayed binary-tree BtLazy2 now have
-     their actual matchers, including streaming extDict and reset/index lifecycles.
-     Signed debug/release each pass19 codec tests; the newest tree stage adds257
-     exact fresh frames,514 opposite decodes and32 actual C++ context frames.
-     All prior small-window/row/default controls passed at that checkpoint. Working
-     optimal parser/tree and splitting code is now present.768 default small-window
-     parser frames match C++; the larger default cohort remained9/29 before adding
-     the splitter. The new splitter build/runtime gates await restored SSD access
-     after EPERM denied artifact reads/writes. Shipping Parquet/spill/storage and
-     final release gates remain open. See
-     `docs/zstd-strategy-parity.md` for exact scope and individual speed/RSS diagnostics.
+   - ZSTD hash-chain/row, delayed-tree, optimal parsing and entropy-cost splitting
+     now have working implementations. Default C++ optimal comparisons pass29/29
+     large frames,12/12 nine-MB streams and32/32 context frames. Signed debug/release
+     component suites pass23tests each; all-target Clippy passes. Automatic LDM at
+     windowLog>=27 remains missing: two default level22 mixed streams still differ.
+     A C++ diagnostic disabling only LDM matches both; this is not a waiver. Public
+     Parquet COPY of a70MiB value at level22 reaches that parameter range. Complete
+     LDM and refresh shipping Parquet/spill/storage plus final release gates. See
+     `docs/zstd-strategy-parity.md` for raw counterexamples and coupled diagnostics.
    - FSST segments of the same strings hold slightly different counts than DuckDB's
      (5878 against 5877 strings in a 256 KiB segment): the symbol tables differ.
    - zstd throughput is 0.88–1.0× DuckDB's (`docs/perf-backlog.md`).

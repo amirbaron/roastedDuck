@@ -206,3 +206,72 @@ verification claim for the splitter source, no post-optimal full-source snapshot
 yet, and no final performance acceptance. The previous source4 signed19-test stage
 remains a before-optimal control. The goal remains active; this is the first goal
 turn with the SSD access condition, not a completed or paused goal.
+
+## Resumed verification: optimal parser and default block splitter
+
+On2026-10-29 the required SSD mount/link and actual artifact read/write/readback
+succeed again. The resumed goal is active. Source5 was snapshotted before the
+splitter's first successful signed standalone build. Default C++ comparison
+opt-known-2 now matches29/29 full optimal frames, versus9/29 before splitting;
+all58 opposite decodes pass. No C++ feature is disabled in this comparison.
+Default opt-stream-1 matches12/12 nine-MB text/overlap streams with24 opposite
+decodes, including dictionary wraps. opt-reuse-1 matches32/32 chronological default
+C++ same-context frames over level/stream/strategy changes.
+
+All768 source small-window goldens created during the access interruption have now
+been cross-checked against the original SSD C++ raw frames. All32 additional default
+C++ context frames are archived and checked. Evidence: opt-small-goldens-1/. The
+new optimal_split fixture retains73 independent default C++ frames (41 fresh and32
+context). Together with prior tests, each codec build checks2026 explicit frozen
+frames plus the original reference/decoder/overflow cases.
+
+The first mixed-distribution fixture lacked raw blocks because its random bytes
+had appeared earlier and became matches; its coverage assertion stopped that run,
+with identical first C++/Rust frames. The retained opt-mixed-1 failure is a fixture
+issue. opt-mixed-2 uses fresh noise first and verifies raw/RLE/compressed blocks;
+10/12 frames match, all24 opposite decodes pass. The two mismatches are level22
+streaming at both chunk sizes. They are not waived or hidden by the passing cohort.
+
+## Confirmed remaining automatic-LDM gap
+
+The frozen ZSTD_resolveEnableLdm automatically enables long-distance matching for
+optimal strategies when windowLog>=27. C++ level22 unknown-size streams enter this
+range. A scoped diagnostic keeps default splitting but explicitly disables C++ LDM:
+opt-ldm-diagnostic-1 then matches both previously differing frames, with four
+opposite decodes. This isolates a missing feature; the diagnostic setting is not
+used in the product or final acceptance. The older statement that DuckDB never
+uses LDM has been corrected in the source documentation.
+
+Public reachability is also verified through C++ DuckDB COPY: one70MiB VARCHAR
+written with Parquet/ZSTD/COMPRESSION_LEVEL22 is read back correctly. Its page
+metadata reports73,400,351 uncompressed bytes; the frozen compression parameters
+for this size select strategy9/windowLog27. Together with the default activation
+rule, this proves the valid large-page path reaches the automatic-LDM parameter
+range; it does not claim to count internal LDM matches. Evidence: external
+ldm-reachability-20261029/verification.json and its retained Parquet file.
+Port the automatic matcher, raw-sequence candidates and reset/window integration;
+retain the default level22 failures until they pass unchanged.
+
+## Signed component gates and remaining release scope
+
+Source8 preserves938 overlay entries/937 build inputs. Workspace/all-target Clippy7
+passes after four retained style corrections. Immutable signed debug/release runs
+both pass23/23 codec tests,0ignored, across eight executables, with all source and
+signature identities stable. The first debug run exposed missing generated-input
+labels in the new stream fixture; the exact text/overlap generators were added
+without changing expected bytes or assertions. That failed run remains preserved.
+Evidence: source-8/manifest.json, tests-{debug,release}-5/verification.json,
+clippy-7-terminal.json, opt-split-golden-provenance-1.json.
+
+These green gates cover the implemented non-LDM components, not complete codec or
+whole-port acceptance. The automatic-LDM counterexamples remain required work.
+Shipping SQL/shell/client/storage/WAL artifacts have not been refreshed for this
+codec source. Preserve the owner-approved COPY tradeoff and uncached performance
+policy, then measure final speed/RSS and individual query outliers on final images.
+
+opt-speed-memory-diagnostic-1.json retains every default one-shot case with time,
+whole-process RSS and exact compressed bytes. For300KB text, C++/Rust level16 is
+30.199/40.082ms with13,877,248/11,812,864bytes RSS; level18 is39.940/52.788ms with
+14,434,304/12,353,536bytes; level22 is55.562/86.050ms with14,434,304/12,288,000bytes.
+These individual slowdowns remain explicit. Single native samples and differing
+process/DLL overhead are diagnostic only, not final TPC-H/ClickBench acceptance.

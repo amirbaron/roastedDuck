@@ -33,6 +33,21 @@ previous OS access denial was not reproduced in this check. The goal was marked
 blocked before this owner reply; the optimal/splitter checkpoint remains in
 `.context/optimal-next.md` for continuation.
 
+## Resumed optimal/splitter verification and remaining LDM (2026-10-29)
+
+SSD reads/writes now succeed and the user resumed the full goal. The working optimal
+parser/splitter matches default C++29/29 larger frames,12/12 nine-MB streams and32/32
+chronological context frames. All-source Clippy passes; signed debug/release each
+pass23codec tests on source8 (938entries/937inputs). The earlier access interruption
+and failed fixture wiring are retained historical evidence, not current blockers.
+
+Automatic LDM is the next confirmed gap: two level22 mixed default streams differ;
+a diagnostic disabling only C++ LDM matches both. Public C++ Parquet COPY of one70MiB
+value at compression level22 reaches the automatic-LDM parameter range. Preserve
+these counterexamples and implement the matcher/candidate/window/reset behavior.
+Continue .context/ldm-next.md and docs/zstd-strategy-parity.md. Final shipping/core/
+selected-client/corpus/shell/WAL/performance gates remain open; goal active.
+
 ## Current working optimal-parser stage and access condition (2026-10-27)
 
 The working optimal parser passes768 default small-window C++ frames and1536

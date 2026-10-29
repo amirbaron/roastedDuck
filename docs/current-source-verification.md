@@ -49,9 +49,11 @@ applicable broader contract/platform/extension audits remain.
 COPY is an explicit performance outlier. At 14 threads/256 MB the corrected path is
 303.0 ms/459.5 MB versus C++ 246.6 ms/463.8 MB, and the old unaccounted Rust path
 87.4 ms/665.0 MB. At 512 MB it is 222.5 ms/565.0 MB versus C++ 152.9 ms/683.8 MB.
-CPU concurrency follows C++ budgeted throttling. The user preference question about
-this documented tradeoff is pending; no answer or approval is inferred. The first
-shipping candidate's larger runtime regression remains rejected and preserved.
+CPU concurrency follows C++ budgeted throttling. On2026-10-29 the owner explicitly
+accepted this documented tradeoff, conditional on final TPC-H/ClickBench results
+remaining within the approved speed–memory range. Individual outliers remain
+visible, and final artifact measurements are still required. The first shipping
+candidate's larger runtime regression remains rejected and preserved.
 See [COPY measurements and lifecycle](batch-copy-memory-parity.md).
 
 The accepted lower-memory TPC-H/ClickBench policy remains unchanged; no table cache
