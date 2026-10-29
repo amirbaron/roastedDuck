@@ -9,7 +9,7 @@ this release goal. Language clients remain Python,Go,Swift; preserve C API/ADBC.
 | macOS |arm64,x86_64|CLI,C API/ADBC,Python,Go,Swift package/framework|Earlier signed arm64 component gates only; x86_64 execution available through Rosetta, artifacts not yet verified|
 | iOS device |arm64|Swift package/XCFramework and embedded C API engine|Not yet built or verified|
 | iOS simulator |arm64,x86_64|Swift package/XCFramework, consumer and engine tests|SDK27.1 installed; iOS26.5 runtime available; no target artifacts verified|
-| Linux |arm64,x86_64|CLI,C API/ADBC,Python,Go,Swift native loading and packages|Linux arm64 Cargo check and42 signed debug SDK tests pass; optimized native build running. Full reference/client/release gates and x86_64 remain open|
+| Linux |arm64,x86_64|CLI,C API/ADBC,Python,Go,Swift native loading and packages|Linux arm64 passes42 signed debug SDK tests,eight signed optimized smoke checks and full C API30 files/155 cases/862,010 assertions. Full reference/client/release gates and x86_64 remain open|
 
 Client combinations follow their upstream desktop/server or Apple-client surface;
 this does not introduce new iOS Python/Go clients beyond C++ DuckDB's client support.
@@ -93,12 +93,33 @@ covering Parquet schema mapping, Arrow producer, main filesystem context, client
 settings, persistence and native ART/index storage. These are **debug preflight**
 results, not final release or C++/client/OS-matrix completion.
 
-The optimized Linux C API/shell/SQL-runner build is running next. Toolchains,targets,
+The first optimized build was OOM-killed while rustc linked the shell with full LTO
+(actual exit101; Docker reports `OOMKilled=true`). The retry preserves the source
+and release profile and adds8GiB of compiler swap on the isolated SSD-backed VM
+data disk. Runtime test containers disable swap so this build accommodation does
+not change speed/memory acceptance. Both attempts retain separate evidence.
+
+The optimized Linux C API/shell/SQL-runner retry passes with unchanged full LTO.
+Four artifacts (shared/static library,CLI,SQL runner) are frozen with source hashes
+and a signed manifest. Eight optimized native smoke checks pass with swap disabled:
+version,UTF-8/nested CSV values,transaction/checkpoint/reopen,C ABI compile/load/query,
+547 exports/no ADBC test hooks,SQL-runner aggregates/rollback,dynamic dependencies
+and signed integrity before/after. The initial smoke fixture incorrectly expected
+unquoted CSV strings; its failure is preserved. The second attempt parses typed CSV
+values; final shell byte-parity remains a separate gate. The full30-file upstream
+C API harness passes against this signed library after an explicit `<atomic>` shim
+include fixes the GCC appender build. No assertions are removed. See
+[Linux arm64 native checkpoint](linux-arm64-native-preflight.md) for artifact hashes,
+both retained attempts and the remaining gates.
+
+Toolchains,targets,
 registry caches,tmpfiles and logs are under external `work/`; the workspace is
 mounted read-only. Source code matches the Mac candidate; the only added source
 file is the portable signing verifier, which does not alter compiled engine inputs.
 Evidence: `linux-arm64-check-1/`, `linux-arm64-sdk-build-1/`, `linux-sdk-freeze-1.json`,
-`work/linux-arm64/sdk-runtime-1/` and `linux-arm64-native-build-1/`.
+`work/linux-arm64/sdk-runtime-1/`, `linux-arm64-native-build-{1,2}/`,
+`linux-native-freeze-1.json`, `work/linux-arm64/native-runtime-2/` and
+`linux-arm64-capi-1/`.
 
 ## Detached content-signature verification
 

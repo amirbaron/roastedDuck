@@ -30,7 +30,7 @@ with essentially unchanged RSS;1.21x/1.61x timing outliers remain explicit. Cand
 was rejected despite full-fast green after a custom buffer protocol counterexample;
 source3 fixes it. See `docs/python-object-buffer-parity.md`.
 
-Current core work is a separate **unfinished** Parquet schema-evolution candidate.
+Current core work is a separately verified Parquet schema-evolution component.
 It now maps requested fields and uses the existing builtin `remap_struct` for
 missing/disjoint nested STRUCT/LIST/MAP fields. Explicit schema whole-column behavior
 and binder error categories match the reference controls. Source7's correct values
@@ -38,13 +38,21 @@ concealed a measured row-copy regression (14-thread whole-struct8.61ms/162MB ver
 preserved2.86ms/119MB), so it is not accepted. Source9 references vector fields/heaps,
 handles sparse selections, and matches C++ compact-type validation diagnostics.
 Workspace Clippy, nine signed SDK tests in debug/release, and109 affected tests pass
-(two unchanged ignored Snappy tools). Fresh native2 build/sign/13-literal-CAPI and
-four-way speed/RSS checks are active; no final performance acceptance is claimed.
+(two unchanged ignored Snappy tools). Native2 build/signing,13 literal C API controls
+and four-way speed/RSS checks pass; vectorized remapping restores the whole-struct
+baseline. The479-file affected SQL cohort passes473 files with six exact C++ skips
+and zero regressions. Final integrated performance acceptance remains open.
 See `docs/parquet-schema-mapping-parity.md` and `.context/schema-projection-next.md`.
 
 Required platforms are now owner-confirmed: macOS+iOS devices/simulators and Linux
 x86_64/arm64. Other Apple families and Windows are outside scope. The isolated Linux
-runtime is prepared on SSD but has not started; broader targets remain unverified.
+runtime is running on SSD. Linux arm64 passes42 signed debug SDK tests,eight signed
+optimized native smoke checks and all30 upstream C API files (155 cases/862,010
+assertions). The unchanged full-LTO release build requires8GiB of isolated SSD
+compiler swap; runtime tests disable swap. Engine inputs are unchanged; GCC harness
+portability fixes preserve all assertions. C++ reference build is active; broader
+target and final release gates remain unverified. See
+`docs/linux-arm64-native-preflight.md`.
 See `docs/release-platform-matrix.md`.
 
 The signed native images and130-query performance acceptance below are preserved
@@ -75,7 +83,8 @@ run is complete:130 configurations pass, with accepted aggregate speed–memory
 tradeoff and weighted sums/peak RSS/all63 outliers documented in
 `docs/performance-final-native-20261029.md`. Current Python-only object-buffer candidate
 is rebuilding separately; native engine bytes remain unchanged. Broader core/backend
-and platform acceptance remain pending. A release-platform clarification is pending user response;
+and platform acceptance remain pending. Required platforms are macOS arm64/x86_64,
+iOS arm64 devices and arm64/x86_64 simulators, and Linux arm64/x86_64;
 current-host evidence must not imply unverified platforms. Goal remains active.
 
 Earlier component checkpoints below retain their original evidence and artifact IDs.
