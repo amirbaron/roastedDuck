@@ -1,11 +1,15 @@
 # Current-source verification
 
-**Latest source frontier:** the Python object-buffer component is verified, and a new
-Parquet schema-evolution candidate is in progress. Five signed SDK regressions pass,
-but broader inferred nested remapping remains open. Native integration/performance
-results below are preserved signed-artifact controls, not acceptance of that new core
-source. See [Python component](python-object-buffer-parity.md) and
-`.context/schema-projection-next.md`.
+**Latest source frontier:** Python object-buffer component verification is complete,
+and the Parquet mapping candidate now uses vector references for nested remaps.
+Source9 passes workspace Clippy, nine signed SDK tests in debug/release and109 affected
+tests. The prior row-based candidate is performance-incomplete; fresh native2
+literal C API and speed/RSS checks are active. Native integration/performance results
+below are preserved controls, not acceptance of the latest source. Required release
+targets now include macOS+iOS devices/simulators and Linux x86_64/arm64. See
+[Parquet checkpoint](parquet-schema-mapping-parity.md),
+[Python component](python-object-buffer-parity.md) and
+[platform matrix](release-platform-matrix.md).
 
 Updated 2026-10-29. **The full port goal remains active.** The current signed native
 candidate is `art-resident-checkpoint-20261029/source-1/manifest.json`: 969 overlay

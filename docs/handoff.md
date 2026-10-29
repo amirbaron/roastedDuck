@@ -31,14 +31,21 @@ was rejected despite full-fast green after a custom buffer protocol counterexamp
 source3 fixes it. See `docs/python-object-buffer-parity.md`.
 
 Current core work is a separate **unfinished** Parquet schema-evolution candidate.
-Frozen C++ ignores a damaged unselected sibling under inferred evolution while the
-preserved Rust library fails. Source3 recursively maps requested struct fields by
-name and preserves explicit-schema whole-column behavior and binder error category.
-Five signed SDK regressions pass. A broader inferred-schema control exposes another
-open case: disjoint nested fields should become NULL as C++ does, but generic whole
-STRUCT casts reject them. Continue the full mapping before release builds/gates;
-do not call the five-case checkpoint complete. Evidence and next steps are in
-`.context/schema-projection-next.md` and external `schema-evolution-projection-20261029/`.
+It now maps requested fields and uses the existing builtin `remap_struct` for
+missing/disjoint nested STRUCT/LIST/MAP fields. Explicit schema whole-column behavior
+and binder error categories match the reference controls. Source7's correct values
+concealed a measured row-copy regression (14-thread whole-struct8.61ms/162MB versus
+preserved2.86ms/119MB), so it is not accepted. Source9 references vector fields/heaps,
+handles sparse selections, and matches C++ compact-type validation diagnostics.
+Workspace Clippy, nine signed SDK tests in debug/release, and109 affected tests pass
+(two unchanged ignored Snappy tools). Fresh native2 build/sign/13-literal-CAPI and
+four-way speed/RSS checks are active; no final performance acceptance is claimed.
+See `docs/parquet-schema-mapping-parity.md` and `.context/schema-projection-next.md`.
+
+Required platforms are now owner-confirmed: macOS+iOS devices/simulators and Linux
+x86_64/arm64. Other Apple families and Windows are outside scope. The isolated Linux
+runtime is prepared on SSD but has not started; broader targets remain unverified.
+See `docs/release-platform-matrix.md`.
 
 The signed native images and130-query performance acceptance below are preserved
 controls, predating this Parquet candidate. Final integrated verification must use
