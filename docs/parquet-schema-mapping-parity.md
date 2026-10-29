@@ -51,7 +51,9 @@ fields or empty collections, matching C++ `getTType` diagnostics for invalid tag
 It passes workspace Clippy, nine signed SDK tests in both debug and release, and
 109 affected tests with the same two ignored tools. Fresh native2 images now pass13 literal paired C API cases, including the two
 malformed-Thrift negative bodies. The coupled recheck removes the row-copy
-regression; the479-file affected SQL cohort is running. This is scoped component
+regression; the479-file affected SQL cohort passes473 files with six exact C++ skips and
+zero crashes/timeouts/verdict or skip-reason regressions. All4,870SQL/1,522data
+fixture hashes and links remain stable. This is scoped component
 acceptance, not full release/platform acceptance.
 
 ## Rejected performance candidate
@@ -108,8 +110,7 @@ affected-test receipts, native1 identities/matrix and `profile-1/verification.js
 The external root is
 `/Volumes/amirs ssd/ai context/conductor/duckdb-rust/ottawa-50198a764d3b1fdc/`.
 
-Remaining: the running479-file affected SQL cohort, complete final integration and
-the required Apple/Linux artifact matrix. Source9 release/native/literal-message and
+Remaining: complete final integration and the required Apple/Linux artifact matrix. Source9 release/native/literal-message and
 bounded coupled checks above are complete. Earlier130-query TPC-H/ClickBench acceptance is a
 preserved artifact control, not acceptance of this later core change. Required
 platforms now include macOS/iOS devices/simulators and Linux x86_64/arm64; the other
