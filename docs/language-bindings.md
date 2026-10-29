@@ -11,7 +11,19 @@ The [versioned client overview](https://duckdb.org/docs/1.5/clients/overview) an
 upstream packages and tests. Pin matching revisions before implementation/testing;
 a newer client or documentation update must not silently change the target version.
 
-## Current inventory and gates
+## Current signed-candidate gates (2026-10-29)
+
+Resident source1 now passes both complete Python Arrow19/21 fast matrices with exact
+C++ IDs/verdicts/skips, seven non-fast files (71 pass/eight shared skips), installed
+ADBC, stubs/strict typing,385 runtime exports and eight typed checkpoint/WAL journeys.
+Go passes652 pinned root cases plus a separate module/four cross-engine journeys.
+Swift passes132 upstream+identity on both engines, relative/relocated/standalone
+packages and four cross-engine journeys. Native ADBC passes64 cases/3040 assertions.
+See [current signed client evidence](final-client-verification-20261029.md) for hashes,
+platform boundaries and the remaining1.73x/1.92x Python string-scan outliers.
+Final performance, broader backend/core audits and platform scope remain open.
+
+## Implementation history and earlier gates
 
 A native PyO3 Python package is now implemented in `crates/python` and `python/`.
 Its signed current development wheel matches 64 expression, 36 join/write, 49/51 native Pandas,

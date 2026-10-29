@@ -34,9 +34,13 @@ recovery-close outlier (Rust about 18 ms / 61–62 MiB versus C++ 4.4 ms / 59 Mi
 
 Final workspace unit/integration tests pass 1,001 cases across 141 signed executables;
 seven existing diagnostics/probes remain ignored. Shell passes 392 tests/three shared
-skips plus 768 differential/46 PTY cases with zero unexpected differences. Fresh Python
-wheel build is running. Python/Go/Swift, native/installed ADBC and final TPC-H/ClickBench
-acceptance remain pending. A release-platform clarification is pending user response;
+skips plus 768 differential/46 PTY cases with zero unexpected differences. Current
+signed Python Arrow19/21 fast matrices match C++ exactly; non-fast71/eight skips,
+typing/installed ADBC and eight typed file/WAL journeys pass. Go652 plus external
+consumer/four journeys and Swift132+identity, relocated/standalone distribution/four
+journeys pass. Native ADBC64/3040 passes. Client string scans retain1.73x/1.92x time
+outliers. See `docs/final-client-verification-20261029.md`. Full signed TPC-H/ClickBench
+run is active; final performance and broader core/backend acceptance remain pending. A release-platform clarification is pending user response;
 current-host evidence must not imply unverified platforms. Goal remains active.
 
 Earlier component checkpoints below retain their original evidence and artifact IDs.

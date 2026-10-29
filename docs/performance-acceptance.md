@@ -117,6 +117,13 @@ reporting. It is not accepted by the separate TPC-H/ClickBench baseline policy.
 Before/intermediate/final samples, controls and result checks are retained in
 `.context/artifacts/python-pandas-remaining-20261025/performance*-comparison.json`.
 
+The current signed release wheel repeats this outlier on2026-10-29: three paired
+samples give35.09/60.71ms C++/Rust for Python strings (142.11/139.46MB) and
+58.82/112.97ms for Arrow strings (198.02/212.43MB). This confirms1.73x/1.92x time
+ratios in release builds. Raw samples and whole-process RSS are retained; the older
+development-versus-release explanation is no longer sufficient. See
+[final client evidence](final-client-verification-20261029.md).
+
 ## Python execution/reader checkpoint (2026-10-25)
 
 After native signal polling and reader lifecycle corrections, the final signed

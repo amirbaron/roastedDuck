@@ -29,8 +29,12 @@ about 4.4 ms / 59 MiB. The remaining close outlier is explicit and separate from
 TPC-H/ClickBench acceptance. Full workspace unit/integration verification now passes 1,001 tests across 141 signed
 executables, with seven existing diagnostics/probes ignored. Shell verification passes
 392 tests/three shared skips and 768 differential cases including 46 PTY sessions,
-with zero unexpected differences. Fresh Python wheel build is running; Go/Swift,
-native/installed ADBC and final coupled benchmarks remain.
+with zero unexpected differences. Current Python Arrow19/21 fast matrices exactly match
+C++; non-fast71/eight skips, installed ADBC, typing and eight 15-column file/WAL
+journeys pass. Go652 plus an external consumer/four journeys and Swift132+identity,
+relocated/standalone distribution/four journeys pass. Native ADBC64/3040 passes.
+See [current client evidence](final-client-verification-20261029.md). Final coupled
+benchmarks are running; platform and broader contract acceptance remain open.
 Shared reference limitations remain explicit in [divergences](../conformance/divergences.md).
 
 Retained dictionary source4 evidence: original 10/100 MB no-spill COPY budgets, four
@@ -38,10 +42,12 @@ SDK tests per profile, 202 broader tests (two optional tools ignored), 693 SQL f
 and 12 cross-engine Parquet files/reads passed. The current ART overlay preserves
 that repair. See [dictionary repair](parquet-dictionary-memory-parity.md).
 
-The installed Python wheel remains Arrow source7, before the dictionary/ART changes.
-Its 18 native producer controls, 62 Python controls per Arrow19/21 environment and
-3241/3492-record fast matrices are historical component evidence, not current release
-acceptance. See [Arrow report](arrow-producer-parity.md).
+The installed Python wheel now uses Resident source1, including dictionary/ART fixes.
+Its signed extension is `3b9c8b632ee1055cd7f671b36ac765c5718a929350979fe41ff7aca6666f0ff9`.
+Both complete fast matrices and62 additional producer controls per Arrow environment
+pass. Final client string scans retain explicit1.73x/1.92x time outliers; see
+[the current report](final-client-verification-20261029.md). Earlier Arrow source7
+receipts remain component history in [Arrow report](arrow-producer-parity.md).
 
 Remaining observable core/memory audits and full final same-source SQL, unit, shell,
 C API/ADBC, Python/Go/Swift, persistence/WAL and paired speed/memory verification remain
