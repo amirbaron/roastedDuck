@@ -20,6 +20,21 @@ The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swi
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
 
+## Arrow producer checkpoint and immediate COPY repair (2026-10-29)
+
+Current signed images source7=964overlay/963inputs. Native projection-aware producers
+match18 frozen C++ controls, including runtime filters/prepared refresh/runtime
+EXPLAIN; signed debug/release pass.46 broader tests/Clippy/155CAPIcases pass. Signed
+Python wheel installed in Arrow19/21 matches62 client controls each and complete
+3241/3492-record fast matrices. Public raw Arrow C APIs share an explicit reference
+projection/filter limitation; correct projection-aware adapters are verified separately.
+The693-file broader SQL audit is FAILED:682pass/nine C++ skips/two constant dictionary
+Parquet COPY OOM regressions. Retained post-COPY/pre-codec images also fail them.
+Next repair reusable Parquet dictionary size/identity metadata so ColumnDataCollection
+retains compression under10MB/100MB, preserving raw-batch accounting and accepted
+performance policy. See docs/arrow-producer-parity.md. Whole goal remains active;
+other core audits and all final artifact gates remain.
+
 ## Signed aggregate/native checkpoint (2026-10-29)
 
 Source5 has961overlay/960build inputs. Callback-family and eight aggregate bind-data

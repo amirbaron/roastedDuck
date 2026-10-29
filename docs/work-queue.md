@@ -22,9 +22,13 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    Left:
    - ADBC's 64-case frozen upstream suite passes on both engines with 3040 assertions;
      broader client/version/packaging matrices remain open. See `docs/adbc.md`.
-   - Arrow per-type filter support and native producer filtering now exist. The C API
-     raw-producer projection/filtering and dynamic-filter matrices still need explicit
-     client verification; Python's producer tests alone do not close this gate.
+   - Native producer projection/filter/dynamic verification is complete at source7:
+     18 signed SDK C++ controls,16 public C stream/array comparisons,62 installed
+     Python client controls per Arrow19/21 environment and both full fast matrices
+     pass. Generic scans now deliver runtime filters and retain runtime bind data.
+     A shared legacy public C API projection/filter limitation remains explicit.
+     The693-file broad audit exposed two earlier compressed COPY memory regressions;
+     repair them next, preserving raw-batch accounting. See docs/arrow-producer-parity.md.
    - Result Arrow settings snapshots are implemented and covered by the current signed
      30-file/155-case C API checkpoint; preserve that behavior in the final release gate.
    - Multi-statement PRAGMA extraction is a verified current functional gap. A real

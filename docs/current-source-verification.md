@@ -1,12 +1,32 @@
 # Current-source verification
 
 Updated2026-10-29. **The full port goal remains active.** The current signed native
-candidate is external `aggregate-equality-20261029/source-5/manifest.json`, with961
-overlay entries/960 verified build inputs. It includes the complete current overlay,
-EXPORT fixes, all ZSTD strategies/splitting/automatic LDM, FSST candidate/heap fixes,
-and aggregate callback/bind-data/logical-type equality corrections. The engine
-contract remains DuckDB1.5.6. Required clients remain Python, Go and Swift only;
-preserve C API/ADBC and the accepted uncached performance policy.
+candidate is external `arrow-producer-parity-20261029/source-7/manifest.json`, with964
+overlay entries/963 verified build inputs. Generic Arrow producers now receive
+runtime join filters and retain per-execution bind data. See
+[Arrow producer verification](arrow-producer-parity.md).
+
+Current checks:18 frozen C++ producer controls pass in signed debug/release,46
+broader tests pass, workspace/all-target Clippy passes, and155 C API cases pass.
+The installed signed wheel matches62 C++ producer/client controls in each Arrow19/21
+environment, plus both full fast matrices(3241/3492records) literally. Public raw
+C stream/array controls preserve an explicit shared legacy C++ limitation.
+
+**Two earlier COPY regressions remain open.** The693-file scan/join audit has682pass,
+nine exact C++ skips and two constant/dictionary Parquet COPY memory failures at
+10MB/100MB. The preserved post-COPY/pre-codec image also fails both. Its raw-batch
+accounting must retain compressed dictionary metadata; the accepted performance
+tradeoff does not waive these failures. The failed broad scoped gate is retained.
+
+Current DLL: `ad0541c58f39e22a49666dd85c2f52a8dcd031e743cd8001ebd2c35f67e5c4d7`.
+CLI: `cd5cb0f9277933fbcafd62f4cb02eb2ef2b5e8264cc15b96996c25c499a52522`.
+SQL runner: `17c90de00a9fb2a174bd2ffe626a4356d77889caf735e566468bce35134b44f0`.
+Python module: `edea9955ae09b78e132bbad931aa1223d0d441f75da5c6d8d8f77440bafeb430`.
+547 C API exports/zero ADBC test hooks; strict signatures and actual loaded images
+verified. No final release/performance acceptance is claimed. Required clients remain
+Python, Go and Swift only; preserve C API/ADBC and the uncached lower-memory policy.
+
+The earlier aggregate checkpoint below is retained component evidence.
 
 ## Current aggregate/native integration checkpoint
 
@@ -46,8 +66,7 @@ exports/imports and installed Arrow19/21 registered filesystem checks pass. See
 substitute for final current-source release verification.
 
 Remaining contract audits in `work-queue.md` still need authoritative disposition:
-native Arrow producer
-projection/filtering, ART legacy/expression/WAL paths, nested VARIANT statistics,
+ART legacy/expression/WAL paths, nested VARIANT statistics,
 Parquet schema evolution, vector-heap accounting, configured extensions/platforms.
 Verify each against actual current code/runtime; stale backlog prose alone neither
 proves a gap nor closes it. Full final SQL/shell/selected-client/ADBC/persistence/WAL
