@@ -274,9 +274,14 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    - EXPORT serialization is closed at the retained component checkpoint:
      160 literal public plans,14 SDK cases and eight cross-engine export/import
      journeys pass. See `docs/export-plan-parity.md`; final current-image gates remain.
-   - Equal aggregates are shared when their functions have the same name; DuckDB
-     compares the functions' callbacks, so `median(x)` and `quantile_cont(x, 0.5)` are
-     one aggregate there.
+   - Aggregate callback/bind-data equality is closed at the current source5 component
+     checkpoint:36 complete SDK plans/values/names per signed profile,50 native
+     physical/serialized plan controls,324 affected SQL files and155 C API cases pass.
+     Logical return types and eight aggregate bind-data families are compared like
+     C++; C API simple-update capability selects the reference physical path.
+     Three invalid C++ ordered-state array controls remain explicit reference defects;
+     Rust defined sums and their exact plans are independently verified. See
+     `docs/aggregate-equality-parity.md`; final release gates remain.
    - Encrypted-Parquet scan/COPY key serialization is now implemented. Current
      installed source8 Python controls on Arrow19/21 verify encrypted scan-plan
      serialization and paired C++ behavior; this earlier limitation is closed

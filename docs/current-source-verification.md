@@ -1,36 +1,43 @@
 # Current-source verification
 
 Updated2026-10-29. **The full port goal remains active.** The current signed native
-candidate is external `fsst-parity-20261029/source-3/manifest.json`, with946 overlay
-entries/945 verified build inputs. It includes the complete current overlay,
-EXPORT fixes, all ZSTD encoder strategies/splitting/automatic LDM and the corrected
-FSST candidate/heap lifecycle. The engine contract remains DuckDB1.5.6. Required
-clients remain Python, Go and Swift only; preserve C API/ADBC and the accepted
-uncached performance policy.
+candidate is external `aggregate-equality-20261029/source-5/manifest.json`, with961
+overlay entries/960 verified build inputs. It includes the complete current overlay,
+EXPORT fixes, all ZSTD strategies/splitting/automatic LDM, FSST candidate/heap fixes,
+and aggregate callback/bind-data/logical-type equality corrections. The engine
+contract remains DuckDB1.5.6. Required clients remain Python, Go and Swift only;
+preserve C API/ADBC and the accepted uncached performance policy.
 
-## Current FSST/native integration checkpoint
+## Current aggregate/native integration checkpoint
 
 | Gate | Actual current-source evidence |
 |---|---|
-| Workspace/all-target Clippy | Pass, warnings denied (`clippy-2-terminal.json`) |
-| Signed affected common/storage debug/release |124/124 each,0ignored;899 native container operations/512 heap removals and NUL counterexample regression |
-| FSST exact primitive |73/73 corpora match C++ tables/records;146 opposite decodes |
+| Workspace/all-target Clippy | Pass, warnings denied (`clippy-5-terminal.json`) |
+| Signed targeted SDK debug/release |36 complete frozen C++ physical plans/values/raw names plus eight return-type controls each |
+| Signed broader affected crate tests |142pass across22 executables; one existing optional full cast-oracle CLI tool ignored |
 | Signed native images | Actual build exited0; frozen CLI/library/SQL runner strictly signed;547 C API exports/zero ADBC test hooks |
-| Public C ABI storage/WAL |12 bidirectional FSST/DICT_FSST checkpoint/nonempty-WAL/torn-tail journeys with receiver writes/checkpoint and final readback;20 immutable raw inputs retained |
-| Affected SQL |190 files:186pass/four exact C++ skips; no failures, crashes, timeouts or verdict regressions |
-| Full C API suite |30files/155cases/797774assertions pass; each loader selects the immutable current library |
-| Full workspace unit/SQL/shell/client/native ADBC/encrypted WAL/performance | Final refresh required; earlier results below are controls |
+| Public C ABI native matrix |50 complete physical/serialized plans, values, metadata, empty/frame/ordered/callback/extra-data controls match C++ |
+| Checked reference defect | Three multi-row ordered C API calls receive invalid C++ state arrays; Rust correct sums and literal physical/serialized plans verified separately |
+| Affected SQL |324 files:323pass/one exact C++ longdouble skip; zero failures/crashes/timeouts/verdict regressions |
+| Full C API suite |30files/155cases/747436assertions pass; each loader selects the immutable current library |
+| Full workspace unit/SQL/shell/clients/native ADBC/persistence/WAL/performance | Final refresh required; prior results are controls |
 
 Current immutable library SHA256:
-`eda5ab536f9feb10bcfd2ac7279b64f1d9e9ff19d200a378d4ed3c4ffef5d960`.
-CLI: `2044ecd3f114f72e4f4eb4f156964ec7c73bacf8cba80b91243d7b4ce715f7f5`.
-SQL runner: `0906e5e05652ce047247f296c0b1bebdae319b85afd52fb6fc34b32866dad6dd`.
-Evidence: external `fsst-parity-20261029/` and [FSST report](fsst-parity.md).
-The earlier codecnative checkpoint remains preserved in external
-`zstd-strategy-parity-20261027/`:25/25 signed codec debug/release tests,2072 explicit
-frames,20 public cross-engine Parquet files including70MiB automatic-LDM values,
-and155 C API cases. That evidence and the unchanged codec source remain controls;
-see [codec report](zstd-strategy-parity.md). Actual SSD reads/writes succeed.
+`e9b447335ee2c5fba4bcb399092d74676e85284a1acdfa769ecd0f2d62c2372d`.
+CLI: `6798e2fec6736382a74900dfb43663a92e83b8be145e8cb82d1795cf1e5409e8`.
+SQL runner: `846188c762c3801ae79a1f819bbff6ebe872f840473c1d524d07201e3e3dd301`.
+Evidence: external `aggregate-equality-20261029/` and
+[aggregate report](aggregate-equality-parity.md). The narrow C++ ordered-state
+reference defect is explicit in `conformance/divergences.md`; the50 paired controls
+remain literal comparisons, separate from reference-fault diagnostics.
+
+Retained FSST component evidence:73 exact corpora/146 cross-decodes,124 signed
+common/storage tests per profile,190 affected SQL files,155 C API cases and12
+bidirectional FSST/DICT_FSST checkpoint/nonempty/torn-WAL mutation/readback journeys,
+with20 immutable raw inputs. See [FSST report](fsst-parity.md). Earlier codecnative
+controls remain external `zstd-strategy-parity-20261027/`:25/25 signed codec tests per
+profile,2072 explicit frames and20 cross-engine Parquet files including70MiB LDM
+values. See [codec report](zstd-strategy-parity.md). Actual SSD reads/writes succeed.
 
 The confirmed EXPORT gaps were closed at the retained before-codec checkpoint:
 160/160 complete public plans match C++; all14 signed SDK cases, eight cross-engine
@@ -39,13 +46,13 @@ exports/imports and installed Arrow19/21 registered filesystem checks pass. See
 substitute for final current-source release verification.
 
 Remaining contract audits in `work-queue.md` still need authoritative disposition:
-aggregate callback equality, native Arrow producer
+native Arrow producer
 projection/filtering, ART legacy/expression/WAL paths, nested VARIANT statistics,
 Parquet schema evolution, vector-heap accounting, configured extensions/platforms.
 Verify each against actual current code/runtime; stale backlog prose alone neither
 proves a gap nor closes it. Full final SQL/shell/selected-client/ADBC/persistence/WAL
 and coupled TPC-H/ClickBench/outlier gates remain required. No goal completion is
-claimed by this FSST/native checkpoint.
+claimed by this aggregate/native checkpoint.
 
 ## Retained before-codec integrated control
 

@@ -48,3 +48,25 @@ literally. The original failed raw comparison remains preserved rather than
 being normalized away. Evidence: external
 `nested-hash-parity-20261027/{physical-2/padding-verification.json,
 public-hashes-1/differences.json,public-hashes-2/verification.json}`.
+
+## Reference constant state vector in ordered C API aggregates
+
+DuckDB1.5.6's sorted aggregate fallback passes a CONSTANT_VECTOR to the underlying
+update callback when no simple-update callback exists
+(`src/function/aggregate/sorted_aggregate_function.cpp`). Its C API wrapper
+(`src/main/capi/aggregate_function-c.cpp`, CAPIAggregateUpdate) reads that vector
+with FlatVector::GetDataUnsafe without flattening the state pointers. The public
+C callback receives a row count greater than one and an invalid state array.
+In three20-row controls on the frozen build, state0 is valid and state1 is NULL.
+A checked callback reports an error before dereferencing the invalid state.
+
+The exception concerns the reference result oracle for multi-row argument-ordered
+C API aggregates. Rust supplies valid repeated state pointers and verifies the
+independent sums190/190,190/380 and190/190 for aliases, different updates and different
+extra-data controls. Physical and serialized plans match C++ for all three.
+Single-row ordered calls exercise the defined C++ path and match values/names/plans
+literally. The50 paired native acceptance controls and three checked reference
+fault controls are reported separately. Existing SQL tests/ratchets are unchanged.
+Evidence: external `aggregate-equality-20261029/{before-6/,before-7/,
+ordered-state-1/verification.json,native-matrix-1/verification.json}` and
+`docs/aggregate-equality-parity.md`.

@@ -1,7 +1,7 @@
 # Handoff
 
 State of the DuckDB 1.5.6 → Rust port ("rustdb") on the main line
-(`amirbaron/rust-duckdb-port`), updated 2026-10-25, to continue the work in a new session.
+(`amirbaron/rust-duckdb-port`), updated 2026-10-29, to continue the work in a new session.
 
 ## Goal
 
@@ -19,6 +19,24 @@ outliers. Functional, correctness and storage/WAL compatibility gates remain in 
 The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swift
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
+
+## Signed aggregate/native checkpoint (2026-10-29)
+
+Source5 has961overlay/960build inputs. Callback-family and eight aggregate bind-data
+comparisons now match C++; base bound-expression equality checks logical return types.
+C API simple-update capability selects the reference physical path. Clippy passes;
+signed debug/release each match36 full SDK plans/values/raw names plus eight native
+return-type controls.142 broader affected tests pass (one existing optional cast tool
+ignored). Actual native build exited0; frozen images signed;547exports/zeroADBChooks.
+50 complete native physical/serialized plans/values/metadata controls match C++.
+324 affected SQL files yield323pass/one exact C++ skip, no regressions. All155CAPIcases/
+747436assertions pass. Three additional multi-row ordered C API cases expose invalid
+C++ constant state arrays; Rust valid-pointer sums and literal plans are verified
+separately, with the narrow exception documented in conformance/divergences.md.
+See docs/aggregate-equality-parity.md and docs/current-source-verification.md.
+Remaining core audits and full final corpus/shell/selected-client/ADBC/persistence/WAL/
+coupled performance acceptance remain; goalACTIVE, notcomplete. Python/Go/SwiftONLY,
+accepted lower-memory baseline and owner-accepted COPY tradeoff unchanged.
 
 ## Signed FSST/native checkpoint (2026-10-29)
 
