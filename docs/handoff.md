@@ -50,7 +50,10 @@ runtime is running on SSD. Linux arm64 passes42 signed debug SDK tests,eight sig
 optimized native smoke checks and all30 upstream C API files (155 cases/862,010
 assertions). The unchanged full-LTO release build requires8GiB of isolated SSD
 compiler swap; runtime tests disable swap. Engine inputs are unchanged; GCC harness
-portability fixes preserve all assertions. C++ reference build is active; broader
+portability fixes preserve all assertions. The C++ reference and all runtime test
+assets are signed; the full4,870-file paired Linux SQL run is active. An initial
+diagnostic lacked demo-extension assets; that setup is repaired and its output
+preserved. Broader
 target and final release gates remain unverified. See
 `docs/linux-arm64-native-preflight.md`.
 See `docs/release-platform-matrix.md`.

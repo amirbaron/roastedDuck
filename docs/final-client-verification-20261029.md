@@ -1,5 +1,15 @@
 # Current signed client verification — 2026-10-29
 
+Historical integrated macOS arm64 checkpoint: the later
+[Python object-buffer component](python-object-buffer-parity.md) has since passed
+its separate gates, and the [Parquet component](parquet-schema-mapping-parity.md)
+also has newer core evidence. Neither replaces the final integrated client refresh.
+Required platforms are now confirmed as macOS,iOS devices/simulators and Linux;
+see the [platform matrix](release-platform-matrix.md) and
+[Linux native checkpoint](linux-arm64-native-preflight.md). References below to a
+pending platform answer or an in-progress object-buffer candidate describe the
+original checkpoint date, not the current frontier.
+
 The goal remains active. This checkpoint verifies the selected clients and existing
 ADBC on the current Resident source1 candidate. It does not establish untested
 platforms, close the remaining core contract audits, or grant final performance

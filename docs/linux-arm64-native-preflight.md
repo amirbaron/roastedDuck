@@ -64,10 +64,33 @@ workspace's dedicated external SSD directory. Relevant records:
 - `linux-arm64-capi-{1,2}/`: both complete harness attempts and terminal results.
 - `work/linux-arm64/capi-2/verification.json`:30 files/155 cases/862,010 assertions.
 
-The Linux C++1.5.6 comparator is building from a fresh SSD extraction of the supplied
-source archive, mounted read-only. Its git identifier is explicitly synthetic
-because the archive has no git history; the archive SHA256 is recorded separately.
+The Linux C++1.5.6 comparator builds from a fresh SSD extraction of the supplied
+source archive, mounted read-only. Its shared library,shell,upstream test runner and
+oracle shim are frozen and signature-verified. Its git identifier is explicitly
+synthetic because the archive has no git history; the archive SHA256 is recorded
+separately. The first freezer expected the CLI under `tools/shell`; the corrected
+attempt uses CMake's actual build-root executable and preserves the partial attempt.
+
+The first paired corpus diagnostic proves selection of the frozen C++ library but
+finds missing loadable-demo test extensions: selecting the engine/shell/unittest
+targets had omitted the remaining CMake assets. The owned diagnostic container is
+stopped and its partial output retained; it is not acceptance evidence. CMake ALL
+targets now complete with the original engine hash unchanged. All23 runtime assets
+are signed and verified. The second full paired run is active with a fresh fixture
+matching all4,870 SQL files and1,522 data entries and a read-only reference build.
+Both previously missing-demo failures now pass on C++; full results remain pending.
 No Linux C++ paired parity result is claimed yet.
+
+The Go harness now selects native macOS/Linux and arm64/amd64, checks the library
+architecture, records Linux rpath/loader selection and requires a caller-supplied
+certificate pin plus signed manifest before Linux execution. Actual Linux helper
+preflights verify the signed library, reject an unlisted manifest artifact and
+resolve the selected library through a path containing spaces. Evidence is under
+`go-portable-helper-preflight-{1,2,3}/`; trust/membership rejections also pass under
+Python optimization. The native Go1.27.3 Linux arm64 toolchain and all79 pinned
+upstream source files are verified and prepared on SSD. These checks do not establish Go compilation,
+the652-case suite or consumer/WAL acceptance. The complete Go build/test and Mac
+regression verification remain pending. Engine inputs are unchanged.
 
 Remaining: full SQL/shell,ADBC,Python/Go/Swift,cross-engine persistence/WAL and coupled
 speed/RSS gates on final signed artifacts; Linux x86_64,macOS x86_64 and iOS slices;

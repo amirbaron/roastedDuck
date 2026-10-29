@@ -11,7 +11,25 @@ The [versioned client overview](https://duckdb.org/docs/1.5/clients/overview) an
 upstream packages and tests. Pin matching revisions before implementation/testing;
 a newer client or documentation update must not silently change the target version.
 
-## Current signed-candidate gates (2026-10-29)
+## Current signed-candidate gates (2026-10-30)
+
+Client integration is not final. The latest Python object-buffer component passes
+both complete Arrow19/21 fast matrices and its boundary/non-fast/typing/ADBC/WAL
+gates; its1.21x/1.61x string-scan timing outliers remain explicit. That wheel predates
+the separately verified Parquet core component and needs an integrated refresh.
+See [Python object-buffer evidence](python-object-buffer-parity.md).
+
+Linux arm64 now has optimized signed native artifacts and passes the full30-file
+C API harness (155 cases/862,010 assertions), with no engine changes for Linux
+harness portability. Linux Python/Go/Swift and ADBC have not yet been verified.
+Go harness platform,signature and loader support is implemented with bounded
+Linux helper checks; actual client builds,full cases and consumers remain pending.
+See [Linux native evidence](linux-arm64-native-preflight.md) and the
+[required platform matrix](release-platform-matrix.md). macOS x86_64,iOS device/
+simulator and Linux x86_64 gates remain open.
+
+The following integrated client checkpoint is an earlier macOS arm64 control;
+it does not establish acceptance for the newer core or other platforms.
 
 Resident source1 now passes both complete Python Arrow19/21 fast matrices with exact
 C++ IDs/verdicts/skips, seven non-fast files (71 pass/eight shared skips), installed
@@ -21,7 +39,8 @@ Swift passes132 upstream+identity on both engines, relative/relocated/standalone
 packages and four cross-engine journeys. Native ADBC passes64 cases/3040 assertions.
 See [current signed client evidence](final-client-verification-20261029.md) for hashes,
 platform boundaries and the remaining1.73x/1.92x Python string-scan outliers.
-Final performance, broader backend/core audits and platform scope remain open.
+Final integrated performance, broader backend/core audits and platform verification
+remain open. Platform scope is confirmed in the matrix linked above.
 
 ## Implementation history and earlier gates
 
