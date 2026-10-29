@@ -13,6 +13,23 @@ merely to match C++ caching or close a small speed gap. Evaluate both metrics an
 report individual query outliers separately. Correctness, functional parity and
 storage/WAL compatibility remain required.
 
+## Accepted memory-bound COPY tradeoff
+
+On 2026-10-29 the owner explicitly accepted the documented COPY memory-manager
+throttling tradeoff, provided the full final TPC-H/ClickBench baseline remains
+within the approved speed–memory range. The two-million-row calibration at14
+threads/256MB is303.0ms/459.5MB peak RSS for corrected Rust versus246.6ms/463.8MB
+for C++; the old unaccounted Rust path was87.4ms/665.0MB. All values are separate
+three-sample medians, with decimal MB. The faster unaccounted path is not a
+performance target to recover by increasing memory.
+
+Retain individual query/configuration outliers and coupled time/RSS measurements.
+This acceptance leaves functional/correctness, shell, persistence/WAL, C API/ADBC
+and Python/Go/Swift gates intact. Final signed artifacts still need verification;
+this policy decision does not complete the goal. See
+[the COPY evidence](batch-copy-memory-parity.md) and external
+`performance-policy-20261029/copy-acceptance/owner-decision.json`.
+
 ## Preserved comparison baseline
 
 Use the checked round-6 integrated **uncached** results in

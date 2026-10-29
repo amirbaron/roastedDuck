@@ -20,6 +20,19 @@ The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swi
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
 
+## Owner COPY performance decision (2026-10-29)
+
+The owner accepted the documented memory-bound COPY throttling tradeoff, conditional
+on the full final TPC-H/ClickBench baseline staying in the approved speed–memory
+range. The pending preference question is resolved. Keep all individual outliers
+visible; final artifact/correctness/client/persistence gates remain open. See
+`docs/performance-acceptance.md` and external
+`performance-policy-20261029/copy-acceptance/owner-decision.json`.
+Artifact reads and an actual write/readback now succeed on the mounted SSD; the
+previous OS access denial was not reproduced in this check. The goal was marked
+blocked before this owner reply; the optimal/splitter checkpoint remains in
+`.context/optimal-next.md` for continuation.
+
 ## Current working optimal-parser stage and access condition (2026-10-27)
 
 The working optimal parser passes768 default small-window C++ frames and1536

@@ -264,11 +264,16 @@ uncounted raw-batch throughput. SQL memory_limit governs engine-accounted memory
 whole-process RSS also includes runtime/codec/other allocations, and no hard
 physical-RSS cap is claimed. Both raw RSS and every timing/CPU sample are kept.
 
-A user preference question is pending on accepting this explicitly documented
-memory-bound COPY tradeoff if the full TPC-H/ClickBench baseline remains within
-the approved range. No response or performance acceptance is inferred. Continue
-independent functionality/regression gates while that preference is pending.
-Final aggregate speed/RSS and individual-outlier acceptance are still open.
+On 2026-10-29 the owner explicitly accepted this documented memory-bound COPY
+throttling tradeoff, conditional on the full final TPC-H/ClickBench baseline
+remaining within the approved speed–memory range. This resolves the pending
+preference question; recovering the old unaccounted-batch throughput is not a
+completion requirement. Keep the coupled measurements above and report each
+query/configuration outlier separately. Correctness and the other final release
+gates remain required; the decision does not claim those gates or final-artifact
+performance verification have passed. The original rejected candidate remains
+rejected. Owner decision and recalculated calibration medians are preserved in
+external `performance-policy-20261029/copy-acceptance/owner-decision.json`.
 
 The source-8 shipping C API refresh passes all 30 files/155 cases/725,896 assertions.
 Each loader selects the stage-2 immutable library, and signatures/harness/source
