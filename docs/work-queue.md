@@ -180,11 +180,16 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      LDM now have implementations. The original default-LDM failures pass unchanged;
      known70MiB,132MiB window-wrap, diverse and reused-context controls match C++.
      Signed debug/release each pass25 codec tests; workspace/all-target Clippy passes.
-     Shipping CLI/C API/SQL-runner images are rebuilding from source9 before actual
-     Parquet/spill/storage integration. Final release/query performance acceptance
+     Signed shipping integration passes20 cross-engine Parquet files, including
+     70MiB automatic-LDM values; current FSST/native source3 retains the codec.
+     Final release/query performance acceptance
      remains open; see `docs/zstd-strategy-parity.md` for exact scope/outliers.
-   - FSST segments of the same strings hold slightly different counts than DuckDB's
-     (5878 against 5877 strings in a 256 KiB segment): the symbol tables differ.
+   - FSST's controlled NUL-candidate ordering discrepancy is closed:73 exact
+     primitive corpora/146 cross-decodes,124 signed affected tests per profile,
+     190 affected SQL files and12 bidirectional storage/WAL/torn-tail mutation
+     journeys pass. Historical5878/5877 density lacks a retained input and outer
+     C++ sampling is random; do not treat it as a calibrated correctness gap.
+     See `docs/fsst-parity.md`; final release/performance acceptance remains open.
    - zstd throughput is 0.88–1.0× DuckDB's (`docs/perf-backlog.md`).
 6. **External file cache, the rest.** `ExternalFileCache` and `CachingFileSystem` are
    ported (`crates/function`: buffer-managed ranges, validation by version tag or
@@ -266,9 +271,9 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
    object clear the entry, like DuckDB's. Parquet scans and writes, STRUCT `date_part`
    (ICU's too), binning and lambdas write their bind data; CSV and JSON scans and
    exported aggregate states fail as DuckDB's do. What still differs:
-   - `EXPORT DATABASE` is not serialized: rustdb's `LogicalExport` keeps what its
-     operator needs instead of DuckDB's `CopyInfo` and `BoundExportData`, and unions the
-     table copies two at a time.
+   - EXPORT serialization is closed at the retained component checkpoint:
+     160 literal public plans,14 SDK cases and eight cross-engine export/import
+     journeys pass. See `docs/export-plan-parity.md`; final current-image gates remain.
    - Equal aggregates are shared when their functions have the same name; DuckDB
      compares the functions' callbacks, so `median(x)` and `quantile_cont(x, 0.5)` are
      one aggregate there.

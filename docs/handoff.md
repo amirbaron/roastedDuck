@@ -20,6 +20,23 @@ The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swi
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
 
+## Signed FSST/native checkpoint (2026-10-29)
+
+The NUL-candidate discrepancy is corrected: reproduce C++ erase/reinsert order,
+QSymbol hash and heap ties. Source3 has946overlay/945build inputs; workspace/all-target
+Clippy passes. Signed common/storage debug/release each pass124tests,0ignored.
+All73 controlled encoder corpora match exact tables/records;146 cross-decodes pass.
+Shipping build exited0; immutable native images are signed with547CAPIexports and
+zero ADBC test hooks.190 affected SQL files yield186pass/four exact C++ skips;
+all155CAPIcases/797774assertions pass.12 bidirectional FSST/DICT_FSST checkpoint,
+nonempty-WAL and torn-tail journeys pass with receiver mutations and final readback.
+Twenty immutable raw database/WAL inputs remain on the SSD. See `docs/fsst-parity.md`
+and `docs/current-source-verification.md`. No full-goal acceptance is claimed.
+The next confirmed core gap is aggregate callback equality; continue
+`.context/aggregate-next.md`. Full final SQL/shell/selected-client/ADBC/encrypted-WAL
+and coupled performance/outlier gates remain. Python/Go/SwiftONLY; preserve the
+accepted lower-memory baseline and owner-accepted COPY tradeoff.
+
 ## Owner COPY performance decision (2026-10-29)
 
 The owner accepted the documented memory-bound COPY throttling tradeoff, conditional

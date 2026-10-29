@@ -1,32 +1,36 @@
 # Current-source verification
 
 Updated2026-10-29. **The full port goal remains active.** The current signed native
-candidate is external `zstd-strategy-parity-20261027/source-9/manifest.json`, with943
-overlay entries/942verified build inputs. It includes the complete current overlay,
-EXPORT fixes and all ZSTD encoder strategies/optimal splitting/automatic LDM.
-The frozen engine contract remains DuckDB1.5.6. Required clients remain Python,
-Go and Swift only; preserve C API/ADBC and the accepted uncached performance policy.
+candidate is external `fsst-parity-20261029/source-3/manifest.json`, with946 overlay
+entries/945 verified build inputs. It includes the complete current overlay,
+EXPORT fixes, all ZSTD encoder strategies/splitting/automatic LDM and the corrected
+FSST candidate/heap lifecycle. The engine contract remains DuckDB1.5.6. Required
+clients remain Python, Go and Swift only; preserve C API/ADBC and the accepted
+uncached performance policy.
 
-## Current codec/native integration checkpoint
+## Current FSST/native integration checkpoint
 
 | Gate | Actual current-source evidence |
 |---|---|
-| Workspace/all-target Clippy | Pass, warnings denied (`clippy-8-terminal.json`) |
-| Signed codec debug/release |25/25 tests each,0ignored;2072 explicit frozen frames plus reference/decode/overflow checks |
-| Automatic-LDM counterexamples | Original12/12 mixed frames exact; known70MiB/streaming132MiB wrap/tiny/diverse/context controls pass against unchanged C++ defaults |
-| Signed native images | Actual shipping build exited0; frozen CLI/library/SQL runner strictly signed;547 C API exports/zero ADBC test hooks |
-| Public C ABI Parquet |20 files written across both engines;20 opposite-engine and20 own-engine reads pass at levels1/3/4/5/9/13/16/19/22, including70MiB LDM-triggering values |
-| Full C API suite |30files/155cases/751094assertions pass; each signed executable's loader selects the immutable current library |
-| Full workspace unit/SQL/shell/client/native ADBC/WAL/performance | Final refresh still required; prior results below are controls |
+| Workspace/all-target Clippy | Pass, warnings denied (`clippy-2-terminal.json`) |
+| Signed affected common/storage debug/release |124/124 each,0ignored;899 native container operations/512 heap removals and NUL counterexample regression |
+| FSST exact primitive |73/73 corpora match C++ tables/records;146 opposite decodes |
+| Signed native images | Actual build exited0; frozen CLI/library/SQL runner strictly signed;547 C API exports/zero ADBC test hooks |
+| Public C ABI storage/WAL |12 bidirectional FSST/DICT_FSST checkpoint/nonempty-WAL/torn-tail journeys with receiver writes/checkpoint and final readback;20 immutable raw inputs retained |
+| Affected SQL |190 files:186pass/four exact C++ skips; no failures, crashes, timeouts or verdict regressions |
+| Full C API suite |30files/155cases/797774assertions pass; each loader selects the immutable current library |
+| Full workspace unit/SQL/shell/client/native ADBC/encrypted WAL/performance | Final refresh required; earlier results below are controls |
 
 Current immutable library SHA256:
-`fce108a13835cc3698acf67c4b69e38327d2dea4b349a0e04e1b297ab3c5e94c`.
-CLI: `0323332f6bf0e7bed51cd747082824cdd1c50396fa31113d995a68d1ef66fb1a`.
-SQL runner: `f0da330fcb6c2867c62e48048c4c597c9d6c83b5346d0f8fa3a38b492dc3e94d`.
-Evidence: external `zstd-strategy-parity-20261027/{native-images-1.json,
-engine-parquet-1/verification.json,capi-suite-1/verification.json}` and
-[codec report](zstd-strategy-parity.md). The prior OS artifact-access denial is not
-currently reproduced: mounted-path checks plus actual reads/writes succeed.
+`eda5ab536f9feb10bcfd2ac7279b64f1d9e9ff19d200a378d4ed3c4ffef5d960`.
+CLI: `2044ecd3f114f72e4f4eb4f156964ec7c73bacf8cba80b91243d7b4ce715f7f5`.
+SQL runner: `0906e5e05652ce047247f296c0b1bebdae319b85afd52fb6fc34b32866dad6dd`.
+Evidence: external `fsst-parity-20261029/` and [FSST report](fsst-parity.md).
+The earlier codecnative checkpoint remains preserved in external
+`zstd-strategy-parity-20261027/`:25/25 signed codec debug/release tests,2072 explicit
+frames,20 public cross-engine Parquet files including70MiB automatic-LDM values,
+and155 C API cases. That evidence and the unchanged codec source remain controls;
+see [codec report](zstd-strategy-parity.md). Actual SSD reads/writes succeed.
 
 The confirmed EXPORT gaps were closed at the retained before-codec checkpoint:
 160/160 complete public plans match C++; all14 signed SDK cases, eight cross-engine
@@ -35,13 +39,13 @@ exports/imports and installed Arrow19/21 registered filesystem checks pass. See
 substitute for final current-source release verification.
 
 Remaining contract audits in `work-queue.md` still need authoritative disposition:
-FSST symbol/segment counts, aggregate callback equality, native Arrow producer
+aggregate callback equality, native Arrow producer
 projection/filtering, ART legacy/expression/WAL paths, nested VARIANT statistics,
 Parquet schema evolution, vector-heap accounting, configured extensions/platforms.
 Verify each against actual current code/runtime; stale backlog prose alone neither
 proves a gap nor closes it. Full final SQL/shell/selected-client/ADBC/persistence/WAL
 and coupled TPC-H/ClickBench/outlier gates remain required. No goal completion is
-claimed by this codec/native checkpoint.
+claimed by this FSST/native checkpoint.
 
 ## Retained before-codec integrated control
 
