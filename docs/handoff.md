@@ -20,6 +20,19 @@ The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swi
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
 
+## Reusable Parquet dictionary repair verified (2026-10-29)
+
+Current source4=965overlay/964inputs. Parquet dictionaries share stable size/identity
+metadata including NULL, preserving compression through buffer-managed COPY.
+Original10/100MB tests nowPASS without spill/accounting changes. Clippy and four
+signed SDK tests per profile pass;202 broader tests pass(two optional Snappy tools
+ignored). Native images strictly signed,547exports/zeroADBChooks.693SQL=684pass/nine
+exact C++ skips/zero regressions.155CAPIcases/775418assertions and12 cross-engine
+Parquet files/reads pass. See docs/parquet-dictionary-memory-parity.md. Older Arrow
+wheel's6733 full fast records remain before-dictionary evidence; final refresh needed.
+Next expression-index WAL/persistence audit and other remaining core contracts,
+then all final signed artifact/performance gates. GoalACTIVE, notcomplete.
+
 ## Arrow producer checkpoint and immediate COPY repair (2026-10-29)
 
 Current signed images source7=964overlay/963inputs. Native projection-aware producers

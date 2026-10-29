@@ -27,8 +27,10 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
      Python client controls per Arrow19/21 environment and both full fast matrices
      pass. Generic scans now deliver runtime filters and retain runtime bind data.
      A shared legacy public C API projection/filter limitation remains explicit.
-     The693-file broad audit exposed two earlier compressed COPY memory regressions;
-     repair them next, preserving raw-batch accounting. See docs/arrow-producer-parity.md.
+     The693-file audit exposed two earlier compressed COPY memory regressions, now
+     fixed by reusable Parquet dictionary metadata: original10/100MB tests, full693
+     rerun,155 C API cases and12 cross-engine files pass with accounting intact.
+     See docs/arrow-producer-parity.md and docs/parquet-dictionary-memory-parity.md.
    - Result Arrow settings snapshots are implemented and covered by the current signed
      30-file/155-case C API checkpoint; preserve that behavior in the final release gate.
    - Multi-statement PRAGMA extraction is a verified current functional gap. A real
