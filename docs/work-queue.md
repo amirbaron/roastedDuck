@@ -260,11 +260,16 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
     checkpoint matches C++; the separate shared deleted-key reference limitation is
     explicit. See `docs/art-persistence-parity.md` and external
     `art-persistence-parity-20261029/`.
-    Remaining audits: native ALTER ADD PRIMARY KEY WAL metadata still uses a rebuild
-    fallback; large-index WAL buffer memory needs paired measurements. Missing and
-    in-memory metadata also retain a rebuild fallback. Calibrate observable behavior
-    and coupled time/RSS before treating internal implementation differences as gaps.
-    Final full same-source release/client/performance verification remains required.
+    Native ALTER ADD PRIMARY KEY WAL restore, streaming allocator buffers and
+    constraint-order metadata matching are now verified in Resident source1. A
+    resident-only old-layout checkpoint walk closes the two-million-row / 1 MB
+    checkpoint failure without extra cache. The current full 4,870-file gate has
+    4,781 passes/74 exact C++ skips/15 documented exceptions and zero regressions;
+    C API 155 cases, 52 cross-engine journeys, 1,001 workspace tests and the complete
+    shell gates pass. Paired recovery close time/RSS improves from about 82 ms/75 MiB
+    to 18 ms/61–62 MiB; the remaining C++ gap is explicit. Missing/in-memory metadata
+    retains the rebuild fallback. See `docs/art-resident-checkpoint-parity.md`.
+    Final selected-client/ADBC/platform and TPC-H/ClickBench acceptance remains.
 
 ## Planner and execution
 

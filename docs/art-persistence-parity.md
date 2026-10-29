@@ -1,6 +1,7 @@
 # Native ART persistence and deferred WAL replay
 
-The port goal remains active. This component targets DuckDB 1.5.6's native ART
+The port goal remains active. This report retains the earlier ART source14 checkpoint.
+The current signed-artifact results are in [the resident checkpoint report](art-resident-checkpoint-parity.md). This component targets DuckDB 1.5.6's native ART
 storage and replay behavior, including supported v0.9.1 database files. It adds no
 table cache and raises no test memory budgets.
 
@@ -50,7 +51,7 @@ transaction committed. The failed run was stopped and preserved. Recovery now us
 C++'s dedicated WAL append semantics and stages the index until commit. Both the new
 SDK regression and the original upstream SQL test pass after the correction.
 
-Current native image SHA256 values:
+Earlier ART source14 native image SHA256 values:
 
 - Library: `52098b287d43ac6132d0e743bc6bca1bcc15b0007065676e0e662d6e027af6cf`
 - Shell: `a5c4a6dda79bcd1f61970a710fc17a00ee1a078dd4f6744feb7396f77b9d3170`

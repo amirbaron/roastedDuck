@@ -1,32 +1,37 @@
 # Current-source verification
 
 Updated 2026-10-29. **The full port goal remains active.** The current signed native
-candidate is `art-persistence-parity-20261029/source-14/manifest.json`: 969 overlay
-entries and 967 guarded inputs. Native expression/CREATE INDEX WAL buffers and legacy
-v0.9.1 ART metadata restore without table scans; deferred mutations apply at binding.
-WAL-created indexes publish after their creating replay transaction commits. Shutdown
-retains the WAL when pending expression keys cannot yet be bound.
-See [ART persistence report](art-persistence-parity.md).
+candidate is `art-resident-checkpoint-20261029/source-1/manifest.json`: 969 overlay
+entries / 967 guarded inputs. Native expression/CREATE INDEX/ALTER PRIMARY KEY WAL
+buffers restore without table rebuilds when metadata is available. Constraint storage
+order handles ALTER/rename names, and checkpoints keep untouched deprecated-format
+subtrees unloaded. No table cache or higher memory budget is introduced.
+See [current persistence/recovery report](art-resident-checkpoint-parity.md).
 
-Current checks: workspace/all-target Clippy passes; eight SDK tests pass in each
-signed debug/release profile; 138 broader tests pass without ignores. The 796-file
-affected SQL run has **777 passes, 19 exact C++ skips and zero failures/regressions**.
-All 155 C API cases pass **820,026 assertions**. All **28 cross-engine recovery
-journeys** pass, covering plain/GCM/CTR, clean/torn WAL, transactional DDL, string keys,
-receiver writes/checkpoint and original-engine readback. C++ and Rust both pass the
-cold 100,000-row expression-index checkpoint at 1 MB with spill disabled. The first
-failed transactional native run and two intermediate SDK failures remain preserved.
+Current signed checks: Clippy; nine SDK tests per debug/release profile; 141 broader
+tests including 23 index tests, all without ignores. Native C++/Rust cold recovery
+and checkpoint reopen pass at 1 MB, including two-million-row plain/expression index
+checkpoints with spill disabled. The **full 4,870-file corpus has 4,781 passes,
+74 exact C++ skips, 15 documented exceptions, and zero crashes/timeouts/regressions**.
+All 1,522 fixture hashes and every verdict/skip reason are stable. C API **155 cases /
+728,156 assertions** and **52 cross-engine recovery journeys** pass on the same images.
 
 Current native SHA256 values:
 
-- Library: `52098b287d43ac6132d0e743bc6bca1bcc15b0007065676e0e662d6e027af6cf`
-- Shell: `a5c4a6dda79bcd1f61970a710fc17a00ee1a078dd4f6744feb7396f77b9d3170`
-- SQL runner: `4a33665268951a1f3c8b28df674e482ecf4c82dfb5c90c3a40096fca279e6d7e`
+- Library: `01aaeb24d068580f7755656062ba7a3e8a31bbbdfd4a1c5933379a59ecb0a702`
+- Shell: `d53e9768c456ff13d0327c0c9960e485dc1ff9f40af9223cf539c24a4a90a5b7`
+- SQL runner: `5942f2cfd1c6f970e10350bf6d8afb59f33f56c965f87fedc4470c01344ada5d`
 
 Strict signatures, actual loaded images, all 547 C API exports and absence of ADBC
-test hooks are verified. A shared recovered-index deleted-key limitation is explicit
-in [divergences](../conformance/divergences.md); its failed independent correctness
-diagnostics are separate from the passing controls.
+test hooks are verified. Three-repetition recovery measurements reduce Rust's close
+cost from roughly 82 ms to 18 ms and process RSS from 75 MiB to 61–62 MiB; C++ remains
+about 4.4 ms / 59 MiB. The remaining close outlier is explicit and separate from final
+TPC-H/ClickBench acceptance. Full workspace unit/integration verification now passes 1,001 tests across 141 signed
+executables, with seven existing diagnostics/probes ignored. Shell verification passes
+392 tests/three shared skips and 768 differential cases including 46 PTY sessions,
+with zero unexpected differences. Fresh Python wheel build is running; Go/Swift,
+native/installed ADBC and final coupled benchmarks remain.
+Shared reference limitations remain explicit in [divergences](../conformance/divergences.md).
 
 Retained dictionary source4 evidence: original 10/100 MB no-spill COPY budgets, four
 SDK tests per profile, 202 broader tests (two optional tools ignored), 693 SQL files

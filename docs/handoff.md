@@ -20,6 +20,27 @@ The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swi
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
 
+## Current native checkpoint and final validation (2026-10-29)
+
+Current signed native candidate is Resident source1 (969 overlay/967 guarded inputs).
+Native ALTER PRIMARY KEY/WAL streaming and constraint-order restore are implemented;
+checkpoints keep untouched old-layout subtrees unloaded. Both engines now pass two
+million rows at 1 MB with spill disabled. Clippy, nine SDK tests per signed profile,
+23 index tests and 141 broader tests pass. The full SQL corpus is 4,781 pass/74 exact
+C++ skips/15 documented exceptions, zero crashes/timeouts/regressions, all 1,522
+fixture hashes stable. C API 155 cases/728,156 assertions and 52 cross-engine recovery
+journeys pass. See `docs/art-resident-checkpoint-parity.md` for hashes and remaining
+recovery-close outlier (Rust about 18 ms / 61–62 MiB versus C++ 4.4 ms / 59 MiB).
+
+Final workspace unit/integration tests pass 1,001 cases across 141 signed executables;
+seven existing diagnostics/probes remain ignored. Shell passes 392 tests/three shared
+skips plus 768 differential/46 PTY cases with zero unexpected differences. Fresh Python
+wheel build is running. Python/Go/Swift, native/installed ADBC and final TPC-H/ClickBench
+acceptance remain pending. A release-platform clarification is pending user response;
+current-host evidence must not imply unverified platforms. Goal remains active.
+
+Earlier component checkpoints below retain their original evidence and artifact IDs.
+
 ## Native ART persistence/WAL checkpoint verified (2026-10-29)
 
 Current native candidate is ART source14 (969 overlay/967 inputs). Expression and
