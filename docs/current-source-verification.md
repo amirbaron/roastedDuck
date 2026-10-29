@@ -1,19 +1,54 @@
 # Current-source verification
 
-Updated 2026-10-27. **The port goal remains active.** An EXPORT serialization
-implementation is now under verification in `export-plan-parity-20261027/source-4`
-(913 overlay entries/912 inputs). Workspace checking/Clippy, signed generator check
-and seven independent C++ binary-wire cases pass; the three-case release SDK is
-building. Public plan equality and runtime closure remain unproven.
+Updated2026-10-29. **The full port goal remains active.** The current signed native
+candidate is external `zstd-strategy-parity-20261027/source-9/manifest.json`, with943
+overlay entries/942verified build inputs. It includes the complete current overlay,
+EXPORT fixes and all ZSTD encoder strategies/optimal splitting/automatic LDM.
+The frozen engine contract remains DuckDB1.5.6. Required clients remain Python,
+Go and Swift only; preserve C API/ADBC and the accepted uncached performance policy.
 
-The latest integrated signed before-stage candidate is
-`batch-copy-memory-20261027/source-8/manifest.json`: 910 overlay entries and 909
-verified build inputs. It includes the import/native-byte work, footer-key Parquet
-encryption, nested/VARIANT hash fixes and the complete ordered-COPY helper lifecycle.
-Required clients are Python, Go and Swift; preserve C API/ADBC. Other language clients
-remain outside the owner's scope. The frozen engine contract is DuckDB 1.5.6.
+## Current codec/native integration checkpoint
 
-## Live candidate gates
+| Gate | Actual current-source evidence |
+|---|---|
+| Workspace/all-target Clippy | Pass, warnings denied (`clippy-8-terminal.json`) |
+| Signed codec debug/release |25/25 tests each,0ignored;2072 explicit frozen frames plus reference/decode/overflow checks |
+| Automatic-LDM counterexamples | Original12/12 mixed frames exact; known70MiB/streaming132MiB wrap/tiny/diverse/context controls pass against unchanged C++ defaults |
+| Signed native images | Actual shipping build exited0; frozen CLI/library/SQL runner strictly signed;547 C API exports/zero ADBC test hooks |
+| Public C ABI Parquet |20 files written across both engines;20 opposite-engine and20 own-engine reads pass at levels1/3/4/5/9/13/16/19/22, including70MiB LDM-triggering values |
+| Full C API suite |30files/155cases/751094assertions pass; each signed executable's loader selects the immutable current library |
+| Full workspace unit/SQL/shell/client/native ADBC/WAL/performance | Final refresh still required; prior results below are controls |
+
+Current immutable library SHA256:
+`fce108a13835cc3698acf67c4b69e38327d2dea4b349a0e04e1b297ab3c5e94c`.
+CLI: `0323332f6bf0e7bed51cd747082824cdd1c50396fa31113d995a68d1ef66fb1a`.
+SQL runner: `f0da330fcb6c2867c62e48048c4c597c9d6c83b5346d0f8fa3a38b492dc3e94d`.
+Evidence: external `zstd-strategy-parity-20261027/{native-images-1.json,
+engine-parquet-1/verification.json,capi-suite-1/verification.json}` and
+[codec report](zstd-strategy-parity.md). The prior OS artifact-access denial is not
+currently reproduced: mounted-path checks plus actual reads/writes succeed.
+
+The confirmed EXPORT gaps were closed at the retained before-codec checkpoint:
+160/160 complete public plans match C++; all14 signed SDK cases, eight cross-engine
+exports/imports and installed Arrow19/21 registered filesystem checks pass. See
+[EXPORT evidence](export-plan-parity.md). That component evidence does not
+substitute for final current-source release verification.
+
+Remaining contract audits in `work-queue.md` still need authoritative disposition:
+FSST symbol/segment counts, aggregate callback equality, native Arrow producer
+projection/filtering, ART legacy/expression/WAL paths, nested VARIANT statistics,
+Parquet schema evolution, vector-heap accounting, configured extensions/platforms.
+Verify each against actual current code/runtime; stale backlog prose alone neither
+proves a gap nor closes it. Full final SQL/shell/selected-client/ADBC/persistence/WAL
+and coupled TPC-H/ClickBench/outlier gates remain required. No goal completion is
+claimed by this codec/native checkpoint.
+
+## Retained before-codec integrated control
+
+The following batch-copy source8 checkpoint predates the current native codec image.
+It remains historical integrated evidence, not current-image release acceptance.
+
+### Batch-copy source8 gates (before-codec)
 
 | Source-8 checkpoint | Verified state |
 |---|---|
@@ -43,7 +78,7 @@ the SQL runner is `02e16760f696206437040c7104c239a67539150879417b0070f21f4f801e0
 Evidence is under external `batch-copy-memory-20261027/`, including source, signatures,
 SDK/C API, `encryption-sql-2`, `after-probe-2` and accepted `affected-sql-2` receipts. The source-8 Python native image is
 `a6d88586d08536c79addc1d9545f891145165d876a8c7ce83df975b6293f4d14`.
-Its fast/non-fast/installed-ADBC and persistence receipts are current scoped evidence;
+Its fast/non-fast/installed-ADBC and persistence receipts are before-codec scoped evidence;
 applicable broader contract/platform/extension audits remain.
 
 COPY is an explicit performance outlier. At 14 threads/256 MB the corrected path is

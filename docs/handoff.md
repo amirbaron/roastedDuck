@@ -33,6 +33,16 @@ previous OS access denial was not reproduced in this check. The goal was marked
 blocked before this owner reply; the optimal/splitter checkpoint remains in
 `.context/optimal-next.md` for continuation.
 
+## Latest signed codec/native integration (2026-10-29)
+
+The source9 shipping build now exits0 and all three images are frozen/strictly signed.
+The new immutable library fce108a13835cc3698acf67c4b69e38327d2dea4b349a0e04e1b297ab3c5e94c
+retains547exports/zero ADBC test hooks. All20 public Parquet files pass opposite-engine
+and own-engine reads, covering compression levels and70MiB LDM-triggering values.
+C API refresh passes30files/155cases/751094assertions on the actual selected image.
+See docs/current-source-verification.md and codec report. Remaining core audits and
+full final SQL/shell/clients/ADBC/WAL/performance gates remain open. Goal active.
+
 ## Latest automatic-LDM component and shipping refresh (2026-10-29)
 
 Automatic LDM now matches the preserved default C++ counterexamples. The new

@@ -319,3 +319,31 @@ No current shipping integration result is claimed until its parent exits0 and th
 images are frozen/signed/verified. The codec component counterexamples are closed
 at this checkpoint, while actual Parquet/spill/storage, full SQL/shell/client/WAL
 and final coupled speed/memory gates remain required. Goal active, not complete.
+
+## Fresh signed shipping and public engine integration
+
+The source9 shipping build exits0, then CLI/library/SQL-runner images are copied,
+signed and strictly verified in native-signed-1. All942 build inputs remain
+unchanged. The new library SHA256 is
+fce108a13835cc3698acf67c4b69e38327d2dea4b349a0e04e1b297ab3c5e94c,
+with547 shipping C API exports and zero ADBC test hooks. The CLI and SQL-runner
+identities are retained in native-images-1.json; the mutable build outputs are not
+substituted for those immutable images.
+
+engine-parquet-1 passes20 files across independent C++/Rust writers,20 opposite-
+engine reads and20 own-engine reads. The regular cases cover levels1/3/4/5/9/13/16/
+19/22 with Unicode/NULL/list/struct/numeric values and full EXCEPT ALL comparisons.
+Both directions also write/read the70MiB VARCHAR at level22, checking length/hash,
+ZSTD/page metadata and unchanged file identities. This validates the public actual
+Parquet path reaching automatic LDM, beyond standalone codec controls.
+
+The full C API suite on this exact immutable library passes30files/155cases/
+751094assertions. Each executable is signed and its loader log names the selected
+current library. Source/harness/native signatures remain stable. Evidence:
+engine-parquet-1/verification.json and capi-suite-1/verification.json.
+
+This closes the confirmed codec component gaps and first public engine integration
+checkpoint. Full workspace unit/corpus/shell/selected-client/ADBC/checkpoint/WAL and
+final coupled benchmark acceptance remain open, along with other live core audits.
+Preserve the owner's accepted memory-bound COPY tradeoff and individual outliers;
+no final whole-port or performance completion is claimed.
