@@ -9,7 +9,7 @@ this release goal. Language clients remain Python,Go,Swift; preserve C API/ADBC.
 | macOS |arm64,x86_64|CLI,C API/ADBC,Python,Go,Swift package/framework|Earlier signed arm64 component gates only; x86_64 execution available through Rosetta, artifacts not yet verified|
 | iOS device |arm64|Swift package/XCFramework and embedded C API engine|Not yet built or verified|
 | iOS simulator |arm64,x86_64|Swift package/XCFramework, consumer and engine tests|SDK27.1 installed; iOS26.5 runtime available; no target artifacts verified|
-| Linux |arm64,x86_64|CLI,C API/ADBC,Python,Go,Swift native loading and packages|Isolated arm64 VM/Docker ready; pinned manylinux builder and Rust portability check in progress. No release/runtime parity pass yet|
+| Linux |arm64,x86_64|CLI,C API/ADBC,Python,Go,Swift native loading and packages|Linux arm64 Cargo check and42 signed debug SDK tests pass; optimized native build running. Full reference/client/release gates and x86_64 remain open|
 
 Client combinations follow their upstream desktop/server or Apple-client surface;
 this does not introduce new iOS Python/Go clients beyond C++ DuckDB's client support.
@@ -77,3 +77,49 @@ Its actual digest/architecture and source/bootstrap identities are recorded unde
 `manylinux-arm64-image-1/` and `linux-arm64-check-1/`. All new toolchains, caches,
 targets and logs go to the SSD work directory. Checks have not yet established
 release artifacts, Linux correctness or x86_64 execution.
+
+
+## First Linux arm64 runtime checkpoint
+
+The pinned manylinux arm64 environment installs verified Rust1.99.0 and checks all
+969 source inputs inside the guest. `cargo check --locked` passes for C API,shell
+and SQL runner. Six SDK test executables then build successfully, are frozen as
+ELF64/AArch64 files, and are covered by a detached signed SHA256 manifest.
+
+The Linux OpenSSL verifier checks the signed CodeDirectory/CMS, pinned public
+certificate fingerprint, manifest page hashes and every listed file before/after
+execution. The SDK binaries run sequentially:42 tests pass, zero failures/ignored,
+covering Parquet schema mapping, Arrow producer, main filesystem context, client
+settings, persistence and native ART/index storage. These are **debug preflight**
+results, not final release or C++/client/OS-matrix completion.
+
+The optimized Linux C API/shell/SQL-runner build is running next. Toolchains,targets,
+registry caches,tmpfiles and logs are under external `work/`; the workspace is
+mounted read-only. Source code matches the Mac candidate; the only added source
+file is the portable signing verifier, which does not alter compiled engine inputs.
+Evidence: `linux-arm64-check-1/`, `linux-arm64-sdk-build-1/`, `linux-sdk-freeze-1.json`,
+`work/linux-arm64/sdk-runtime-1/` and `linux-arm64-native-build-1/`.
+
+## Detached content-signature verification
+
+Linux payloads are authenticated through a SHA256 manifest signed by the existing
+local `rustdb-dev` code-signing identity. The portable helper
+`scripts/signing/verify_detached_manifest.py` uses OpenSSL for CMS verification,
+validates the SHA256 CodeDirectory page hashes, and hashes each listed payload.
+The certificate DER fingerprint is supplied explicitly by the verifier's caller
+from a trusted signing record; an untrusted archive's certificate is not a trust
+anchor by itself. This is content authentication, not Apple runtime-policy or
+notarization verification, and does not export a private key.
+
+The initial direct `security cms` preflight timed out and has no claimed signature
+result. `codesign --detached` succeeds and verifies through native codesign and
+OpenSSL on the host, then through OpenSSL inside Linux. Manifest,payload and CMS
+signature tampering are rejected in preserved controls. A separate initial test
+changed unsigned Apple identification metadata; it did not change authenticated
+content and was not counted as a signature-forgery rejection.
+
+Primary format references: [Apple's CodeDirectory structure](https://github.com/apple-oss-distributions/xnu/blob/main/osfmk/kern/cs_blobs.h)
+and [code-signing format/operation documentation](https://github.com/apple-oss-distributions/Security/blob/main/OSX/libsecurity_codesigning/lib/codedirectory.h).
+The helper deliberately accepts only a single SHA256 CodeDirectory for a plain
+manifest, rejecting ad-hoc,scatter and alternate-directory forms. Final release
+artifacts still require their own signed manifest and complete verification.
