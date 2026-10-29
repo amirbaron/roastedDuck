@@ -20,6 +20,24 @@ The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swi
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
 
+## Native ART persistence/WAL checkpoint verified (2026-10-29)
+
+Current native candidate is ART source14 (969 overlay/967 inputs). Expression and
+CREATE INDEX WAL buffers restore natively, legacy v0.9.1 allocator metadata loads
+lazily, and creating WAL transactions publish indexes after commit. Automatic
+shutdown preserves WAL while deferred expression-key mutations await binding.
+Clippy, eight signed SDK tests per profile and 138 broader tests pass. The affected
+796-file SQL cohort has 777 passes/19 exact C++ skips/zero regressions. C API 155
+cases pass 820,026 assertions. All 28 cross-engine plain/encrypted/clean/torn-WAL,
+transactional/string-key, mutation/checkpoint/readback journeys pass. C++ and Rust
+both pass the cold 1 MB no-spill checkpoint. See `docs/art-persistence-parity.md`
+for current immutable hashes and the separate shared deleted-key reference fault.
+
+Goal remains active. The Python wheel still predates dictionary/ART fixes. Review
+remaining observable core/memory exceptions, then refresh all final signed artifact
+SQL/unit/shell/C API/ADBC/Python/Go/Swift/storage/WAL/performance gates. No additional
+clients, table cache or exact speed/memory parity are required.
+
 ## Reusable Parquet dictionary repair verified (2026-10-29)
 
 Current source4=965overlay/964inputs. Parquet dictionaries share stable size/identity

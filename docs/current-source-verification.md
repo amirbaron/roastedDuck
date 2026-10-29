@@ -1,34 +1,47 @@
 # Current-source verification
 
-Updated2026-10-29. **The full port goal remains active.** Current signed native
-candidate: `parquet-dictionary-memory-20261029/source-4/manifest.json`,965 overlay
-entries/964 guarded inputs. Reusable Parquet dictionary metadata now preserves
-compression through accounted COPY batches. Both original10/100MB no-spill tests pass.
-See [dictionary repair](parquet-dictionary-memory-parity.md).
+Updated 2026-10-29. **The full port goal remains active.** The current signed native
+candidate is `art-persistence-parity-20261029/source-14/manifest.json`: 969 overlay
+entries and 967 guarded inputs. Native expression/CREATE INDEX WAL buffers and legacy
+v0.9.1 ART metadata restore without table scans; deferred mutations apply at binding.
+WAL-created indexes publish after their creating replay transaction commits. Shutdown
+retains the WAL when pending expression keys cannot yet be bound.
+See [ART persistence report](art-persistence-parity.md).
 
-Current checks: Clippy passes; four SDK regressions pass in signed debug/release;
-202 broader tests pass(two optional Snappy tools ignored);693 affected SQL files
-yield684pass/nine exact C++ skips and zero regressions;155 C API cases pass775418
-assertions. Twelve independently written Parquet files pass12 opposite-engine reads
-and complete payload/key coverage. Raw-batch accounting and original budgets remain.
+Current checks: workspace/all-target Clippy passes; eight SDK tests pass in each
+signed debug/release profile; 138 broader tests pass without ignores. The 796-file
+affected SQL run has **777 passes, 19 exact C++ skips and zero failures/regressions**.
+All 155 C API cases pass **820,026 assertions**. All **28 cross-engine recovery
+journeys** pass, covering plain/GCM/CTR, clean/torn WAL, transactional DDL, string keys,
+receiver writes/checkpoint and original-engine readback. C++ and Rust both pass the
+cold 100,000-row expression-index checkpoint at 1 MB with spill disabled. The first
+failed transactional native run and two intermediate SDK failures remain preserved.
 
-Current DLL: `abd6b36c486f2bf144830c88f85ae25b445832375d6d941d519c3ed1e3fdbce7`.
-CLI: `40653e5af71d44bfdf72e2c64c32b63fa8a51b495b74f4b24e1f631f55f91898`.
-SQL runner: `65df208cbffd6da63393838df94bb5c7a3408fb1107a7105aeabaa243a09bb9c`.
-547 C API exports/zero ADBC test hooks; strict signatures/actual loaded images verified.
+Current native SHA256 values:
 
-The previous Arrow source7 component matched18 native producer controls,62 installed
-Python controls per Arrow19/21 environment, full3241/3492-record fast matrices and
-16 public raw stream/array comparisons(with a shared legacy limitation explicit).
-Its Python native image `edea9955ae09b78e132bbad931aa1223d0d441f75da5c6d8d8f77440bafeb430`
-predates the dictionary repair. See [Arrow report](arrow-producer-parity.md). The two
-COPY regressions discovered in that audit are now closed by the stronger current
-693-file rerun; the original failed run remains unchanged.
+- Library: `52098b287d43ac6132d0e743bc6bca1bcc15b0007065676e0e662d6e027af6cf`
+- Shell: `a5c4a6dda79bcd1f61970a710fc17a00ee1a078dd4f6744feb7396f77b9d3170`
+- SQL runner: `4a33665268951a1f3c8b28df674e482ecf4c82dfb5c90c3a40096fca279e6d7e`
 
-Expression-index persistence/WAL and remaining core audits are next. Full final
-SQL/shell/selected-client/ADBC/persistence/WAL and coupled performance acceptance
-remain required. Python, Go and Swift only; preserve C API/ADBC and the accepted
-uncached lower-memory baseline/COPY tradeoff. No final release claim is made.
+Strict signatures, actual loaded images, all 547 C API exports and absence of ADBC
+test hooks are verified. A shared recovered-index deleted-key limitation is explicit
+in [divergences](../conformance/divergences.md); its failed independent correctness
+diagnostics are separate from the passing controls.
+
+Retained dictionary source4 evidence: original 10/100 MB no-spill COPY budgets, four
+SDK tests per profile, 202 broader tests (two optional tools ignored), 693 SQL files
+and 12 cross-engine Parquet files/reads passed. The current ART overlay preserves
+that repair. See [dictionary repair](parquet-dictionary-memory-parity.md).
+
+The installed Python wheel remains Arrow source7, before the dictionary/ART changes.
+Its 18 native producer controls, 62 Python controls per Arrow19/21 environment and
+3241/3492-record fast matrices are historical component evidence, not current release
+acceptance. See [Arrow report](arrow-producer-parity.md).
+
+Remaining observable core/memory audits and full final same-source SQL, unit, shell,
+C API/ADBC, Python/Go/Swift, persistence/WAL and paired speed/memory verification remain
+open. Preserve the accepted lower-memory baseline and COPY tradeoff; report query
+outliers. No exact performance parity, outperformance or additional clients are needed.
 
 The earlier aggregate checkpoint below is retained component evidence.
 

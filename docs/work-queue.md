@@ -251,11 +251,20 @@ it must be DuckDB's shell one to one, interactive editing included — then comp
     C API stress trials and explicit-transaction lock behavior also pass against C++.
     Evidence:
     `.context/artifacts/index-reload-20261022/`.
-    Left: native expression-index binding and buffered WAL replay, native CREATE INDEX
-    WAL buffers, pre-v0.10 root-pointer deserialization, and any missing/in-memory
-    metadata still rebuilt as a fallback. These remain explicit parity gates; do not
-    treat the fixed profiling test or modern-file checks as proof that all formats and
-    reload paths are ported.
+    Native expression binding, buffered WAL mutations, native CREATE INDEX WAL buffers
+    and pre-v0.10 root-pointer metadata are now verified in ART source14. Creating WAL
+    transactions stage index publication until commit; automatic shutdown retains WAL
+    while unbound expression keys await binding. Eight SDK tests per signed profile,
+    138 broader tests, 796 SQL files (777 passes/19 exact C++ skips), 155 C API cases
+    and 28 cross-engine recovery journeys pass. The cold 100k-row 1 MB no-spill
+    checkpoint matches C++; the separate shared deleted-key reference limitation is
+    explicit. See `docs/art-persistence-parity.md` and external
+    `art-persistence-parity-20261029/`.
+    Remaining audits: native ALTER ADD PRIMARY KEY WAL metadata still uses a rebuild
+    fallback; large-index WAL buffer memory needs paired measurements. Missing and
+    in-memory metadata also retain a rebuild fallback. Calibrate observable behavior
+    and coupled time/RSS before treating internal implementation differences as gaps.
+    Final full same-source release/client/performance verification remains required.
 
 ## Planner and execution
 

@@ -8,7 +8,10 @@ rustdb differs. Anything not listed here is a bug to fix.
 
 These tests assert that DuckDB runs out of memory or spills to disk at a given limit.
 rustdb fits the same work into less memory, so the expected error or spill never
-happens (the porting goal is peak memory at most C++'s, never spilling more).
+happens. Preserve these lower-memory behaviors; final performance acceptance follows
+`docs/performance-acceptance.md`, with coupled speed/memory measurements and
+individual query outliers. Exact independent speed, memory or spill parity is not
+a requirement.
 
 | test | asserts | rustdb |
 |---|---|---|
@@ -70,3 +73,24 @@ fault controls are reported separately. Existing SQL tests/ratchets are unchange
 Evidence: external `aggregate-equality-20261029/{before-6/,before-7/,
 ordered-state-1/verification.json,native-matrix-1/verification.json}` and
 `docs/aggregate-equality-parity.md`.
+
+
+## Recovered index keys deleted in the creating transaction
+
+A separate native diagnostic writes a transaction that inserts local rows, creates
+an index over a table with existing rows, and deletes existing key `v=42` before
+commit. After WAL recovery, the full table multiset correctly excludes 42, but both
+frozen C++ 1.5.6 and Rust reject reinserting that key with the identical unique
+constraint error (type 18). This is a shared reference limitation, not a Rust-only
+behavior difference and not a passing independent-correctness control. The original
+failed diagnostics remain unchanged; no SQL expectation or ratchet was weakened.
+Evidence: external `art-persistence-parity-20261029/diagnostics-1/` and
+`docs/art-persistence-parity.md`.
+
+A different reference fault occurs when an unbound expression index receives later
+WAL mutations and shutdown checkpoints it before binding. C++ can persist a stale
+tree while discarding its WAL. Rust now retains the recoverable WAL until a binding
+connection can apply the mutations. Explicit CHECKPOINT binds first. The separate
+28 defined cross-engine recovery journeys pass, including repeated Rust shutdowns,
+receiver writes/checkpoint and original-engine readback. The shared premature-close
+failure is preserved in `expression-wal-before-4/`, rather than counted as a pass.
