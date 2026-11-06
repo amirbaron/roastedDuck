@@ -31,7 +31,7 @@ impl PegTransformer {
                     kind: AlterInfoKind::SetColumnComment(Box::new(SetColumnCommentInfo {
                         catalog_entry_type: CatalogType::Invalid,
                         comment_value,
-                        column_name,
+                        column_name: column_name.into(),
                     })),
                 }
             }

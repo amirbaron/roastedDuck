@@ -7,8 +7,13 @@ use rustdb_parser::hash_order::CiHashMap;
 use super::prelude::*;
 
 /// The constant a `GenericCopyOption` value written as a column is (`GetColumnName`).
-fn column_name_value(column_ref: &ColumnRefExpression) -> Value {
-    Value::varchar(column_ref.column_names.last().map_or("", String::as_str))
+fn column_name_value(column_ref: &ColumnRefExpression) -> Result<Value> {
+    Value::try_varchar(
+        column_ref
+            .column_names
+            .last()
+            .map_or(b"".as_slice(), ByteString::as_bytes),
+    )
 }
 
 impl PegTransformer {
@@ -31,7 +36,7 @@ impl PegTransformer {
             OnCreateConflict::ErrorOnConflict
         };
         let mut info = AttachInfo {
-            name: String::new(),
+            name: String::new().into(),
             path: self.transform_child(list, 4)?,
             options: OrderedMap::default(),
             on_conflict,
@@ -65,7 +70,7 @@ impl PegTransformer {
                     )));
                 }
             };
-            info.options.insert(copy_option.name, value);
+            info.options.insert(copy_option.name.into(), value);
         }
         info.parsed_options = parsed_options.into_ordered().into_iter().collect();
         Ok(SqlStatement::new(SqlStatementKind::Attach(Box::new(info))))
@@ -124,7 +129,7 @@ impl PegTransformer {
                 copy_option.children.push(constant.value.clone());
             }
             (ExpressionType::ColumnRef, ParsedExpressionKind::ColumnRef(column_ref)) => {
-                copy_option.children.push(column_name_value(column_ref));
+                copy_option.children.push(column_name_value(column_ref)?);
             }
             (ExpressionType::Placeholder, ParsedExpressionKind::Operator(op_expr)) => {
                 for child in &op_expr.children {
@@ -133,7 +138,7 @@ impl PegTransformer {
                             copy_option.children.push(constant.value.clone());
                         }
                         ParsedExpressionKind::ColumnRef(column_ref) => {
-                            copy_option.children.push(column_name_value(column_ref));
+                            copy_option.children.push(column_name_value(column_ref)?);
                         }
                         _ => {
                             return Err(Error::internal(format!(

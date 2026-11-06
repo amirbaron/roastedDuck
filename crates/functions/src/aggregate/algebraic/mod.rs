@@ -2,4 +2,5 @@
 //! second moments.
 
 pub mod avg;
+mod avg_precision;
 pub mod stddev;

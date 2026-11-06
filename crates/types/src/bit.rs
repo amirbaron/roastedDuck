@@ -7,9 +7,10 @@
 //!
 //! Functions taking a stored bit string never panic, even on malformed input (empty, or a
 //! padding byte above 7); the result is unspecified for such input. Error messages are
-//! DuckDB's, byte for byte, except that input that is not valid UTF-8 is rendered lossily.
+//! DuckDB's, byte for byte, including invalid UTF-8 in conversion diagnostics.
 
 use crate::PhysicalType;
+use rustdb_common::ByteString;
 
 /// Number of padding bits a bit string of `bit_len` bits needs.
 const fn padding_for(bit_len: usize) -> u8 {
@@ -55,15 +56,15 @@ pub fn octet_length(bits: &[u8]) -> usize {
 
 /// Validates the text form of a bit string and returns its stored size (DuckDB's
 /// `Bit::TryGetBitStringSize`).
-pub fn text_stored_len(input: &[u8]) -> Result<usize, String> {
+pub fn text_stored_len(input: &[u8]) -> Result<usize, ByteString> {
     if let Some(&bad) = input.iter().find(|&&c| c != b'0' && c != b'1') {
-        return Err(format!(
+        return Err(rustdb_common::byte_format!(
             "Invalid character encountered in string -> bit conversion: '{}'",
-            String::from_utf8_lossy(&[bad])
+            &[bad][..]
         ));
     }
     if input.is_empty() {
-        return Err("Cannot cast empty string to BIT".to_owned());
+        return Err("Cannot cast empty string to BIT".into());
     }
     Ok(stored_len(input.len()))
 }
@@ -73,7 +74,7 @@ pub fn text_stored_len(input: &[u8]) -> Result<usize, String> {
 ///
 /// On failure `out` is left unchanged and the error is DuckDB's conversion message, e.g.
 /// `Invalid character encountered in string -> bit conversion: 'a'`.
-pub fn parse_text(input: &[u8], out: &mut Vec<u8>) -> Result<(), String> {
+pub fn parse_text(input: &[u8], out: &mut Vec<u8>) -> Result<(), ByteString> {
     out.reserve(text_stored_len(input)?);
     let padding = padding_for(input.len());
     out.push(padding);
@@ -219,7 +220,7 @@ pub fn to_numeric<T: BitNumeric>(bits: &[u8]) -> Result<T, String> {
 mod tests {
     use super::*;
 
-    fn parse(text: &str) -> Result<Vec<u8>, String> {
+    fn parse(text: &str) -> Result<Vec<u8>, ByteString> {
         let mut out = Vec::new();
         parse_text(text.as_bytes(), &mut out).map(|()| out)
     }
@@ -271,8 +272,11 @@ mod tests {
         assert_eq!(parse("x1").unwrap_err(), format!("{invalid}'x'"));
         assert_eq!(parse("2").unwrap_err(), format!("{invalid}'2'"));
         assert_eq!(parse("").unwrap_err(), "Cannot cast empty string to BIT");
-        // DuckDB embeds the lone byte 0xC3 here; it is rendered lossily.
-        assert_eq!(parse("é").unwrap_err(), format!("{invalid}'\u{FFFD}'"));
+        // DuckDB embeds the lone byte 0xC3, rather than a Unicode replacement.
+        assert_eq!(
+            parse("é").unwrap_err().as_bytes(),
+            b"Invalid character encountered in string -> bit conversion: '\xc3'"
+        );
     }
 
     fn numeric_bits<T: BitNumeric>(value: T) -> String {

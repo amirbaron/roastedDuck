@@ -26,7 +26,7 @@ impl Transformer<'_> {
     pub(crate) fn transform_value(value: &Value) -> Result<ParsedExpression> {
         Ok(build::constant(match value {
             Value::Integer(integer) => DuckValue::integer(*integer as i32),
-            Value::String(text) | Value::BitString(text) => DuckValue::varchar(text),
+            Value::String(text) | Value::BitString(text) => DuckValue::try_varchar(text)?,
             Value::Float(text) => numeric_literal(text)?,
             Value::Null => DuckValue::null(LogicalType::SQLNULL),
         }))
@@ -36,8 +36,7 @@ impl Transformer<'_> {
 /// The value of a numeric literal that is not a 32-bit integer: BIGINT, HUGEINT or
 /// UHUGEINT if integral, DECIMAL if it has a decimal point and at most 38 digits, and
 /// DOUBLE otherwise.
-fn numeric_literal(text: &str) -> Result<DuckValue> {
-    let bytes = text.as_bytes();
+fn numeric_literal(bytes: &[u8]) -> Result<DuckValue> {
     let mut try_integer = true;
     let mut try_decimal = true;
     let mut decimal_position = None;
@@ -62,7 +61,7 @@ fn numeric_literal(text: &str) -> Result<DuckValue> {
             _ => {}
         }
     }
-    let varchar = DuckValue::varchar(text);
+    let varchar = DuckValue::try_varchar(bytes)?;
     if try_integer {
         for ty in [LogicalType::BIGINT, LogicalType::HUGEINT, LogicalType::UHUGEINT] {
             if let Ok(value) = varchar.try_cast(&ty) {
@@ -85,7 +84,9 @@ fn numeric_literal(text: &str) -> Result<DuckValue> {
             return varchar.default_cast_as(&LogicalType::decimal(width as u8, scale as u8));
         }
     }
-    varchar
-        .try_cast(&LogicalType::DOUBLE)
-        .map_err(|_| Error::conversion(format!("Could not convert string \"{text}\" to DOUBLE")))
+    varchar.try_cast(&LogicalType::DOUBLE).map_err(|_| {
+        Error::conversion(rustdb_common::byte_format!(
+            "Could not convert string \"{bytes}\" to DOUBLE"
+        ))
+    })
 }

@@ -1,7 +1,7 @@
 //! UNION / EXCEPT / INTERSECT (DuckDB's `bind_setop_node.cpp` and `plan_setop.cpp`).
 
 use rustdb_ast::{DistinctModifier, QueryNode, QueryNodeKind, ResultModifier, SetOperationType};
-use rustdb_common::{CaseInsensitiveMap, CaseInsensitiveSet, Error, Result};
+use rustdb_common::{ByteString, CaseInsensitiveMap, CaseInsensitiveSet, Error, Result};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 use super::modifiers::{OrderTargets, bind_modifiers, prepare_modifiers, visit_query_node};
@@ -44,12 +44,12 @@ fn gather_aliases(bind_state: &mut SelectBindState, child: &BoundChildInfo, reor
 fn gather_setop_aliases(
     bind_state: &mut SelectBindState,
     setop_type: SetOperationType,
-    names: &[String],
+    names: &[ByteString],
     children: &[BoundChildInfo],
     reorder: &[usize],
 ) -> Result<()> {
     if setop_type == SetOperationType::UnionByName {
-        let mut reorder_map = CaseInsensitiveMap::default();
+        let mut reorder_map = CaseInsensitiveMap::<usize, ByteString>::default();
         for (name, &index) in names.iter().zip(reorder) {
             reorder_map.insert(name.clone(), index);
         }
@@ -90,18 +90,18 @@ fn gather_binders(binders: &[Binder], children: &[BoundChildInfo], result: &mut 
 fn build_union_by_name_info(
     binder: &Binder,
     children: &mut [BoundStatement],
-) -> Result<(Vec<String>, Vec<LogicalType>)> {
-    let mut names: Vec<String> = Vec::new();
-    let mut global = CaseInsensitiveSet::default();
+) -> Result<(Vec<ByteString>, Vec<LogicalType>)> {
+    let mut names: Vec<ByteString> = Vec::new();
+    let mut global = CaseInsensitiveSet::<ByteString>::default();
     let mut name_maps = Vec::with_capacity(children.len());
     for child in children.iter() {
-        let mut map = CaseInsensitiveMap::default();
+        let mut map = CaseInsensitiveMap::<usize, ByteString>::default();
         for (i, name) in child.names.iter().enumerate() {
             if map.contains_key(name) {
-                return Err(Error::binder(format!(
+                return Err(Error::new_bytes(rustdb_common::ErrorKind::Binder, rustdb_common::byte_format!(
                     "UNION (ALL) BY NAME operation doesn't support duplicate names in the SELECT list - the name \
                      \"{name}\" occurs multiple times"
-                )));
+                ).into_bytes()));
             }
             if global.insert(name.clone()) {
                 names.push(name.clone());

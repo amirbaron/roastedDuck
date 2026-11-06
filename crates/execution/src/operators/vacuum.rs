@@ -106,7 +106,10 @@ impl Sink for PhysicalVacuum {
     }
 
     fn combine(&self, _: &ExecutionContext, global: &Self::Global, local: VacuumStatistics) -> Result<()> {
-        global.lock().unwrap_or_else(PoisonError::into_inner).merge(&local);
+        global
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .merge(&local);
         Ok(())
     }
 
@@ -123,7 +126,11 @@ impl Source for PhysicalVacuum {
     type Global = ();
     type Local = ();
 
-    fn global_source_state(&self, _: &ExecutionContext, _: Option<&crate::operator::SinkState>) -> Result<()> {
+    fn global_source_state(
+        &self,
+        _: &ExecutionContext,
+        _: Option<&crate::operator::SinkState>,
+    ) -> Result<()> {
         Ok(())
     }
 
@@ -131,7 +138,13 @@ impl Source for PhysicalVacuum {
         Ok(())
     }
 
-    fn get_data(&self, _: &ExecutionContext, chunk: &mut DataChunk, (): &(), (): &mut ()) -> Result<SourceResult> {
+    fn get_data(
+        &self,
+        _: &ExecutionContext,
+        chunk: &mut DataChunk,
+        (): &(),
+        (): &mut (),
+    ) -> Result<SourceResult> {
         chunk.set_len(0);
         Ok(SourceResult::Finished)
     }

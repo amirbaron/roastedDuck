@@ -7,6 +7,7 @@
 //! parser does the same for values it discards on error.
 
 use super::{List, Node, NodeStruct, RawStmt, Value};
+use rustdb_common::ByteString;
 
 /// Moves the child nodes out of a node or field.
 pub(crate) trait TakeChildren {
@@ -51,7 +52,7 @@ macro_rules! no_children {
         }
     )*};
 }
-no_children!(bool, i32, i64, u8, u32, Option<String>, Value);
+no_children!(bool, i32, i64, u8, u32, Option<ByteString>, Value);
 no_children!(
     super::AExprKind,
     super::AlterDatabaseType,

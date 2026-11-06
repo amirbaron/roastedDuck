@@ -564,7 +564,7 @@ pub fn add_functions() -> ScalarFunctionSet {
     ));
     // Lists concatenate (DuckDB adds `ListConcatFun` to the set).
     for mut function in crate::scalar::string::concat::list_concat_functions().functions {
-        function.name = Arc::from("+");
+        function.name = "+".into();
         set.add(function);
     }
     set.add(bignum_binary("+", false));

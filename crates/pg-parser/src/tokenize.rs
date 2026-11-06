@@ -33,7 +33,12 @@ pub struct SimplifiedToken {
 /// Splits `sql` into classified tokens. Scanning stops silently at the first
 /// lexical error (an unterminated string, for example), like DuckDB's tokenizer.
 pub fn tokenize(sql: &str) -> Vec<SimplifiedToken> {
-    let mut scanner = Scanner::new(
+    tokenize_bytes(sql.as_bytes())
+}
+
+/// Native byte-tokenization API, stopping at the same lexical errors as C++.
+pub fn tokenize_bytes(sql: &[u8]) -> Vec<SimplifiedToken> {
+    let mut scanner = Scanner::new_bytes(
         sql,
         ScanOptions {
             preserve_identifier_case: true,

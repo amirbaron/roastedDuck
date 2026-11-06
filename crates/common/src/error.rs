@@ -136,32 +136,33 @@ enum ExtraInfoStep {
     /// The key is set (`extra_info[key] = value`); a key whose value is not known yet
     /// holds its place for a value DuckDB has at that point (`None` until then).
     Entry {
-        key: &'static str,
-        value: Option<String>,
+        key: Cow<'static, str>,
+        value: Option<Vec<u8>>,
     },
     /// The exception is caught into an `ErrorData` (`ErrorData(const std::exception &)`).
     RoundTrip,
 }
 
 impl ExtraInfo {
-    fn get(&self, key: &str) -> Option<&str> {
+    fn get(&self, key: &str) -> Option<&[u8]> {
         self.steps.iter().find_map(|step| match step {
             ExtraInfoStep::Entry {
                 key: entry,
                 value: Some(value),
-            } if *entry == key => Some(value.as_str()),
+            } if entry.as_ref() == key => Some(value.as_slice()),
             _ => None,
         })
     }
 
     /// Sets `key`, in its place if it has one.
-    fn set(&mut self, key: &'static str, value: Option<String>) {
+    fn set(&mut self, key: impl Into<Cow<'static, str>>, value: Option<Vec<u8>>) {
+        let key = key.into();
         for step in &mut self.steps {
             if let ExtraInfoStep::Entry {
                 key: entry,
                 value: slot,
             } = step
-                && *entry == key
+                && entry.as_ref() == key.as_ref()
             {
                 *slot = value;
                 return;
@@ -172,35 +173,38 @@ impl ExtraInfo {
 
     /// The entries in the iteration order of DuckDB's map after the history, and one more
     /// round trip: the client catching the error.
-    fn iteration_order(&self) -> Vec<(&'static str, &str)> {
-        let mut order: Vec<(&'static str, &str)> = Vec::new();
-        let mut table = crate::libcxx::UnorderedOrder::default();
-        for step in self
-            .steps
-            .iter()
-            .chain(std::iter::once(&ExtraInfoStep::RoundTrip))
-        {
+    fn iteration_order(&self) -> Vec<(&str, &[u8])> {
+        let mut order: Vec<(&str, &[u8])> = Vec::new();
+        let mut table = crate::platform_order::UnorderedOrder::default();
+        for step in &self.steps {
             match step {
                 ExtraInfoStep::Entry {
                     key,
                     value: Some(value),
                 } => {
-                    let (inserted, index) =
-                        table.insert(crate::libcxx::string_hash(key.as_bytes()), *key, |a, b| a == b);
+                    let (inserted, index) = table.insert(
+                        crate::platform_order::string_hash(key.as_bytes()),
+                        key.as_ref(),
+                        |a, b| a == b,
+                    );
                     if inserted {
-                        order.push((key, value));
+                        order.push((key.as_ref(), value));
                     } else {
                         order[index].1 = value;
                     }
                 }
                 ExtraInfoStep::Entry { value: None, .. } => {}
                 ExtraInfoStep::RoundTrip => {
-                    let entries: Vec<(&'static str, &str)> =
+                    let entries: Vec<(&str, &[u8])> =
                         table.order().into_iter().map(|index| order[index]).collect();
                     (table, order) = round_trip(&entries);
                 }
             }
         }
+        // The final client catch rebuilds the map once more. Keep this separate
+        // from the borrowed steps so owned keys retain the error's lifetime.
+        let entries: Vec<(&str, &[u8])> = table.order().into_iter().map(|index| order[index]).collect();
+        let (table, order) = round_trip(&entries);
         table.order().into_iter().map(|index| order[index]).collect()
     }
 }
@@ -210,36 +214,42 @@ impl ExtraInfo {
 /// first, is parsed into a map (`ComplexJSON`), that one is flattened into another, whose
 /// entries but the type and message make the new extra info.
 fn round_trip<'a>(
-    entries: &[(&'static str, &'a str)],
+    entries: &[(&'a str, &'a [u8])],
 ) -> (
-    crate::libcxx::UnorderedOrder<&'static str>,
-    Vec<(&'static str, &'a str)>,
+    crate::platform_order::UnorderedOrder<&'a str>,
+    Vec<(&'a str, &'a [u8])>,
 ) {
-    const TYPE_AND_MESSAGE: [(&str, &str); 2] = [("exception_type", ""), ("exception_message", "")];
-    let rebuild = |entries: &[(&'static str, &'a str)]| {
-        let mut table = crate::libcxx::UnorderedOrder::default();
+    const TYPE_AND_MESSAGE: [(&str, &[u8]); 2] = [("exception_type", b""), ("exception_message", b"")];
+    let rebuild = |entries: &[(&'a str, &'a [u8])]| {
+        let mut table = crate::platform_order::UnorderedOrder::default();
         for (key, _) in entries {
-            table.insert(crate::libcxx::string_hash(key.as_bytes()), *key, |a, b| a == b);
+            table.insert(
+                crate::platform_order::string_hash(key.as_bytes()),
+                *key,
+                |a, b| a == b,
+            );
         }
-        let ordered: Vec<(&'static str, &'a str)> =
+        let ordered: Vec<(&'a str, &'a [u8])> =
             table.order().into_iter().map(|index| entries[index]).collect();
         ordered
     };
-    let json: Vec<(&'static str, &'a str)> = TYPE_AND_MESSAGE
+    let json: Vec<(&'a str, &'a [u8])> = TYPE_AND_MESSAGE
         .iter()
         .copied()
         .chain(entries.iter().copied())
         .collect();
     let flattened = rebuild(&rebuild(&json));
-    let mut table = crate::libcxx::UnorderedOrder::default();
+    let mut table = crate::platform_order::UnorderedOrder::default();
     let mut order = Vec::with_capacity(entries.len());
     for entry in flattened {
         if TYPE_AND_MESSAGE.iter().any(|(key, _)| *key == entry.0) {
             continue;
         }
-        table.insert(crate::libcxx::string_hash(entry.0.as_bytes()), entry.0, |a, b| {
-            a == b
-        });
+        table.insert(
+            crate::platform_order::string_hash(entry.0.as_bytes()),
+            entry.0,
+            |a, b| a == b,
+        );
         order.push(entry);
     }
     (table, order)
@@ -292,20 +302,64 @@ impl Error {
 
     /// The `error_subtype` extra info, if any.
     pub fn subtype(&self) -> Option<&str> {
-        self.extra_info.get("error_subtype")
+        self.extra_info
+            .get("error_subtype")
+            .and_then(|value| std::str::from_utf8(value).ok())
     }
 
     /// Sets extra info `key` (`extra_info[key] = value`).
     #[must_use]
-    pub fn with_extra_info(mut self, key: &'static str, value: impl Into<String>) -> Self {
-        self.extra_info.set(key, Some(value.into()));
+    pub fn with_extra_info(
+        mut self,
+        key: impl Into<Cow<'static, str>>,
+        value: impl Into<crate::ByteString>,
+    ) -> Self {
+        self.extra_info.set(key, Some(value.into().into_bytes()));
+        self
+    }
+
+    /// Attach an HTTP response as DuckDB's `HTTPException::HTTPExtraInfo` does.
+    /// Header names retain their original spelling; the response header map keeps
+    /// the first value for each case-insensitive name.
+    #[must_use]
+    pub fn with_http_response<K: AsRef<str>, V: AsRef<[u8]>>(
+        mut self,
+        status: u16,
+        body: impl Into<crate::ByteString>,
+        headers: impl IntoIterator<Item = (K, V)>,
+        reason: impl Into<crate::ByteString>,
+    ) -> Self {
+        self = self
+            .with_extra_info("status_code", status.to_string())
+            .with_extra_info("reason", reason)
+            .with_extra_info("response_body", body);
+        let entries: Vec<_> = headers
+            .into_iter()
+            .map(|(name, value)| (name.as_ref().to_owned(), value.as_ref().to_vec()))
+            .collect();
+        let mut order = crate::platform_order::UnorderedOrder::default();
+        let mut selected = Vec::new();
+        for (index, (name, _)) in entries.iter().enumerate() {
+            let (inserted, _) = order.insert(crate::libcxx::ci_hash(name), name.as_str(), |a, b| {
+                a.eq_ignore_ascii_case(b)
+            });
+            if inserted {
+                selected.push(index);
+            }
+        }
+        for index in order.order() {
+            let (name, value) = &entries[selected[index]];
+            self = self.with_extra_info(format!("header_{name}"), value.as_slice());
+        }
+        // Constructing HTTPException does not catch it. The binder or executor
+        // records its own ErrorData boundary when this error reaches that caller.
         self
     }
 
     /// Holds the place of extra info `key` that DuckDB sets at this point, when the value
     /// is attached later (the `position` of a catalog lookup).
     #[must_use]
-    pub fn with_extra_info_slot(mut self, key: &'static str) -> Self {
+    pub fn with_extra_info_slot(mut self, key: impl Into<Cow<'static, str>>) -> Self {
         self.extra_info.set(key, None);
         self
     }
@@ -356,7 +410,7 @@ impl Error {
     pub fn position(&self) -> Option<u64> {
         self.extra_info
             .get("position")
-            .and_then(|position| position.parse().ok())
+            .and_then(|position| std::str::from_utf8(position).ok()?.parse().ok())
     }
 
     /// Sets the query position (used by the parser for syntax errors).
@@ -374,12 +428,32 @@ impl Error {
     /// Renders the position as `LINE n: ...` context within `query`
     /// (DuckDB's `ErrorData::AddErrorLocation`, which erases the `position`).
     #[must_use]
-    pub fn with_query_context(mut self, query: &str) -> Self {
-        if let Some(position) = self.position() {
+    pub fn with_query_context(self, query: &str) -> Self {
+        self.with_query_context_bytes(query.as_bytes())
+    }
+
+    #[must_use]
+    pub fn with_query_context_bytes(mut self, query: &[u8]) -> Self {
+        if !query.is_empty()
+            && let Some(position) = self.position()
+        {
             let mut message = self.message.to_vec();
-            message.extend_from_slice(crate::query_context::format(query, "", position).as_bytes());
+            message.extend_from_slice(crate::query_context::format_bytes(query, b"", position).as_bytes());
             self.message = message.into();
             self.extra_info.set("position", None);
+        }
+        // ErrorData::AddErrorLocation transfers an already resolved trace into
+        // the raw message before ConstructFinalMessage appends the internal footer.
+        if let Some(trace) = self
+            .extra_info
+            .get("stack_trace")
+            .filter(|trace| !trace.is_empty())
+        {
+            let mut message = self.message.to_vec();
+            message.extend_from_slice(b"\n\nStack Trace:\n");
+            message.extend_from_slice(trace);
+            self.message = message.into();
+            self.extra_info.set("stack_trace", Some(Vec::new()));
         }
         self
     }
@@ -403,7 +477,7 @@ impl Error {
         field("exception_type", self.kind.display_name().as_bytes());
         field("exception_message", &self.message);
         for (key, value) in self.extra_info.iteration_order() {
-            field(key, value.as_bytes());
+            field(key, value);
         }
         json.push(b'}');
         self.message = json.into();
@@ -417,6 +491,19 @@ impl Error {
     /// prints with the type's prefix.
     #[must_use]
     pub fn rethrown(mut self) -> Self {
+        // Throw serializes the processed message into an exception; the next
+        // ErrorData catch sanitizes any NUL introduced by query context.
+        if self.message.contains(&0) {
+            let mut message = Vec::with_capacity(self.message.len());
+            for &byte in self.message.iter() {
+                if byte == 0 {
+                    message.extend_from_slice(b"\\0");
+                } else {
+                    message.push(byte);
+                }
+            }
+            self.message = message.into();
+        }
         self.json = false;
         self
     }
@@ -427,7 +514,7 @@ impl Error {
 
     /// The extra info (`error_subtype`, `position`, ...) in the iteration order of the
     /// map of an `ErrorData` that caught this error (`ErrorData::ExtraInfo`).
-    pub fn extra_info(&self) -> Vec<(&'static str, &str)> {
+    pub fn extra_info(&self) -> Vec<(&str, &[u8])> {
         self.extra_info.iteration_order()
     }
 
@@ -463,46 +550,64 @@ impl Error {
         }
         if self.kind == ErrorKind::Internal {
             result.extend_from_slice(INTERNAL_ERROR_SUFFIX.as_bytes());
+            if let Some((_, trace)) = self
+                .extra_info
+                .iteration_order()
+                .into_iter()
+                .find(|(key, value)| *key == "stack_trace" && !value.is_empty())
+            {
+                result.extend_from_slice(b"\n\nStack Trace:\n");
+                result.extend_from_slice(trace);
+            }
         }
         result
     }
 
-    pub fn parser(message: impl Into<Cow<'static, str>>) -> Self {
-        Self::new(ErrorKind::Parser, message)
+    pub fn parser(message: impl Into<crate::ByteString>) -> Self {
+        Self::new_bytes(ErrorKind::Parser, message.into().into_bytes())
     }
 
-    pub fn binder(message: impl Into<Cow<'static, str>>) -> Self {
-        Self::new(ErrorKind::Binder, message)
+    pub fn binder(message: impl Into<crate::ByteString>) -> Self {
+        Self::new_bytes(ErrorKind::Binder, message.into().into_bytes())
     }
 
-    pub fn catalog(message: impl Into<Cow<'static, str>>) -> Self {
-        Self::new(ErrorKind::Catalog, message)
+    pub fn catalog(message: impl Into<crate::ByteString>) -> Self {
+        Self::new_bytes(ErrorKind::Catalog, message.into().into_bytes())
     }
 
-    pub fn conversion(message: impl Into<Cow<'static, str>>) -> Self {
-        Self::new(ErrorKind::Conversion, message)
+    pub fn conversion(message: impl Into<crate::ByteString>) -> Self {
+        Self::new_bytes(ErrorKind::Conversion, message.into().into_bytes())
     }
 
-    pub fn out_of_range(message: impl Into<Cow<'static, str>>) -> Self {
-        Self::new(ErrorKind::OutOfRange, message)
+    pub fn out_of_range(message: impl Into<crate::ByteString>) -> Self {
+        Self::new_bytes(ErrorKind::OutOfRange, message.into().into_bytes())
     }
 
-    pub fn invalid_input(message: impl Into<Cow<'static, str>>) -> Self {
-        Self::new(ErrorKind::InvalidInput, message)
+    pub fn invalid_input(message: impl Into<crate::ByteString>) -> Self {
+        Self::new_bytes(ErrorKind::InvalidInput, message.into().into_bytes())
     }
 
-    pub fn internal(message: impl Into<Cow<'static, str>>) -> Self {
-        Self::new(ErrorKind::Internal, message)
+    pub fn internal(message: impl Into<crate::ByteString>) -> Self {
+        Self::new_bytes(ErrorKind::Internal, message.into().into_bytes())
+    }
+
+    /// An internal invariant with its actual native origin, captured before the
+    /// failing stack unwinds. Ordinary errors do not pay for trace capture.
+    pub fn internal_with_stack_trace(message: impl Into<crate::ByteString>) -> Self {
+        Self::internal(message).with_extra_info(
+            "stack_trace",
+            std::backtrace::Backtrace::force_capture().to_string(),
+        )
     }
 
     /// DuckDB's `SerializationException`.
-    pub fn serialization(message: impl Into<Cow<'static, str>>) -> Self {
-        Self::new(ErrorKind::Serialization, message)
+    pub fn serialization(message: impl Into<crate::ByteString>) -> Self {
+        Self::new_bytes(ErrorKind::Serialization, message.into().into_bytes())
     }
 
     /// A feature that the reference engine supports but this port does not (yet).
-    pub fn not_implemented(message: impl Into<Cow<'static, str>>) -> Self {
-        Self::new(ErrorKind::NotImplemented, message)
+    pub fn not_implemented(message: impl Into<crate::ByteString>) -> Self {
+        Self::new_bytes(ErrorKind::NotImplemented, message.into().into_bytes())
     }
 }
 
@@ -531,6 +636,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn owned_metadata_keys_preserve_existing_round_trip_order() {
+        let borrowed = Error::new(ErrorKind::Http, "missing")
+            .with_extra_info("header_x-MiXeD", "value")
+            .with_extra_info_round_trip()
+            .with_extra_info("status_code", "404")
+            .into_json();
+        let owned = Error::new(ErrorKind::Http, "missing")
+            .with_extra_info(format!("header_{}", "x-MiXeD"), "value")
+            .with_extra_info_round_trip()
+            .with_extra_info("status_code".to_owned(), "404")
+            .into_json();
+        assert_eq!(owned.extra_info(), borrowed.extra_info());
+        assert_eq!(owned.to_bytes(), borrowed.to_bytes());
+    }
+
+    #[test]
+    fn http_metadata_preserves_wire_spelling_and_first_header_value() {
+        let error = Error::new(ErrorKind::Http, "missing").with_http_response(
+            404,
+            b"body\0bytes",
+            [
+                ("x-MiXeD", b"first\xff".as_slice()),
+                ("X-MIXED", b"second".as_slice()),
+                ("Content-Length", b"10".as_slice()),
+            ],
+            "Not Found",
+        );
+        let info = error.extra_info();
+        assert!(info.contains(&("status_code", b"404".as_slice())));
+        assert!(info.contains(&("reason", b"Not Found".as_slice())));
+        assert!(info.contains(&("response_body", b"body\0bytes".as_slice())));
+        assert!(info.contains(&("header_x-MiXeD", b"first\xff".as_slice())));
+        assert!(!info.iter().any(|(name, _)| *name == "header_X-MIXED"));
+        assert_eq!(error.to_bytes(), b"HTTP Error: missing");
+    }
+
+    #[test]
     fn native_error_bytes_preserve_invalid_utf8_and_escape_nul() {
         let error = Error::new_bytes(ErrorKind::InvalidInput, b"caf\xe9\0\xff".to_vec());
         assert_eq!(error.raw_message_bytes(), b"caf\xe9\\0\xff");
@@ -544,6 +686,39 @@ mod tests {
             Error::internal("boom").to_bytes(),
             Error::internal("boom").to_string().as_bytes()
         );
+    }
+
+    #[test]
+    fn captured_internal_trace_preserves_raw_message_and_clone() {
+        let error = Error::new_bytes(ErrorKind::Internal, b"caf\xe9\0".to_vec())
+            .with_extra_info("stack_trace", b"actual frame\xff".to_vec());
+        assert_eq!(error.raw_message_bytes(), b"caf\xe9\\0");
+        let rendered = error.to_bytes();
+        assert!(rendered.starts_with(b"INTERNAL Error: caf\xe9\\0"));
+        assert!(rendered.ends_with(b"\n\nStack Trace:\nactual frame\xff"));
+        assert_eq!(error.clone().to_bytes(), rendered);
+        assert!(
+            !Error::internal("plain")
+                .to_bytes()
+                .windows(b"Stack Trace:".len())
+                .any(|window| window == b"Stack Trace:")
+        );
+    }
+
+    #[test]
+    fn originating_trace_survives_return_to_its_renderer() {
+        #[inline(never)]
+        fn traced_failure_origin() -> Error {
+            Error::internal_with_stack_trace("origin")
+        }
+        let error = traced_failure_origin();
+        let rendered = error.to_string();
+        let (_, trace) = rendered
+            .split_once("\n\nStack Trace:\n")
+            .expect("native trace section");
+        assert_ne!(trace.trim(), "");
+        assert_eq!(error.raw_message_bytes(), b"origin");
+        assert_eq!(error.clone().to_string(), rendered);
     }
 
     #[test]
@@ -568,6 +743,23 @@ mod tests {
             b"caf\xe9\n\nLINE 1: SELECT unknown\n               ^"
         );
         assert_eq!(error.position(), None);
+    }
+
+    #[test]
+    fn query_context_places_resolved_trace_before_internal_footer_once() {
+        let error = Error::internal("origin")
+            .with_extra_info("stack_trace", "0        real origin\n")
+            .with_position(Some(7))
+            .with_query_context("SELECT unknown")
+            .with_query_context("SELECT unknown");
+        let rendered = error.to_string();
+        assert_eq!(rendered.matches("Stack Trace:").count(), 1);
+        let context = rendered.find("LINE 1:").unwrap();
+        let trace = rendered.find("Stack Trace:").unwrap();
+        let footer = rendered.find("This error signals").unwrap();
+        assert!(context < trace);
+        assert!(trace < footer);
+        assert_eq!(error.extra_info.get("stack_trace"), Some(b"".as_slice()));
     }
 
     fn json_keys(error: Error) -> Vec<String> {
@@ -603,9 +795,16 @@ mod tests {
         };
         assert_eq!(
             json_keys(column(true)),
-            ["candidates", "position", "error_subtype", "name"]
+            if cfg!(target_os = "linux") {
+                vec!["candidates", "name", "error_subtype", "position"]
+            } else {
+                vec!["candidates", "position", "error_subtype", "name"]
+            }
         );
-        assert_eq!(json_keys(column(false)), ["error_subtype", "position", "name"]);
+        assert_eq!(
+            json_keys(column(false)),
+            vec!["error_subtype", "position", "name"]
+        );
         let missing = |position: Option<u64>| {
             Error::catalog("m")
                 .with_subtype("MISSING_ENTRY")
@@ -618,11 +817,15 @@ mod tests {
         };
         assert_eq!(
             json_keys(missing(Some(14))),
-            ["candidates", "position", "type", "error_subtype", "name"]
+            if cfg!(target_os = "linux") {
+                vec!["candidates", "type", "name", "error_subtype", "position"]
+            } else {
+                vec!["candidates", "position", "type", "error_subtype", "name"]
+            }
         );
         assert_eq!(
             json_keys(missing(None)),
-            ["candidates", "type", "error_subtype", "name"]
+            vec!["candidates", "type", "error_subtype", "name"]
         );
         let function = Error::binder("m")
             .with_subtype("NO_MATCHING_FUNCTION")
@@ -635,20 +838,55 @@ mod tests {
             .with_position(Some(7));
         assert_eq!(
             json_keys(function),
-            [
-                "catalog",
-                "candidates",
-                "call",
-                "error_subtype",
-                "position",
-                "schema",
-                "name"
-            ]
+            if cfg!(target_os = "linux") {
+                vec![
+                    "candidates",
+                    "call",
+                    "schema",
+                    "error_subtype",
+                    "catalog",
+                    "name",
+                    "position",
+                ]
+            } else {
+                vec![
+                    "catalog",
+                    "candidates",
+                    "call",
+                    "error_subtype",
+                    "position",
+                    "schema",
+                    "name",
+                ]
+            }
         );
         let syntax = Error::parser("m")
             .with_subtype("SYNTAX_ERROR")
             .with_query_location(14);
-        assert_eq!(json_keys(syntax), ["error_subtype", "position"]);
+        assert_eq!(
+            json_keys(syntax),
+            if cfg!(target_os = "linux") {
+                vec!["position", "error_subtype"]
+            } else {
+                vec!["error_subtype", "position"]
+            }
+        );
+    }
+
+    #[test]
+    fn filled_location_slot_tracks_later_value_updates() {
+        let error = Error::catalog("missing")
+            .with_subtype("MISSING_ENTRY")
+            .with_extra_info_slot("position")
+            .with_extra_info("name", "t")
+            .with_extra_info_round_trip()
+            .with_position(Some(7))
+            .with_position(Some(14));
+        assert_eq!(error.position(), Some(7));
+        let error = error.with_position_override(Some(14));
+        assert_eq!(error.extra_info.get("position"), Some(b"14".as_slice()));
+        let entries = error.extra_info.iteration_order();
+        assert_eq!(entries.iter().filter(|(key, _)| *key == "position").count(), 1);
     }
 
     #[test]

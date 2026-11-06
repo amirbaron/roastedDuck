@@ -53,17 +53,17 @@ fn new_join(ref_type: JoinRefType, join_type: JoinType, right: TableRef) -> Join
 fn base_table(catalog: &str, schema: &str, table: &str) -> BaseTable {
     BaseTable(build::table_ref(TableRefKind::BaseTable(Box::new(
         BaseTableRef {
-            schema_name: schema.to_owned(),
-            table_name: table.to_owned(),
+            schema_name: schema.to_owned().into(),
+            table_name: table.to_owned().into(),
             column_name_alias: Vec::new(),
-            catalog_name: catalog.to_owned(),
+            catalog_name: catalog.to_owned().into(),
             at_clause: None,
         },
     ))))
 }
 
 /// The column name aliases of a table ref that has them.
-fn column_name_alias_mut(table_ref: &mut TableRef) -> Option<&mut Vec<String>> {
+fn column_name_alias_mut(table_ref: &mut TableRef) -> Option<&mut Vec<ByteString>> {
     match &mut table_ref.kind {
         TableRefKind::BaseTable(base) => Some(&mut base.column_name_alias),
         TableRefKind::Subquery(subquery) => Some(&mut subquery.column_name_alias),
@@ -130,13 +130,13 @@ pub(super) fn construct_constant_from_expression(expression: &ParsedExpression) 
         ParsedExpressionKind::Function(function)
             if expression.expression_type == ExpressionType::Function =>
         {
-            match function.function_name.as_str() {
-                "struct_pack" => {
-                    let mut names: Vec<&str> = Vec::with_capacity(function.children.len());
+            match function.function_name.as_bytes() {
+                b"struct_pack" => {
+                    let mut names: Vec<&ByteString> = Vec::with_capacity(function.children.len());
                     let mut values = Vec::with_capacity(function.children.len());
                     for child in &function.children {
-                        if names.iter().any(|name| *name == child.alias) {
-                            return Err(Error::binder(format!(
+                        if names.iter().any(|name| **name == child.alias) {
+                            return Err(Error::binder(byte_format!(
                                 "Duplicate struct entry name \"{}\"",
                                 child.alias
                             )));
@@ -149,7 +149,7 @@ pub(super) fn construct_constant_from_expression(expression: &ParsedExpression) 
                     }
                     Ok(Some(Value::struct_value(values)))
                 }
-                "list_value" => {
+                b"list_value" => {
                     let mut values = Vec::with_capacity(function.children.len());
                     for child in &function.children {
                         let Some(value) = construct_constant_from_expression(child)? else {
@@ -163,7 +163,7 @@ pub(super) fn construct_constant_from_expression(expression: &ParsedExpression) 
                     }
                     Ok(Some(Value::list(child_type, values)))
                 }
-                "map" => {
+                b"map" => {
                     let (Some(keys), Some(values)) = (function.children.first(), function.children.get(1))
                     else {
                         return Ok(None);
@@ -230,9 +230,12 @@ fn transform_pivot_in_list(expression: &ParsedExpression, entry: &mut PivotColum
                         .with_position(expression.query_location),
                 );
             }
-            entry.values.push(Value::varchar(
-                column_ref.column_names.last().cloned().unwrap_or_default(),
-            ));
+            entry.values.push(Value::try_varchar(
+                column_ref
+                    .column_names
+                    .last()
+                    .map_or(b"".as_slice(), ByteString::as_bytes),
+            )?);
             Ok(true)
         }
         ParsedExpressionKind::Function(function)
@@ -284,7 +287,7 @@ fn verify_limit_offset(
 /// `CheckGroupingSetMax`.
 fn check_grouping_set_max(count: usize) -> Result<()> {
     if count > MAX_GROUPING_SETS {
-        return Err(Error::parser(format!(
+        return Err(Error::parser(byte_format!(
             "Maximum grouping set count of {MAX_GROUPING_SETS} exceeded"
         )));
     }
@@ -380,7 +383,7 @@ fn sample_method_from_string(name: &str) -> Result<SampleMethod> {
             .map(|method| method.name().to_owned())
             .collect();
         let closest = rustdb_common::string_util::top_n_jaro_winkler(&candidates, name);
-        Error::not_implemented(format!(
+        Error::not_implemented(byte_format!(
             "Enum value: unrecognized value \"{name}\" for enum \"SampleMethod\"\n{}",
             rustdb_common::string_util::candidates_message(&closest, "Candidates")
         ))
@@ -417,13 +420,13 @@ impl PegTransformer {
             return Ok(select);
         };
         if !select.node.cte_map.map.is_empty() {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(byte_format!(
                 "{} with CTE not allowed - wrap the statement in a subquery instead",
                 show_ref.show_type.name()
             )));
         }
         if !select.node.modifiers.is_empty() {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(byte_format!(
                 "{} with ORDER BY not allowed - wrap the statement in a subquery instead",
                 show_ref.show_type.name()
             )));
@@ -514,7 +517,7 @@ impl PegTransformer {
             if setop_type == SetOperationType::Union {
                 setop_type = SetOperationType::UnionByName;
             } else {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(byte_format!(
                     "Invalid combination of {} and BY NAME",
                     setop_type.name()
                 )));
@@ -579,7 +582,7 @@ impl PegTransformer {
             for mut window in windows {
                 let window_name = std::mem::take(&mut window.alias);
                 if self.window_clauses.contains_key(&window_name) {
-                    return Err(Error::parser(format!(
+                    return Err(Error::parser(byte_format!(
                         "window \"{window_name}\" is already defined"
                     )));
                 }
@@ -844,7 +847,7 @@ impl PegTransformer {
     ) -> Result<QualifiedName> {
         let list = parse_result.list()?;
         Ok(QualifiedName {
-            catalog: String::new(),
+            catalog: String::new().into(),
             schema: self.transform_child(list, 0)?,
             name: self.transform_child(list, 1)?,
         })
@@ -924,7 +927,7 @@ impl PegTransformer {
         let list = parse_result.list()?;
         let mut expression: ParsedExpression = self.transform_child(list, 0)?;
         if let Some(alias) = list.optional(1)? {
-            alias.identifier()?.clone_into(&mut expression.alias);
+            expression.alias = alias.identifier()?.into();
         }
         Ok(expression)
     }
@@ -951,7 +954,7 @@ impl PegTransformer {
     ) -> Result<TableAlias> {
         let list = parse_result.list()?;
         Ok(TableAlias {
-            name: list.identifier(0)?.to_owned(),
+            name: list.identifier(0)?.into(),
             column_name_alias: self.transform_optional(list, 1)?.unwrap_or_default(),
         })
     }
@@ -992,7 +995,7 @@ impl PegTransformer {
                     inner = transformed;
                 }
                 _ => {
-                    return Err(Error::not_implemented(format!(
+                    return Err(Error::not_implemented(byte_format!(
                         "Unsupported TableRef type encountered: {}",
                         transformed.table_reference_type().name()
                     )));
@@ -1033,7 +1036,7 @@ impl PegTransformer {
     /// `TransformUnpivotValueList`: `name IN (targets)`.
     pub(super) fn transform_unpivot_value_list(&mut self, parse_result: &ParseResult) -> Result<PivotColumn> {
         let list = parse_result.list()?;
-        let unpivot_names: Vec<String> = self.transform(list.child(0)?)?;
+        let unpivot_names: Vec<ByteString> = self.transform(list.child(0)?)?;
         if unpivot_names.len() != 1 {
             return Err(Error::parser(
                 "UNPIVOT requires a single column name for the PIVOT IN clause",
@@ -1106,9 +1109,7 @@ impl PegTransformer {
         let pivot_expression: ParsedExpression = self.transform_child(list, 0)?;
         let target_list_or_enum = list.list(2)?.choice(0)?;
         if target_list_or_enum.result_type() == ParseResultType::Identifier {
-            target_list_or_enum
-                .identifier()?
-                .clone_into(&mut result.pivot_enum);
+            result.pivot_enum = target_list_or_enum.identifier()?.into();
         } else {
             result.entries = self.transform(target_list_or_enum)?;
         }
@@ -1208,7 +1209,7 @@ impl PegTransformer {
             if column.is_empty() {
                 return Err(Error::parser("Column identifier cannot be empty"));
             }
-            result.using_columns.push(column.to_owned());
+            result.using_columns.push(column.to_owned().into());
         }
         Ok(result)
     }
@@ -1298,7 +1299,7 @@ impl PegTransformer {
         let function: QualifiedName = self.transform_child(list, 1)?;
         let arguments: Vec<ParsedExpression> = self.transform_child(list, 2)?;
         let mut table_ref = table_function_ref(&function, arguments, list.has(3)?);
-        table_ref.alias = alias;
+        table_ref.alias = alias.into();
         table_ref.sample = self.transform_optional(list, 4)?.map(Box::new);
         Ok(table_ref)
     }
@@ -1318,7 +1319,7 @@ impl PegTransformer {
         let mut result = QualifiedName {
             catalog: self.transform_optional(list, 0)?.unwrap_or_default(),
             schema: self.transform_optional(list, 1)?.unwrap_or_default(),
-            name: list.identifier(2)?.to_owned(),
+            name: list.identifier(2)?.to_owned().into(),
         };
         if !result.catalog.is_empty() && result.schema.is_empty() {
             result.schema = std::mem::take(&mut result.catalog);
@@ -1349,10 +1350,10 @@ impl PegTransformer {
         let alias_colon: Option<String> = self.transform_optional(list, 0)?;
         let has_alias_colon = alias_colon.is_some();
         if let Some(alias) = alias_colon {
-            result.alias = alias;
+            result.alias = alias.into();
         }
         if list.has(2)? && has_alias_colon {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(byte_format!(
                 "Table reference {result} cannot have two aliases"
             )));
         }
@@ -1378,7 +1379,7 @@ impl PegTransformer {
         let has_alias_colon = list.has(0)?;
         let has_alias = list.has(2)?;
         if has_alias_colon && has_alias {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(byte_format!(
                 "Table reference {table_ref} cannot have two aliases"
             )));
         }
@@ -1387,7 +1388,7 @@ impl PegTransformer {
         }
         let mut subquery = build::subquery_ref(select_star_from(table_ref));
         if let Some(alias) = self.transform_optional::<String>(list, 0)? {
-            subquery.alias = alias;
+            subquery.alias = alias.into();
         }
         if let Some(alias) = self.transform_optional(list, 2)? {
             apply_table_alias(&mut subquery, alias);
@@ -1407,7 +1408,7 @@ impl PegTransformer {
         let unit: String = self.transform_child(list, 0)?;
         let expr: ParsedExpression = self.transform_child(list, 2)?;
         Ok(AtClause {
-            unit,
+            unit: unit.into(),
             expr: Box::new(expr),
         })
     }
@@ -1445,7 +1446,7 @@ impl PegTransformer {
             expected_types: Vec::new(),
             values,
         })));
-        "valueslist".clone_into(&mut values_ref.alias);
+        values_ref.alias = "valueslist".into();
         Ok(select_star_from(values_ref))
     }
 
@@ -1799,7 +1800,7 @@ impl PegTransformer {
         let is_recursive = list.has(1)?;
         let mut result = CommonTableExpressionMap::default();
         for entry in list.child(2)?.list_elements()? {
-            let (name, mut info): (String, CommonTableExpressionInfo) = self.transform(entry)?;
+            let (name, mut info): (ByteString, CommonTableExpressionInfo) = self.transform(entry)?;
             if is_recursive {
                 for modifier in &info.query.node.modifiers {
                     match modifier {
@@ -1818,7 +1819,7 @@ impl PegTransformer {
                 info.query.node = Box::new(to_recursive_cte(*node, &name, &info.aliases, &info.key_targets)?);
             }
             if result.map.contains_key(&name) {
-                return Err(Error::parser(format!("Duplicate CTE name \"{name}\"")));
+                return Err(Error::parser(byte_format!("Duplicate CTE name \"{name}\"")));
             }
             result.map.insert(&name, info);
         }
@@ -1829,10 +1830,10 @@ impl PegTransformer {
     pub(super) fn transform_with_statement(
         &mut self,
         parse_result: &ParseResult,
-    ) -> Result<(String, CommonTableExpressionInfo)> {
+    ) -> Result<(ByteString, CommonTableExpressionInfo)> {
         let list = parse_result.list()?;
-        let name: String = self.transform_child(list, 0)?;
-        let aliases: Vec<String> = self.transform_optional(list, 1)?.unwrap_or_default();
+        let name: ByteString = self.transform_child(list, 0)?;
+        let aliases: Vec<ByteString> = self.transform_optional(list, 1)?.unwrap_or_default();
         let key_targets: Vec<ParsedExpression> = self.transform_optional(list, 2)?.unwrap_or_default();
         let materialized = match self.transform_optional::<bool>(list, 4)? {
             // With a result, it is NEVER or ALWAYS.
@@ -2011,7 +2012,7 @@ impl PegTransformer {
         } else {
             let rows = rustdb_parser::get_value_i64(value)?;
             if rows < 0 || rows.unsigned_abs() > MAX_SAMPLE_ROWS {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(byte_format!(
                     "Sample rows {rows} out of range, must be between 0 and {MAX_SAMPLE_ROWS}"
                 )));
             }
@@ -2099,7 +2100,7 @@ fn new_pivot_column() -> PivotColumn {
         pivot_expressions: Vec::new(),
         unpivot_names: Vec::new(),
         entries: Vec::new(),
-        pivot_enum: String::new(),
+        pivot_enum: String::new().into(),
         subquery: None,
     }
 }

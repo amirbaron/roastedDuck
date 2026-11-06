@@ -19,13 +19,20 @@ use rustdb_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType, Value, 
 use crate::aggregate::nested::list::append_list;
 
 /// DuckDB's `ReservoirQuantileBindData`.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Bounds {
     quantiles: Vec<f64>,
     sample_size: usize,
 }
 
 impl FunctionData for Bounds {
+    fn equals(&self, other: &dyn FunctionData) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self == other)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

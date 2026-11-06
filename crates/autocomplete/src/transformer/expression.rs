@@ -133,10 +133,10 @@ impl PegTransformer {
         let mut column_names = Vec::new();
         if let Some(qualifiers) = list.optional(0)? {
             for qualifier in qualifiers.repeat()? {
-                column_names.push(qualifier.list()?.identifier(0)?.to_owned());
+                column_names.push(qualifier.list()?.identifier(0)?.to_owned().into());
             }
         }
-        column_names.push(list.identifier(1)?.to_owned());
+        column_names.push(list.identifier(1)?.to_owned().into());
         Ok(ColumnRefExpression { column_names })
     }
 
@@ -162,7 +162,7 @@ impl PegTransformer {
             self.transform_child(list, 0)?,
             self.transform_child(list, 1)?,
             self.transform_child(list, 2)?,
-            list.identifier(3)?.to_owned(),
+            list.identifier(3)?.into(),
         ];
         Ok(ColumnRefExpression { column_names })
     }
@@ -176,7 +176,7 @@ impl PegTransformer {
         let column_names = vec![
             self.transform_child(list, 0)?,
             self.transform_child(list, 1)?,
-            list.identifier(2)?.to_owned(),
+            list.identifier(2)?.into(),
         ];
         Ok(ColumnRefExpression { column_names })
     }
@@ -240,10 +240,10 @@ impl PegTransformer {
             );
         }
         if lowercase_name == "count" && children.is_empty() {
-            "count_star".clone_into(&mut lowercase_name);
+            lowercase_name = "count_star".into();
         }
-        match lowercase_name.as_str() {
-            "if" => {
+        match lowercase_name.as_bytes() {
+            b"if" => {
                 let [when, then, otherwise]: [ParsedExpression; 3] = children
                     .try_into()
                     .map_err(|_| Error::parser("Wrong number of arguments to IF."))?;
@@ -253,7 +253,7 @@ impl PegTransformer {
                 };
                 return Ok(build::case_expression(vec![check], otherwise));
             }
-            "unpack" => {
+            b"unpack" => {
                 if children.len() != 1 {
                     return Err(Error::parser("Wrong number of arguments to the UNPACK operator"));
                 }
@@ -262,7 +262,7 @@ impl PegTransformer {
                     children,
                 ));
             }
-            "try" => {
+            b"try" => {
                 if children.len() != 1 {
                     return Err(Error::parser(
                         "Wrong number of arguments provided to TRY expression",
@@ -270,13 +270,13 @@ impl PegTransformer {
                 }
                 return Ok(ParsedExpression::operator(ExpressionType::OperatorTry, children));
             }
-            "construct_array" => {
+            b"construct_array" => {
                 return Ok(ParsedExpression::operator(
                     ExpressionType::ArrayConstructor,
                     children,
                 ));
             }
-            "position" => {
+            b"position" => {
                 if children.len() != 2 {
                     return Err(Error::parser(
                         "Wrong number of arguments to __internal_position_operator.",
@@ -285,7 +285,7 @@ impl PegTransformer {
                 // POSITION(x IN y) takes its arguments the other way round.
                 children.swap(0, 1);
             }
-            "ifnull" => {
+            b"ifnull" => {
                 if children.len() != 2 {
                     return Err(Error::parser("Wrong number of arguments to IFNULL."));
                 }
@@ -295,13 +295,13 @@ impl PegTransformer {
                     children,
                 ));
             }
-            "date" => {
+            b"date" => {
                 let [child]: [ParsedExpression; 1] = children
                     .try_into()
                     .map_err(|_| Error::parser("Wrong number of arguments provided to DATE function"))?;
                 return Ok(build::cast(LogicalType::DATE, child, false));
             }
-            "list" if order_modifier.orders.len() == 1 => {
+            b"list" if order_modifier.orders.len() == 1 => {
                 // list(expr ORDER BY expr <sense> <nulls>) is list_sort(list(expr), <sense>, <nulls>).
                 if children.len() != 1 {
                     return Err(Error::parser("Wrong number of arguments to LIST."));
@@ -321,7 +321,7 @@ impl PegTransformer {
                         false,
                         export_state,
                     );
-                    "list_sort".clone_into(&mut lowercase_name);
+                    lowercase_name = "list_sort".into();
                     distinct = false;
                     children = vec![unordered, sense, nulls];
                 }
@@ -346,26 +346,26 @@ impl PegTransformer {
                     "Cannot use multiple ORDER BY clauses with WITHIN GROUP",
                 ));
             }
-            match lowercase_name.as_str() {
-                "percentile_cont" => {
+            match lowercase_name.as_bytes() {
+                b"percentile_cont" => {
                     if children.len() != 1 {
                         return Err(Error::parser("Wrong number of arguments for PERCENTILE_CONT"));
                     }
-                    "quantile_cont".clone_into(&mut lowercase_name);
+                    lowercase_name = "quantile_cont".into();
                 }
-                "percentile_disc" => {
+                b"percentile_disc" => {
                     if children.len() != 1 {
                         return Err(Error::parser("Wrong number of arguments for PERCENTILE_DISC"));
                     }
-                    "quantile_disc".clone_into(&mut lowercase_name);
+                    lowercase_name = "quantile_disc".into();
                 }
-                "mode" => {
+                b"mode" => {
                     if !children.is_empty() {
                         return Err(Error::parser("Wrong number of arguments for MODE"));
                     }
                 }
                 _ => {
-                    return Err(Error::parser(format!(
+                    return Err(Error::parser(byte_format!(
                         "Unknown ordered aggregate \"{}\".",
                         function.name
                     )));
@@ -395,7 +395,7 @@ impl PegTransformer {
         &mut self,
         over: &ParseResult,
         function: &QualifiedName,
-        lowercase_name: String,
+        lowercase_name: ByteString,
         mut children: Vec<ParsedExpression>,
         arguments: WindowArguments,
     ) -> Result<ParsedExpression> {
@@ -411,7 +411,7 @@ impl PegTransformer {
             ));
         }
         if !arguments.orders.is_empty() && !rustdb_parser::is_orderable_window_function(window_type)? {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(byte_format!(
                 "ORDER BY is not supported for the window function \"{lowercase_name}\""
             )));
         }
@@ -434,11 +434,11 @@ impl PegTransformer {
         let mut expr: WindowExpr = self.transform(over)?;
         expr.0.expression_type = window_type;
         let window = window_mut(&mut expr)?;
-        function.catalog.clone_into(&mut window.catalog);
-        function.schema.clone_into(&mut window.schema);
+        window.catalog.clone_from(&function.catalog);
+        window.schema.clone_from(&function.schema);
         window.function_name = lowercase_name;
         let wrong_arguments = || {
-            Error::parser(format!(
+            Error::parser(byte_format!(
                 "Incorrect number of parameters for function {}",
                 function.name
             ))
@@ -480,7 +480,7 @@ impl PegTransformer {
             && !window.arg_orders.is_empty()
             && !rustdb_parser::is_excludable_window_function(window_type)?
         {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(byte_format!(
                 "EXCLUDE is not supported for the window function \"{}\"",
                 window.function_name
             )));
@@ -505,7 +505,7 @@ impl PegTransformer {
         let name = parse_result.list()?.choice(0)?;
         if name.result_type() == ParseResultType::Identifier {
             return Ok(QualifiedName {
-                name: name.identifier()?.to_owned(),
+                name: name.identifier()?.to_owned().into(),
                 ..QualifiedName::default()
             });
         }
@@ -519,9 +519,9 @@ impl PegTransformer {
     ) -> Result<QualifiedName> {
         let list = parse_result.list()?;
         Ok(QualifiedName {
-            catalog: String::new(),
+            catalog: String::new().into(),
             schema: self.transform_child(list, 0)?,
-            name: list.identifier(1)?.to_owned(),
+            name: list.identifier(1)?.to_owned().into(),
         })
     }
 
@@ -539,7 +539,7 @@ impl PegTransformer {
         } else {
             result.schema = self.transform_child(list, 0)?;
         }
-        list.identifier(2)?.clone_into(&mut result.name);
+        result.name = list.identifier(2)?.into();
         Ok(result)
     }
 
@@ -606,7 +606,7 @@ impl PegTransformer {
         let array_agg_child = if let QueryNodeKind::Select(select) = &subquery.node.kind {
             // The easy case: the subquery is a SELECT.
             if select.select_list.len() != 1 {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(byte_format!(
                     "Subquery returns {} columns - expected 1",
                     select.select_list.len()
                 )));
@@ -653,7 +653,7 @@ impl PegTransformer {
                         &mut order.expression,
                         Box::new(build::column_ref(vec![alias.clone()])),
                     );
-                    alias.clone_into(&mut expression.alias);
+                    expression.alias = alias.into();
                     if let QueryNodeKind::Select(select) = &mut subquery.node.kind {
                         select.select_list.push(*expression);
                     }
@@ -842,13 +842,13 @@ fn subquery_expression(
 }
 
 /// `TryNegateLikeFunction`: `NOT LIKE` / `NOT ILIKE` have operators of their own.
-fn try_negate_like_function(function_name: &mut String) -> bool {
-    let negated = match function_name.as_str() {
-        "~~" => "!~~",
-        "~~*" => "!~~*",
+fn try_negate_like_function(function_name: &mut ByteString) -> bool {
+    let negated = match function_name.as_bytes() {
+        b"~~" => "!~~",
+        b"~~*" => "!~~*",
         _ => return false,
     };
-    negated.clone_into(function_name);
+    *function_name = negated.into();
     true
 }
 
@@ -911,9 +911,9 @@ fn new_window_expression(expression_type: ExpressionType, name: &str) -> WindowE
     WindowExpr(ParsedExpression::new(
         expression_type,
         ParsedExpressionKind::Window(Box::new(WindowExpression {
-            function_name: name.to_ascii_lowercase(),
-            schema: String::new(),
-            catalog: String::new(),
+            function_name: name.to_ascii_lowercase().into(),
+            schema: ByteString::new(),
+            catalog: ByteString::new(),
             children: Vec::new(),
             partitions: Vec::new(),
             orders: Vec::new(),
@@ -971,7 +971,7 @@ fn parse_components(input: &str) -> Result<Vec<String>> {
                     Some('"') => break,
                     Some(quoted) => entry.push(quoted),
                     None => {
-                        return Err(Error::parser(format!(
+                        return Err(Error::parser(byte_format!(
                             "Unterminated quote in qualified name! (input: {input})"
                         )));
                     }
@@ -996,24 +996,24 @@ fn parse_qualified_column_name(input: &str) -> Result<QualifiedColumnName> {
     Ok(match count {
         1 => QualifiedColumnName::column(next()),
         2 => QualifiedColumnName {
-            table: next(),
-            column: next(),
+            table: next().into(),
+            column: next().into(),
             ..QualifiedColumnName::default()
         },
         3 => QualifiedColumnName {
-            schema: next(),
-            table: next(),
-            column: next(),
+            schema: next().into(),
+            table: next().into(),
+            column: next().into(),
             ..QualifiedColumnName::default()
         },
         4 => QualifiedColumnName {
-            catalog: next(),
-            schema: next(),
-            table: next(),
-            column: next(),
+            catalog: next().into(),
+            schema: next().into(),
+            table: next().into(),
+            column: next().into(),
         },
         count => {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(byte_format!(
                 "Expected at most 4 entries (catalog.schema.table.column), but found {count} entries (input: \
                  {input})"
             )));
@@ -1023,7 +1023,7 @@ fn parse_qualified_column_name(input: &str) -> Result<QualifiedColumnName> {
 
 /// `QualifiedColumnEquality`: a prefix comparison, so `tbl.i` equals `i` but not `tbl2.i`.
 fn qualified_column_equal(a: &QualifiedColumnName, b: &QualifiedColumnName) -> bool {
-    let part_matches = |x: &str, y: &str| x.is_empty() || y.is_empty() || x.eq_ignore_ascii_case(y);
+    let part_matches = |x: &[u8], y: &[u8]| x.is_empty() || y.is_empty() || x.eq_ignore_ascii_case(y);
     part_matches(&a.catalog, &b.catalog)
         && part_matches(&a.schema, &b.schema)
         && part_matches(&a.table, &b.table)
@@ -1197,7 +1197,7 @@ impl PegTransformer {
                     // A special LIKE function is negated by name, others by NOT.
                     !try_negate_like_function(&mut function.function_name)
                 } else if function.function_name == "!~" {
-                    "regexp_full_match".clone_into(&mut function.function_name);
+                    function.function_name = "regexp_full_match".into();
                     function.is_operator = false;
                     true
                 } else {
@@ -1372,7 +1372,7 @@ impl PegTransformer {
             } else {
                 // left = ANY(right) is left = ANY((SELECT UNNEST(right))).
                 if expression_type == ExpressionType::Invalid {
-                    return Err(Error::parser(format!(
+                    return Err(Error::parser(byte_format!(
                         "Unsupported comparison \"{op_string}\" for ANY/ALL subquery"
                     )));
                 }
@@ -1557,10 +1557,12 @@ impl PegTransformer {
             for collation in collations.repeat()? {
                 let collation: ParsedExpression = self.transform_child(collation.list()?, 1)?;
                 let collation = match &collation.kind {
-                    ParsedExpressionKind::Constant(constant) => constant.value.to_varchar()?,
-                    ParsedExpressionKind::ColumnRef(column_ref) => column_ref.column_names.join("."),
+                    ParsedExpressionKind::Constant(constant) => constant.value.to_varchar_bytes()?,
+                    ParsedExpressionKind::ColumnRef(column_ref) => {
+                        ByteString::join(&column_ref.column_names, b".")
+                    }
                     _ => {
-                        return Err(Error::not_implemented(format!(
+                        return Err(Error::not_implemented(byte_format!(
                             "Unexpected expression encountered for collate, {}",
                             collation.expression_class().name()
                         )));
@@ -1965,7 +1967,7 @@ impl PegTransformer {
         let table: String = self.transform_child(list, 0)?;
         let column = list.identifier(1)?.to_owned();
         Ok(ColumnRefExpression {
-            column_names: vec![table, column],
+            column_names: vec![table.into(), column.into()],
         })
     }
 
@@ -1999,15 +2001,15 @@ impl PegTransformer {
         for column in exclude {
             exclude_set.insert(column, ());
         }
-        let mut replace_map = CiHashMap::new();
+        let mut replace_map: CiHashMap<ParsedExpression, ByteString> = CiHashMap::default();
         if let Some(replace) = list.optional(3)? {
-            let replace: CaseInsensitiveMap<ParsedExpression> = self.transform(replace)?;
+            let replace: CaseInsensitiveMap<ParsedExpression, ByteString> = self.transform(replace)?;
             for (name, expression) in replace {
                 replace_map.insert(name, expression);
             }
             for (name, _) in replace_map.iter() {
                 if exclude_set.contains(&QualifiedColumnName::column(name)) {
-                    return Err(Error::parser(format!(
+                    return Err(Error::parser(byte_format!(
                         "Column \"{name}\" cannot occur in both EXCLUDE and REPLACE list"
                     )));
                 }
@@ -2022,17 +2024,20 @@ impl PegTransformer {
             let renames = rename_map.into_ordered();
             for (column, _) in &renames {
                 if exclude_set.contains(column) {
-                    return Err(Error::parser(format!(
+                    return Err(Error::parser(byte_format!(
                         "Column \"{column}\" cannot occur in both EXCLUDE and RENAME list"
                     )));
                 }
                 if replace_map.contains_key(&column.column) {
-                    return Err(Error::parser(format!(
+                    return Err(Error::parser(byte_format!(
                         "Column \"{column}\" cannot occur in both REPLACE and RENAME list"
                     )));
                 }
             }
-            result.rename_list = renames.into_iter().collect();
+            result.rename_list = renames
+                .into_iter()
+                .map(|(column, name)| (column, name.into()))
+                .collect();
         }
         result.exclude_list = rustdb_parser::serialized_exclude_list(exclude_set);
         result.replace_list = replace_map.into_ordered().into_iter().collect();
@@ -2063,7 +2068,7 @@ impl PegTransformer {
                 .iter()
                 .any(|existing| qualified_column_equal(existing, &column))
             {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(byte_format!(
                     "Duplicate entry \"{column}\" in EXCLUDE list"
                 )));
             }
@@ -2120,7 +2125,7 @@ impl PegTransformer {
             || definition.end_expr.is_some()
             || !is_window_frame_default(definition)
         {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(byte_format!(
                 "cannot copy window \"{name}\" because it has a frame clause"
             )));
         }
@@ -2153,7 +2158,9 @@ impl PegTransformer {
         let window_name: String = self.transform_optional(inner, 0)?.unwrap_or_default();
         let lower_name = window_name.to_ascii_lowercase();
         if matches!(lower_name.as_str(), "partition" | "range" | "rows" | "groups") {
-            return Err(Error::parser(format!("Invalid window name \"{window_name}\"")));
+            return Err(Error::parser(byte_format!(
+                "Invalid window name \"{window_name}\""
+            )));
         }
         let mut contents: WindowExpr = self.transform_child(inner, 1)?;
         if window_name.is_empty() {
@@ -2165,7 +2172,7 @@ impl PegTransformer {
             || copied_window.end_expr.is_some()
             || !is_window_frame_default(copied_window)
         {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(byte_format!(
                 "cannot copy window \"{window_name}\" because it has a frame clause"
             )));
         }
@@ -2178,7 +2185,7 @@ impl PegTransformer {
         copied_window.offset_expr = contents.offset_expr.take();
         copied_window.default_expr = contents.default_expr.take();
         if !copied_window.orders.is_empty() && !contents.orders.is_empty() {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(byte_format!(
                 "Cannot override ORDER BY clause of window \"{window_name}\""
             )));
         }
@@ -2186,7 +2193,7 @@ impl PegTransformer {
             copied_window.orders = std::mem::take(&mut contents.orders);
         }
         if !copied_window.partitions.is_empty() && !contents.partitions.is_empty() {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(byte_format!(
                 "Cannot override PARTITION BY clause of window \"{window_name}\""
             )));
         }
@@ -2267,7 +2274,9 @@ impl PegTransformer {
                     other => other,
                 }
             } else {
-                return Err(Error::parser(format!("Invalid result from frame: {framing}")));
+                return Err(Error::parser(byte_format!(
+                    "Invalid result from frame: {framing}"
+                )));
             };
         }
         let mut extent = extent.into_iter();
@@ -2889,8 +2898,8 @@ impl PegTransformer {
         };
         let mut filter_expr: ParsedExpression = self.transform(filter)?;
         // Stage 1: list_apply(list, x -> struct_pack(filter := ..., result := ...)).
-        "filter".clone_into(&mut filter_expr.alias);
-        "result".clone_into(&mut result_expr.alias);
+        filter_expr.alias = "filter".into();
+        result_expr.alias = "result".into();
         let struct_pack = qualified_function("", "main", "struct_pack", vec![filter_expr, result_expr]);
         let stage1 = qualified_function(
             "",
@@ -2935,7 +2944,7 @@ impl PegTransformer {
     pub(super) fn transform_replace_list(
         &mut self,
         parse_result: &ParseResult,
-    ) -> Result<CaseInsensitiveMap<ParsedExpression>> {
+    ) -> Result<CaseInsensitiveMap<ParsedExpression, ByteString>> {
         self.transform_child(parse_result.list()?, 1)
     }
 
@@ -2943,7 +2952,7 @@ impl PegTransformer {
     pub(super) fn transform_replace_entries(
         &mut self,
         parse_result: &ParseResult,
-    ) -> Result<CaseInsensitiveMap<ParsedExpression>> {
+    ) -> Result<CaseInsensitiveMap<ParsedExpression, ByteString>> {
         self.transform(parse_result.list()?.choice(0)?)
     }
 
@@ -2951,8 +2960,9 @@ impl PegTransformer {
     pub(super) fn transform_replace_entry_single(
         &mut self,
         parse_result: &ParseResult,
-    ) -> Result<CaseInsensitiveMap<ParsedExpression>> {
-        let (name, expression): (String, ParsedExpression) = self.transform_child(parse_result.list()?, 0)?;
+    ) -> Result<CaseInsensitiveMap<ParsedExpression, ByteString>> {
+        let (name, expression): (ByteString, ParsedExpression) =
+            self.transform_child(parse_result.list()?, 0)?;
         let mut result = CaseInsensitiveMap::default();
         result.insert(&name, expression);
         Ok(result)
@@ -2962,13 +2972,13 @@ impl PegTransformer {
     pub(super) fn transform_replace_entry_list(
         &mut self,
         parse_result: &ParseResult,
-    ) -> Result<CaseInsensitiveMap<ParsedExpression>> {
+    ) -> Result<CaseInsensitiveMap<ParsedExpression, ByteString>> {
         let entries = parse_result.list()?.child(0)?.parens_content()?.list_elements()?;
         let mut result = CaseInsensitiveMap::default();
         for entry in entries {
-            let (name, expression): (String, ParsedExpression) = self.transform(entry)?;
+            let (name, expression): (ByteString, ParsedExpression) = self.transform(entry)?;
             if result.contains_key(&name) {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(byte_format!(
                     "Duplicate entry \"{name}\" in REPLACE list"
                 )));
             }
@@ -2981,7 +2991,7 @@ impl PegTransformer {
     pub(super) fn transform_replace_entry(
         &mut self,
         parse_result: &ParseResult,
-    ) -> Result<(String, ParsedExpression)> {
+    ) -> Result<(ByteString, ParsedExpression)> {
         let list = parse_result.list()?;
         let expression: ParsedExpression = self.transform_child(list, 0)?;
         let column: ParsedExpression = self.transform_child(list, 2)?;
@@ -3077,7 +3087,9 @@ impl PegTransformer {
 fn parameter_expression(identifier: String) -> ParsedExpression {
     ParsedExpression::new(
         ExpressionType::ValueParameter,
-        ParsedExpressionKind::Parameter(ParameterExpression { identifier }),
+        ParsedExpressionKind::Parameter(ParameterExpression {
+            identifier: identifier.into(),
+        }),
     )
 }
 

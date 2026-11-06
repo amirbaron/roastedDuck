@@ -28,9 +28,10 @@ pub use client_properties::{ArrowFormatVersion, ArrowOffsetSize, ClientPropertie
 pub use conversion::data_chunk_from_arrow;
 pub use converter::{to_arrow_array, to_arrow_schema};
 pub use duck_schema::{ArrowArrayPhysicalType, ArrowTableSchema, ArrowType};
+pub use rustdb_storage::{TableFilter, TableFilterSet};
 pub use table_function::{
     ArrowProjectedColumns, ArrowStreamParameters, StreamFactoryGetSchema, StreamFactoryProduce,
-    arrow_table_functions, populate_arrow_table_schema,
+    arrow_table_functions, populate_arrow_table_schema, retain_factory_owner,
 };
 
 #[cfg(test)]

@@ -21,3 +21,6 @@ unicode-normalization = "0.1"
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+rustdb-serde.workspace = true

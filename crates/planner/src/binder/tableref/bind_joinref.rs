@@ -8,7 +8,7 @@ use rustdb_ast::{
     ComparisonExpression, ConjunctionExpression, ExpressionType, JoinRef, JoinRefType, JoinType,
     ParsedExpression, ParsedExpressionKind,
 };
-use rustdb_common::{CaseInsensitiveSet, Error, Result};
+use rustdb_common::{ByteString, CaseInsensitiveSet, Error, Result};
 
 use super::bind_table_ref;
 use super::plan_joinref::{BoundJoinRef, create_join_plan};
@@ -18,7 +18,7 @@ use crate::binder::{UsingColumnSet, UsingSetRef};
 use crate::expression_binder::{BaseBinder, ExpressionBinder, LateralBinder, WhereBinder, set_bound};
 
 /// A column reference qualified by `alias` (DuckDB's `ColumnRefExpression(name, alias)`).
-fn column_ref(column_name: &str, alias: &BindingAlias) -> ParsedExpression {
+fn column_ref(column_name: &[u8], alias: &BindingAlias) -> ParsedExpression {
     let mut names = Vec::new();
     if alias.is_set() {
         if !alias.catalog.is_empty() {
@@ -29,12 +29,12 @@ fn column_ref(column_name: &str, alias: &BindingAlias) -> ParsedExpression {
         }
         names.push(alias.alias.clone());
     }
-    names.push(column_name.to_owned());
+    names.push(column_name.into());
     ParsedExpression::column_ref(names)
 }
 
 /// `alias.column` bound in `binder`, wrapped as a parsed node (DuckDB's `BindColumn`).
-fn bind_column(binder: &mut Binder, alias: &BindingAlias, column_name: &str) -> Result<ParsedExpression> {
+fn bind_column(binder: &mut Binder, alias: &BindingAlias, column_name: &[u8]) -> Result<ParsedExpression> {
     let mut expr = column_ref(column_name, alias);
     let bound = BaseBinder::new(binder, None).bind(&mut expr, true)?;
     set_bound(&mut expr, bound);
@@ -47,7 +47,7 @@ fn add_condition(
     right_binder: &mut Binder,
     left_alias: &BindingAlias,
     right_alias: &BindingAlias,
-    column_name: &str,
+    column_name: &[u8],
     expression_type: ExpressionType,
 ) -> Result<ParsedExpression> {
     let left = bind_column(left_binder, left_alias, column_name)?;
@@ -63,20 +63,20 @@ fn add_condition(
 
 /// The single relation of `binder` with a column `using_column` (DuckDB's
 /// `TryFindBinding`): `Ok(None)` if there is none, an error if there are several.
-fn try_find_binding(binder: &Binder, using_column: &str, join_side: &str) -> Result<Option<BindingAlias>> {
+fn try_find_binding(binder: &Binder, using_column: &[u8], join_side: &str) -> Result<Option<BindingAlias>> {
     let bindings = binder.bind_context.matching_bindings(using_column);
     let mut result: Option<BindingAlias> = None;
     for binding in &bindings {
         if result.is_some() {
-            let mut error = format!(
+            let mut error = rustdb_common::byte_format!(
                 "Column name \"{using_column}\" is ambiguous: it exists more than once on {join_side} side of \
                  join.\nCandidates:"
             );
             for other in &bindings {
-                error.push_str("\n\t");
-                error.push_str(other.alias_name());
-                error.push('.');
-                error.push_str(
+                error.push_bytes("\n\t");
+                error.push_bytes(other.alias_name());
+                error.push(b'.');
+                error.push_bytes(
                     &binder
                         .bind_context
                         .actual_column_name(&other.alias, using_column)?,
@@ -90,9 +90,9 @@ fn try_find_binding(binder: &Binder, using_column: &str, join_side: &str) -> Res
 }
 
 /// DuckDB's `FindBinding`.
-fn find_binding(binder: &Binder, using_column: &str, join_side: &str) -> Result<BindingAlias> {
+fn find_binding(binder: &Binder, using_column: &[u8], join_side: &str) -> Result<BindingAlias> {
     try_find_binding(binder, using_column, join_side)?.ok_or_else(|| {
-        Error::binder(format!(
+        Error::binder(rustdb_common::byte_format!(
             "Column \"{using_column}\" does not exist on {join_side} side of join!"
         ))
     })
@@ -134,7 +134,7 @@ fn set_primary_binding(
 fn retrieve_using_binding(
     binder: &Binder,
     current_set: Option<&UsingSetRef>,
-    using_column: &str,
+    using_column: &[u8],
     join_side: &str,
 ) -> Result<BindingAlias> {
     match current_set {
@@ -144,8 +144,8 @@ fn retrieve_using_binding(
 }
 
 /// DuckDB's `RemoveDuplicateUsingColumns`.
-fn remove_duplicate_using_columns(using_columns: Vec<String>) -> Vec<String> {
-    let mut handled = CaseInsensitiveSet::default();
+fn remove_duplicate_using_columns(using_columns: Vec<ByteString>) -> Vec<ByteString> {
+    let mut handled = CaseInsensitiveSet::<ByteString>::default();
     using_columns
         .into_iter()
         .filter(|column| handled.insert(column.clone()))
@@ -153,9 +153,9 @@ fn remove_duplicate_using_columns(using_columns: Vec<String>) -> Vec<String> {
 }
 
 /// The `NATURAL JOIN` columns: names of the left side also present on the right.
-fn natural_join_columns(left: &Binder, right: &Binder, location: Option<u64>) -> Result<Vec<String>> {
+fn natural_join_columns(left: &Binder, right: &Binder, location: Option<u64>) -> Result<Vec<ByteString>> {
     let mut lhs_columns = Vec::new();
-    let mut seen = CaseInsensitiveSet::default();
+    let mut seen = CaseInsensitiveSet::<ByteString>::default();
     for binding in left.bind_context.bindings() {
         for name in &binding.names {
             if seen.insert(name.clone()) {
@@ -177,12 +177,12 @@ fn natural_join_columns(left: &Binder, right: &Binder, location: Option<u64>) ->
             let mut list = Vec::new();
             for binding in binder.bind_context.bindings() {
                 for name in &binding.names {
-                    list.push(format!("{}.{name}", binding.alias_name()));
+                    list.push(rustdb_common::byte_format!("{}.{name}", binding.alias_name()));
                 }
             }
-            list.join(", ")
+            ByteString::join(&list, ", ")
         };
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "No columns found to join on in NATURAL JOIN.\nUse CROSS JOIN if you intended for this to be a \
              cross-product.\n   Left candidates: {}\n   Right candidates: {}",
             candidates(left),
@@ -251,7 +251,7 @@ pub fn bind_join(
 pub struct JoinSpec<'a> {
     pub join_type: JoinType,
     pub ref_type: JoinRefType,
-    pub using_columns: &'a [String],
+    pub using_columns: &'a [ByteString],
     /// The `ON` condition; USING columns are added to it.
     pub condition: &'a mut Option<Box<ParsedExpression>>,
     pub location: Option<u64>,
@@ -404,11 +404,11 @@ pub fn bind_bound_join(
         scope.binder.bind_context.remove_context(&right_aliases);
         if join_type == JoinType::Mark {
             mark_index = scope.binder.generate_table_index();
-            let alias = format!("__internal_mark_join_ref{mark_index}");
+            let alias = rustdb_common::byte_format!("__internal_mark_join_ref{mark_index}");
             scope.binder.bind_context.add_generic_binding(
                 mark_index,
                 &alias,
-                vec!["__mark_index_column".to_owned()],
+                vec!["__mark_index_column".into()],
                 vec![rustdb_types::LogicalType::BOOLEAN],
             )?;
         }

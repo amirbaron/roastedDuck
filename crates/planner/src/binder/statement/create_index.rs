@@ -26,7 +26,8 @@ pub fn bind_create_index(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Re
         return Err(Error::internal("expected CREATE INDEX"));
     };
     let mut table_ref = TableRef {
-        alias: String::new(),
+        external_dependency: rustdb_ast::ExternalDependency::default(),
+        alias: rustdb_common::ByteString::new(),
         sample: None,
         query_location: None,
         kind: TableRefKind::BaseTable(Box::new(BaseTableRef {
@@ -96,7 +97,7 @@ pub fn bind_create_index(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Re
         to_physical_references(expression, get.table_index, &column_ids, table)?;
     }
     let schema = table.storage.as_ref().map_or_else(
-        || rustdb_catalog::DEFAULT_SCHEMA.to_owned(),
+        || rustdb_common::ByteString::from(rustdb_catalog::DEFAULT_SCHEMA),
         |storage| storage.info().schema_name(),
     );
     let names = table.columns.iter().map(|column| column.name.clone()).collect();
@@ -194,7 +195,8 @@ pub fn bind_index_expressions(
         .iter()
         .map(|column| column.logical_type.clone())
         .collect();
-    let names: Vec<String> = table.columns.iter().map(|column| column.name.clone()).collect();
+    let names: Vec<rustdb_common::ByteString> =
+        table.columns.iter().map(|column| column.name.clone()).collect();
     let shared_column_ids = crate::operator::SharedColumnIds::default();
     scope.bind_context.add_binding(Binding::new(
         BindingKind::Table {

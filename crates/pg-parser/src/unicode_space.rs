@@ -29,12 +29,10 @@ const fn is_dollar_tag_char(c: u8) -> bool {
 /// Quoted strings and identifiers, dollar-quoted strings and `--` comments are left
 /// alone. This reproduces DuckDB's scan exactly, including its bounds (it stops
 /// looking two bytes before the end of the input).
-pub fn strip_unicode_spaces(query: &str) -> Option<String> {
-    if query.is_ascii() {
-        // All the spaces in question are multi-byte UTF-8 sequences.
-        return None;
+fn space_ranges(q: &[u8]) -> Vec<(usize, usize)> {
+    if q.is_ascii() {
+        return Vec::new();
     }
-    let q = query.as_bytes();
     let n = q.len();
     let mut spaces: Vec<(usize, usize)> = Vec::new();
     let mut pos = 0;
@@ -101,10 +99,34 @@ pub fn strip_unicode_spaces(query: &str) -> Option<String> {
         }
         break;
     }
+    spaces
+}
+
+/// Replaces known Unicode-space byte sequences outside quotes/comments.
+/// Other bytes, including invalid UTF-8, are preserved exactly.
+pub fn strip_unicode_spaces_bytes(query: &[u8]) -> Option<rustdb_common::ByteString> {
+    let spaces = space_ranges(query);
     if spaces.is_empty() {
         return None;
     }
-    let mut out = String::with_capacity(n);
+    let mut out = rustdb_common::ByteString::new();
+    let mut prev = 0;
+    for (start, len) in spaces {
+        out.push_bytes(&query[prev..start]);
+        out.push(b' ');
+        prev = start + len;
+    }
+    out.push_bytes(&query[prev..]);
+    Some(out)
+}
+
+/// The UTF-8 input API; slices remain on original character boundaries.
+pub fn strip_unicode_spaces(query: &str) -> Option<String> {
+    let spaces = space_ranges(query.as_bytes());
+    if spaces.is_empty() {
+        return None;
+    }
+    let mut out = String::with_capacity(query.len());
     let mut prev = 0;
     for (start, len) in spaces {
         out.push_str(&query[prev..start]);

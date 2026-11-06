@@ -21,8 +21,8 @@ pub fn bind_logical_type(context: &ClientContext, ty: &LogicalType) -> Result<Lo
 pub fn bind_logical_type_in_schema(
     context: &ClientContext,
     ty: &LogicalType,
-    catalog: &str,
-    schema: &str,
+    catalog: impl AsRef<[u8]>,
+    schema: impl AsRef<[u8]>,
 ) -> Result<LogicalType> {
     let context = context.with_type_search_path(catalog, schema);
     TypeBinder { context: &context }.bind(ty)
@@ -88,8 +88,8 @@ impl TypeBinder<'_> {
 
     fn bind_children(
         &self,
-        children: Option<&[(String, LogicalType)]>,
-    ) -> Result<Vec<(String, LogicalType)>> {
+        children: Option<&[(rustdb_common::ByteString, LogicalType)]>,
+    ) -> Result<Vec<(rustdb_common::ByteString, LogicalType)>> {
         children
             .unwrap_or_default()
             .iter()
@@ -118,10 +118,11 @@ impl TypeBinder<'_> {
         if !info.parameters.is_empty()
             && rustdb_types::builtin_type_has_bind_function(&info.name) == Some(false)
         {
-            return Err(
-                Error::binder(format!("Type '{}' does not take any type parameters", info.name))
-                    .with_position(info.query_location),
-            );
+            return Err(Error::binder(rustdb_common::byte_format!(
+                "Type '{}' does not take any type parameters",
+                info.name
+            ))
+            .with_position(info.query_location));
         }
         if info.name.eq_ignore_ascii_case("enum") {
             return bind_enum_parameters(info);
@@ -159,7 +160,7 @@ impl TypeBinder<'_> {
                     rustdb_types::TypeParameterValue::Constant(rustdb_types::Value::type_value(child));
             }
         }
-        let bound = info.default_bind()?;
+        let bound = info.bind_with_parameter_aliases()?;
         if bound.id() == LogicalTypeId::Unbound {
             return Err(Error::internal("builtin type entry has no default binder"));
         }
@@ -170,13 +171,13 @@ impl TypeBinder<'_> {
     /// path, and report a missing unqualified type from `system.main`.
     fn lookup_type(&self, info: &UnboundTypeInfo) -> Result<crate::context::EntryLookup> {
         let (catalog, schema) = self.context.bind_schema_or_catalog(&info.catalog, &info.schema)?;
-        let lookup = |catalog: &str, schema: &str, if_exists| {
+        let lookup = |catalog: &[u8], schema: &[u8], if_exists| {
             self.context
                 .get_entry(catalog, schema, CatalogType::Type, &info.name, if_exists)
         };
         let valid = |entry: &crate::context::EntryLookup| matches!(&entry.entry.kind, EntryKind::Type(ty) if ty.user_type.id() != LogicalTypeId::Invalid);
         if catalog.is_empty() && !self.context.has_default_database {
-            return lookup("system", &schema, false)?
+            return lookup(b"system", &schema, false)?
                 .ok_or_else(|| Error::internal("type lookup returned nothing"));
         }
         if let Some(entry) = lookup(&catalog, &schema, true)?.filter(valid) {
@@ -186,13 +187,13 @@ impl TypeBinder<'_> {
             // A qualified name missing from its requested scope reports that scope.
             lookup(&catalog, &schema, false)?;
         }
-        if let Some(entry) = lookup(&catalog, "", true)?.filter(valid) {
+        if let Some(entry) = lookup(&catalog, b"", true)?.filter(valid) {
             return Ok(entry);
         }
-        if let Some(entry) = lookup("", "", true)?.filter(valid) {
+        if let Some(entry) = lookup(b"", b"", true)?.filter(valid) {
             return Ok(entry);
         }
-        lookup("system", rustdb_catalog::DEFAULT_SCHEMA, false)?
+        lookup(b"system", rustdb_catalog::DEFAULT_SCHEMA.as_bytes(), false)?
             .ok_or_else(|| Error::internal("type lookup returned nothing"))
     }
 }
@@ -225,7 +226,7 @@ fn bind_enum_parameters(info: &UnboundTypeInfo) -> Result<LogicalType> {
     let mut values = Vec::with_capacity(info.parameters.len());
     for (index, parameter) in info.parameters.iter().enumerate() {
         if !parameter.name.is_empty() {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "ENUM type arguments cannot have names (argument {} has name \"{}\")",
                 index + 1,
                 parameter.name
@@ -238,7 +239,7 @@ fn bind_enum_parameters(info: &UnboundTypeInfo) -> Result<LogicalType> {
             return Err(Error::binder("ENUM type requires a set of VARCHAR arguments"));
         }
         let Some(text) = value.as_str() else {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "ENUM type arguments cannot be NULL (argument {} is NULL)",
                 index + 1
             )));
@@ -254,17 +255,18 @@ fn user_type(info: &UnboundTypeInfo, entry: &rustdb_catalog::CatalogEntry) -> Re
         return Err(Error::internal("type lookup found another kind of entry"));
     };
     if !info.parameters.is_empty() {
-        return Err(
-            Error::binder(format!("Type '{}' does not take any type parameters", info.name))
-                .with_position(info.query_location),
-        );
+        return Err(Error::binder(rustdb_common::byte_format!(
+            "Type '{}' does not take any type parameters",
+            info.name
+        ))
+        .with_position(info.query_location));
     }
     Ok(ty.user_type.clone())
 }
 
 /// The collation of `VARCHAR COLLATE name`: a named, non-NULL VARCHAR `collation`
 /// modifier among at most two (`BindVarcharType`).
-fn varchar_collation(info: &UnboundTypeInfo) -> Option<String> {
+fn varchar_collation(info: &UnboundTypeInfo) -> Option<rustdb_common::ByteString> {
     if info.parameters.is_empty() || info.parameters.len() > 2 {
         return None;
     }
@@ -276,7 +278,7 @@ fn varchar_collation(info: &UnboundTypeInfo) -> Option<String> {
                     && value.logical_type().id() == LogicalTypeId::Varchar
                     && !value.is_null() =>
             {
-                value.to_varchar().ok()
+                value.to_varchar_bytes().ok()
             }
             _ => None,
         })

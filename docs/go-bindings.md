@@ -1,5 +1,7 @@
 # Go client parity
 
+Current verification (November 4, 2026): source2253 signed Mac2268/Linux2255 engines pass the pinned full Go root suite with Arrow:652 named cases per engine on macOS arm64, Linux arm64 and Linux x86_64. Independent typed checkpoint/nonempty-WAL consumers verify four journeys per platform. Linux review2443 verifies actual image selection, all case starts/completions, two automatic examples and immutable persistence snapshots. Use `duckdb_use_lib` with the explicit signed Rust C API image; the default upstream prebuilt C++ engine remains excluded. Final release composition and coupled performance acceptance are still pending. Earlier discoveries below retain their original historical scope. See [current verification](current-source-verification.md) and [release exceptions](release-known-exceptions.md).
+
 Pin duckdb-go v2.10506.0 (commit addeaeb4ad0a9040c4f8dd70757e17e3852d5881),
 the matching DuckDB1.5.6 client. Source archive SHA256:
 dffa8d880adf55cf7c8cff5ed901e2be6dff50ff048d93532ed5695851dcea54.

@@ -15,20 +15,20 @@ use crate::equality::expressions_equal;
 
 /// `WindowExpression::WindowToExpressionType`: window functions by name; anything else
 /// is an aggregate.
-pub fn window_to_expression_type(name: &str) -> ExpressionType {
-    match name {
-        "rank" => ExpressionType::WindowRank,
-        "rank_dense" | "dense_rank" => ExpressionType::WindowRankDense,
-        "percent_rank" => ExpressionType::WindowPercentRank,
-        "row_number" => ExpressionType::WindowRowNumber,
-        "first_value" | "first" => ExpressionType::WindowFirstValue,
-        "last_value" | "last" => ExpressionType::WindowLastValue,
-        "nth_value" => ExpressionType::WindowNthValue,
-        "cume_dist" => ExpressionType::WindowCumeDist,
-        "lead" => ExpressionType::WindowLead,
-        "lag" => ExpressionType::WindowLag,
-        "ntile" => ExpressionType::WindowNtile,
-        "fill" => ExpressionType::WindowFill,
+pub fn window_to_expression_type(name: impl AsRef<[u8]>) -> ExpressionType {
+    match name.as_ref() {
+        b"rank" => ExpressionType::WindowRank,
+        b"rank_dense" | b"dense_rank" => ExpressionType::WindowRankDense,
+        b"percent_rank" => ExpressionType::WindowPercentRank,
+        b"row_number" => ExpressionType::WindowRowNumber,
+        b"first_value" | b"first" => ExpressionType::WindowFirstValue,
+        b"last_value" | b"last" => ExpressionType::WindowLastValue,
+        b"nth_value" => ExpressionType::WindowNthValue,
+        b"cume_dist" => ExpressionType::WindowCumeDist,
+        b"lead" => ExpressionType::WindowLead,
+        b"lag" => ExpressionType::WindowLag,
+        b"ntile" => ExpressionType::WindowNtile,
+        b"fill" => ExpressionType::WindowFill,
         _ => ExpressionType::WindowAggregate,
     }
 }
@@ -50,7 +50,7 @@ pub fn is_orderable_window_function(expression_type: ExpressionType) -> Result<b
         | E::WindowFill
         | E::WindowAggregate => Ok(true),
         E::WindowRankDense => Ok(false),
-        other => Err(Error::internal(format!(
+        other => Err(Error::internal(rustdb_common::byte_format!(
             "Unknown orderable window type {}",
             expression_type_to_string(other)
         ))),
@@ -71,7 +71,7 @@ pub fn is_excludable_window_function(expression_type: ExpressionType) -> Result<
         | E::WindowLead
         | E::WindowLag
         | E::WindowFill => Ok(false),
-        other => Err(Error::internal(format!(
+        other => Err(Error::internal(rustdb_common::byte_format!(
             "Unknown excludable window type {}",
             expression_type_to_string(other)
         ))),
@@ -94,9 +94,13 @@ const fn frame_boundary(
     }
 }
 
-fn new_window(catalog: String, schema: String, name: &str) -> WindowExpression {
+fn new_window(
+    catalog: rustdb_common::ByteString,
+    schema: rustdb_common::ByteString,
+    name: &[u8],
+) -> WindowExpression {
     WindowExpression {
-        function_name: name.to_ascii_lowercase(),
+        function_name: name.to_ascii_lowercase().into(),
         schema,
         catalog,
         children: Vec::new(),
@@ -122,13 +126,13 @@ impl<'a> Transformer<'a> {
         &mut self,
         window_spec: &'a WindowDef,
         expr: &mut WindowExpression,
-        window_name: Option<&str>,
+        window_name: Option<&[u8]>,
     ) -> Result<()> {
         if !window_spec.partition_clause.is_empty() {
             if let Some(name) = window_name
                 && !expr.partitions.is_empty()
             {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "Cannot override PARTITION BY clause of window \"{name}\""
                 )));
             }
@@ -138,7 +142,7 @@ impl<'a> Transformer<'a> {
             if let Some(name) = window_name
                 && !expr.orders.is_empty()
             {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "Cannot override ORDER BY clause of window \"{name}\""
                 )));
             }
@@ -236,7 +240,7 @@ impl<'a> Transformer<'a> {
             && !expr.arg_orders.is_empty()
             && !is_excludable_window_function(window_type_of(expr))?
         {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(rustdb_common::byte_format!(
                 "EXCLUDE is not supported for the window function \"{}\"",
                 expr.function_name
             )));
@@ -247,11 +251,15 @@ impl<'a> Transformer<'a> {
     /// `TransformFuncCall`.
     #[inline(never)]
     pub(crate) fn transform_func_call(&mut self, root: &'a FuncCall) -> Result<ParsedExpression> {
-        let names: Vec<&str> = root.funcname.iter().map(node_string).collect::<Result<_>>()?;
+        let names: Vec<&[u8]> = root.funcname.iter().map(node_string).collect::<Result<_>>()?;
         let (catalog, schema, function_name) = match names.as_slice() {
-            [catalog, schema, name] => ((*catalog).to_owned(), (*schema).to_owned(), *name),
-            [schema, name] => (String::new(), (*schema).to_owned(), *name),
-            [name] => (String::new(), String::new(), *name),
+            [catalog, schema, name] => ((*catalog).into(), (*schema).into(), *name),
+            [schema, name] => (rustdb_common::ByteString::new(), (*schema).into(), *name),
+            [name] => (
+                rustdb_common::ByteString::new(),
+                rustdb_common::ByteString::new(),
+                *name,
+            ),
             _ => {
                 return Err(Error::parser(
                     "TransformFuncCall - Expected 1, 2 or 3 qualifications",
@@ -288,36 +296,36 @@ impl<'a> Transformer<'a> {
                     "Cannot use multiple ORDER BY clauses with WITHIN GROUP",
                 ));
             }
-            match lowercase_name.as_str() {
-                "percentile_cont" => {
+            match lowercase_name.as_slice() {
+                b"percentile_cont" => {
                     if children.len() != 1 {
                         return Err(Error::parser("Wrong number of arguments for PERCENTILE_CONT"));
                     }
-                    "quantile_cont".clone_into(&mut lowercase_name);
+                    lowercase_name = b"quantile_cont".to_vec();
                 }
-                "percentile_disc" => {
+                b"percentile_disc" => {
                     if children.len() != 1 {
                         return Err(Error::parser("Wrong number of arguments for PERCENTILE_DISC"));
                     }
-                    "quantile_disc".clone_into(&mut lowercase_name);
+                    lowercase_name = b"quantile_disc".to_vec();
                 }
-                "mode" => {
+                b"mode" => {
                     if !children.is_empty() {
                         return Err(Error::parser("Wrong number of arguments for MODE"));
                     }
                 }
                 _ => {
-                    return Err(Error::parser(format!(
+                    return Err(Error::parser(rustdb_common::byte_format!(
                         "Unknown ordered aggregate \"{function_name}\"."
                     )));
                 }
             }
         }
-        if lowercase_name == "count" && children.is_empty() {
-            "count_star".clone_into(&mut lowercase_name);
+        if lowercase_name == b"count" && children.is_empty() {
+            lowercase_name = b"count_star".to_vec();
         }
-        match lowercase_name.as_str() {
-            "if" => {
+        match lowercase_name.as_slice() {
+            b"if" => {
                 let [when, then, otherwise]: [ParsedExpression; 3] = children
                     .try_into()
                     .map_err(|_| Error::parser("Wrong number of arguments to IF."))?;
@@ -327,13 +335,13 @@ impl<'a> Transformer<'a> {
                 };
                 return Ok(build::case_expression(vec![check], otherwise));
             }
-            "unpack" => {
+            b"unpack" => {
                 if children.len() != 1 {
                     return Err(Error::parser("Wrong number of arguments to the UNPACK operator"));
                 }
                 return Ok(build::operator(ExpressionType::OperatorUnpack, children));
             }
-            "try" => {
+            b"try" => {
                 if children.len() != 1 {
                     return Err(Error::parser(
                         "Wrong number of arguments provided to TRY expression",
@@ -341,25 +349,25 @@ impl<'a> Transformer<'a> {
                 }
                 return Ok(build::operator(ExpressionType::OperatorTry, children));
             }
-            "construct_array" => {
+            b"construct_array" => {
                 return Ok(build::operator(ExpressionType::ArrayConstructor, children));
             }
-            "__internal_position_operator" => {
+            b"__internal_position_operator" => {
                 if children.len() != 2 {
                     return Err(Error::parser(
                         "Wrong number of arguments to __internal_position_operator.",
                     ));
                 }
                 children.swap(0, 1);
-                "position".clone_into(&mut lowercase_name);
+                lowercase_name = b"position".to_vec();
             }
-            "ifnull" => {
+            b"ifnull" => {
                 if children.len() != 2 {
                     return Err(Error::parser("Wrong number of arguments to IFNULL."));
                 }
                 return Ok(build::operator(ExpressionType::OperatorCoalesce, children));
             }
-            "list" if order_bys.orders.len() == 1 => {
+            b"list" if order_bys.orders.len() == 1 => {
                 if children.len() != 1 {
                     return Err(Error::parser("Wrong number of arguments to LIST."));
                 }
@@ -378,13 +386,13 @@ impl<'a> Transformer<'a> {
                         false,
                         root.export_state,
                     );
-                    "list_sort".clone_into(&mut lowercase_name);
+                    lowercase_name = b"list_sort".to_vec();
                     order_bys.orders.clear();
                     distinct = false;
                     children = vec![unordered, sense, nulls];
                 }
             }
-            "date" => {
+            b"date" => {
                 let [child]: [ParsedExpression; 1] = children
                     .try_into()
                     .map_err(|_| Error::parser("Wrong number of arguments provided to DATE function"))?;
@@ -412,9 +420,9 @@ impl<'a> Transformer<'a> {
         &mut self,
         root: &'a FuncCall,
         over: &'a WindowDef,
-        catalog: String,
-        schema: String,
-        lowercase_name: &str,
+        catalog: rustdb_common::ByteString,
+        schema: rustdb_common::ByteString,
+        lowercase_name: &[u8],
         mut children: Vec<ParsedExpression>,
     ) -> Result<ParsedExpression> {
         if self.in_window_definition() {
@@ -432,7 +440,7 @@ impl<'a> Transformer<'a> {
             ));
         }
         if !root.agg_order.is_empty() && !is_orderable_window_function(win_fun_type)? {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(rustdb_common::byte_format!(
                 "ORDER BY is not supported for the window function \"{lowercase_name}\""
             )));
         }
@@ -471,7 +479,7 @@ impl<'a> Transformer<'a> {
                     expr.offset_expr = rest.next().map(Box::new);
                     expr.default_expr = rest.next().map(Box::new);
                     if count > 3 {
-                        return Err(Error::parser(format!(
+                        return Err(Error::parser(rustdb_common::byte_format!(
                             "Incorrect number of parameters for function {lowercase_name}"
                         )));
                     }
@@ -481,14 +489,14 @@ impl<'a> Transformer<'a> {
                         expr.children.push(second);
                     }
                     if count > 2 {
-                        return Err(Error::parser(format!(
+                        return Err(Error::parser(rustdb_common::byte_format!(
                             "Incorrect number of parameters for function {lowercase_name}"
                         )));
                     }
                 }
                 _ => {
                     if count > 1 {
-                        return Err(Error::parser(format!(
+                        return Err(Error::parser(rustdb_common::byte_format!(
                             "Incorrect number of parameters for function {lowercase_name}"
                         )));
                     }
@@ -497,25 +505,21 @@ impl<'a> Transformer<'a> {
         }
         let mut window_spec = over;
         if let Some(name) = &window_spec.name {
-            window_spec = *self
-                .frame()
-                .window_clauses
-                .get(name)
-                .ok_or_else(|| Error::parser(format!("window \"{name}\" does not exist")))?;
+            window_spec = *self.frame().window_clauses.get(name).ok_or_else(|| {
+                Error::parser(rustdb_common::byte_format!("window \"{name}\" does not exist"))
+            })?;
         }
         let mut window_ref = window_spec;
         let window_name = window_ref.refname.as_deref();
         if let Some(refname) = &window_spec.refname {
-            window_ref = *self
-                .frame()
-                .window_clauses
-                .get(refname)
-                .ok_or_else(|| Error::parser(format!("window \"{refname}\" does not exist")))?;
+            window_ref = *self.frame().window_clauses.get(refname).ok_or_else(|| {
+                Error::parser(rustdb_common::byte_format!("window \"{refname}\" does not exist"))
+            })?;
             if window_ref.start_offset.is_some()
                 || window_ref.end_offset.is_some()
                 || window_ref.frame_options != fo::DEFAULTS
             {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "cannot copy window \"{refname}\" because it has a frame clause"
                 )));
             }

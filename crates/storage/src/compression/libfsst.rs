@@ -8,6 +8,7 @@
 //! (including its 8/4-bit split counters and its sampling hash), so the same input gives
 //! the same symbol table and the same compressed bytes as DuckDB.
 
+use rustdb_common::libcxx::UnorderedOrder;
 use std::collections::HashMap;
 
 /// `FSST_VERSION` (`FSST_VERSION_20190218`).
@@ -556,9 +557,72 @@ fn compress_count(st: &SymbolTable, counters: &mut Counters, lines: &[&[u8]], sa
     gain
 }
 
+// Frozen QSymbol hashing deliberately ignores length. Different lengths of a
+// zero-padded symbol can therefore have identical hashes and queue priorities.
+fn candidate_hash(mut value: u64) -> u64 {
+    const M: u64 = 0xc6a4_a793_5bd1_e995;
+    let mut hash = 0x8445_d61a_4e77_4912 ^ 8u64.wrapping_mul(M);
+    value = value.wrapping_mul(M);
+    value ^= value >> 47;
+    value = value.wrapping_mul(M);
+    hash ^= value;
+    hash = hash.wrapping_mul(M);
+    hash ^= hash >> 47;
+    hash = hash.wrapping_mul(M);
+    hash ^ (hash >> 47)
+}
+
+type Candidate = (Symbol, u32);
+
+fn candidate_less(a: Candidate, b: Candidate) -> bool {
+    a.1 < b.1 || (a.1 == b.1 && a.0.val > b.0.val)
+}
+
+// Match libc++ priority_queue, including equal-priority items: push_heap stops
+// on ties; pop_heap uses Floyd's descent over the original (not shortened) heap
+// and then sifts the last item up. Sorting with a length tie-break changes FSST.
+fn candidate_sift_up(queue: &mut [Candidate], mut hole: usize) {
+    let value = queue[hole];
+    while hole > 0 {
+        let parent = (hole - 1) / 2;
+        if !candidate_less(queue[parent], value) {
+            break;
+        }
+        queue[hole] = queue[parent];
+        hole = parent;
+    }
+    queue[hole] = value;
+}
+
+fn candidate_pop(queue: &mut Vec<Candidate>) -> Option<Candidate> {
+    let top = *queue.first()?;
+    let len = queue.len();
+    if len > 1 {
+        let mut hole = 0;
+        loop {
+            let mut child = 2 * hole + 1;
+            if child + 1 < len && candidate_less(queue[child], queue[child + 1]) {
+                child += 1;
+            }
+            queue[hole] = queue[child];
+            hole = child;
+            if hole > (len - 2) / 2 {
+                break;
+            }
+        }
+        if hole != len - 1 {
+            queue[hole] = queue[len - 1];
+            candidate_sift_up(queue, hole);
+        }
+    }
+    queue.pop();
+    Some(top)
+}
+
 /// `makeTable`: rebuilds `st` from the 255 candidate symbols with the highest gain.
 fn make_table(st: &mut SymbolTable, counters: &mut Counters, sample_frac: usize) {
-    let mut candidates: HashMap<CandidateKey, (Symbol, u32)> = HashMap::new();
+    let mut candidates: HashMap<CandidateKey, Candidate> = HashMap::new();
+    let mut order = UnorderedOrder::default();
     let terminator = if st.n_symbols > 0 {
         FSST_CODE_BASE as usize
     } else {
@@ -570,9 +634,12 @@ fn make_table(st: &mut SymbolTable, counters: &mut Counters, sample_frac: usize)
             return;
         }
         let gain = count.wrapping_mul(u64::from(symbol.length())) as u32;
-        let entry = candidates
-            .entry((symbol.val, symbol.length()))
-            .or_insert((symbol, 0));
+        let key = (symbol.val, symbol.length());
+        let hash = candidate_hash(symbol.val);
+        order.remove(hash, &key, |a, b| a == b);
+        order.insert(hash, key, |a, b| a == b);
+        let entry = candidates.entry(key).or_insert((symbol, 0));
+        entry.0 = symbol;
         entry.1 = entry.1.wrapping_add(gain);
     };
     let limit = FSST_CODE_BASE as usize + usize::from(st.n_symbols);
@@ -602,19 +669,17 @@ fn make_table(st: &mut SymbolTable, counters: &mut Counters, sample_frac: usize)
         }
         pos1 += 1;
     }
-    // The priority queue order: highest gain first, then the smallest symbol bytes.
-    let mut queue: Vec<(Symbol, u32)> = candidates.into_values().collect();
-    queue.sort_unstable_by(|(a, gain_a), (b, gain_b)| {
-        gain_b
-            .cmp(gain_a)
-            .then(a.val.cmp(&b.val))
-            .then(a.length().cmp(&b.length()))
-    });
+    let mut queue = Vec::with_capacity(candidates.len());
+    for index in order.order() {
+        queue.push(candidates[&order.keys()[index]]);
+        let last = queue.len() - 1;
+        candidate_sift_up(&mut queue, last);
+    }
     st.clear();
-    for (symbol, _) in queue {
-        if st.n_symbols >= 255 {
+    while st.n_symbols < 255 {
+        let Some((symbol, _)) = candidate_pop(&mut queue) else {
             break;
-        }
+        };
         st.add(symbol);
     }
 }
@@ -936,6 +1001,71 @@ mod tests {
             assert_eq!(&decoder.decompress(packed), original);
         }
         compressed
+    }
+
+    #[test]
+    fn candidate_heap_ties_match_native_libcxx() {
+        let mut queue = Vec::new();
+        for i in 0..512u32 {
+            let mut symbol = Symbol::single((i % 11) as u8, 0);
+            symbol.set_code_len(0, 1 + i % 8);
+            queue.push((symbol, 1 + i % 7));
+            let last = queue.len() - 1;
+            candidate_sift_up(&mut queue, last);
+        }
+        for line in include_str!("../../tests/data/fsst_heap_1.5.6.tsv").lines() {
+            let expected: Vec<u64> = line.split('\t').map(|v| v.parse().unwrap()).collect();
+            let (symbol, gain) = candidate_pop(&mut queue).unwrap();
+            assert_eq!(
+                [symbol.val, u64::from(symbol.length()), u64::from(gain)],
+                expected.as_slice()
+            );
+        }
+        assert!(candidate_pop(&mut queue).is_none());
+    }
+
+    #[test]
+    fn nul_length_candidates_match_frozen_fsst_table_and_records() {
+        // DuckDB 1.5.6's independently compiled vendored encoder. This was a
+        // real counterexample: sorting equal-priority lengths produced 8 symbols
+        // instead of 7 and different compressed rows (cross-decodes still passed).
+        let strings: Vec<Vec<u8>> = (1..1000)
+            .map(|i| {
+                let mut value = b"a\0".repeat(i);
+                value.resize(value.len() + i % 9, 0);
+                value
+            })
+            .collect();
+        let refs: Vec<&[u8]> = strings.iter().map(Vec::as_slice).collect();
+        let encoder = FsstEncoder::create(&refs);
+        let header = encoder.export();
+        assert_eq!(
+            header,
+            [
+                0x01, 0x07, 0x01, 0x01, 0x0a, 0x14, 0x34, 0x01, 0x00, 0x03, 0x02, 0x00, 0x00, 0x00, 0x00,
+                0x00, 0x02, 0x00, 0x00, 0x61, 0x00, 0x61, 0x00, 0x61, 0x00, 0x61, 0x00, 0x61, 0x00, 0x61,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x61, 0x00
+            ]
+        );
+        let compressed = encoder.compress(&refs);
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        for byte in (compressed.len() as u64)
+            .to_le_bytes()
+            .into_iter()
+            .chain(compressed.iter().flat_map(|row| {
+                (row.len() as u64)
+                    .to_le_bytes()
+                    .into_iter()
+                    .chain(row.iter().copied())
+            }))
+        {
+            hash = (hash ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3);
+        }
+        assert_eq!(hash, 0xabf2_5866_aef9_48ffu64);
+        let (decoder, _) = FsstDecoder::import(&header).unwrap();
+        for (original, packed) in strings.iter().zip(compressed) {
+            assert_eq!(decoder.decompress(&packed), *original);
+        }
     }
 
     #[test]

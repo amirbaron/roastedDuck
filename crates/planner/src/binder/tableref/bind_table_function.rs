@@ -2,14 +2,12 @@
 //! `bind_named_parameters.cpp`): constant arguments are bound and evaluated, the
 //! overload is chosen, and the function's bind callback decides the output columns.
 
-use std::fmt::Write as _;
-
 use rustdb_ast::{
     ExpressionType, FunctionExpression, MacroFunction, MacroFunctionKind, OrdinalityType, ParsedExpression,
     ParsedExpressionKind, QueryNode, TableFunctionRef,
 };
 use rustdb_catalog::{CatalogType, EntryKind};
-use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_common::{ByteString, Error, ErrorKind, Result};
 use rustdb_function::cast::{CastParameters, ValueCast};
 use rustdb_function::{TableFunction, TableFunctionBindInput};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
@@ -24,10 +22,10 @@ use crate::operator::{LogicalGet, LogicalKind, LogicalOperator};
 /// `name := value` arguments in the order they were written; a repeated name replaces
 /// the earlier value (DuckDB's `named_parameter_map_t`).
 #[derive(Debug, Default)]
-struct NamedParameters(Vec<(String, Value)>);
+struct NamedParameters(Vec<(ByteString, Value)>);
 
 impl NamedParameters {
-    fn insert(&mut self, name: String, value: Value) {
+    fn insert(&mut self, name: ByteString, value: Value) {
         match self
             .0
             .iter_mut()
@@ -44,11 +42,11 @@ impl NamedParameters {
 }
 
 /// The name a table function's columns are bound under (DuckDB's `GetAlias`).
-fn function_alias(alias: &str, function: &FunctionExpression) -> String {
+fn function_alias(alias: &[u8], function: &FunctionExpression) -> ByteString {
     if alias.is_empty() {
         function.function_name.clone()
     } else {
-        alias.to_owned()
+        alias.into()
     }
 }
 
@@ -101,7 +99,8 @@ fn bind_in_out_arguments(scope: &mut BindScope<'_>, children: &[ParsedExpression
         kind: rustdb_ast::QueryNodeKind::Select(Box::new(rustdb_ast::SelectNode {
             select_list: children.to_vec(),
             from_table: Box::new(rustdb_ast::TableRef {
-                alias: String::new(),
+                external_dependency: rustdb_ast::ExternalDependency::default(),
+                alias: ByteString::new(),
                 sample: None,
                 query_location: None,
                 kind: rustdb_ast::TableRefKind::Empty,
@@ -169,7 +168,7 @@ fn bind_parameters(
     let mut named = NamedParameters::default();
     let mut subquery: Option<BoundStatement> = None;
     for child in children.iter_mut() {
-        let mut parameter_name = String::new();
+        let mut parameter_name = ByteString::new();
         // `name = value` and `name := value` both name a parameter.
         if child.expression_type == ExpressionType::CompareEqual {
             if let ParsedExpressionKind::Comparison(comparison) = &mut child.kind
@@ -192,7 +191,7 @@ fn bind_parameters(
         {
             let only = functions.functions.first();
             if functions.functions.len() != 1 || only.is_none_or(|function| function.arguments.is_empty()) {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "Only table-in-out functions can have subquery parameters - {} only accepts constant parameters",
                     only.map_or(function_name, |function| &*function.name)
                 )));
@@ -273,27 +272,27 @@ struct BoundParameters {
 /// Checks and casts named parameters (DuckDB's `Binder::BindNamedParameters`).
 pub(crate) fn bind_named_parameters(
     declared: &[(String, LogicalType)],
-    values: &mut [(String, Value)],
+    values: &mut [(ByteString, Value)],
     location: Option<u64>,
     function_name: &str,
 ) -> Result<()> {
     for (name, value) in values {
         let Some((_, ty)) = declared
             .iter()
-            .find(|(declared, _)| declared.eq_ignore_ascii_case(name))
+            .find(|(declared, _)| declared.as_bytes().eq_ignore_ascii_case(name.as_bytes()))
         else {
             let mut ordered: Vec<&(String, LogicalType)> = declared.iter().collect();
             ordered.sort_by(|a, b| a.0.cmp(&b.0));
-            let named = ordered.iter().fold(String::new(), |mut named, (name, ty)| {
-                let _ = writeln!(named, "    {name} {ty}");
+            let named = ordered.iter().fold(ByteString::new(), |mut named, (name, ty)| {
+                let _ = rustdb_common::byte_write!(named, "    {name} {ty}\n");
                 named
             });
             let message = if named.is_empty() {
-                "Function does not accept any named parameters.".to_owned()
+                ByteString::from("Function does not accept any named parameters.")
             } else {
-                format!("Candidates:\n{named}")
+                rustdb_common::byte_format!("Candidates:\n{named}")
             };
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Invalid named parameter \"{name}\" for function {function_name}\n{message}"
             ))
             .with_position(location));
@@ -310,17 +309,17 @@ pub(crate) fn bind_named_parameters(
 #[derive(Default)]
 struct InputTable {
     types: Vec<LogicalType>,
-    names: Vec<String>,
+    names: Vec<ByteString>,
 }
 
 /// Calls the bind callback and builds the scan (DuckDB's `BindTableFunctionInternal`).
 fn bind_table_function_internal(
     scope: &mut BindScope<'_>,
     function: TableFunction,
-    function_name: &str,
+    function_name: &[u8],
     reference: &TableFunctionRef,
     parameters: Vec<Value>,
-    named_parameters: Vec<(String, Value)>,
+    named_parameters: Vec<(ByteString, Value)>,
     input_table: InputTable,
 ) -> Result<BoundStatement> {
     let InputTable {
@@ -329,7 +328,7 @@ fn bind_table_function_internal(
     } = input_table;
     let bind_index = scope.binder.generate_table_index();
     let Some(bind) = function.bind.clone() else {
-        return Err(Error::invalid_input(format!(
+        return Err(Error::invalid_input(rustdb_common::byte_format!(
             "Cannot call function \"{}\" directly - it has no bind function",
             function.name
         )));
@@ -347,17 +346,17 @@ fn bind_table_function_internal(
     let mut names = output.names;
     let with_ordinality = reference.with_ordinality == OrdinalityType::WithOrdinality;
     let correlated = !scope.binder.correlated_columns.is_empty();
-    let mut ordinality_name = "ordinality".to_owned();
+    let mut ordinality_name = ByteString::from("ordinality");
     let mut ordinality_index = None;
     if with_ordinality {
         // A name not taken by the function's columns or the aliases.
-        let mut taken = rustdb_common::CaseInsensitiveSet::default();
+        let mut taken = rustdb_common::CaseInsensitiveSet::<ByteString>::default();
         for name in names.iter().chain(column_name_alias) {
             taken.insert(name.clone());
         }
         let mut suffix = 0;
         while taken.contains(&ordinality_name) {
-            ordinality_name = format!("ordinality{suffix}");
+            ordinality_name = rustdb_common::byte_format!("ordinality{suffix}");
             suffix += 1;
         }
         if correlated {
@@ -367,13 +366,13 @@ fn bind_table_function_internal(
         }
     }
     if return_types.len() != names.len() {
-        return Err(Error::internal(format!(
+        return Err(Error::internal(rustdb_common::byte_format!(
             "Failed to bind \"{}\": return_types/names must have same size",
             function.name
         )));
     }
     if return_types.is_empty() {
-        return Err(Error::internal(format!(
+        return Err(Error::internal(rustdb_common::byte_format!(
             "Failed to bind \"{}\": Table function must return at least one column",
             function.name
         )));
@@ -383,7 +382,7 @@ fn bind_table_function_internal(
     }
     for (i, name) in names.iter_mut().enumerate() {
         if name.is_empty() {
-            *name = format!("C{i}");
+            *name = rustdb_common::byte_format!("C{i}");
         }
     }
     let shared_column_ids = crate::operator::SharedColumnIds::default();
@@ -465,7 +464,7 @@ fn bind_table_function_internal(
 pub fn bind_table_function(
     scope: &mut BindScope<'_>,
     function_ref: &mut TableFunctionRef,
-    alias: &str,
+    alias: &[u8],
     location: Option<u64>,
 ) -> Result<BoundStatement> {
     let ParsedExpressionKind::Function(function) = &mut function_ref.function.kind else {
@@ -496,7 +495,7 @@ pub fn bind_table_function(
         return bind_table_macro_ref(scope, function_ref, entry.entry.name(), &macros, alias, location);
     }
     let EntryKind::TableFunction(functions) = &entry.entry.kind else {
-        return Err(Error::not_implemented(format!(
+        return Err(Error::not_implemented(rustdb_common::byte_format!(
             "{} as a table function",
             entry.entry.catalog_type().display_name()
         )));
@@ -571,7 +570,7 @@ pub fn bind_table_function(
             .iter()
             .map(|value| value.logical_type().clone())
             .collect();
-        let names = vec![String::new(); types.len()];
+        let names = vec![ByteString::new(); types.len()];
         InputTable { types, names }
     } else {
         InputTable::default()
@@ -593,7 +592,10 @@ pub fn bind_table_function(
                 .cast_with(&context.casts, &target, &mut cast_parameters)
                 .map_err(|error| {
                     if error.kind() == ErrorKind::Conversion {
-                        Error::invalid_input(format!("Failed to cast value: {}", error.raw_message()))
+                        Error::invalid_input(rustdb_common::byte_format!(
+                            "Failed to cast value: {}",
+                            error.raw_message()
+                        ))
                     } else {
                         error
                     }
@@ -675,7 +677,7 @@ fn bind_in_out_function(
     functions: &rustdb_function::TableFunctionSet,
     children: &[ParsedExpression],
     function_ref: &TableFunctionRef,
-    alias: &str,
+    alias: &[u8],
     location: Option<u64>,
 ) -> Result<BoundStatement> {
     let mut subquery =
@@ -752,7 +754,7 @@ fn bind_in_out_function(
 fn bind_table_macro(
     binder: &mut crate::binder::Binder,
     function: &mut FunctionExpression,
-    name: &str,
+    name: &[u8],
     macros: &[MacroFunction],
     location: Option<u64>,
 ) -> Result<QueryNode> {
@@ -775,9 +777,9 @@ fn bind_table_macro(
 fn bind_table_macro_ref(
     scope: &mut BindScope<'_>,
     function_ref: &mut TableFunctionRef,
-    name: &str,
+    name: &[u8],
     macros: &[MacroFunction],
-    alias: &str,
+    alias: &[u8],
     location: Option<u64>,
 ) -> Result<BoundStatement> {
     let ParsedExpressionKind::Function(function) = &mut function_ref.function.kind else {
@@ -789,9 +791,9 @@ fn bind_table_macro_ref(
     let mut binder = scope.binder.child()?;
     binder.can_contain_nulls = true;
     binder.alias = if alias.is_empty() {
-        "unnamed_query".to_owned()
+        ByteString::from("unnamed_query")
     } else {
-        alias.to_owned()
+        ByteString::from(alias)
     };
     let bound = {
         let mut child_scope = BindScope {
@@ -802,9 +804,9 @@ fn bind_table_macro_ref(
     };
     let bind_index = bound.plan.root_index()?;
     let subquery_alias = if alias.is_empty() {
-        format!("unnamed_query{bind_index}")
+        rustdb_common::byte_format!("unnamed_query{bind_index}")
     } else {
-        alias.to_owned()
+        ByteString::from(alias)
     };
     scope.binder.bind_context.add_subquery(
         bind_index,

@@ -187,15 +187,20 @@ impl PipelineExecutor {
         let local_source_state = source.local_source_state(&ctx, states.source.as_ref())?;
         let mut intermediate_states = Vec::with_capacity(pipeline.operators.len());
         let mut chunks = Vec::with_capacity(pipeline.operators.len() + 1);
-        chunks.push(DataChunk::with_types(
-            pipeline.source.types(),
-            STANDARD_VECTOR_SIZE,
-        ));
+        let output_chunk = |op: &PhysicalRef| {
+            let capacity = if op.preallocate_output() {
+                STANDARD_VECTOR_SIZE
+            } else {
+                0
+            };
+            DataChunk::with_types(op.types(), capacity)
+        };
+        chunks.push(output_chunk(&pipeline.source));
         let mut finished_processing_idx = None;
         for (index, op) in pipeline.operators.iter().enumerate() {
             let operator = role(op, |op| op.as_operator())?;
             intermediate_states.push(operator.local_operator_state(&ctx, states.operators[index].as_ref())?);
-            chunks.push(DataChunk::with_types(op.types(), STANDARD_VECTOR_SIZE));
+            chunks.push(output_chunk(op));
             if states.no_output_possible[index] {
                 // A join already knows it produces nothing: skip the pipeline.
                 finished_processing_idx = Some(usize::MAX);

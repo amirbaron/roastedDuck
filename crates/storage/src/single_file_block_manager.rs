@@ -7,8 +7,6 @@
 //! concerned and are written into the free list as such.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{File, OpenOptions};
-use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -17,6 +15,9 @@ use rustdb_common::profiling::{MetricType, add_to_counter};
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_crypto::{CipherType, EncryptionKeyManager, EncryptionVersion};
 use rustdb_function::logging::FileSystemLogger;
+use rustdb_function::registered_files::OpenFlags;
+
+use crate::file_system::{DatabaseFileSystem, StorageFile};
 
 use crate::compression::CompressionConfig;
 use crate::encryption::{
@@ -30,25 +31,28 @@ use crate::storage_info::{
     VERSION_NUMBER, checksum, unsupported_version_error,
 };
 
-fn io_error(message: impl Into<std::borrow::Cow<'static, str>>) -> Error {
-    Error::new(ErrorKind::Io, message)
+fn io_error(message: impl Into<rustdb_common::ByteString>) -> Error {
+    Error::new_bytes(ErrorKind::Io, message.into())
 }
 
 /// Positional file I/O (DuckDB's `FileHandle::Read/Write` at a location).
 #[derive(Debug)]
 struct FileHandle {
-    file: File,
-    path: String,
+    file: StorageFile,
+    file_system: DatabaseFileSystem,
+    path: rustdb_common::ByteString,
     /// The `FileSystem` log of the connection that opened the file.
     logger: Option<FileSystemLogger>,
 }
 
 impl FileHandle {
     /// A handle of `file`, opened now at `path`.
-    fn new(file: File, path: &str) -> Self {
+    fn new(file: StorageFile, path: impl AsRef<[u8]>, file_system: DatabaseFileSystem) -> Self {
+        let path = path.as_ref();
         Self {
             file,
-            path: path.to_owned(),
+            file_system,
+            path: path.into(),
             logger: FileSystemLogger::open(path),
         }
     }
@@ -60,11 +64,29 @@ impl FileHandle {
         if let Some(logger) = &self.logger {
             logger.read(buffer.len() as u64, location);
         }
+        let file = match &self.file {
+            StorageFile::Local(file) => file,
+            StorageFile::Registered(cursor) => {
+                let mut done = 0;
+                while done < buffer.len() {
+                    let n = cursor
+                        .handle
+                        .read_at(location + done as u64, &mut buffer[done..])?;
+                    if n == 0 || n > buffer.len() - done {
+                        return Err(io_error(rustdb_common::byte_format!(
+                            "Could not read enough bytes from file \"{}\"",
+                            self.path
+                        )));
+                    }
+                    done += n;
+                }
+                return Ok(());
+            }
+        };
         #[cfg(unix)]
         {
             use std::os::unix::fs::FileExt;
-            self.file
-                .read_exact_at(buffer, location)
+            file.read_exact_at(buffer, location)
                 .map_err(|error| self.error("read from", location, &error))
         }
         #[cfg(windows)]
@@ -72,12 +94,11 @@ impl FileHandle {
             use std::os::windows::fs::FileExt;
             let mut done = 0;
             while done < buffer.len() {
-                let read = self
-                    .file
+                let read = file
                     .seek_read(&mut buffer[done..], location + done as u64)
                     .map_err(|error| self.error("read from", location, &error))?;
                 if read == 0 {
-                    return Err(io_error(format!(
+                    return Err(io_error(rustdb_common::byte_format!(
                         "Could not read enough bytes from file \"{}\"",
                         self.path
                     )));
@@ -102,6 +123,26 @@ impl FileHandle {
         if let Some(logger) = &self.logger {
             logger.write(total as u64, location);
         }
+        let file = match &self.file {
+            StorageFile::Local(file) => file,
+            StorageFile::Registered(cursor) => {
+                let mut position = location;
+                for mut bytes in [header, data] {
+                    while !bytes.is_empty() {
+                        let n = cursor.handle.write_at(position, bytes)?;
+                        if n == 0 || n > bytes.len() {
+                            return Err(io_error(rustdb_common::byte_format!(
+                                "Could not write enough bytes to file \"{}\"",
+                                self.path
+                            )));
+                        }
+                        bytes = &bytes[n..];
+                        position += n as u64;
+                    }
+                }
+                return Ok(());
+            }
+        };
         #[cfg(unix)]
         {
             use std::os::fd::AsRawFd;
@@ -125,7 +166,7 @@ impl FileHandle {
                 ];
                 let skip = usize::from(header_rest.is_empty());
                 let offset = libc::off_t::try_from(location + written as u64).map_err(|_| {
-                    io_error(format!(
+                    io_error(rustdb_common::byte_format!(
                         "Could not write to file \"{}\": offset too large",
                         self.path
                     ))
@@ -133,7 +174,7 @@ impl FileHandle {
                 // SAFETY: the iovecs point into `header` and `data`, which outlive the call.
                 let result = unsafe {
                     libc::pwritev(
-                        self.file.as_raw_fd(),
+                        file.as_raw_fd(),
                         parts[skip..].as_ptr(),
                         (parts.len() - skip) as libc::c_int,
                         offset,
@@ -161,8 +202,7 @@ impl FileHandle {
             let buffer = [header, data].concat();
             let mut done = 0;
             while done < buffer.len() {
-                done += self
-                    .file
+                done += file
                     .seek_write(&buffer[done..], location + done as u64)
                     .map_err(|error| self.error("write to", location, &error))?;
             }
@@ -171,29 +211,46 @@ impl FileHandle {
     }
 
     fn error(&self, action: &str, location: u64, error: &std::io::Error) -> Error {
-        io_error(format!(
+        io_error(rustdb_common::byte_format!(
             "Could not {action} file \"{}\" at location {location}: {error}",
             self.path
         ))
     }
 
     fn size(&self) -> Result<u64> {
-        self.file
-            .metadata()
-            .map(|metadata| metadata.len())
-            .map_err(|error| io_error(format!("Could not get size of file \"{}\": {error}", self.path)))
+        self.file.size().map_err(|error| {
+            if let Some(callback) = crate::file_system::callback_error(&error) {
+                return callback;
+            }
+            io_error(rustdb_common::byte_format!(
+                "Could not get size of file \"{}\": {error}",
+                self.path
+            ))
+        })
     }
 
     fn sync(&self) -> Result<()> {
-        self.file
-            .sync_data()
-            .map_err(|error| io_error(format!("Could not fsync file \"{}\": {error}", self.path)))
+        self.file.sync_data().map_err(|error| {
+            if let Some(callback) = crate::file_system::callback_error(&error) {
+                return callback;
+            }
+            io_error(rustdb_common::byte_format!(
+                "Could not fsync file \"{}\": {error}",
+                self.path
+            ))
+        })
     }
 
     fn truncate(&self, size: u64) -> Result<()> {
-        self.file
-            .set_len(size)
-            .map_err(|error| io_error(format!("Could not truncate file \"{}\": {error}", self.path)))
+        self.file.set_len(size).map_err(|error| {
+            if let Some(callback) = crate::file_system::callback_error(&error) {
+                return callback;
+            }
+            io_error(rustdb_common::byte_format!(
+                "Could not truncate file \"{}\": {error}",
+                self.path
+            ))
+        })
     }
 }
 
@@ -347,19 +404,28 @@ impl SingleFileBlockManager {
     /// Creates a new database file (`CreateNewDatabase`), encrypted with the key of
     /// `encryption` (derived with a new salt and added to `keys`) if given.
     pub fn create_new(
-        path: &str,
+        path: impl AsRef<[u8]>,
         options: BlockManagerOptions,
         encryption: Option<EncryptionOptions>,
         keys: &EncryptionKeyManager,
     ) -> Result<Self> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(path)
+        let path = path.as_ref();
+        let file_system = DatabaseFileSystem::for_path(path);
+        let file = file_system
+            .open(
+                path,
+                OpenFlags {
+                    read: true,
+                    write: true,
+                    create: true,
+                    truncate: true,
+                },
+            )
             .map_err(|error| {
-                io_error(format!(
+                if let Some(callback) = crate::file_system::callback_error(&error) {
+                    return callback;
+                }
+                io_error(rustdb_common::byte_format!(
                     "Cannot open file \"{path}\": {}",
                     rustdb_common::os_error_text(&error)
                 ))
@@ -416,7 +482,7 @@ impl SingleFileBlockManager {
             DEFAULT_BLOCK_HEADER_SIZE
         };
         let manager = Self {
-            handle: FileHandle::new(file, path),
+            handle: FileHandle::new(file, path, file_system),
             block_alloc_size: options.block_alloc_size,
             read_only: false,
             version_number: AtomicU64::new(version_number),
@@ -463,31 +529,47 @@ impl SingleFileBlockManager {
     /// An encrypted file needs the key of `encryption`, whose derived key is added to
     /// `keys`.
     pub fn load_existing(
-        path: &str,
+        path: impl AsRef<[u8]>,
         options: BlockManagerOptions,
         encryption: Option<EncryptionOptions>,
         keys: &EncryptionKeyManager,
     ) -> Result<Self> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(!options.read_only)
-            .open(path)
+        let path = path.as_ref();
+        let file_system = DatabaseFileSystem::for_path(path);
+        if options.read_only && file_system.is_registered() && !file_system.exists(path)? {
+            return Err(io_error(rustdb_common::byte_format!(
+                "Cannot open database \"{path}\" in read-only mode: database does not exist"
+            )));
+        }
+        let file = file_system
+            .open(
+                path,
+                OpenFlags {
+                    read: true,
+                    write: !options.read_only,
+                    create: false,
+                    truncate: false,
+                },
+            )
             .map_err(|error| {
+                if let Some(callback) = crate::file_system::callback_error(&error) {
+                    return callback;
+                }
                 if options.read_only && error.kind() == std::io::ErrorKind::NotFound {
-                    io_error(format!(
+                    io_error(rustdb_common::byte_format!(
                         "Cannot open database \"{path}\" in read-only mode: database does not exist"
                     ))
                 } else {
-                    io_error(format!(
+                    io_error(rustdb_common::byte_format!(
                         "Cannot open file \"{path}\": {}",
                         rustdb_common::os_error_text(&error)
                     ))
                 }
             })?;
-        let handle = FileHandle::new(file, path);
+        let handle = FileHandle::new(file, path, file_system);
         // `MainHeader::CheckMagicBytes`.
         let not_a_database = || {
-            io_error(format!(
+            io_error(rustdb_common::byte_format!(
                 "The file \"{path}\" exists, but it is not a valid DuckDB database file!"
             ))
         };
@@ -521,13 +603,13 @@ impl SingleFileBlockManager {
         let main_header = MainHeader::read(&main_bytes)?;
         manager.db_identifier = main_header.db_identifier;
         if !main_header.is_encrypted() && encryption.is_some() {
-            return Err(Error::catalog(format!(
+            return Err(Error::catalog(rustdb_common::byte_format!(
                 "A key is explicitly specified, but database \"{path}\" is not encrypted"
             )));
         }
         if main_header.is_encrypted() {
             let Some(encryption) = encryption else {
-                return Err(Error::catalog(format!(
+                return Err(Error::catalog(rustdb_common::byte_format!(
                     "Cannot open encrypted database \"{path}\" without a key"
                 )));
             };
@@ -558,7 +640,7 @@ impl SingleFileBlockManager {
         let path = &self.handle.path;
         if let Some(requested) = options.storage_version {
             if requested < header.serialization_compatibility {
-                return Err(Error::invalid_input(format!(
+                return Err(Error::invalid_input(rustdb_common::byte_format!(
                     "Error opening \"{path}\": cannot initialize database with storage version {requested} - which \
                      is lower than what the database itself uses ({}). The storage version of an existing database \
                      cannot be lowered.",
@@ -570,7 +652,7 @@ impl SingleFileBlockManager {
             self.storage_version = header.serialization_compatibility;
         }
         if header.serialization_compatibility > crate::storage_info::LATEST_SERIALIZATION_VERSION {
-            return Err(Error::invalid_input(format!(
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "Error opening \"{path}\": file was written with a storage version greater than the latest version \
                  supported by this DuckDB instance. Try opening the file with a newer version of DuckDB."
             )));
@@ -585,12 +667,17 @@ impl SingleFileBlockManager {
         Ok(())
     }
 
-    pub fn path(&self) -> &str {
+    pub fn path(&self) -> &[u8] {
         &self.handle.path
     }
 
     pub fn is_read_only(&self) -> bool {
         self.read_only
+    }
+
+    /// The backend retained by this database and its WAL after registry removal.
+    pub fn file_system(&self) -> &DatabaseFileSystem {
+        &self.handle.file_system
     }
 
     /// The file's version number (`MainHeader::version_number`).
@@ -693,7 +780,7 @@ impl SingleFileBlockManager {
         }
         drop(state);
         if self.registry.is_registered(block_id) {
-            return Err(Error::internal(format!(
+            return Err(Error::internal(rustdb_common::byte_format!(
                 "Free block {block_id} is already registered"
             )));
         }
@@ -773,12 +860,12 @@ impl SingleFileBlockManager {
             return Ok(());
         }
         if state.modified_blocks.contains(&block_id) {
-            return Err(Error::internal(format!(
+            return Err(Error::internal(rustdb_common::byte_format!(
                 "MarkBlockAsModified called with already modified block id {block_id}"
             )));
         }
         if state.free_list.contains(&block_id) {
-            return Err(Error::internal(format!(
+            return Err(Error::internal(rustdb_common::byte_format!(
                 "MarkBlockAsModified called with already freed block id {block_id}"
             )));
         }
@@ -986,8 +1073,8 @@ impl SingleFileBlockManager {
     }
 
     fn block_location(&self, block_id: BlockId) -> Result<u64> {
-        let id =
-            u64::try_from(block_id).map_err(|_| Error::internal(format!("invalid block id {block_id}")))?;
+        let id = u64::try_from(block_id)
+            .map_err(|_| Error::internal(rustdb_common::byte_format!("invalid block id {block_id}")))?;
         Ok(BLOCK_START + id * self.block_alloc_size as u64)
     }
 }
@@ -1000,7 +1087,7 @@ fn verify_checksum(block: &[u8], delta: usize, location: u64) -> Result<()> {
     let stored = u64::from_le_bytes(stored);
     let computed = checksum(&block[delta + DEFAULT_BLOCK_HEADER_SIZE..]);
     if stored != computed {
-        return Err(io_error(format!(
+        return Err(io_error(rustdb_common::byte_format!(
             "Corrupt database file: computed checksum {computed} does not match stored checksum {stored} in block \
              at location {location}"
         )));
@@ -1013,11 +1100,12 @@ fn verify_checksum(block: &[u8], delta: usize, location: u64) -> Result<()> {
 /// must be the file's, and a file not encrypted with GCM needs it given, so that an
 /// attacker cannot downgrade the cipher to one without integrity checks.
 fn check_encryption_key(
-    path: &str,
+    path: impl AsRef<[u8]>,
     header: &MainHeader,
     mut encryption: EncryptionOptions,
     keys: &EncryptionKeyManager,
 ) -> Result<FileEncryption> {
+    let path = path.as_ref();
     let key = rustdb_crypto::EncryptionKey::new(&mut encryption.user_key.derive(&header.db_identifier));
     if !decrypt_canary(header, &key)? {
         return Err(wrong_key());
@@ -1027,7 +1115,7 @@ fn check_encryption_key(
     let stored = CipherType::from_u8(header.encryption_cipher());
     let given = encryption.cipher;
     if given != CipherType::Invalid && given != stored {
-        return Err(Error::catalog(format!(
+        return Err(Error::catalog(rustdb_common::byte_format!(
             "Cannot open encrypted database \"{path}\" with a different cipher ({}) than the one used to create it \
              ({})",
             given.name(),
@@ -1035,7 +1123,7 @@ fn check_encryption_key(
         )));
     }
     if stored != CipherType::Gcm && given == CipherType::Invalid {
-        return Err(Error::catalog(format!(
+        return Err(Error::catalog(rustdb_common::byte_format!(
             "Cannot open encrypted database \"{path}\" without explicitly specifying the encryption cipher for \
              security reasons. Please make sure you understand the security implications and re-attach the \
              database specifying the desired cipher."
@@ -1125,6 +1213,6 @@ impl BlockManager for SingleFileBlockManager {
 }
 
 /// Whether `path` looks like a database file that exists.
-pub fn database_exists(path: &str) -> bool {
-    Path::new(path).exists()
+pub fn database_exists(path: impl AsRef<[u8]>) -> bool {
+    rustdb_common::native_file_path(path.as_ref()).is_ok_and(|path| path.exists())
 }

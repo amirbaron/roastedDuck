@@ -28,13 +28,13 @@ pub(super) fn propagate_scalar_function(
         return Ok(None);
     };
     match &*function.function.name {
-        "+" | "-" | "*" if child_stats.len() == 2 => Ok(propagate_arithmetic(expression, child_stats)),
-        "abs" | "@" if child_stats.len() == 1 => Ok(propagate_abs(expression, child_stats)),
+        b"+" | b"-" | b"*" if child_stats.len() == 2 => Ok(propagate_arithmetic(expression, child_stats)),
+        b"abs" | b"@" if child_stats.len() == 1 => Ok(propagate_abs(expression, child_stats)),
         name if child_stats.len() == 1 && date_part_kind(name).is_some() => Ok(date_part_kind(name)
             .and_then(|kind| propagate_date_part(propagator, expression, kind, 0, child_stats))),
         // DuckDB binds `date_part('epoch' | 'julian', x)` as `epoch(x)` / `julian(x)`,
         // which have statistics.
-        "date_part" if child_stats.len() == 2 => {
+        b"date_part" if child_stats.len() == 2 => {
             let specifier = function
                 .children
                 .first()
@@ -52,7 +52,7 @@ pub(super) fn propagate_scalar_function(
             })
         }
         // `ListExtractStats`: an element of the list, or NULL out of range.
-        "list_extract" | "list_element" | "array_extract"
+        b"list_extract" | b"list_element" | b"array_extract"
             if child_stats.len() == 2
                 && function
                     .children
@@ -64,13 +64,13 @@ pub(super) fn propagate_scalar_function(
                 element
             }))
         }
-        "struct_extract" | "array_extract" if child_stats.len() == 2 => {
+        b"struct_extract" | b"array_extract" if child_stats.len() == 2 => {
             Ok(propagate_struct_extract(expression, child_stats))
         }
-        "variant_extract" if child_stats.len() == 2 => {
+        b"variant_extract" if child_stats.len() == 2 => {
             Ok(propagate_variant_extract(expression, child_stats))
         }
-        "date_trunc" if child_stats.len() == 2 => {
+        b"date_trunc" if child_stats.len() == 2 => {
             Ok(propagate_date_trunc(propagator, expression, child_stats))
         }
         _ if function.function.ascii_kernel.is_some()
@@ -88,7 +88,7 @@ pub(super) fn propagate_scalar_function(
             Ok(None)
         }
         // `StructPackStats`: the fields have the statistics of the arguments.
-        "struct_pack" | "row" => {
+        b"struct_pack" | b"row" => {
             let mut stats = BaseStatistics::create_unknown(expression.return_type.clone());
             if let Some(children) = stats.struct_children_mut() {
                 for (child, argument) in children.iter_mut().zip(child_stats) {
@@ -99,7 +99,7 @@ pub(super) fn propagate_scalar_function(
         }
         // `ListValueStats`: the elements have the merged statistics of the arguments; the
         // list itself is never NULL.
-        "list_value" | "list_pack" => {
+        b"list_value" | b"list_pack" => {
             let mut stats = BaseStatistics::create_empty(expression.return_type.clone());
             if let Some(child) = stats.child_mut() {
                 for argument in child_stats {
@@ -109,7 +109,7 @@ pub(super) fn propagate_scalar_function(
             stats.set_has_no_null_fast();
             Ok(Some(stats))
         }
-        "stats" => {
+        b"stats" => {
             // DuckDB's `StatsPropagateStats`: record the argument's statistics.
             if let (Some(data), Some(stats)) = (
                 function
@@ -142,8 +142,9 @@ enum DatePartKind {
 
 /// The statistics behavior of the date part function `name` (DuckDB's
 /// `PropagateStatistics` of each `DatePart` operator).
-fn date_part_kind(name: &str) -> Option<DatePartKind> {
+fn date_part_kind(name: impl AsRef<[u8]>) -> Option<DatePartKind> {
     use DatePartKind::{Bounded, Monotonic};
+    let name = name.as_ref();
     let bounded = |min, max| Bounded {
         min,
         max,
@@ -151,23 +152,23 @@ fn date_part_kind(name: &str) -> Option<DatePartKind> {
     };
     let time = |min, max| Bounded { min, max, time: true };
     Some(match name {
-        "year" | "decade" | "century" | "millennium" | "isoyear" | "yearweek" | "epoch_ns" | "epoch_us"
-        | "epoch_ms" => Monotonic { double: false },
-        "epoch" | "julian" => Monotonic { double: true },
-        "month" => bounded(1, 12),
-        "day" | "dayofmonth" => bounded(1, 31),
-        "quarter" => bounded(1, 4),
-        "dayofweek" | "weekday" => bounded(0, 6),
-        "isodow" => bounded(1, 7),
-        "dayofyear" => bounded(1, 366),
-        "week" | "weekofyear" => bounded(1, 54),
-        "era" => bounded(0, 1),
-        "timezone" | "timezone_hour" | "timezone_minute" => bounded(0, 0),
-        "nanosecond" => time(0, 60_000_000_000),
-        "microsecond" => time(0, 60_000_000),
-        "millisecond" => time(0, 60_000),
-        "second" | "minute" => time(0, 60),
-        "hour" => time(0, 24),
+        b"year" | b"decade" | b"century" | b"millennium" | b"isoyear" | b"yearweek" | b"epoch_ns"
+        | b"epoch_us" | b"epoch_ms" => Monotonic { double: false },
+        b"epoch" | b"julian" => Monotonic { double: true },
+        b"month" => bounded(1, 12),
+        b"day" | b"dayofmonth" => bounded(1, 31),
+        b"quarter" => bounded(1, 4),
+        b"dayofweek" | b"weekday" => bounded(0, 6),
+        b"isodow" => bounded(1, 7),
+        b"dayofyear" => bounded(1, 366),
+        b"week" | b"weekofyear" => bounded(1, 54),
+        b"era" => bounded(0, 1),
+        b"timezone" | b"timezone_hour" | b"timezone_minute" => bounded(0, 0),
+        b"nanosecond" => time(0, 60_000_000_000),
+        b"microsecond" => time(0, 60_000_000),
+        b"millisecond" => time(0, 60_000),
+        b"second" | b"minute" => time(0, 60),
+        b"hour" => time(0, 24),
         _ => return None,
     })
 }
@@ -196,7 +197,9 @@ fn propagate_date_part(
     let child = child_stats.get(input_index)?;
     let input = function.children.get(input_index)?;
     // `EpochOperator::PropagateStatistics<dtime_t>`: the seconds of a day.
-    if matches!(kind, DatePartKind::Monotonic { double: true }) && input.return_type.id() == LogicalTypeId::Time {
+    if matches!(kind, DatePartKind::Monotonic { double: true })
+        && input.return_type.id() == LogicalTypeId::Time
+    {
         let mut result = BaseStatistics::create_empty(LogicalType::DOUBLE);
         set_min(&mut result, Some(NumericValue::F64(0.0)));
         set_max(&mut result, Some(NumericValue::F64(86_400.0)));
@@ -277,12 +280,12 @@ fn propagate_struct_extract(
     if function.function.arguments.get(1)?.id() != LogicalTypeId::Varchar {
         return None;
     }
-    let key = key.as_constant()?.as_str()?.to_lowercase();
+    let key = key.as_constant()?.as_bytes()?;
     let index = input
         .return_type
         .struct_children()?
         .iter()
-        .position(|(name, _)| name.to_lowercase() == key)?;
+        .position(|(name, _)| name.eq_ignore_ascii_case(key))?;
     child_stats.first()?.struct_children()?.get(index).cloned()
 }
 
@@ -297,7 +300,7 @@ fn propagate_variant_extract(
     };
     let path = function.children.get(1)?.as_constant()?;
     let component = match path.logical_type().id() {
-        LogicalTypeId::Varchar => VariantPathComponent::Key(path.as_str()?.to_owned()),
+        LogicalTypeId::Varchar => VariantPathComponent::Key(path.as_bytes()?.into()),
         _ => VariantPathComponent::Index(path.as_u32()?.checked_sub(1)?),
     };
     let variant_stats = child_stats.first()?;
@@ -592,11 +595,11 @@ fn propagate_arithmetic(
         };
         let within = |value: i128| value >= range.0 && value <= range.1;
         new_bounds = match &*function.function.name {
-            "+" => {
+            b"+" => {
                 let (min, max) = (lmin + rmin, lmax + rmax);
                 (within(min) && within(max)).then_some((min, max))
             }
-            "-" => {
+            b"-" => {
                 let (min, max) = (lmin - rmax, lmax - rmin);
                 (within(min) && within(max)).then_some((min, max))
             }
@@ -637,7 +640,8 @@ fn propagate_arithmetic(
 
 /// The kernel of `+`, `-` or `*` over two columns of `physical` without overflow checks
 /// (DuckDB's `GetScalarIntegerFunction<OP>`).
-fn unchecked_kernel(name: &str, physical: PhysicalType) -> Option<ScalarKernel> {
+fn unchecked_kernel(name: impl AsRef<[u8]>, physical: PhysicalType) -> Option<ScalarKernel> {
+    let name = name.as_ref();
     macro_rules! kernel {
         ($t:ty, $op:ident) => {{
             let kernel: ScalarKernel =
@@ -662,9 +666,9 @@ fn unchecked_kernel(name: &str, physical: PhysicalType) -> Option<ScalarKernel> 
         };
     }
     match name {
-        "+" => by_type!(wrapping_add),
-        "-" => by_type!(wrapping_sub),
-        "*" => by_type!(wrapping_mul),
+        b"+" => by_type!(wrapping_add),
+        b"-" => by_type!(wrapping_sub),
+        b"*" => by_type!(wrapping_mul),
         _ => None,
     }
 }

@@ -144,10 +144,10 @@ impl DeserializeObject for SetOperationNode {
 /// Reads the members of a legacy `CTE_NODE` and returns the query it wraps: CTEs now
 /// live in the query's `cte_map`, so DuckDB discards the wrapper on load.
 pub(crate) fn read_legacy_cte_node(deserializer: &mut dyn Deserializer) -> Result<QueryNode> {
-    deserializer.read_property_with_default::<String>(200, "cte_name")?;
+    deserializer.read_property_with_default::<rustdb_common::ByteString>(200, "cte_name")?;
     deserializer.read_property_with_default::<Option<Box<QueryNode>>>(201, "query")?;
     let child = deserializer.read_property_with_default(202, "child")?;
-    deserializer.read_property_with_default::<Vec<String>>(203, "aliases")?;
+    deserializer.read_property_with_default::<Vec<rustdb_common::ByteString>>(203, "aliases")?;
     deserializer.read_property_with_explicit_default(
         204,
         "materialized",

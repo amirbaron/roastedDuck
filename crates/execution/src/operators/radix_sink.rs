@@ -248,7 +248,12 @@ impl RadixMemory {
     /// Registers a table whose threads fill tables under `config` with rows of
     /// `row_width` bytes (`RadixHTGlobalSinkState` construction): it reserves a table of
     /// the sink capacity per thread, with a block or two per partition.
-    pub fn new(ctx: &ExecutionContext, config: &RadixSinkConfig, row_width: usize, all_constant: bool) -> Self {
+    pub fn new(
+        ctx: &ExecutionContext,
+        config: &RadixSinkConfig,
+        row_width: usize,
+        all_constant: bool,
+    ) -> Self {
         let buffer_manager = &ctx.env.buffer_manager;
         let threads = ctx.env.threads().max(1) as u64;
         let context = buffer_manager.temporary_memory_context(threads, 1, ctx.force_external());

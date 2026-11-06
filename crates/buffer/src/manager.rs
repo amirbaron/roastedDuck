@@ -29,7 +29,7 @@ use crate::{DEFAULT_BLOCK_ALLOC_SIZE, MAXIMUM_BLOCK, TEMPORARY_BLOCK_HEADER_SIZE
 /// Memory and spilling configuration of a buffer manager.
 #[derive(Clone, Debug, Default)]
 pub struct BufferManagerConfig {
-    /// `memory_limit`; `None` uses DuckDB's default, 80% of the physical memory.
+    /// `memory_limit`; `None` uses DuckDB's default, 80% of process-available memory.
     pub memory_limit: Option<u64>,
     /// `temp_directory`; `None` disables spilling to disk.
     pub temp_directory: Option<PathBuf>,
@@ -41,10 +41,10 @@ pub struct BufferManagerConfig {
     pub allocator_retention: Option<usize>,
 }
 
-/// The default memory limit: 80% of physical memory (`DBConfig::SetDefaultMaxMemory`).
+/// The default memory limit: 80% of process-available memory (`DBConfig::SetDefaultMaxMemory`).
 pub fn default_memory_limit() -> u64 {
     // DuckDB falls back to 8 GiB when the physical memory is unknown.
-    os::physical_memory().map_or(8 << 30, |memory| memory / 10 * 8)
+    os::available_memory().map_or(8 << 30, |memory| (u128::from(memory) * 8 / 10) as u64)
 }
 
 /// Memory used by one tag (a row of `duckdb_memory()`).
@@ -64,7 +64,7 @@ const IN_MEMORY_WARNING: &str = "\nDatabase is launched in in-memory mode and no
 
 /// The temporary directory: configured lazily and created on first use.
 struct TemporaryDirectory {
-    path: RwLock<String>,
+    path: RwLock<PathBuf>,
     size_on_disk: Arc<AtomicU64>,
     handle: Mutex<Option<Arc<TemporaryDirectoryHandle>>>,
     max_swap_space: Mutex<Option<u64>>,
@@ -91,7 +91,7 @@ impl ManagerShared {
         &self.pool
     }
 
-    fn temp_path(&self) -> String {
+    fn temp_path(&self) -> PathBuf {
         self.temporary_directory
             .path
             .read()
@@ -100,7 +100,7 @@ impl ManagerShared {
     }
 
     pub(crate) fn has_temporary_directory(&self) -> bool {
-        !self.temp_path().is_empty()
+        !self.temp_path().as_os_str().is_empty()
     }
 
     fn in_memory_warning(&self) -> &'static str {
@@ -172,7 +172,7 @@ impl ManagerShared {
     /// (`RequireTemporaryDirectory`).
     fn require_temporary_directory(&self) -> Result<Arc<TemporaryDirectoryHandle>> {
         let path = self.temp_path();
-        if path.is_empty() {
+        if path.as_os_str().is_empty() {
             return Err(Error::invalid_input(
                 "Out-of-memory: cannot write buffer because no temporary directory is specified!\nTo enable \
                  temporary buffer eviction set a temporary directory using PRAGMA temp_directory='/path/to/tmp.tmp'",
@@ -184,7 +184,7 @@ impl ManagerShared {
         }
         let max_swap = *lock(&self.temporary_directory.max_swap_space);
         let created = Arc::new(TemporaryDirectoryHandle::new(
-            PathBuf::from(path),
+            path,
             Arc::clone(&self.temporary_directory.size_on_disk),
             max_swap,
             Arc::clone(&self.encryption),
@@ -430,9 +430,7 @@ impl BufferManager {
 
     /// A buffer manager sharing `pool` with other databases.
     pub fn with_pool(pool: Arc<BufferPool>, temp_directory: Option<PathBuf>) -> Self {
-        let path = temp_directory
-            .map(|path| path.display().to_string())
-            .unwrap_or_default();
+        let path = temp_directory.unwrap_or_default();
         Self {
             shared: Arc::new(ManagerShared {
                 pool,
@@ -515,8 +513,8 @@ impl BufferManager {
     }
 
     /// The temporary directory (empty when spilling is disabled).
-    pub fn temporary_directory(&self) -> String {
-        self.shared.temp_path()
+    pub fn temporary_directory(&self) -> rustdb_common::ByteString {
+        self.shared.temp_path().as_os_str().as_encoded_bytes().into()
     }
 
     /// The database's encryption keys (DuckDB's `EncryptionKeyManager`).
@@ -536,7 +534,8 @@ impl BufferManager {
     }
 
     /// Changes the temporary directory; not possible once it has been used.
-    pub fn set_temporary_directory(&self, path: &str) -> Result<()> {
+    pub fn set_temporary_directory(&self, path: impl AsRef<[u8]>) -> Result<()> {
+        let path = rustdb_common::native_file_path(path.as_ref())?;
         let handle = lock(&self.shared.temporary_directory.handle);
         if handle.is_some() {
             return Err(Error::not_implemented(
@@ -560,8 +559,8 @@ impl BufferManager {
 
     /// Whether the temporary directory contains spilled data files.
     pub fn has_files_in_temporary_directory(&self) -> bool {
-        let path = self.temporary_directory();
-        if path.is_empty() {
+        let path = self.shared.temp_path();
+        if path.as_os_str().is_empty() {
             return false;
         }
         std::fs::read_dir(path).is_ok_and(|entries| {
@@ -588,8 +587,8 @@ impl BufferManager {
 
     /// The temporary files in use (`duckdb_temporary_files()`).
     pub fn temporary_files(&self) -> Vec<TemporaryFileInformation> {
-        let path = self.temporary_directory();
-        if path.is_empty() {
+        let path = self.shared.temp_path();
+        if path.as_os_str().is_empty() {
             return Vec::new();
         }
         let mut result = self
@@ -925,6 +924,31 @@ impl BufferManager {
             ))
         });
         self.pin(&block)
+    }
+
+    /// Copies a pinned temporary block before persisting it, leaving existing readers'
+    /// buffers intact (`BlockManager::ConvertToPersistent`, `THREAD_SAFE` mode).
+    pub fn convert_to_persistent_thread_safe(
+        &self,
+        block_manager: &Arc<dyn BlockManager>,
+        block_id: BlockId,
+        old_block: Arc<BlockHandle>,
+        old_pin: BufferHandle,
+    ) -> Result<Arc<BlockHandle>> {
+        let size = block_manager.block_size();
+        if old_pin.len() < size {
+            return Err(Error::internal(
+                "temporary buffer is smaller than a persistent block",
+            ));
+        }
+        let copy = self.allocate_for(old_block.tag(), block_manager.as_ref(), false)?;
+        // SAFETY: the old pin keeps the source alive for concurrent readers; the
+        // newly allocated destination is unshared and holds exactly `size` bytes.
+        unsafe { std::ptr::copy_nonoverlapping(old_pin.as_ptr(), copy.as_ptr(), size) };
+        let copy_block = Arc::clone(copy.block());
+        drop(old_pin);
+        drop(old_block);
+        self.convert_to_persistent(block_manager, block_id, copy_block, copy)
     }
 
     /// Turns a pinned temporary block into persistent block `block_id`: its buffer is

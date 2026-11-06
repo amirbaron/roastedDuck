@@ -20,7 +20,7 @@ pub(super) fn variable_show_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
         0 => {
             let n = VariableShowSelectStmt {
                 stmt: rhs.node(2)?,
-                name: Some("select".to_owned()),
+                name: Some("select".into()),
                 is_summary: 0,
             };
             Ok(SemValue::node(n))
@@ -29,7 +29,7 @@ pub(super) fn variable_show_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
         1 => {
             let n = VariableShowSelectStmt {
                 stmt: rhs.node(2)?,
-                name: Some("select".to_owned()),
+                name: Some("select".into()),
                 is_summary: 1,
             };
             Ok(SemValue::node(n))
@@ -47,7 +47,7 @@ pub(super) fn variable_show_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
         3 => {
             let n = VariableShowStmt {
                 relation: rhs.ptr::<RangeVar>(4)?,
-                set: Some("__show_tables_from_database".to_owned()),
+                set: Some("__show_tables_from_database".into()),
                 is_summary: 0,
             };
             Ok(SemValue::node(n))
@@ -64,7 +64,7 @@ pub(super) fn variable_show_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
         // show_or_describe TIME ZONE
         5 => {
             let n = VariableShowStmt {
-                set: Some("timezone".to_owned()),
+                set: Some("timezone".into()),
                 is_summary: 0,
                 ..Default::default()
             };
@@ -73,7 +73,7 @@ pub(super) fn variable_show_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
         // show_or_describe TRANSACTION ISOLATION LEVEL
         6 => {
             let n = VariableShowStmt {
-                set: Some("transaction_isolation".to_owned()),
+                set: Some("transaction_isolation".into()),
                 is_summary: 0,
                 ..Default::default()
             };
@@ -83,7 +83,7 @@ pub(super) fn variable_show_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
         // show_or_describe
         7 | 8 => {
             let n = VariableShowStmt {
-                set: Some("__show_tables_expanded".to_owned()),
+                set: Some("__show_tables_expanded".into()),
                 is_summary: 0,
                 ..Default::default()
             };
@@ -101,7 +101,7 @@ pub(super) fn variable_show_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 pub(super) fn var_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // var_name '.' ColId
-        1 => Ok(SemValue::Str(Some(format!(
+        1 => Ok(SemValue::Str(Some(rustdb_common::byte_format!(
             "{}.{}",
             c_str(rhs.str(1)?.as_deref()),
             c_str(rhs.str(3)?.as_deref())

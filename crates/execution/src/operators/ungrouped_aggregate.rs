@@ -414,16 +414,22 @@ impl Sink for PhysicalUngroupedAggregate {
             if let Some(distinct) = &mut local.distinct[index] {
                 let arguments = DataChunk::new(arguments.columns().to_vec(), count);
                 add_distinct(&mut distinct.table, &arguments)?;
-                if let (Some(config), Some(memory)) = (&global.distinct_configs[index], &global.distinct_memory[index]) {
+                if let (Some(config), Some(memory)) =
+                    (&global.distinct_configs[index], &global.distinct_memory[index])
+                {
                     distinct.after_add_chunk(config)?;
                     // A table that outgrew the thread's share of its reservation sets its
                     // tuples aside, and the aggregation goes out of core (`MaybeRepartition`).
                     let external = config.external.load(Ordering::Acquire);
                     if memory.over_thread_limit(external, distinct.table.size_in_bytes()) {
                         let current_bits = config.radix_bits.load(Ordering::Acquire);
-                        if !config.external.swap(true, Ordering::AcqRel) && config.external_radix_bits > current_bits {
+                        if !config.external.swap(true, Ordering::AcqRel)
+                            && config.external_radix_bits > current_bits
+                        {
                             // `SetRadixBitsInternal`: the threads fill more partitions now.
-                            memory.scale_minimum_reservation(1u64 << (config.external_radix_bits - current_bits));
+                            memory.scale_minimum_reservation(
+                                1u64 << (config.external_radix_bits - current_bits),
+                            );
                         }
                         config
                             .radix_bits

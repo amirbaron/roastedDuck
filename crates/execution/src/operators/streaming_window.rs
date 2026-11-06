@@ -557,8 +557,11 @@ impl PhysicalOperator for PhysicalStreamingWindow {
 
     fn params_to_string(&self, _: u64) -> RenderParams {
         let mut result = RenderParams::new();
-        let projections: Vec<&str> = self.select_list.iter().map(|w| w.alias.as_str()).collect();
-        result.insert("Projections".to_owned(), projections.join("\n"));
+        let projections: Vec<&[u8]> = self.select_list.iter().map(|w| w.alias.as_bytes()).collect();
+        result.insert(
+            "Projections".to_owned(),
+            rustdb_common::ByteString::join(&projections, b"\n"),
+        );
         result
     }
 }

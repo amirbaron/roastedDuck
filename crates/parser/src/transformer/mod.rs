@@ -26,7 +26,7 @@ mod tableref;
 mod typename;
 
 use rustdb_ast::{CommonTableExpressionMap, ParsedExpression, SelectNode, SqlStatement, SqlStatementKind};
-use rustdb_common::{CaseInsensitiveMap, Error, Result};
+use rustdb_common::{ByteString, CaseInsensitiveMap, Error, Result};
 use rustdb_pg_parser::nodes::{List, Node, RawStmt, Value, WindowDef};
 
 use crate::ParserOptions;
@@ -51,7 +51,7 @@ pub(crate) enum ParamType {
 /// (DuckDB's `CreatePivotEntry`).
 #[derive(Debug)]
 pub(crate) struct PivotEntry {
-    pub(crate) enum_name: String,
+    pub(crate) enum_name: ByteString,
     pub(crate) base: Option<SelectNode>,
     pub(crate) base_cte_map: CommonTableExpressionMap,
     pub(crate) column: ParsedExpression,
@@ -63,7 +63,7 @@ pub(crate) struct PivotEntry {
 #[derive(Debug, Default)]
 struct Frame<'a> {
     /// `WINDOW name AS (...)` definitions of the current SELECT.
-    window_clauses: CaseInsensitiveMap<&'a WindowDef>,
+    window_clauses: CaseInsensitiveMap<&'a WindowDef, ByteString>,
     /// The CTEs defined so far (`stored_cte_map`), kept only when the query can contain
     /// a PIVOT that needs them.
     stored_cte_maps: Vec<CommonTableExpressionMap>,
@@ -78,7 +78,7 @@ pub(crate) struct Transformer<'a> {
     /// The highest parameter index used so far (`prepared_statement_parameter_index`).
     param_count: u64,
     /// Parameter names (and numbers) seen so far, with their indexes.
-    named_params: CiHashMap<u64>,
+    named_params: CiHashMap<u64, ByteString>,
     last_param_type: ParamType,
     pivot_entries: Vec<PivotEntry>,
     /// The current nesting depth (`stack_depth`).
@@ -89,17 +89,17 @@ pub(crate) struct Transformer<'a> {
     children: Vec<Frame<'a>>,
     /// The query text, to tell whether it mentions PIVOT at all: CTEs are only recorded
     /// for `ExtractCTEsRecursive` then.
-    query: &'a str,
+    query: &'a [u8],
     /// Whether `query` mentions PIVOT, once known.
     may_pivot: Option<bool>,
 }
 
 impl<'a> Transformer<'a> {
-    pub(crate) fn new(options: ParserOptions, query: &'a str) -> Self {
+    pub(crate) fn new(options: ParserOptions, query: &'a [u8]) -> Self {
         Self {
             options,
             param_count: 0,
-            named_params: CiHashMap::new(),
+            named_params: CiHashMap::new_with_keys(),
             last_param_type: ParamType::Invalid,
             pivot_entries: Vec::new(),
             depth: 0,
@@ -154,7 +154,7 @@ impl<'a> Transformer<'a> {
         let mut statement = SqlStatement::new(self.transform_statement_internal(node)?);
         if !self.named_params.is_empty() {
             // A copy-assignment of the map, which keeps its iteration order.
-            let map: CaseInsensitiveMap<u64> = self
+            let map: CaseInsensitiveMap<u64, ByteString> = self
                 .named_params
                 .iter()
                 .map(|(key, value)| (key, *value))
@@ -193,7 +193,7 @@ impl<'a> Transformer<'a> {
             Node::CreateTableAsStmt(stmt) => self.transform_create_table_as(stmt)?,
             Node::PragmaStmt(stmt) => self.transform_pragma(stmt)?,
             Node::ExportStmt(stmt) => self.transform_export(stmt)?,
-            Node::ImportStmt(stmt) => Self::transform_import(stmt),
+            Node::ImportStmt(stmt) => Self::transform_import(stmt)?,
             Node::ExplainStmt(stmt) => self.transform_explain(stmt)?,
             Node::VacuumStmt(stmt) => self.transform_vacuum(stmt)?,
             Node::VariableShowStmt(stmt) => SqlStatementKind::Select(self.transform_show_stmt(stmt)?),
@@ -202,7 +202,7 @@ impl<'a> Transformer<'a> {
             }
             Node::CallStmt(stmt) => self.transform_call(stmt)?,
             Node::VariableSetStmt(stmt) => self.transform_set(stmt)?,
-            Node::CheckPointStmt(stmt) => Self::transform_checkpoint(stmt),
+            Node::CheckPointStmt(stmt) => Self::transform_checkpoint(stmt)?,
             Node::LoadStmt(stmt) => Self::transform_load(stmt),
             Node::CreateTypeStmt(stmt) => self.transform_create_type(stmt)?,
             Node::AlterSeqStmt(stmt) => Self::transform_alter_sequence(stmt)?,
@@ -226,7 +226,7 @@ impl<'a> Transformer<'a> {
     /// `max_expression_depth`.
     pub(crate) fn check_depth(&self, extra: u64) -> Result<()> {
         if self.depth + extra >= self.options.max_expression_depth {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(rustdb_common::byte_format!(
                 "Max expression depth limit of {} exceeded. Use \"SET max_expression_depth TO x\" to increase the \
                  maximum expression depth.",
                 self.options.max_expression_depth
@@ -290,15 +290,15 @@ impl<'a> Transformer<'a> {
     }
 
     /// `SetParam`.
-    pub(crate) fn set_param(&mut self, identifier: &str, index: u64, param_type: ParamType) -> Result<()> {
+    pub(crate) fn set_param(&mut self, identifier: &[u8], index: u64, param_type: ParamType) -> Result<()> {
         self.param_type_check(param_type)?;
         self.last_param_type = param_type;
-        self.named_params.set(identifier.to_owned(), index);
+        self.named_params.set(ByteString::from(identifier), index);
         Ok(())
     }
 
     /// `GetParam`.
-    pub(crate) fn get_param(&self, identifier: &str, param_type: ParamType) -> Result<Option<u64>> {
+    pub(crate) fn get_param(&self, identifier: &[u8], param_type: ParamType) -> Result<Option<u64>> {
         self.param_type_check(param_type)?;
         Ok(self.named_params.get(identifier).copied())
     }
@@ -325,14 +325,14 @@ impl<'a> Transformer<'a> {
     pub(crate) fn may_pivot(&mut self) -> bool {
         *self
             .may_pivot
-            .get_or_insert_with(|| contains_ignore_ascii_case(self.query.as_bytes(), b"pivot"))
+            .get_or_insert_with(|| contains_ignore_ascii_case(self.query, b"pivot"))
     }
 
     /// `PivotEntryCheck`: CREATE VIEW / MACRO cannot use a PIVOT that reads its values
     /// from the data.
     pub(crate) fn pivot_entry_check(&self, kind: &str) -> Result<()> {
         if let Some(entry) = self.pivot_entries.first() {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(rustdb_common::byte_format!(
                 "PIVOT statements with pivot elements extracted from the data cannot be used in {kind}s.\nIn order \
                  to use PIVOT in a {kind} the PIVOT values must be manually specified, e.g.:\nPIVOT ... ON {} IN \
                  (val1, val2, ...)",
@@ -361,14 +361,18 @@ fn contains_ignore_ascii_case(haystack: &[u8], needle: &[u8]) -> bool {
 
 /// A pointer DuckDB dereferences unconditionally: missing means a malformed tree.
 pub(crate) fn required<'b, T>(value: Option<&'b T>, what: &str) -> Result<&'b T> {
-    value.ok_or_else(|| Error::internal(format!("Unexpected NULL {what} in the parse tree")))
+    value.ok_or_else(|| {
+        Error::internal(rustdb_common::byte_format!(
+            "Unexpected NULL {what} in the parse tree"
+        ))
+    })
 }
 
 /// The text of a `PGString` value node, or of a bare C string in a list.
-pub(crate) fn node_string(node: &Node) -> Result<&str> {
+pub(crate) fn node_string(node: &Node) -> Result<&[u8]> {
     match node {
         Node::Value(Value::String(text)) | Node::Str(text) => Ok(text),
-        other => Err(Error::internal(format!(
+        other => Err(Error::internal(rustdb_common::byte_format!(
             "Expected a string in the parse tree, found {}",
             node_tag(other).1
         ))),
@@ -376,20 +380,20 @@ pub(crate) fn node_string(node: &Node) -> Result<&str> {
 }
 
 /// `TransformStringList` / `TransformNameList`: the strings of a list.
-pub(crate) fn string_list(list: &List) -> Result<Vec<String>> {
+pub(crate) fn string_list(list: &List) -> Result<Vec<ByteString>> {
     list.iter()
-        .map(|node| node_string(node).map(str::to_owned))
+        .map(|node| node_string(node).map(ByteString::from))
         .collect()
 }
 
 /// The `name` DuckDB reads from a list cell it treats as a `PGResTarget`. Some grammar
 /// rules put plain strings in such lists; `PGResTarget::name` and `PGValue::val.str`
 /// share their offset, so DuckDB reads the string.
-pub(crate) fn res_target_name(node: &Node) -> Result<Option<String>> {
+pub(crate) fn res_target_name(node: &Node) -> Result<Option<ByteString>> {
     match node {
         Node::ResTarget(target) => Ok(target.name.clone()),
         Node::Value(Value::String(text)) | Node::Str(text) => Ok(Some(text.clone())),
-        other => Err(Error::internal(format!(
+        other => Err(Error::internal(rustdb_common::byte_format!(
             "Expected a ResTarget node in the parse tree, found {}",
             node_tag(other).1
         ))),
@@ -399,7 +403,7 @@ pub(crate) fn res_target_name(node: &Node) -> Result<Option<String>> {
 /// Borrows `node` as the node struct `T`, failing like a bad `PGCast` would.
 pub(crate) fn cast_node<T: rustdb_pg_parser::nodes::NodeStruct>(node: &Node) -> Result<&T> {
     node.downcast_ref::<T>().ok_or_else(|| {
-        Error::internal(format!(
+        Error::internal(rustdb_common::byte_format!(
             "Expected a {} node in the parse tree, found {}",
             T::NAME,
             node_tag(node).1
@@ -408,6 +412,6 @@ pub(crate) fn cast_node<T: rustdb_pg_parser::nodes::NodeStruct>(node: &Node) -> 
 }
 
 /// A parser error positioned at an expression's location (`ParserException(location, ...)`).
-pub(crate) fn parser_error_at(location: Option<u64>, message: String) -> Error {
+pub(crate) fn parser_error_at(location: Option<u64>, message: impl Into<ByteString>) -> Error {
     Error::parser(message).with_position(location)
 }

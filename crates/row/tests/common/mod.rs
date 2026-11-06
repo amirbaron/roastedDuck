@@ -48,7 +48,7 @@ pub fn struct_type(fields: &[(&str, LogicalType)]) -> LogicalType {
         TypeInfo::Struct(rustdb_types::StructTypeInfo {
             child_types: fields
                 .iter()
-                .map(|(name, ty)| ((*name).to_owned(), ty.clone()))
+                .map(|(name, ty)| ((*name).into(), ty.clone()))
                 .collect(),
         }),
     )

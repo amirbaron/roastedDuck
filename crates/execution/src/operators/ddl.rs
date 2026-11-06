@@ -128,7 +128,7 @@ impl DdlAction for CreateSequenceAction {
         let CreateInfoKind::Sequence(sequence) = &self.info.kind else {
             return Err(Error::internal("expected a sequence"));
         };
-        let mut entry = CatalogEntry::new(
+        let mut entry = self.catalog.new_entry(
             sequence.name.clone(),
             EntryKind::Sequence(SequenceEntry::new(sequence)),
         );
@@ -151,7 +151,7 @@ impl DdlAction for CreateViewAction {
         let CreateInfoKind::View(view) = &self.info.kind else {
             return Err(Error::internal("expected a view"));
         };
-        let mut entry = CatalogEntry::new(
+        let mut entry = self.catalog.new_entry(
             view.view_name.clone(),
             EntryKind::View(ViewEntry {
                 query: (*view.query).clone(),
@@ -179,7 +179,7 @@ pub struct CreateEntryAction {
 
 impl DdlAction for CreateEntryAction {
     fn execute(&self, transaction: &Transaction) -> Result<()> {
-        let entry = rustdb_catalog::checkpoint::entry_from_create_info(&self.info)?;
+        let entry = rustdb_catalog::checkpoint::entry_from_create_info(&self.catalog, &self.info)?;
         self.catalog
             .create_entry(transaction, &self.info.schema, entry, self.info.on_conflict)?;
         Ok(())
@@ -218,7 +218,7 @@ pub(crate) fn check_type_is_supported(ty: &LogicalType, catalog: &Catalog) -> Re
                 if let Some(version) = catalog.storage_version()
                     && version < VARIANT_VERSION_ADDED
                 {
-                    return Err(Error::invalid_input(format!(
+                    return Err(Error::invalid_input(rustdb_common::byte_format!(
                         "VARIANT columns are not supported in storage versions prior to {} (database \"{}\" \
                          is using storage version {})",
                         storage_version_name(VARIANT_VERSION_ADDED, false),
@@ -263,7 +263,7 @@ pub(crate) fn check_struct_columns(ty: &LogicalType) -> Result<()> {
 #[derive(Debug)]
 pub struct CatalogTableCreator {
     pub catalog: Arc<Catalog>,
-    pub schema: String,
+    pub schema: rustdb_common::ByteString,
     pub info: CreateInfo,
     pub io: Arc<TableIoManager>,
 }
@@ -284,7 +284,7 @@ impl TableCreator for CatalogTableCreator {
             None
         };
         if let Some(clause) = unsupported {
-            return Err(Error::catalog(format!(
+            return Err(Error::catalog(rustdb_common::byte_format!(
                 "{clause} is not supported for tables in a duckdb catalog"
             )));
         }
@@ -342,7 +342,7 @@ impl TableCreator for CatalogTableCreator {
         }
         entry.storage = Some(Arc::clone(&storage));
         let name = table.table.clone();
-        let mut catalog_entry = CatalogEntry::new(name.clone(), EntryKind::Table(entry));
+        let mut catalog_entry = self.catalog.new_entry(name.clone(), EntryKind::Table(entry));
         catalog_entry.dependencies.clone_from(&self.info.dependencies.set);
         catalog_entry.temporary = self.info.temporary;
         let created =
@@ -399,8 +399,8 @@ fn unique_keys(entry: &TableEntry, unique: &rustdb_ast::UniqueConstraint) -> Res
 fn alter_referenced_table(
     catalog: &Catalog,
     transaction: &Transaction,
-    schema: &str,
-    name: &str,
+    schema: &[u8],
+    name: &[u8],
     alter: impl FnOnce(&mut Vec<Constraint>),
 ) -> Result<()> {
     let Some(existing) = catalog.get_entry(transaction, CatalogType::Table, schema, name) else {
@@ -411,7 +411,7 @@ fn alter_referenced_table(
     };
     let mut table = table.clone();
     alter(&mut table.constraints);
-    let mut entry = CatalogEntry::new(existing.name(), EntryKind::Table(table));
+    let mut entry = catalog.new_entry(existing.name(), EntryKind::Table(table));
     entry.inherit_links(&existing);
     catalog.replace_entry(transaction, schema, CatalogType::Table, existing.name(), entry)
 }
@@ -437,7 +437,10 @@ impl DdlAction for DropAction {
             AstCatalogType::IndexEntry => CatalogType::Index,
             AstCatalogType::TypeEntry => CatalogType::Type,
             other => {
-                return Err(Error::not_implemented(format!("DROP {}", other.name())));
+                return Err(Error::not_implemented(rustdb_common::byte_format!(
+                    "DROP {}",
+                    other.name()
+                )));
             }
         };
         if ty == CatalogType::Table
@@ -452,7 +455,7 @@ impl DdlAction for DropAction {
                     continue;
                 };
                 if fk.fk_type == ForeignKeyType::FkTypePrimaryKeyTable {
-                    return Err(Error::catalog(format!(
+                    return Err(Error::catalog(rustdb_common::byte_format!(
                         "Could not drop the table because this table is main key table of the table \"{}\"",
                         fk.table
                     )));
@@ -487,7 +490,7 @@ impl DdlAction for DropAction {
 #[derive(Debug)]
 struct IndexExpressionExecutor {
     executor: std::sync::Mutex<ExpressionExecutor>,
-    names: Vec<String>,
+    names: Vec<rustdb_common::ByteString>,
     /// The single key expression with its column read as `BOUND_REF #0`, the form of
     /// a pushed-down expression filter; `None` for compound keys or keys over several
     /// columns.
@@ -570,7 +573,7 @@ impl IndexKeyExecutor for IndexExpressionExecutor {
         Ok(keys)
     }
 
-    fn names(&self) -> &[String] {
+    fn names(&self) -> &[rustdb_common::ByteString] {
         &self.names
     }
 
@@ -673,9 +676,9 @@ pub fn bind_table_indexes(client: &Arc<ClientContext>, entry: &Arc<CatalogEntry>
             return Err(Error::internal("unbound index without a CreateIndexInfo"));
         };
         if !unbound.index_type().eq_ignore_ascii_case("ART") {
-            return Err(Error::new(
+            return Err(Error::new_bytes(
                 rustdb_common::ErrorKind::MissingExtension,
-                format!(
+                rustdb_common::byte_format!(
                     "Cannot bind index '{}', unknown index type '{}'. You need to load the extension that provides this index type before table '{}' can be modified.",
                     index.table,
                     unbound.index_type(),
@@ -687,7 +690,9 @@ pub fn bind_table_indexes(client: &Arc<ClientContext>, entry: &Arc<CatalogEntry>
         let mut art = index_art(storage, index, &expressions)?;
         // The index holds the latest committed rows, like the stored one plus the
         // replayed changes (`ApplyBufferedReplays`).
-        storage.build_index(&Transaction::system(), &mut art, false)?;
+        if !storage.restore_unbound_index(&mut art, unbound)? {
+            storage.build_index(&Transaction::system(), &mut art, false)?;
+        }
         Ok(art)
     })
 }
@@ -706,7 +711,7 @@ impl DdlAction for CreateIndexAction {
             if self.info.on_conflict == OnCreateConflict::IgnoreOnConflict {
                 return Ok(());
             }
-            return Err(Error::catalog(format!(
+            return Err(Error::catalog(rustdb_common::byte_format!(
                 "Index with name \"{}\" already exists!",
                 index.name
             )));
@@ -721,7 +726,7 @@ impl DdlAction for CreateIndexAction {
             ));
         }
         if !index.index_type_name.is_empty() && !index.index_type_name.eq_ignore_ascii_case("ART") {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Unknown index type: {}",
                 index.index_type_name
             )));
@@ -739,7 +744,7 @@ impl DdlAction for CreateIndexAction {
             art,
             self.info.on_conflict != OnCreateConflict::IgnoreOnConflict,
         )?;
-        let mut entry = CatalogEntry::new(
+        let mut entry = self.catalog.new_entry(
             index.name.clone(),
             EntryKind::Index(IndexEntry {
                 info: (**index).clone(),

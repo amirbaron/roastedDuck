@@ -33,7 +33,7 @@ fn chunk(columns: &[(LogicalType, Vec<Value>)]) -> DataChunk {
 /// Exports `input` and reads it back: the types the schema imports as, and the chunk.
 fn round_trip(input: &DataChunk, options: &ClientProperties) -> (Vec<LogicalType>, DataChunk) {
     let types: Vec<LogicalType> = input.columns().iter().map(|c| c.logical_type().clone()).collect();
-    let names: Vec<String> = (0..types.len()).map(|i| format!("c{i}")).collect();
+    let names: Vec<rustdb_common::ByteString> = (0..types.len()).map(|i| format!("c{i}").into()).collect();
     let mut schema = ArrowSchemaWrapper::default();
     to_arrow_schema(&mut schema.arrow_schema, &types, &names, options).unwrap();
     let mut array = to_arrow_array(input, options).unwrap();
@@ -597,7 +597,7 @@ fn schema_names_formats_and_flags() {
         LogicalType::TIMESTAMP_TZ,
         LogicalType::decimal(4, 1),
     ];
-    let names = ["a".to_owned(), "m".to_owned(), "t".to_owned(), "d".to_owned()];
+    let names: [rustdb_common::ByteString; 4] = ["a".into(), "m".into(), "t".into(), "d".into()];
     let options = ClientProperties {
         time_zone: "Europe/Amsterdam".to_owned(),
         ..ClientProperties::default()
@@ -620,11 +620,17 @@ fn schema_names_formats_and_flags() {
         let entries = children[1].child_schemas().next().unwrap();
         assert_eq!(entries.name_string(), "entries");
         assert_eq!(entries.flags, 0);
-        let key_value: Vec<(String, i64)> = entries
+        let key_value: Vec<(rustdb_common::ByteString, i64)> = entries
             .child_schemas()
             .map(|f| (f.name_string(), f.flags))
             .collect();
-        assert_eq!(key_value, [("key".to_owned(), 0), ("value".to_owned(), 2)]);
+        assert_eq!(
+            key_value,
+            [
+                (rustdb_common::ByteString::from("key"), 0),
+                (rustdb_common::ByteString::from("value"), 2)
+            ]
+        );
     }
 }
 
@@ -634,7 +640,7 @@ fn unsupported_types_are_errors() {
     let error = to_arrow_schema(
         &mut schema,
         &[LogicalType::variant()],
-        &["v".to_owned()],
+        &["v".into()],
         &ClientProperties::default(),
     )
     .unwrap_err();

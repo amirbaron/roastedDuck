@@ -9,13 +9,13 @@ use crate::{LogicalType, LogicalTypeId};
 pub use crate::generated::enums::ColumnIndexType;
 
 /// A column, or a field path into a STRUCT (by field index) or VARIANT (by field name)
-/// column (DuckDB's `ColumnIndex`). Equality compares every member, like DuckDB's.
+/// column (DuckDB's `ColumnIndex`). The stored metadata owns native field-name bytes.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ColumnIndex {
     /// The column or field index, when `field` is `None` (DuckDB's `has_index`).
     pub index: u64,
     /// The field name of a VARIANT path element.
-    pub field: Option<String>,
+    pub field: Option<rustdb_common::ByteString>,
     /// The type of the column this references (a pushdown extract), `INVALID` if unset.
     pub ty: LogicalType,
     pub index_type: ColumnIndexType,
@@ -41,7 +41,7 @@ impl ColumnIndex {
     }
 
     /// A field of a VARIANT, by name.
-    pub fn field(field: impl Into<String>) -> Self {
+    pub fn field(field: impl Into<rustdb_common::ByteString>) -> Self {
         Self {
             index: 0,
             field: Some(field.into()),
@@ -72,7 +72,7 @@ impl ColumnIndex {
         self.field.is_none()
     }
 
-    pub fn field_name(&self) -> &str {
+    pub fn field_name(&self) -> &[u8] {
         self.field.as_deref().unwrap_or_default()
     }
 
@@ -167,13 +167,37 @@ impl ColumnIndex {
 impl rustdb_serde::Serialize for ColumnIndex {
     /// `ColumnIndex::Serialize`.
     fn serialize(&self, serializer: &mut dyn rustdb_serde::Serializer) -> rustdb_serde::Result<()> {
+        let empty = rustdb_common::ByteString::new();
         serializer.write_object(&crate::generated::column_index::ColumnIndex {
             index: self.index,
             child_indexes: &self.child_indexes,
             index_type: self.index_type,
             ty: &self.ty,
-            field: self.field_name(),
+            field: self.field.as_ref().unwrap_or(&empty),
             has_index: self.has_primary_index(),
         })
+    }
+}
+
+impl rustdb_serde::DeserializeObject for ColumnIndex {
+    fn deserialize_fields(d: &mut dyn rustdb_serde::Deserializer) -> rustdb_serde::Result<Self> {
+        let index = d.read_property_with_default(1, "index")?;
+        let child_indexes = d.read_property_with_default(2, "child_indexes")?;
+        let index_type = d.read_property_with_explicit_default(3, "index_type", ColumnIndexType::FullRead)?;
+        let ty = d.read_property_with_explicit_default(4, "type", LogicalType::INVALID)?;
+        let field: rustdb_common::ByteString = d.read_property_with_default(5, "field")?;
+        let has_index = d.read_property_with_explicit_default(6, "has_index", true)?;
+        Ok(Self {
+            index,
+            child_indexes,
+            index_type,
+            ty,
+            field: (!has_index).then_some(field),
+        })
+    }
+}
+impl rustdb_serde::Deserialize for ColumnIndex {
+    fn deserialize(d: &mut dyn rustdb_serde::Deserializer) -> rustdb_serde::Result<Self> {
+        d.read_object()
     }
 }

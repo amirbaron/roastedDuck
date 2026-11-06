@@ -534,15 +534,18 @@ pub fn set_highlighting(enabled: bool) {
 
 /// `ShellHighlight::TryGetHighlightElement`: the element named `name` (any case), or the
 /// error listing the names.
-pub fn try_get_highlight_element(name: &str) -> Result<HighlightElementType, String> {
+pub fn try_get_highlight_element(
+    name: impl AsRef<[u8]>,
+) -> Result<HighlightElementType, rustdb_common::ByteString> {
+    let name = name.as_ref();
     if let Some(index) = DEFAULT_ELEMENTS
         .iter()
-        .position(|element| element.name.eq_ignore_ascii_case(name))
+        .position(|element| element.name.as_bytes().eq_ignore_ascii_case(name))
     {
         return Ok(ELEMENT_TYPES[index]);
     }
     let supported_options: Vec<&str> = DEFAULT_ELEMENTS.iter().map(|element| element.name).collect();
-    Err(format!(
+    Err(rustdb_common::byte_format!(
         "Unknown element '{name}', supported options: {}\n",
         supported_options.join(", ")
     ))
@@ -550,16 +553,18 @@ pub fn try_get_highlight_element(name: &str) -> Result<HighlightElementType, Str
 
 /// `ShellHighlight::TryGetPrintColor`: the color named `name` (any case), or the error
 /// with the closest names.
-pub fn try_get_print_color(name: &str) -> Result<PrintColor, String> {
+pub fn try_get_print_color(name: impl AsRef<[u8]>) -> Result<PrintColor, rustdb_common::ByteString> {
+    let name = name.as_ref();
     if let Some(code) = COLOR_INFO
         .iter()
-        .position(|info| info.color_name.eq_ignore_ascii_case(name))
+        .position(|info| info.color_name.as_bytes().eq_ignore_ascii_case(name))
     {
         return Ok(PrintColor::from_code(code as u8));
     }
     let color_names: Vec<String> = COLOR_INFO.iter().map(|info| info.color_name.to_owned()).collect();
-    let candidates = rustdb_common::string_util::candidates_error_message(&color_names, name, "Did you mean");
-    Err(format!(
+    let candidates =
+        rustdb_common::string_util::candidates_error_message_bytes(&color_names, name, b"Did you mean");
+    Err(rustdb_common::byte_format!(
         "Unknown highlighting color '{name}'\n{candidates}\nRun '.display_colors' for a list of available colors.\n"
     ))
 }
@@ -687,6 +692,32 @@ impl<'a> ShellHighlight<'a> {
         }
         self.out
             .print(output, format!("{terminal_code}{text}{RESET_TERMINAL_CODE}"));
+    }
+
+    /// Native message bytes with the selected terminal style.
+    pub fn print_bytes_colored(
+        &self,
+        text: &[u8],
+        output: PrintOutput,
+        color: PrintColor,
+        intensity: PrintIntensity,
+    ) {
+        let code = terminal_code(color, intensity);
+        if (color == PrintColor::STANDARD && intensity == PrintIntensity::Standard)
+            || !is_enabled()
+            || code.is_empty()
+        {
+            self.out.print(output, text);
+        } else {
+            self.out.print(
+                output,
+                rustdb_common::byte_format!("{code}{text}{RESET_TERMINAL_CODE}"),
+            );
+        }
+    }
+    pub fn print_bytes(&self, text: &[u8], output: PrintOutput, element_type: HighlightElementType) {
+        let element = highlight_element(element_type);
+        self.print_bytes_colored(text, output, element.color, element.intensity);
     }
 
     /// `PrintText(text, output, type)`.

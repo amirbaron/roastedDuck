@@ -27,7 +27,10 @@ impl FunctionData for ExportAggregateBindData {
 }
 
 /// `BindAggregateState`: binds the aggregate named by the state type again.
-fn bind_aggregate_state(function: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Option<Arc<dyn FunctionData>>> {
+fn bind_aggregate_state(
+    function: &mut ScalarFunction,
+    input: &BindInput<'_>,
+) -> Result<Option<Arc<dyn FunctionData>>> {
     let state_type = input
         .argument_types
         .first()
@@ -36,7 +39,9 @@ fn bind_aggregate_state(function: &mut ScalarFunction, input: &BindInput<'_>) ->
     for argument in &mut function.arguments {
         *argument = state_type.clone();
     }
-    let Some(TypeInfo::AggregateState(state)) = state_type.info().filter(|_| state_type.id() == LogicalTypeId::AggregateState)
+    let Some(TypeInfo::AggregateState(state)) = state_type
+        .info()
+        .filter(|_| state_type.id() == LogicalTypeId::AggregateState)
     else {
         return Err(Error::binder(format!(
             "Can only FINALIZE aggregate state, not {state_type}"
@@ -79,13 +84,16 @@ fn bind_aggregate_state(function: &mut ScalarFunction, input: &BindInput<'_>) ->
             state.function_name
         )));
     }
-    function.return_type = if &*function.name == "finalize" {
+    function.return_type = if function.name.as_bytes() == b"finalize" {
         aggregate.return_type.clone()
     } else {
         state_type.clone()
     };
     let state_size = aggregate.ops.state_layout().size();
-    Ok(Some(Arc::new(ExportAggregateBindData { aggregate, state_size })))
+    Ok(Some(Arc::new(ExportAggregateBindData {
+        aggregate,
+        state_size,
+    })))
 }
 
 fn bind_data(state: &FunctionState) -> Result<&ExportAggregateBindData> {
@@ -178,12 +186,15 @@ fn aggregate_state_combine(args: &DataChunk, state: &mut FunctionState, result: 
                 load_state(pointers[1], target);
                 // SAFETY: both states are initialised states of the aggregate.
                 unsafe {
-                    data.aggregate
-                        .ops
-                        .combine(&pointers[..1], &pointers[1..], AggregateInput { bind_data: None })?;
+                    data.aggregate.ops.combine(
+                        &pointers[..1],
+                        &pointers[1..],
+                        AggregateInput { bind_data: None },
+                    )?;
                 }
                 // SAFETY: the combined state is `state_size` initialised bytes.
-                let bytes = unsafe { std::slice::from_raw_parts(pointers[1].as_ptr().cast_const(), data.state_size) };
+                let bytes =
+                    unsafe { std::slice::from_raw_parts(pointers[1].as_ptr().cast_const(), data.state_size) };
                 result.add_string(bytes)
             }
         };

@@ -11,6 +11,7 @@
 #![allow(clippy::missing_safety_doc)] // Safety contracts are those of duckdb.h.
 #![allow(clippy::wildcard_imports)] // The modules share the `duckdb.h` vocabulary of `types`.
 
+mod adbc;
 mod aggregate_function;
 mod appender;
 mod arrow;
@@ -23,6 +24,9 @@ mod data_chunk;
 mod datetime;
 mod error_data;
 mod expression;
+mod extension_api;
+mod extension_keys;
+mod extension_loader;
 mod file_system;
 mod function;
 mod helper;
@@ -43,6 +47,7 @@ mod types;
 mod value;
 mod value_fetch;
 
+pub use adbc::*;
 pub use aggregate_function::*;
 pub use appender::*;
 pub use arrow::*;
@@ -79,3 +84,9 @@ pub use threading::*;
 pub use types::*;
 pub use value::*;
 pub use value_fetch::*;
+
+/// Install the C extension adapter for embeddings that open the core directly.
+pub fn register_extension_loader() {
+    rustdb::external_extensions::register_external_extension_loader(extension_loader::load);
+    rustdb::external_extensions::register_extension_install_validator(extension_loader::validate_install);
+}

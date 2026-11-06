@@ -7,6 +7,8 @@
 
 use std::collections::HashMap;
 
+use rustdb_common::ByteString;
+
 use super::VerifyExistenceType;
 
 /// Whether hits are violations or recorded (`ConflictManagerMode`).
@@ -30,7 +32,7 @@ pub struct ConflictManager {
     /// The first and (for duplicate leaves) second row id hit by each input row.
     hits: HashMap<usize, (i64, Option<i64>)>,
     /// Names of the indexes matching the conflict target.
-    matching_indexes: Vec<String>,
+    matching_indexes: Vec<ByteString>,
 }
 
 impl ConflictManager {
@@ -73,13 +75,15 @@ impl ConflictManager {
     }
 
     /// Records that index `name` matches the conflict target (`AddIndex`).
-    pub fn add_index(&mut self, name: &str) {
-        self.matching_indexes.push(name.to_owned());
+    pub fn add_index(&mut self, name: impl AsRef<[u8]>) {
+        self.matching_indexes.push(name.as_ref().into());
     }
 
     /// Whether index `name` matches the conflict target (`IndexMatches`).
-    pub fn index_matches(&self, name: &str) -> bool {
-        self.matching_indexes.iter().any(|n| n.eq_ignore_ascii_case(name))
+    pub fn index_matches(&self, name: impl AsRef<[u8]>) -> bool {
+        self.matching_indexes
+            .iter()
+            .any(|n| n.eq_ignore_ascii_case(name.as_ref()))
     }
 
     fn should_throw(&self, row: usize) -> bool {

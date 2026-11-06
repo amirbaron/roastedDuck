@@ -5,8 +5,8 @@
 use rustdb_common::{Error, ErrorKind, Result};
 
 /// A `std::runtime_error` of the C++ reader, reported as an `Invalid Error`.
-pub(crate) fn runtime_error(message: impl Into<String>) -> Error {
-    Error::new(ErrorKind::Invalid, message.into())
+pub(crate) fn runtime_error(message: impl Into<rustdb_common::ByteString>) -> Error {
+    Error::new_bytes(ErrorKind::Invalid, message.into())
 }
 
 /// `ByteBuffer::available` failing.

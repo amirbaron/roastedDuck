@@ -239,6 +239,18 @@ pub(crate) unsafe fn opt_str<'a>(ptr: *const c_char) -> Option<&'a str> {
     unsafe { CStr::from_ptr(ptr) }.to_str().ok()
 }
 
+/// Native C-string bytes, without UTF-8 validation or replacement.
+///
+/// # Safety
+/// `ptr` is NULL or points to a NUL-terminated string readable for the returned lifetime.
+pub(crate) unsafe fn opt_bytes<'a>(ptr: *const c_char) -> Option<&'a [u8]> {
+    if ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { CStr::from_ptr(ptr) }.to_bytes())
+    }
+}
+
 /// Reads a C string, replacing invalid UTF-8 (DuckDB stores such text as given; the
 /// engine's strings are Rust strings).
 ///

@@ -525,6 +525,8 @@ pub fn keyword_category(text: &str) -> KeywordCategory {
 /// Whether `text` is a keyword of any category other than `excluded`
 /// (DuckDB's `KeywordHelper::IsKeyword`).
 pub fn is_keyword(text: &str, excluded: KeywordCategory) -> bool {
+    // C++ compares the categories directly, including KEYWORD_NONE. Thus a
+    // non-keyword is quoted when a different category is excluded.
     keyword_category(text) != excluded
 }
 
@@ -576,10 +578,68 @@ pub fn write_optionally_quoted(text: &str) -> String {
     write_optionally_quoted_with(text, '"', true, KeywordCategory::None)
 }
 
-/// An identifier as DuckDB's `SQLIdentifier` renders it: double-quoted unless it is a
-/// lower-case non-keyword.
+/// The byte-preserving identifier form of `WriteOptionallyQuoted`.
+pub fn write_optionally_quoted_bytes(text: &[u8]) -> rustdb_common::ByteString {
+    quoted_identifier_bytes(text, true)
+}
+
+/// The native byte form of `SQLIdentifier` (ASCII capitals are allowed).
+pub fn sql_identifier_bytes(text: &[u8]) -> rustdb_common::ByteString {
+    quoted_identifier_bytes(text, true)
+}
+
+/// Native byte form of the configurable keyword-aware identifier writer.
+pub fn write_optionally_quoted_with_bytes(
+    text: &[u8],
+    quote: u8,
+    allow_caps: bool,
+    excluded: KeywordCategory,
+) -> rustdb_common::ByteString {
+    let plain = text.iter().enumerate().all(|(i, byte)| {
+        (i > 0 && byte.is_ascii_digit())
+            || byte.is_ascii_lowercase()
+            || (allow_caps && byte.is_ascii_uppercase())
+            || *byte == b'_'
+    });
+    let lower = text.to_ascii_lowercase();
+    let category = KEYWORDS
+        .binary_search_by(|(name, _)| name.as_bytes().cmp(&lower))
+        .map_or(KeywordCategory::None, |index| KEYWORDS[index].1);
+    if plain && category == excluded {
+        return text.into();
+    }
+    let mut out = rustdb_common::ByteString::new();
+    out.push(quote);
+    for &byte in text {
+        if byte == quote {
+            out.push(byte);
+        }
+        out.push(byte);
+    }
+    out.push(quote);
+    out
+}
+fn quoted_identifier_bytes(text: &[u8], allow_caps: bool) -> rustdb_common::ByteString {
+    write_optionally_quoted_with_bytes(text, b'"', allow_caps, KeywordCategory::None)
+}
+
+/// An identifier as DuckDB's `SQLIdentifier` renders it: quoted when required,
+/// with ASCII capitals allowed.
 pub fn sql_identifier(text: &str) -> String {
-    write_optionally_quoted_with(text, '"', false, KeywordCategory::None)
+    write_optionally_quoted_with(text, '"', true, KeywordCategory::None)
+}
+
+/// Native SQL string quoting, without a VARCHAR-value validation boundary.
+pub fn sql_string_bytes(text: &[u8]) -> rustdb_common::ByteString {
+    let mut out = rustdb_common::ByteString::from(b"'");
+    for &byte in text {
+        if byte == b'\'' {
+            out.push(byte);
+        }
+        out.push(byte);
+    }
+    out.push(b'\'');
+    out
 }
 
 /// A string literal as DuckDB's `SQLString` renders it.
@@ -599,7 +659,16 @@ mod tests {
         assert_eq!(write_optionally_quoted("MyCol"), "MyCol");
         assert_eq!(write_optionally_quoted("select"), "\"select\"");
         assert_eq!(write_optionally_quoted("a b"), "\"a b\"");
-        assert_eq!(sql_identifier("MyCol"), "\"MyCol\"");
+        // Frozen C++ SQLIdentifier allows capitals (native oracle: SELECT 1 AS MyCol).
+        assert_eq!(sql_identifier("MyCol"), "MyCol");
+        assert_eq!(
+            write_optionally_quoted_with("MyCol", '"', false, KeywordCategory::None),
+            "\"MyCol\""
+        );
+        assert_eq!(
+            write_optionally_quoted_with("my_type", '"', true, KeywordCategory::ColName),
+            "\"my_type\""
+        );
         assert_eq!(
             write_optionally_quoted_with("integer", '"', true, KeywordCategory::ColName),
             "integer"

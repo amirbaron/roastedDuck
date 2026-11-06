@@ -12,7 +12,7 @@ use rustdb_function::{
     FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
     TableScanState,
 };
-use rustdb_parser::{ParserOptions, parse_column_definition};
+use rustdb_parser::{ParserOptions, parse_column_definition_bytes};
 use rustdb_planner::{ClientContext, bind_logical_type};
 use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
 
@@ -39,67 +39,75 @@ pub fn client_context<'a>(input: &TableFunctionBindInput<'a>) -> Result<&'a Clie
 
 /// `TransformStringToLogicalType`: a type name as written in SQL.
 pub fn transform_string_to_logical_type(context: &ClientContext, text: &str) -> Result<LogicalType> {
-    if text.eq_ignore_ascii_case("null") {
+    transform_bytes_to_logical_type(context, text.as_bytes())
+}
+
+/// The same type-name boundary without requiring SQL identifiers to be Unicode.
+pub fn transform_bytes_to_logical_type(context: &ClientContext, text: &[u8]) -> Result<LogicalType> {
+    if text.eq_ignore_ascii_case(b"null") {
         return Ok(LogicalType::SQLNULL);
     }
     // `TypeManager::ParseLogicalType`: text that does not parse as a type is reported
     // with similar type names.
-    let column = parse_column_definition(&format!("dummy {text}"), &ParserOptions::default()).map_err(|_| {
+    let definition = rustdb_common::byte_format!("dummy {text}");
+    let column = parse_column_definition_bytes(&definition, &ParserOptions::default()).map_err(|_| {
         const SUGGESTED_TYPES: [&str; 47] = [
-        "BIGINT",
-        "INT8",
-        "LONG",
-        "BIT",
-        "BITSTRING",
-        "BLOB",
-        "BYTEA",
-        "BINARY,",
-        "VARBINARY",
-        "BOOLEAN",
-        "BOOL",
-        "LOGICAL",
-        "DATE",
-        "DECIMAL(prec, scale)",
-        "DOUBLE",
-        "FLOAT8",
-        "FLOAT",
-        "FLOAT4",
-        "REAL",
-        "HUGEINT",
-        "INTEGER",
-        "INT4",
-        "INT",
-        "SIGNED",
-        "INTERVAL",
-        "SMALLINT",
-        "INT2",
-        "SHORT",
-        "TIME",
-        "TIMESTAMPTZ",
-        "TIMESTAMP",
-        "DATETIME",
-        "TINYINT",
-        "INT1",
-        "UBIGINT",
-        "UHUGEINT",
-        "UINTEGER",
-        "USMALLINT",
-        "UTINYINT",
-        "UUID",
-        "VARCHAR",
-        "CHAR",
-        "BPCHAR",
-        "TEXT",
-        "STRING",
-        "MAP(INTEGER, VARCHAR)",
-        "UNION(num INTEGER, text VARCHAR)",
+            "BIGINT",
+            "INT8",
+            "LONG",
+            "BIT",
+            "BITSTRING",
+            "BLOB",
+            "BYTEA",
+            "BINARY,",
+            "VARBINARY",
+            "BOOLEAN",
+            "BOOL",
+            "LOGICAL",
+            "DATE",
+            "DECIMAL(prec, scale)",
+            "DOUBLE",
+            "FLOAT8",
+            "FLOAT",
+            "FLOAT4",
+            "REAL",
+            "HUGEINT",
+            "INTEGER",
+            "INT4",
+            "INT",
+            "SIGNED",
+            "INTERVAL",
+            "SMALLINT",
+            "INT2",
+            "SHORT",
+            "TIME",
+            "TIMESTAMPTZ",
+            "TIMESTAMP",
+            "DATETIME",
+            "TINYINT",
+            "INT1",
+            "UBIGINT",
+            "UHUGEINT",
+            "UINTEGER",
+            "USMALLINT",
+            "UTINYINT",
+            "UUID",
+            "VARCHAR",
+            "CHAR",
+            "BPCHAR",
+            "TEXT",
+            "STRING",
+            "MAP(INTEGER, VARCHAR)",
+            "UNION(num INTEGER, text VARCHAR)",
         ];
         let candidates: Vec<String> = SUGGESTED_TYPES.iter().map(|&name| name.to_owned()).collect();
-        let mut message = format!("Value \"{text}\" can not be converted to a DuckDB Type.\nPossible examples as suggestions: \n");
+        let mut message = rustdb_common::byte_format!(
+            "Value \"{text}\" can not be converted to a DuckDB Type.\nPossible examples as suggestions: \n"
+        );
         for suggestion in rustdb_common::string_util::top_n_jaro_winkler(&candidates, text) {
-            message.push_str("* ");
-            message.push_str(&suggestion);
-            message.push('\n');
+            message.push_bytes("* ");
+            message.push_bytes(&suggestion);
+            message.push(b'\n');
         }
         Error::invalid_input(message)
     })?;
@@ -109,8 +117,8 @@ pub fn transform_string_to_logical_type(context: &ClientContext, text: &str) -> 
 /// The cached schema of one file of a `union_by_name` read (DuckDB's `CSVUnionData`).
 #[derive(Clone, Debug)]
 pub struct CsvUnionData {
-    pub file: String,
-    pub names: Vec<String>,
+    pub file: rustdb_common::ByteString,
+    pub names: Vec<rustdb_common::ByteString>,
     pub types: Vec<LogicalType>,
     pub options: CsvReaderOptions,
 }
@@ -122,7 +130,7 @@ pub struct ReadCsvData {
     pub options: CsvReaderOptions,
     pub file_options: MultiFileOptions,
     /// The output columns, including the generated filename and hive columns.
-    pub names: Vec<String>,
+    pub names: Vec<rustdb_common::ByteString>,
     pub types: Vec<LogicalType>,
     pub reader_bind: MultiFileBindData,
     pub csv_schema: CsvSchema,
@@ -187,7 +195,7 @@ impl ReadCsvData {
     /// A copy that reads only the files at positions `keep` (`PruneReaders`).
     fn with_files(&self, keep: &[usize]) -> Self {
         let mut result = self.with_types(self.types.clone());
-        let files: Vec<String> = keep
+        let files: Vec<rustdb_common::ByteString> = keep
             .iter()
             .filter_map(|&index| self.files.files.get(index).cloned())
             .collect();
@@ -260,7 +268,7 @@ fn schema_discovery(
     options: &mut CsvReaderOptions,
     file_options: &MultiFileOptionsView,
     return_types: &mut Vec<LogicalType>,
-    names: &mut Vec<String>,
+    names: &mut Vec<rustdb_common::ByteString>,
     files: &FileList,
 ) -> Result<(CsvSchema, Arc<CsvBufferManager>)> {
     let mut schemas = Vec::new();
@@ -333,7 +341,7 @@ fn schema_discovery(
             .get_buffer(0)?
             .is_none_or(|buffer| buffer.actual_size() == 0)
         {
-            schemas.push(CsvSchema::new(&[], &[], "", 0, true));
+            schemas.push(CsvSchema::new(&[], &[], b"", 0, true));
         } else {
             schemas.push(CsvSchema::new(
                 &result.names,
@@ -384,7 +392,7 @@ pub fn bind_csv_files(
     files: FileList,
     mut file_options: MultiFileOptions,
     mut options: CsvReaderOptions,
-    expected: Option<(&[String], &[LogicalType])>,
+    expected: Option<(&[rustdb_common::ByteString], &[LogicalType])>,
 ) -> Result<ReadCsvData> {
     // InitializeBindData
     if files.expand_result() == FileExpandResult::MultipleFiles {
@@ -422,7 +430,7 @@ pub fn bind_csv_files(
         }
         reader_bind = bind_options(&file_options, &files, &mut types, &mut names)?;
         if !options.sql_types_per_column.is_empty() {
-            let names_in_types: Vec<String> = options
+            let names_in_types: Vec<rustdb_common::ByteString> = options
                 .sql_types_per_column
                 .iter()
                 .map(|(name, _)| name.to_owned())
@@ -459,7 +467,7 @@ pub fn bind_csv_files(
     if !options.force_not_null_names.is_empty() {
         for force_name in &options.force_not_null_names {
             if !names.contains(force_name) {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "\"force_not_null\" expected to find {force_name}, but it was not found in the table"
                 )));
             }
@@ -477,7 +485,7 @@ pub fn bind_csv_files(
     options.finalize()?;
     if let Some((expected_names, expected_types)) = expected {
         if expected_types.len() != types.len() {
-            return Err(Error::conversion(format!(
+            return Err(Error::conversion(rustdb_common::byte_format!(
                 "Failed to read file(s) \"{}\" - column count mismatch: expected {} columns but found {}",
                 files.first_file().unwrap_or_default(),
                 expected_types.len(),
@@ -529,6 +537,107 @@ fn read_csv_bind(function_name: &str, input: &TableFunctionBindInput<'_>) -> Res
     })
 }
 
+/// The frozen file relation exposes physical CSV columns as metadata; virtual
+/// filename/hive columns remain available to the executing table function.
+#[derive(Debug)]
+pub struct CsvRelationOptions {
+    pub names: Vec<rustdb_common::ByteString>,
+    pub types: Vec<LogicalType>,
+    pub parameters: Vec<(rustdb_common::ByteString, Value)>,
+}
+
+/// Captures a relation's sniffed dialect and schema before it is executed
+/// (`ReadCSVRelationBind` followed by `CSVReaderOptions::ToNamedParameters`).
+pub fn relation_options(
+    context: &ClientContext,
+    paths: &[rustdb_common::ByteString],
+    parameters: &[(rustdb_common::ByteString, Value)],
+) -> Result<CsvRelationOptions> {
+    let inputs = [Value::list(
+        LogicalType::VARCHAR,
+        paths
+            .iter()
+            .map(|p| Value::try_varchar(p))
+            .collect::<Result<Vec<_>>>()?,
+    )];
+    let input = TableFunctionBindInput {
+        inputs: &inputs,
+        named_parameters: parameters,
+        input_table_types: &[],
+        input_table_names: &[],
+        binder: Some(context),
+    };
+    let bound = read_csv_bind("ReadCSVRelation", &input)?;
+    let data = bound
+        .bind_data
+        .as_ref()
+        .and_then(|d| d.as_any().downcast_ref::<ReadCsvData>())
+        .ok_or_else(|| Error::internal("Missing CSV relation bind data"))?;
+    let (names, types) = if data.file_options.union_by_name {
+        (data.names.clone(), data.types.clone())
+    } else if data.csv_schema.columns.is_empty() {
+        (data.options.name_list.clone(), data.options.sql_type_list.clone())
+    } else {
+        (
+            data.csv_schema.columns.iter().map(|c| c.name.clone()).collect(),
+            data.csv_schema.columns.iter().map(|c| c.ty.clone()).collect(),
+        )
+    };
+    let mut options = data.options.clone();
+    if !data.file_options.union_by_name {
+        let state = &mut options.dialect_options.state_machine_options;
+        state.escape.change_set_by_user_true();
+        state.delimiter.change_set_by_user_true();
+        state.quote.change_set_by_user_true();
+        state.comment.change_set_by_user_true();
+        options.dialect_options.header.change_set_by_user_true();
+        options.dialect_options.skip_rows.change_set_by_user_true();
+    }
+    let mut result = rustdb_common::CaseInsensitiveMap::<Value, rustdb_common::ByteString>::default();
+    for (key, value) in parameters {
+        result.insert(key, value.clone());
+    }
+    for (key, value) in options.to_named_parameters()? {
+        result.insert(key, value);
+    }
+    result.insert("auto_detect", Value::boolean(false));
+    if !data.file_options.union_by_name {
+        let columns = if data.csv_schema.columns.is_empty() {
+            options
+                .name_list
+                .iter()
+                .zip(&options.sql_type_list)
+                .map(|(n, t)| Value::try_varchar(&t.to_bytes()).map(|value| (n.clone(), value)))
+                .collect::<Result<Vec<_>>>()?
+        } else {
+            data.csv_schema
+                .columns
+                .iter()
+                .map(|c| Value::try_varchar(&c.ty.to_bytes()).map(|value| (c.name.clone(), value)))
+                .collect::<Result<Vec<_>>>()?
+        };
+        let fields = columns
+            .iter()
+            .map(|(name, _)| (name.clone(), LogicalType::VARCHAR))
+            .collect();
+        result.insert(
+            "columns",
+            Value::from_children(
+                LogicalType::struct_type(fields),
+                columns.into_iter().map(|(_, v)| v).collect(),
+            ),
+        );
+    }
+    for key in ["names", "column_names", "types", "dtypes"] {
+        result.remove(key);
+    }
+    Ok(CsvRelationOptions {
+        names,
+        types,
+        parameters: result.into_iter().collect(),
+    })
+}
+
 /// Where a projected output column comes from.
 #[derive(Debug)]
 enum ColumnSource {
@@ -563,13 +672,13 @@ struct CsvScanState {
 }
 
 /// `MultiFileColumnMapper::ThrowColumnNotFoundError`.
-fn column_not_found(data: &ReadCsvData, file: &CsvFileScan, name: &str) -> Error {
-    Error::invalid_input(format!(
+fn column_not_found(data: &ReadCsvData, file: &CsvFileScan, name: &[u8]) -> Error {
+    Error::invalid_input(rustdb_common::byte_format!(
         "Failed to read file \"{}\": schema mismatch in glob: column \"{name}\" was read from the original file \"{}\", but could not be found in file \"{}\".\nCandidate names: {}\nIf you are trying to read files with different schemas, try setting union_by_name=True",
         file.file_path,
         data.files.first_file().unwrap_or_default(),
         file.file_path,
-        file.names.join(", ")
+        rustdb_common::ByteString::join(&file.names, b", ")
     ))
 }
 
@@ -603,7 +712,7 @@ fn open_file(data: &ReadCsvData, file_idx: usize, column_ids: &[u64]) -> Result<
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .take()
-                .filter(|manager| manager.file_path() == file);
+                .filter(|manager| manager.file_path() == file.as_bytes());
         }
         let csv_count = usize::try_from(data.options.dialect_options.num_cols).unwrap_or(usize::MAX);
         CsvFileScan::new(
@@ -630,7 +739,7 @@ fn open_file(data: &ReadCsvData, file_idx: usize, column_ids: &[u64]) -> Result<
     for &global_id in column_ids {
         match global_id {
             crate::multi_file::COLUMN_IDENTIFIER_FILENAME => {
-                sources.push(ColumnSource::Constant(Value::varchar(file)));
+                sources.push(ColumnSource::Constant(Value::try_varchar(file)?));
                 continue;
             }
             crate::multi_file::COLUMN_IDENTIFIER_FILE_INDEX => {
@@ -646,7 +755,7 @@ fn open_file(data: &ReadCsvData, file_idx: usize, column_ids: &[u64]) -> Result<
             continue;
         }
         if data.reader_bind.filename_idx == Some(global) {
-            sources.push(ColumnSource::Constant(Value::varchar(file)));
+            sources.push(ColumnSource::Constant(Value::try_varchar(file)?));
             continue;
         }
         if let Some((key, _)) = data
@@ -776,7 +885,9 @@ fn fill_rejects_table(data: &ReadCsvData, state: &mut CsvScanState, file: &CsvFi
     // File indexes are assigned in file order, whatever order the files finish in.
     let file_idx = file.file_idx as usize;
     while state.rejects_file_indexes.len() <= file_idx {
-        state.rejects_file_indexes.push(rejects.current_file_index(scan_idx));
+        state
+            .rejects_file_indexes
+            .push(rejects.current_file_index(scan_idx));
     }
     rejects.fill(
         client,

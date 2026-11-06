@@ -16,17 +16,21 @@ use crate::attached::AttachOptions;
 
 /// The catalog name of a database file (`AttachedDatabase::ExtractDatabaseName`): the
 /// file name up to its first dot; reserved names get a `_db` suffix.
-pub(crate) fn database_name(path: &str) -> String {
-    if path.is_empty() || path == ":memory:" {
-        return "memory".to_owned();
+pub(crate) fn database_name(path: impl AsRef<[u8]>) -> rustdb_common::ByteString {
+    let path = path.as_ref();
+    if path.is_empty() || path == b":memory:" {
+        return "memory".into();
     }
-    let file = path.rsplit(['/', '\\']).next().unwrap_or(path);
-    let file = file.split('?').next().unwrap_or(file);
-    let name = file.split('.').next().unwrap_or(file).to_owned();
-    if matches!(name.as_str(), "main" | "temp" | "system") {
-        format!("{name}_db")
+    let file = path
+        .rsplit(|byte| matches!(byte, b'/' | b'\\'))
+        .next()
+        .unwrap_or(path);
+    let file = file.split(|byte| *byte == b'?').next().unwrap_or(file);
+    let name = file.split(|byte| *byte == b'.').next().unwrap_or(file);
+    if [b"main".as_slice(), b"temp", b"system"].contains(&name) {
+        rustdb_common::byte_format!("{name}_db")
     } else {
-        name
+        name.into()
     }
 }
 
@@ -139,7 +143,7 @@ fn storage_options(attach: &AttachOptions) -> Result<StorageOptions> {
 
 /// Opens the database file at `path` and loads its catalog into `catalog`.
 pub(crate) fn open_storage(
-    path: &str,
+    path: &[u8],
     attach: &AttachOptions,
     buffer_manager: rustdb_buffer::BufferManager,
     catalog: &Catalog,
@@ -196,7 +200,7 @@ pub(crate) fn checkpoint(
     }
     // A committed transaction with updates or catalog changes that older transactions
     // still need holds the checkpoint lock (`recently_committed_transactions`).
-    if !force && transactions.retains_changes(current.transaction_id, &database.name()) {
+    if !force && transactions.retains_changes(current.transaction_id, database.name()) {
         return Err(Error::new(
             ErrorKind::Transaction,
             "Cannot CHECKPOINT: there are other write transactions active. Try using FORCE CHECKPOINT to wait \
@@ -244,7 +248,7 @@ pub(crate) fn create_checkpoint(
     mode: CheckpointMode,
     transactions: Option<&rustdb_catalog::TransactionManager>,
     failed: &dyn Fn(Error) -> Error,
-    refused: &dyn Fn() -> String,
+    refused: &dyn Fn() -> rustdb_common::ByteString,
     commit: Option<CommitLocks<'_, '_>>,
 ) -> Result<()> {
     if storage.is_read_only() {
@@ -254,6 +258,15 @@ pub(crate) fn create_checkpoint(
         return Ok(());
     };
     let always = commit.is_some();
+    // A shutdown/automatic checkpoint has no connection to bind expressions. Keep
+    // the original checkpoint plus its WAL until binding can apply all key changes.
+    // A commit that skips WAL writes is excluded by `skip_wal_checkpoint` instead.
+    if !always
+        && mode == CheckpointMode::Automatic
+        && rustdb_catalog::checkpoint::has_pending_index_replays(catalog)
+    {
+        return Ok(());
+    }
     let locks = catalog.locks();
     let (exclusive, mut held_wal) = if let Some(CommitLocks { checkpoint, wal }) = commit {
         (Some(checkpoint), Some(wal))
@@ -406,7 +419,7 @@ pub(crate) fn create_in_memory_checkpoint(
     // Committed updates older transactions must not see hold the checkpoint lock in
     // DuckDB (`recently_committed_transactions`): compressing would fold them in.
     if !full_checkpoint
-        && transactions.is_some_and(|transactions| transactions.retains_changes(u64::MAX, &catalog.name()))
+        && transactions.is_some_and(|transactions| transactions.retains_changes(u64::MAX, catalog.name()))
     {
         return Ok(());
     }

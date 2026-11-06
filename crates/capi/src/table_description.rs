@@ -4,7 +4,7 @@ use std::ffi::{CString, c_char};
 
 use rustdb::{ColumnDescription, TableDescription};
 
-use crate::helper::{c_string, catch, opt_str, to_cstring};
+use crate::helper::{c_string, catch, opt_bytes, to_cstring};
 use crate::logical_types::{DuckdbLogicalType, wrap_type};
 use crate::open::{DuckdbConnection, connection_ref};
 use crate::types::*;
@@ -74,11 +74,16 @@ pub unsafe extern "C" fn duckdb_table_description_create_ext(
         &mut *wrapper
     };
     // SAFETY: `connection` is NULL or a live handle; the names are NULL or NUL-terminated.
-    let (Some(context), Some(table)) = (unsafe { (connection_ref(connection), opt_str(table)) }) else {
+    let (Some(context), Some(table)) = (unsafe { (connection_ref(connection), opt_bytes(table)) }) else {
         return DuckdbState::DuckDBError;
     };
     // SAFETY: as above.
-    let (catalog, schema) = unsafe { (opt_str(catalog).unwrap_or(""), opt_str(schema).unwrap_or("main")) };
+    let (catalog, schema) = unsafe {
+        (
+            opt_bytes(catalog).unwrap_or(b""),
+            opt_bytes(schema).unwrap_or(b"main"),
+        )
+    };
     match catch(|| context.lock().table_info(catalog, schema, table)) {
         Ok(Some(description)) => {
             wrapper.description = Some(description);

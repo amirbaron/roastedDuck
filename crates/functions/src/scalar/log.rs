@@ -4,7 +4,7 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_common::{ByteString, Error, ErrorKind, Result};
 use rustdb_function::cast::{CastFunctionSet, CastParameters, cast_vector};
 use rustdb_function::logging::{ClientLogger, LogLevel, LogScope};
 use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet, Stability};
@@ -34,9 +34,12 @@ fn constant_argument<'a>(input: &'a BindInput<'_>, index: usize) -> Result<&'a V
         .get(index)
         .and_then(Option::as_ref)
         .ok_or_else(|| {
-            Error::binder(format!(
+            Error::binder(rustdb_common::byte_format!(
                 "write_log: argument '{}' must be constant",
-                input.aliases.get(index).map_or("", String::as_str)
+                input
+                    .aliases
+                    .get(index)
+                    .map_or(b"".as_slice(), ByteString::as_bytes)
             ))
         })
 }
@@ -66,10 +69,13 @@ fn bind_write_log(
     function.return_type = LogicalType::VARCHAR;
     function.arguments = input.argument_types.to_vec();
     for index in 1..input.argument_types.len() {
-        let alias = input.aliases.get(index).map_or("", String::as_str);
+        let alias = input
+            .aliases
+            .get(index)
+            .map_or(b"".as_slice(), ByteString::as_bytes);
         let ty = &input.argument_types[index];
         match alias {
-            "disable_logging" => {
+            b"disable_logging" => {
                 let value = constant_argument(input, index)?;
                 if ty.id() != LogicalTypeId::Boolean {
                     return Err(Error::binder(
@@ -78,26 +84,28 @@ fn bind_write_log(
                 }
                 data.disable_logging = value.as_bool().unwrap_or(false);
             }
-            "scope" | "level" | "log_type" => {
+            b"scope" | b"level" | b"log_type" => {
                 let value = constant_argument(input, index)?;
                 if ty.id() != LogicalTypeId::Varchar {
-                    return Err(Error::binder(format!(
+                    return Err(Error::binder(rustdb_common::byte_format!(
                         "write_log: '{alias}' argument must be a string"
                     )));
                 }
                 let text = value.to_varchar()?;
                 match alias {
-                    "scope" => data.scope = text,
-                    "level" => data.level = LogLevel::parse(&text)?,
+                    b"scope" => data.scope = text,
+                    b"level" => data.level = LogLevel::parse(&text)?,
                     _ => data.log_type = text,
                 }
             }
-            "return_value" => {
+            b"return_value" => {
                 function.return_type = ty.clone();
                 data.output_column = Some(index);
             }
             _ => {
-                return Err(Error::binder(format!("write_log: Unknown argument '{alias}'")));
+                return Err(Error::binder(rustdb_common::byte_format!(
+                    "write_log: Unknown argument '{alias}'"
+                )));
             }
         }
     }
@@ -136,7 +144,7 @@ fn write_log_functions() -> ScalarFunctionSet {
                     if message.is_null() || !logger.should_log(scope, &data.log_type, data.level) {
                         continue;
                     }
-                    logger.write_log(scope, &data.log_type, data.level, &message.to_varchar()?)?;
+                    logger.write_log_bytes(scope, &data.log_type, data.level, &message.to_varchar_bytes()?)?;
                 }
             }
             *result = match data.output_column {
@@ -177,9 +185,9 @@ fn bind_parse_log_message(
         return Err(Error::binder("structured_log_schema: expects 1 argument"));
     }
     let Some(log_type) = input.constants[0].as_ref() else {
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "structured_log_schema: argument '{}' must be constant",
-            input.aliases.first().map_or("", String::as_str)
+            input.aliases.first().map_or(b"".as_slice(), ByteString::as_bytes)
         )));
     };
     if input.argument_types[0].id() != LogicalTypeId::Varchar {
@@ -195,7 +203,7 @@ fn bind_parse_log_message(
         .ok_or_else(|| Error::invalid_input(format!("structured_log_schema: '{name}' not found")))?;
     function.return_type = match &found.structured_type {
         Some(ty) => ty.clone(),
-        None => LogicalType::struct_type(vec![("message".to_owned(), LogicalType::VARCHAR)]),
+        None => LogicalType::struct_type(vec![("message".to_owned().into(), LogicalType::VARCHAR)]),
     };
     Ok(Some(Arc::new(ParseLogData {
         structured: found.structured_type,
@@ -225,7 +233,7 @@ fn parse_log_message_functions() -> ScalarFunctionSet {
                 let mut out = Vector::flat(ty, args.len().max(1));
                 for row in 0..args.len() {
                     let message = messages.get_value(row);
-                    let value = Value::struct_value(vec![("message".to_owned(), message)]);
+                    let value = Value::struct_value(vec![("message".to_owned().into(), message)]);
                     out.set_value(row, &value)?;
                 }
                 out

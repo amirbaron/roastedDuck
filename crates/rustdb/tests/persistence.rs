@@ -44,7 +44,7 @@ fn tables_survive_a_restart() {
         let (_database, mut con) = open(&path);
         con.query("CREATE TABLE t(i INTEGER PRIMARY KEY, s VARCHAR, d DOUBLE, b BOOLEAN)")
             .unwrap();
-        con.query(&format!(
+        con.query(format!(
             "INSERT INTO t VALUES (1, 'a', 1.5, true), (2, NULL, NULL, false), (3, '{big}', -2.0, NULL)"
         ))
         .unwrap();
@@ -227,6 +227,131 @@ fn checkpoint_empties_the_wal() {
     assert!(wal_size(&path) > 0);
 }
 
+#[test]
+fn extension_types_and_defaults_reopen_from_checkpoint_and_wal() {
+    for checkpoint in [false, true] {
+        let path = temp_path(if checkpoint {
+            "extension-checkpoint"
+        } else {
+            "extension-wal"
+        });
+        {
+            let (_database, mut con) = open_without_checkpoint(&path);
+            con.query("CREATE TABLE extensions(i INTEGER CHECK(abs(i)=i), g INTEGER GENERATED ALWAYS AS (abs(i)), s VARCHAR DEFAULT lower('ABC'), j JSON DEFAULT json_object('x',7), t TIMESTAMPTZ)")
+                .unwrap();
+            con.query("CREATE INDEX extension_abs_idx ON extensions((abs(i)))")
+                .unwrap();
+            con.query("INSERT INTO extensions(i,t) VALUES (1,TIMESTAMPTZ '2024-01-02 03:04:05+00')")
+                .unwrap();
+            if checkpoint {
+                con.query("CHECKPOINT").unwrap();
+            }
+        }
+        if !checkpoint {
+            assert!(wal_size(&path) > 0);
+        }
+        {
+            let (_database, mut con) = open_without_checkpoint(&path);
+            assert_eq!(
+                rows(
+                    &mut con,
+                    "SELECT i,g,s,j->>'x',t::VARCHAR FROM extensions WHERE abs(i)=1"
+                ),
+                vec![vec!["1", "1", "abc", "7", "2024-01-02 03:04:05+00"]]
+            );
+            assert!(con.query("INSERT INTO extensions(i) VALUES (-1)").is_err());
+            con.query("INSERT INTO extensions(i,t) VALUES (2,TIMESTAMPTZ '2024-01-02 03:04:05+00')")
+                .unwrap();
+            con.query("CHECKPOINT").unwrap();
+        }
+        let mut config = Config::default();
+        config
+            .set_option_by_name("access_mode", rustdb::Value::varchar("read_only"))
+            .unwrap();
+        let database = Database::open(&path, &config).unwrap();
+        let mut con = database.connect().unwrap();
+        assert_eq!(
+            rows(&mut con, "SELECT count(*),min(j->>'x') FROM extensions"),
+            vec![vec!["2", "7"]]
+        );
+    }
+}
+
+#[test]
+fn prepared_checkpoint_flushes_wal_and_profiles_actual_storage_work() {
+    use rustdb::{PendingExecutionResult, QueryResult, Value};
+    use rustdb_common::CaseInsensitiveMap;
+
+    let path = temp_path("prepared-checkpoint");
+    let (_database, mut con) = open_without_checkpoint(&path);
+    con.query("CREATE TABLE t(i INTEGER)").unwrap();
+    con.query("SET enable_profiling='no_output'; SET profiling_coverage='ALL'")
+        .unwrap();
+    con.query("SET custom_profiling_settings='{\"CHECKPOINT_LATENCY\":\"true\"}'")
+        .unwrap();
+    let prepared = con.prepare("CHECKPOINT").unwrap();
+    let values: CaseInsensitiveMap<Value> = CaseInsensitiveMap::new();
+    for allow_stream in [false, true] {
+        con.query("INSERT INTO t VALUES (1)").unwrap();
+        assert!(wal_size(&path) > 0);
+        let pending = con.pending_prepared(&prepared, &values, allow_stream).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "checkpoint readiness timeout"
+            );
+            if matches!(
+                con.execute_task(&pending).unwrap(),
+                PendingExecutionResult::ResultReady | PendingExecutionResult::ExecutionFinished
+            ) {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        assert_eq!(
+            wal_size(&path),
+            0,
+            "ready task must have completed its checkpoint"
+        );
+        if let QueryResult::Stream(stream) = con.execute_pending(&pending).unwrap() {
+            while con.fetch(&stream).unwrap().is_some() {}
+        }
+        assert_eq!(wal_size(&path), 0, "prepared checkpoint must actually flush");
+        let profile = con.profiling_tree().expect("checkpoint profile");
+        let latency = profile
+            .metrics
+            .iter()
+            .find(|(name, _)| name == "CHECKPOINT_LATENCY")
+            .expect("enabled checkpoint metric")
+            .1
+            .parse::<f64>()
+            .unwrap();
+        assert!(latency > 0.0, "profile must include actual checkpoint work");
+    }
+    assert_eq!(rows(&mut con, "SELECT count(*) FROM t"), vec![vec!["2"]]);
+}
+
+#[test]
+fn prepared_checkpoint_rejects_uncommitted_writes_and_can_be_reused_after_rollback() {
+    use rustdb::{ErrorKind, Value};
+    use rustdb_common::CaseInsensitiveMap;
+
+    let path = temp_path("prepared-checkpoint-rollback");
+    let (_database, mut con) = open_without_checkpoint(&path);
+    con.query("CREATE TABLE t(i INTEGER)").unwrap();
+    let prepared = con.prepare("CHECKPOINT").unwrap();
+    let values: CaseInsensitiveMap<Value> = CaseInsensitiveMap::new();
+    con.query("BEGIN; INSERT INTO t VALUES (99)").unwrap();
+    let error = con.execute_prepared(&prepared, &values, false).unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::Transaction);
+    assert!(error.to_string().contains("transaction local changes"));
+    con.query("ROLLBACK").unwrap();
+    con.execute_prepared(&prepared, &values, false).unwrap();
+    assert_eq!(wal_size(&path), 0);
+    assert_eq!(rows(&mut con, "SELECT count(*) FROM t"), vec![vec!["0"]]);
+}
+
 /// Writes indexed tables, checkpoints, and checks the indexes after reopening.
 fn check_indexes_survive(path: &str, config: &Config) {
     {
@@ -307,7 +432,7 @@ fn large_commits_that_checkpoint_skip_the_wal() {
         let path = temp_path(&format!("skip-wal-{threshold}"));
         {
             let (_database, mut con) = open_without_checkpoint(&path);
-            con.query(&format!("SET auto_checkpoint_skip_wal_threshold = {threshold}"))
+            con.query(format!("SET auto_checkpoint_skip_wal_threshold = {threshold}"))
                 .unwrap();
             con.query("CREATE TABLE t(i INTEGER)").unwrap();
             con.query("SET wal_autocheckpoint_entries = 1").unwrap();

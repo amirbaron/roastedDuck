@@ -48,8 +48,8 @@ pub fn like_optimization(
         return Ok(RuleOutcome::Unchanged);
     };
     let is_not_like = match &*function.function.name {
-        "~~" => false,
-        "!~~" => true,
+        b"~~" => false,
+        b"!~~" => true,
         _ => return Ok(RuleOutcome::Unchanged),
     };
     if function.children.len() != 2 {
@@ -116,7 +116,9 @@ pub fn empty_needle_removal(
     let ExpressionKind::Function(function) = &mut expression.kind else {
         return Ok(RuleOutcome::Unchanged);
     };
-    if !matches!(&*function.function.name, "prefix" | "contains" | "suffix") || function.children.len() != 2 {
+    if !matches!(&*function.function.name, b"prefix" | b"contains" | b"suffix")
+        || function.children.len() != 2
+    {
         return Ok(RuleOutcome::Unchanged);
     }
     let needle = &function.children[1];

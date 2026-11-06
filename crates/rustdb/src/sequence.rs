@@ -13,8 +13,8 @@ use rustdb_types::{DataChunk, LogicalType, Vector};
 /// The sequence a call uses (`NextvalBindData`).
 #[derive(Debug)]
 struct SequenceBindData {
-    name: String,
-    schema: String,
+    name: rustdb_common::ByteString,
+    schema: rustdb_common::ByteString,
     sequence: SequenceEntry,
     /// The catalog of the sequence; taking a value writes to its database.
     catalog: Option<Arc<rustdb_catalog::Catalog>>,
@@ -33,11 +33,11 @@ impl FunctionData for SequenceBindData {
         self
     }
 
-    fn modified_database(&self) -> Option<String> {
+    fn modified_database(&self) -> Option<rustdb_common::ByteString> {
         self.catalog
             .as_ref()
             .filter(|_| self.modifies)
-            .map(|catalog| catalog.name().to_string())
+            .map(|catalog| (&*catalog.name()).into())
     }
 }
 
@@ -175,7 +175,7 @@ fn sequence_kernel(
     {
         // `DuckTransaction::PushSequenceUsage`; the sequence's database is modified.
         if let Some(catalog) = &data.catalog {
-            transaction.modify_database(&catalog.name(), catalog.wal(), catalog.locks(), true, false)?;
+            transaction.modify_database(catalog.name(), catalog.wal(), catalog.locks(), true, false)?;
         }
         let state = data.sequence.data();
         transaction.push_sequence_usage(

@@ -398,7 +398,10 @@ mod tests {
         // must wake it.
         let tasks: Vec<Box<dyn Task>> = (0..100)
             .map(|_| {
-                Box::new(NotifyingCounter(Arc::clone(&count), Arc::clone(&scheduler.shared))) as Box<dyn Task>
+                Box::new(NotifyingCounter(
+                    Arc::clone(&count),
+                    Arc::clone(&scheduler.shared),
+                )) as Box<dyn Task>
             })
             .collect();
         producer.schedule_tasks(tasks);

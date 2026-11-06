@@ -8,7 +8,7 @@ mod block;
 mod entropy;
 mod frame;
 mod huf;
-mod xxhash;
+pub(crate) mod xxhash;
 
 use std::cell::RefCell;
 use std::io::{self, Read};

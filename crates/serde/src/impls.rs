@@ -274,39 +274,39 @@ impl<K: Serialize, V: Serialize> Serialize for BTreeMap<K, V> {
     }
 }
 
-impl<V: Serialize> Serialize for CaseInsensitiveMap<V> {
+impl<V: Serialize, K: Serialize> Serialize for CaseInsensitiveMap<V, K> {
     fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
-        write_map_entries(serializer, self.iter())
+        write_map_entries(serializer, self.iter_keys())
     }
 }
 
-impl<V: Deserialize> Deserialize for CaseInsensitiveMap<V> {
+impl<V: Deserialize, K: Deserialize + AsRef<[u8]>> Deserialize for CaseInsensitiveMap<V, K> {
     fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let mut map = Self::new();
-        read_map_entries(deserializer, |k: String, v| {
+        let mut map = Self::new_with_keys();
+        read_map_entries(deserializer, |k: K, v| {
             map.insert(k, v);
         })?;
         Ok(map)
     }
 }
 
-impl Serialize for CaseInsensitiveSet {
+impl<K: Serialize + AsRef<[u8]>> Serialize for CaseInsensitiveSet<K> {
     fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
         serializer.on_list_begin(self.len());
-        for value in self.iter() {
-            serializer.write_str(value);
+        for value in self.iter_keys() {
+            value.serialize(serializer)?;
         }
         serializer.on_list_end();
         Ok(())
     }
 }
 
-impl Deserialize for CaseInsensitiveSet {
+impl<K: Deserialize + AsRef<[u8]>> Deserialize for CaseInsensitiveSet<K> {
     fn deserialize(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let mut set = Self::new();
+        let mut set = Self::default();
         let count = deserializer.on_list_begin()?;
         for _ in 0..count {
-            set.insert(deserializer.read_string()?);
+            set.insert(K::deserialize(deserializer)?);
         }
         deserializer.on_list_end()?;
         Ok(set)

@@ -16,9 +16,14 @@ mod database;
 mod default_functions;
 mod default_settings;
 mod default_views;
+mod extension_http;
 mod extensions;
+pub mod external_extensions;
+mod function_lists;
+mod function_registration;
 mod log_functions;
 mod logging;
+mod platform;
 mod query_profiler;
 mod read_duckdb;
 mod read_file;
@@ -33,11 +38,11 @@ mod temp_catalog;
 mod transaction;
 mod wal;
 
-pub use config::{AccessMode, Config, config_flags};
+pub use config::{AccessMode, Config, ConfigurationSnapshot, config_flags};
 pub use database::{
-    Appender, ClientHandle, ColumnDescription, Connection, Database, ExtensionLoad, MemoryStatus,
-    PendingExecutionResult, PendingQuery, PreparedStatement, QueryId, QueryProgress, QueryResult,
-    StreamQueryResult, TableDescription,
+    Appender, ClientHandle, ClientSessionSnapshot, ColumnDescription, Connection, Database, ExtensionLoad,
+    MemoryStatus, PendingExecutionResult, PendingQuery, PreparedStatement, QueryId, QueryProgress,
+    QueryResult, StreamQueryResult, TableDescription,
 };
 pub use logging::LogStorage;
 pub use query_profiler::ProfilingTree;

@@ -3,10 +3,11 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
-use rustdb_common::Result;
+use rustdb_common::{ByteString, Result};
+use rustdb_types::DataChunk;
 
 use super::Art;
-use super::unbound_index::UnboundIndex;
+use super::unbound_index::{BufferedIndexReplay, UnboundIndex};
 
 /// Which side of a foreign key an index lookup is for (`ForeignKeyType`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,7 +31,7 @@ pub struct IndexEntryState {
 /// One index of a table.
 #[derive(Debug)]
 pub struct IndexEntry {
-    name: String,
+    name: ByteString,
     column_ids: Vec<usize>,
     is_unique: bool,
     is_primary: bool,
@@ -53,7 +54,7 @@ impl IndexEntry {
         }
     }
 
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &ByteString {
         &self.name
     }
 
@@ -99,7 +100,12 @@ pub enum IndexSlot {
 }
 
 impl IndexSlot {
-    pub fn name(&self) -> &str {
+    /// A bound index staged outside the active list during WAL replay.
+    pub fn from_bound(index: Art) -> Self {
+        Self::Bound(Arc::new(IndexEntry::new(index)))
+    }
+
+    pub fn name(&self) -> &ByteString {
         match self {
             Self::Bound(entry) => entry.name(),
             Self::Unbound(index) => index.name(),
@@ -165,10 +171,25 @@ impl TableIndexList {
         self.write().push(IndexSlot::Unbound(Arc::new(index)));
     }
 
-    /// Removes the index named `name` and frees its memory (`RemoveIndex`).
-    pub fn remove(&self, name: &str) -> bool {
+    /// Takes ownership without resetting buffers, to stage a WAL-created index
+    /// until its creating transaction has committed.
+    pub fn take_for_replay(&self, name: impl AsRef<[u8]>) -> Option<IndexSlot> {
         let mut entries = self.write();
-        let Some(pos) = entries.iter().position(|e| e.name() == name) else {
+        let position = entries
+            .iter()
+            .position(|entry| entry.name().as_bytes() == name.as_ref())?;
+        Some(entries.remove(position))
+    }
+
+    /// Publishes the native index after the replayed transaction has committed.
+    pub fn publish_replayed(&self, index: IndexSlot) {
+        self.write().push(index);
+    }
+
+    /// Removes the index named `name` and frees its memory (`RemoveIndex`).
+    pub fn remove(&self, name: impl AsRef<[u8]>) -> bool {
+        let mut entries = self.write();
+        let Some(pos) = entries.iter().position(|e| e.name().as_bytes() == name.as_ref()) else {
             return false;
         };
         let entry = entries.remove(pos);
@@ -176,9 +197,8 @@ impl TableIndexList {
         true
     }
 
-    /// A snapshot of the bound indexes (`IndexEntries` after `Bind`). Unbound indexes are
-    /// skipped: rustdb rebuilds them from the table when they are bound, so changes
-    /// made before need not reach them (`BufferChunk`).
+    /// A snapshot of the bound indexes. Unbound indexes receive the same mutations
+    /// through `buffer_chunk`, for application after their expressions are bound.
     pub fn entries(&self) -> Vec<Arc<IndexEntry>> {
         self.read()
             .iter()
@@ -216,24 +236,26 @@ impl TableIndexList {
     }
 
     /// The bound index named `name` (`Find`).
-    pub fn find(&self, name: &str) -> Option<Arc<IndexEntry>> {
+    pub fn find(&self, name: impl AsRef<[u8]>) -> Option<Arc<IndexEntry>> {
         self.read().iter().find_map(|slot| match slot {
-            IndexSlot::Bound(entry) if entry.name == name => Some(Arc::clone(entry)),
+            IndexSlot::Bound(entry) if entry.name.as_bytes() == name.as_ref() => Some(Arc::clone(entry)),
             _ => None,
         })
     }
 
     /// Whether an index, bound or not, is named `name`.
-    pub fn contains(&self, name: &str) -> bool {
-        self.read().iter().any(|slot| slot.name() == name)
+    pub fn contains(&self, name: impl AsRef<[u8]>) -> bool {
+        self.read()
+            .iter()
+            .any(|slot| slot.name().as_bytes() == name.as_ref())
     }
 
     /// Whether no constraint index is named `name` (`NameIsUnique`).
-    pub fn name_is_unique(&self, name: &str) -> bool {
+    pub fn name_is_unique(&self, name: impl AsRef<[u8]>) -> bool {
         !self
             .read()
             .iter()
-            .any(|slot| slot.is_constraint() && slot.name() == name)
+            .any(|slot| slot.is_constraint() && slot.name().as_bytes() == name.as_ref())
     }
 
     /// The index enforcing a foreign key over `keys` (`FindForeignKeyIndex`).
@@ -244,14 +266,35 @@ impl TableIndexList {
         })
     }
 
-    /// Every column some bound index reads (`GetRequiredColumns`), sorted.
+    /// Every physical column needed by bound or unbound indexes, sorted.
     pub fn required_columns(&self) -> Vec<usize> {
-        let columns: BTreeSet<usize> = self
-            .entries()
+        self.read()
             .iter()
-            .flat_map(|e| e.column_ids.iter().copied())
-            .collect();
-        columns.into_iter().collect()
+            .flat_map(|slot| slot.column_ids().iter().copied())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    /// Retains WAL mutations in each unbound index's own physical-column layout.
+    /// Validate every replay before publishing any of them.
+    pub(crate) fn buffer_chunk(
+        &self,
+        chunk: &DataChunk,
+        row_ids: &[i64],
+        kind: BufferedIndexReplay,
+    ) -> Result<()> {
+        let entries = self.read();
+        let mut pending = Vec::new();
+        for slot in entries.iter() {
+            if let IndexSlot::Unbound(index) = slot {
+                pending.push((index, index.prepare_replay(chunk, row_ids, kind)?));
+            }
+        }
+        for (index, replay) in pending {
+            index.push_replay(replay);
+        }
+        Ok(())
     }
 
     /// The key columns of each unique index, bound or not, in index order.

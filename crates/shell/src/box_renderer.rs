@@ -2,6 +2,7 @@
 //! table of unicode boxes, shortened to the terminal width and to `.maxrows` rows, with a
 //! footer that counts the rows and columns.
 
+use rustdb_common::ByteString;
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -10,7 +11,9 @@ use rustdb::{LogicalType, LogicalTypeId, MaterializedResult, Result};
 
 use crate::printer;
 use crate::render_context::RenderContext;
-use crate::utf8::{char_render_width, next_grapheme_cluster, render_width};
+use crate::utf8::render_width;
+#[cfg(test)]
+use crate::utf8::{char_render_width, next_grapheme_cluster};
 
 /// How a value is aligned in its column (`ValueRenderAlignment`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,15 +56,15 @@ pub enum LargeNumberRendering {
 
 /// Where the rendered pieces go (`BaseResultRenderer`).
 pub trait BaseResultRenderer {
-    fn render_layout(&mut self, text: &str);
-    fn render_column_name(&mut self, text: &str);
-    fn render_type(&mut self, text: &str);
-    fn render_value(&mut self, text: &str, ty: &LogicalType);
-    fn render_null(&mut self, text: &str, ty: &LogicalType);
-    fn render_string_literal(&mut self, text: &str, ty: &LogicalType) {
+    fn render_layout(&mut self, text: &[u8]);
+    fn render_column_name(&mut self, text: &[u8]);
+    fn render_type(&mut self, text: &[u8]);
+    fn render_value(&mut self, text: &[u8], ty: &LogicalType);
+    fn render_null(&mut self, text: &[u8], ty: &LogicalType);
+    fn render_string_literal(&mut self, text: &[u8], ty: &LogicalType) {
         self.render_value(text, ty);
     }
-    fn render_footer(&mut self, text: &str);
+    fn render_footer(&mut self, text: &[u8]);
 }
 
 /// A [`BaseResultRenderer`] with the result's column types, so that values render with
@@ -75,7 +78,7 @@ struct ResultRenderer<'a> {
 
 impl ResultRenderer<'_> {
     fn layout(&mut self, text: &str) {
-        self.renderer.render_layout(text);
+        self.renderer.render_layout(text.as_bytes());
     }
 
     /// The type of the column being rendered, `INVALID` outside a column
@@ -85,7 +88,8 @@ impl ResultRenderer<'_> {
             .map_or(LogicalType::INVALID, |column| self.column_types[column].clone())
     }
 
-    fn render(&mut self, render_mode: ResultRenderType, value: &str) {
+    fn render(&mut self, render_mode: ResultRenderType, value: impl AsRef<[u8]>) {
+        let value = value.as_ref();
         let ty = self.value_type();
         match render_mode {
             ResultRenderType::Layout => self.renderer.render_layout(value),
@@ -113,7 +117,7 @@ pub struct BoxRendererConfig {
     /// The width a column shrinks to when the result does not fit.
     pub max_col_width: usize,
     /// How NULL renders.
-    pub null_value: String,
+    pub null_value: ByteString,
     pub decimal_separator: Option<u8>,
     pub thousand_separator: Option<u8>,
     pub render_mode: BoxRenderMode,
@@ -130,7 +134,7 @@ impl Default for BoxRendererConfig {
             max_analyze_rows: usize::MAX,
             limit: 0,
             max_col_width: 20,
-            null_value: "NULL".to_owned(),
+            null_value: "NULL".into(),
             decimal_separator: None,
             thousand_separator: None,
             render_mode: BoxRenderMode::Rows,
@@ -165,7 +169,7 @@ struct HighlightingAnnotation {
 /// A value placed in a column (`BoxRenderValue`).
 #[derive(Clone, Debug)]
 struct BoxRenderValue {
-    text: String,
+    text: ByteString,
     render_mode: ResultRenderType,
     annotations: Vec<HighlightingAnnotation>,
     alignment: ValueRenderAlignment,
@@ -176,14 +180,14 @@ struct BoxRenderValue {
 
 impl BoxRenderValue {
     fn new(
-        text: String,
+        text: impl Into<ByteString>,
         render_mode: ResultRenderType,
         alignment: ValueRenderAlignment,
         column_idx: Option<usize>,
         render_width: Option<usize>,
     ) -> Self {
         Self {
-            text,
+            text: text.into(),
             render_mode,
             annotations: Vec::new(),
             alignment,
@@ -203,10 +207,10 @@ enum RenderRowType {
 /// The texts of the footer (`BoxRendererFooter`).
 #[derive(Debug, Default)]
 struct BoxRendererFooter {
-    row_count_str: String,
-    readable_rows_str: String,
-    shown_str: String,
-    column_count_str: String,
+    row_count_str: ByteString,
+    readable_rows_str: ByteString,
+    shown_str: ByteString,
+    column_count_str: ByteString,
     render_length: usize,
     must_show_footer: bool,
     has_hidden_rows: bool,
@@ -232,7 +236,7 @@ impl BoxRenderRow {
 /// `RenderDataCollection`, which keeps both per column.
 #[derive(Clone, Debug)]
 struct RenderCell {
-    text: Option<String>,
+    text: Option<ByteString>,
     render_length: usize,
 }
 
@@ -244,7 +248,7 @@ type RenderDataCollection = Vec<Vec<RenderCell>>;
 #[derive(Debug)]
 pub struct BoxRendererState {
     config: BoxRendererConfig,
-    column_names: Vec<String>,
+    column_names: Vec<ByteString>,
     result_types: Vec<LogicalType>,
     result: Arc<MaterializedResult>,
     column_widths: Vec<usize>,
@@ -274,7 +278,7 @@ impl BoxRendererState {
     pub fn prepare(
         config: BoxRendererConfig,
         context: &dyn RenderContext,
-        names: &[String],
+        names: &[ByteString],
         result: Arc<MaterializedResult>,
     ) -> Result<Self> {
         let mut state = Self {
@@ -313,30 +317,31 @@ impl BoxRendererState {
     /// `ComputeRowFooter`.
     fn compute_row_footer(&mut self, row_count: usize, rendered_rows: usize) {
         let column_count = self.column_count();
-        self.footer.column_count_str = format!("{column_count} column");
+        self.footer.column_count_str = format!("{column_count} column").into();
         if column_count > 1 {
-            self.footer.column_count_str.push('s');
+            self.footer.column_count_str.push(b's');
         }
-        self.footer.row_count_str = format!("{} rows", self.format_number(&row_count.to_string()));
+        self.footer.row_count_str =
+            rustdb_common::byte_format!("{} rows", self.format_number(&row_count.to_string()));
         let has_limited_rows = self.config.limit > 0 && row_count == self.config.limit;
         if has_limited_rows {
-            "? rows".clone_into(&mut self.footer.row_count_str);
+            self.footer.row_count_str = "? rows".into();
         }
         if self.config.large_number_rendering == LargeNumberRendering::Footer && !has_limited_rows {
-            let readable_str = self.try_format_large_number(&row_count.to_string());
+            let readable_str = self.try_format_large_number(row_count.to_string());
             if !readable_str.is_empty() {
-                self.footer.readable_rows_str = format!("{row_count} total");
-                self.footer.row_count_str = format!("{readable_str} rows");
+                self.footer.readable_rows_str = format!("{row_count} total").into();
+                self.footer.row_count_str = rustdb_common::byte_format!("{readable_str} rows");
             }
         }
         self.footer.has_hidden_rows = rendered_rows < row_count;
         if self.footer.has_hidden_rows {
             if has_limited_rows {
                 let limit = self.format_number(&(self.config.limit - 1).to_string());
-                let _ = write!(self.footer.shown_str, ">{limit} rows, ");
+                self.footer.shown_str += rustdb_common::byte_format!(">{limit} rows, ");
             }
             let shown = self.format_number(&rendered_rows.to_string());
-            let _ = write!(self.footer.shown_str, "{shown} shown");
+            self.footer.shown_str += rustdb_common::byte_format!("{shown} shown");
         }
         self.footer.must_show_footer = has_limited_rows || self.footer.has_hidden_rows || row_count == 0;
         self.footer.render_length = self
@@ -357,7 +362,7 @@ impl BoxRendererState {
             // In columns mode the pruned columns are pruned rows.
             self.footer.has_hidden_rows = true;
             let shown_row_count = column_count - self.pruned_columns.len();
-            self.footer.shown_str = format!("{} shown", shown_row_count - 2);
+            self.footer.shown_str = format!("{} shown", shown_row_count - 2).into();
         } else {
             self.footer.has_hidden_columns = true;
             let shown_column_count = column_count - self.pruned_columns.len();
@@ -396,7 +401,7 @@ impl BoxRendererState {
 
         let collections = self.fetch_render_collections(context)?;
         self.render_collections = if self.config.render_mode == BoxRenderMode::Columns && rows_to_render > 0 {
-            self.pivot_collections(&collections, row_count, context)
+            self.pivot_collections(&collections, row_count, context)?
         } else {
             collections
         };
@@ -407,7 +412,7 @@ impl BoxRendererState {
         } else {
             0
         };
-        self.compute_render_widths(min_width, max_width);
+        self.compute_render_widths(min_width, max_width)?;
 
         // The boundaries of the columns.
         for c in 0..self.column_widths.len() {
@@ -456,7 +461,7 @@ impl BoxRendererState {
     )]
     fn render_value(
         ss: &mut ResultRenderer<'_>,
-        value: &str,
+        value: &[u8],
         column_width: usize,
         render_mode: ResultRenderType,
         annotations: &[HighlightingAnnotation],
@@ -464,7 +469,8 @@ impl BoxRendererState {
         render_width_input: Option<usize>,
         vertical: Option<&str>,
     ) {
-        let mut render_width_value = render_width_input.unwrap_or_else(|| render_width(value));
+        let mut render_width_value =
+            render_width_input.unwrap_or_else(|| crate::utf8::terminal_render_width(value));
         let mut render_value = value;
         let small_value;
         let mut max_render_pos = value.len();
@@ -472,12 +478,13 @@ impl BoxRendererState {
             // The value does not fit: the column was shortened; render what fits.
             let mut pos = 0;
             let mut current_render_width = DOTDOTDOT_LENGTH;
-            let mut truncated = truncate_value(value, column_width, &mut pos, &mut current_render_width);
+            let mut truncated =
+                truncate_value_bytes(value, column_width, &mut pos, &mut current_render_width);
             max_render_pos = truncated.len();
-            truncated.push_str(DOTDOTDOT);
+            truncated.push_bytes(DOTDOTDOT);
             render_width_value = current_render_width;
             small_value = truncated;
-            render_value = &small_value;
+            render_value = small_value.as_bytes();
         }
         let padding_count = (column_width - render_width_value) + 2;
         let (lpadding, rpadding) = match alignment {
@@ -510,7 +517,7 @@ impl BoxRendererState {
     }
 
     /// `TryFormatLargeNumber` with the configured decimal separator.
-    fn try_format_large_number(&self, numeric: &str) -> String {
+    fn try_format_large_number(&self, numeric: impl AsRef<[u8]>) -> ByteString {
         try_format_large_number(numeric, self.config.decimal_separator)
     }
 
@@ -538,7 +545,7 @@ impl BoxRendererState {
         offset: usize,
         count: usize,
     ) -> Result<Vec<Vec<RenderCell>>> {
-        let null_render_length = render_width(&self.config.null_value);
+        let null_render_length = crate::utf8::native_render_width(&self.config.null_value)?;
         let mut rows: Vec<Vec<RenderCell>> = (0..count)
             .map(|_| Vec::with_capacity(chunk.column_count()))
             .collect();
@@ -554,7 +561,7 @@ impl BoxRendererState {
                     Some(text) => {
                         let text = self.convert_render_value_typed(&text, source.logical_type());
                         RenderCell {
-                            render_length: render_width(&text),
+                            render_length: crate::utf8::native_render_width(&text)?,
                             text: Some(text),
                         }
                     }
@@ -596,23 +603,25 @@ impl BoxRendererState {
                     let numeric_val = top_collection
                         .last()
                         .and_then(|row| row[c].text.clone())
-                        .unwrap_or_else(|| "NULL".to_owned());
+                        .unwrap_or_else(|| ByteString::from("NULL"));
                     let readable = self.try_format_large_number(&numeric_val);
                     if readable.is_empty() {
                         all_readable = false;
                         break;
                     }
-                    readable_numbers.push(format!("({readable})"));
+                    readable_numbers.push(rustdb_common::byte_format!("({readable})"));
                 }
                 if all_readable {
                     top_collection.push(
                         readable_numbers
                             .into_iter()
-                            .map(|text| RenderCell {
-                                render_length: render_width(&text),
-                                text: Some(text),
+                            .map(|text| {
+                                Ok(RenderCell {
+                                    render_length: crate::utf8::native_render_width(&text)?,
+                                    text: Some(text),
+                                })
                             })
-                            .collect(),
+                            .collect::<Result<Vec<_>>>()?,
                     );
                 } else {
                     self.config.large_number_rendering = LargeNumberRendering::None;
@@ -674,17 +683,17 @@ impl BoxRendererState {
         input: &[RenderDataCollection],
         row_count: usize,
         context: &dyn RenderContext,
-    ) -> Vec<RenderDataCollection> {
+    ) -> Result<Vec<RenderDataCollection>> {
         let top_count = input[0].len();
         let bottom_count = input[1].len();
-        let mut new_names = vec!["Column".to_owned(), "Type".to_owned()];
+        let mut new_names: Vec<ByteString> = vec!["Column".into(), "Type".into()];
         let mut new_types = vec![LogicalType::VARCHAR, LogicalType::VARCHAR];
         for r in 0..top_count {
-            new_names.push(format!("Row {}", r + 1));
+            new_names.push(format!("Row {}", r + 1).into());
             new_types.push(LogicalType::VARCHAR);
         }
         for r in 0..bottom_count {
-            new_names.push(format!("Row {}", row_count - bottom_count + r + 1));
+            new_names.push(format!("Row {}", row_count - bottom_count + r + 1).into());
             new_types.push(LogicalType::VARCHAR);
         }
         let mut result = RenderDataCollection::new();
@@ -695,12 +704,16 @@ impl BoxRendererState {
             let type_name = render_type(&self.result_types[c]);
             let mut row = vec![
                 RenderCell {
-                    render_length: render_width(column_name),
-                    text: Some(column_name.clone()),
+                    render_length: crate::utf8::terminal_render_width(column_name),
+                    text: Some(
+                        rustdb_types::Value::try_varchar(column_name)?
+                            .to_varchar()?
+                            .into(),
+                    ),
                 },
                 RenderCell {
                     render_length: render_width(&type_name),
-                    text: Some(type_name),
+                    text: Some(type_name.into()),
                 },
             ];
             for collection in input {
@@ -710,10 +723,32 @@ impl BoxRendererState {
         }
         self.column_names = new_names;
         self.result_types = new_types;
-        vec![result]
+        Ok(vec![result])
     }
 
     /// `ConvertRenderValue(const string &)`: control characters as escapes.
+    fn convert_name(input: &[u8]) -> ByteString {
+        let mut result = ByteString::new();
+        for &byte in input {
+            if byte >= 32 {
+                result.push(byte);
+                continue;
+            }
+            result.push(b'\\');
+            match byte {
+                7 => result.push(b'a'),
+                8 => result.push(b'b'),
+                9 => result.push(b't'),
+                10 => result.push(b'n'),
+                11 => result.push(b'v'),
+                12 => result.push(b'f'),
+                13 => result.push(b'r'),
+                27 => result.push(b'e'),
+                _ => result.push_bytes(byte.to_string()),
+            }
+        }
+        result
+    }
     fn convert_render_value(input: &str) -> String {
         let mut result = String::with_capacity(input.len());
         for c in input.chars() {
@@ -740,7 +775,7 @@ impl BoxRendererState {
 
     /// `FormatNumber`: the separators of the configuration, or the readable rendering of
     /// all large numbers.
-    fn format_number(&self, input: &str) -> String {
+    fn format_number(&self, input: &str) -> ByteString {
         if self.config.large_number_rendering == LargeNumberRendering::All {
             let number = self.try_format_large_number(input);
             if !number.is_empty() {
@@ -748,7 +783,7 @@ impl BoxRendererState {
             }
         }
         if self.config.decimal_separator.is_none() && self.config.thousand_separator.is_none() {
-            return input.to_owned();
+            return input.into();
         }
         let bytes = input.as_bytes();
         // The digits before any decimal point.
@@ -775,15 +810,15 @@ impl BoxRendererState {
                 _ => result.push(byte),
             }
         }
-        String::from_utf8_lossy(&result).into_owned()
+        result.into()
     }
 
     /// `ConvertRenderValue(const string &, const LogicalType &)`.
-    fn convert_render_value_typed(&self, input: &str, ty: &LogicalType) -> String {
+    fn convert_render_value_typed(&self, input: &str, ty: &LogicalType) -> ByteString {
         if is_numeric_render_type(ty) {
             self.format_number(input)
         } else {
-            Self::convert_render_value(input)
+            Self::convert_render_value(input).into()
         }
     }
 
@@ -839,7 +874,7 @@ impl BoxRendererState {
             let mut annotations = std::mem::take(&mut row.values[c].annotations);
             let mut annotation_idx = 0;
             let mut active_render_mode = ResultRenderType::Value;
-            row.values[c].text = truncate_value(
+            row.values[c].text = truncate_value_bytes(
                 &full_value,
                 self.column_widths[c],
                 &mut current_pos,
@@ -876,7 +911,7 @@ impl BoxRendererState {
                 let start_pos = current_pos;
                 current_render_width = 0;
                 if can_add_extra_row {
-                    extra_value.text = truncate_value(
+                    extra_value.text = truncate_value_bytes(
                         &full_value,
                         self.column_widths[c],
                         &mut current_pos,
@@ -884,8 +919,8 @@ impl BoxRendererState {
                     );
                 } else {
                     // The last row takes all the remaining text.
-                    full_value[current_pos..].clone_into(&mut extra_value.text);
-                    current_render_width = render_width(&extra_value.text);
+                    extra_value.text = full_value[current_pos..].into();
+                    current_render_width = crate::utf8::terminal_render_width(&extra_value.text);
                     current_pos = full_value.len();
                 }
                 extra_value.render_width = Some(current_render_width);
@@ -913,15 +948,15 @@ impl BoxRendererState {
     }
 
     /// `ComputeRenderWidths`.
-    fn compute_render_widths(&mut self, min_width: usize, max_width: usize) {
+    fn compute_render_widths(&mut self, min_width: usize, max_width: usize) -> Result<()> {
         let mut column_count = self.result_types.len();
 
         // The header: names and types.
         let mut header_row = BoxRenderRow::new(RenderRowType::RowValues);
         let mut type_row = BoxRenderRow::new(RenderRowType::RowValues);
         for c in 0..column_count {
-            let column_name = Self::convert_render_value(&self.column_names[c]);
-            let column_name_width = render_width(&column_name);
+            let column_name = Self::convert_name(&self.column_names[c]);
+            let column_name_width = crate::utf8::native_terminal_render_width(&column_name)?;
             let mut column_type_width = 0;
             header_row.values.push(BoxRenderValue::new(
                 column_name,
@@ -1140,6 +1175,7 @@ impl BoxRendererState {
                 self.expand_rows = true;
             }
         }
+        Ok(())
     }
 
     /// `RenderLayoutLine`.
@@ -1182,8 +1218,10 @@ impl BoxRendererState {
                 DOT.to_owned()
             } else {
                 // Left or right aligned: the dot goes in the middle of the values.
-                let top_length = self.column_widths[c].min(render_width(&prev_value.text));
-                let bottom_length = self.column_widths[c].min(render_width(&next_value.text));
+                let top_length =
+                    self.column_widths[c].min(crate::utf8::terminal_render_width(&prev_value.text));
+                let bottom_length =
+                    self.column_widths[c].min(crate::utf8::terminal_render_width(&next_value.text));
                 let mut dot_length = top_length.min(bottom_length);
                 if top_length == 0 {
                     dot_length = bottom_length;
@@ -1416,16 +1454,16 @@ impl BoxRendererState {
         if render_rows_and_columns {
             padding -= column_count_str.len();
         }
-        let mut extra_render_str = String::new();
+        let mut extra_render_str = ByteString::new();
         // Is there space for the shown count on the same line?
         let shown_size =
             readable_rows_str.len() + shown_str.len() + if readable_rows_str.is_empty() { 3 } else { 5 };
         if has_hidden_rows && padding >= shown_size {
-            extra_render_str = format!(" ({shown_str}");
+            extra_render_str = rustdb_common::byte_format!(" ({shown_str}");
             if !readable_rows_str.is_empty() {
-                let _ = write!(extra_render_str, ", {readable_rows_str}");
+                extra_render_str += rustdb_common::byte_format!(", {readable_rows_str}");
             }
-            extra_render_str.push(')');
+            extra_render_str.push(b')');
             padding -= shown_size;
             readable_rows_str.clear();
             shown_str.clear();
@@ -1486,7 +1524,7 @@ impl BoxRendererState {
             }
             Self::render_value(
                 ss,
-                &format!("({text})"),
+                rustdb_common::byte_format!("({text})").as_bytes(),
                 total - 4,
                 ResultRenderType::Footer,
                 &[],
@@ -1502,6 +1540,7 @@ impl BoxRendererState {
 /// `BoxRenderer::TruncateValue`: the part of `value` from `pos` that fits in
 /// `column_width` columns given `current_render_width` used already, up to a newline
 /// (which is skipped). Advances `pos` and `current_render_width`.
+#[cfg(test)]
 pub fn truncate_value(
     value: &str,
     column_width: usize,
@@ -1528,9 +1567,32 @@ pub fn truncate_value(
     value[start_pos..*pos].to_owned()
 }
 
+pub(crate) fn truncate_value_bytes(
+    value: &[u8],
+    column_width: usize,
+    pos: &mut usize,
+    current_render_width: &mut usize,
+) -> ByteString {
+    let start = *pos;
+    while *pos < value.len() {
+        if value[*pos] == b'\n' {
+            let end = *pos;
+            *pos += 1;
+            return value[start..end].into();
+        }
+        let width = crate::utf8::byte_render_width(value, *pos);
+        if *current_render_width + width > column_width {
+            break;
+        }
+        *current_render_width += width;
+        *pos = crate::utf8::next_grapheme_cluster_bytes(value, *pos);
+    }
+    value[start..*pos].into()
+}
+
 /// `BoxRenderer::TryFormatLargeNumber`: a readable rendering of a number of a million or
 /// more ("1.23 million"), empty for other input.
-pub fn try_format_large_number(numeric: &str, decimal_sep: Option<u8>) -> String {
+pub fn try_format_large_number(numeric: impl AsRef<[u8]>, decimal_sep: Option<u8>) -> ByteString {
     const BASES: [(u64, &str); 5] = [
         (1_000_000, "million"),
         (1_000_000_000, "billion"),
@@ -1538,11 +1600,12 @@ pub fn try_format_large_number(numeric: &str, decimal_sep: Option<u8>) -> String
         (1_000_000_000_000_000, "quadrillion"),
         (1_000_000_000_000_000_000, "quintillion"),
     ];
+    let numeric = numeric.as_ref();
     if numeric.len() <= 5 {
         // Too small for sure.
-        return String::new();
+        return ByteString::new();
     }
-    let bytes = numeric.as_bytes();
+    let bytes = numeric;
     let mut number: u64 = 0;
     let negative = bytes[0] == b'-';
     for &c in &bytes[usize::from(negative)..] {
@@ -1551,11 +1614,11 @@ pub fn try_format_large_number(numeric: &str, decimal_sep: Option<u8>) -> String
         }
         if !c.is_ascii_digit() {
             // Not a number, or something like 1.23e7.
-            return String::new();
+            return ByteString::new();
         }
         if number >= 1_000_000_000_000_000_000 {
             // Too big.
-            return String::new();
+            return ByteString::new();
         }
         number = number * 10 + u64::from(c - b'0');
     }
@@ -1570,20 +1633,20 @@ pub fn try_format_large_number(numeric: &str, decimal_sep: Option<u8>) -> String
         }
     }
     if unit.is_empty() {
-        return String::new();
+        return ByteString::new();
     }
     number += (base / 100) / 2;
     let decimal_str = (number / (base / 100)).to_string();
     let split = decimal_str.len() - 2;
-    let mut result = String::new();
+    let mut result = ByteString::new();
     if negative {
-        result.push('-');
+        result.push(b'-');
     }
-    result.push_str(&decimal_str[..split]);
-    result.push(char::from(decimal_sep.unwrap_or(b'.')));
-    result.push_str(&decimal_str[split..]);
-    result.push(' ');
-    result.push_str(unit);
+    result.push_bytes(&decimal_str[..split]);
+    result.push(decimal_sep.unwrap_or(b'.'));
+    result.push_bytes(&decimal_str[split..]);
+    result.push(b' ');
+    result.push_bytes(unit);
     result
 }
 
@@ -1647,7 +1710,7 @@ pub fn is_json_or_nested(ty: &LogicalType) -> bool {
 
 /// `LogicalType::IsJSONType`: VARCHAR with the JSON alias.
 pub fn is_json_type(ty: &LogicalType) -> bool {
-    ty.id() == LogicalTypeId::Varchar && ty.alias() == Some("JSON")
+    ty.id() == LogicalTypeId::Varchar && ty.alias().is_some_and(|alias| alias == "JSON")
 }
 
 /// The state of [`JsonParser`] (`JSONState`).
@@ -1673,8 +1736,8 @@ trait JsonHandler {
 
 /// `JSONParser::Process`: walks a rendered nested value (JSON-like text) and reports
 /// its structure; `false` if the brackets do not match.
-fn process_json(value: &str, handler: &mut dyn JsonHandler) -> bool {
-    let bytes = value.as_bytes();
+fn process_json(value: impl AsRef<[u8]>, handler: &mut dyn JsonHandler) -> bool {
+    let bytes = value.as_ref();
     let mut separators: Vec<u8> = Vec::new();
     let mut state = JsonState::Regular;
     let mut quote_char = b'"';
@@ -2148,7 +2211,7 @@ impl JsonFormatter {
         if format_state.format_result != JsonFormattingResult::Success {
             return format_state.format_result;
         }
-        render_value.text = String::from_utf8_lossy(&format_state.result).into_owned();
+        render_value.text = format_state.result.into();
         JsonFormattingResult::Success
     }
 }
@@ -2187,7 +2250,7 @@ impl JsonHandler for JsonHighlighter {
 
 impl JsonHighlighter {
     /// `Highlight`: adds the annotations of `value`, none if it does not parse.
-    fn highlight(render_value: &mut BoxRenderValue, value: &str) {
+    fn highlight(render_value: &mut BoxRenderValue, value: impl AsRef<[u8]>) {
         let mut highlighter = Self {
             annotations: Vec::new(),
             render_mode: render_value.render_mode,

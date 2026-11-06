@@ -17,7 +17,7 @@ use crate::expression::{
 };
 use crate::expression_binder::{
     BindError, BindResult, BoundColumnReferenceInfo, ExpressionBinder, for_each_child, is_potential_alias,
-    is_unnest_function, parameter_not_resolved, take_bound, unsupported,
+    is_unnest_function, parameter_not_resolved, peek_bound, take_bound, unsupported,
 };
 use crate::function_binder::{add_cast_to_type, try_bind_comparison};
 
@@ -32,13 +32,13 @@ pub fn bind_unsupported_expression<B: ExpressionBinder + ?Sized>(
     binder: &mut B,
     expr: &mut ParsedExpression,
     depth: u64,
-    message: &str,
+    message: impl Into<rustdb_common::ByteString>,
 ) -> Result<BindResult> {
     let mut error = None;
     let location = expr.query_location;
     for_each_child(expr, &mut |child| binder.bind_child(child, depth, &mut error))?;
     Ok(BindResult::Unbound(error.unwrap_or_else(|| {
-        Error::binder(message.to_owned()).with_position(location).into()
+        Error::binder(message).with_position(location).into()
     })))
 }
 
@@ -198,15 +198,15 @@ fn restructure_arrow_chain(expr: &mut ParsedExpression) -> Result<()> {
     *expr = ParsedExpression::new(
         ExpressionType::Function,
         ParsedExpressionKind::Function(Box::new(rustdb_ast::FunctionExpression {
-            function_name: "->>".to_owned(),
-            schema: String::new(),
+            function_name: "->>".to_owned().into(),
+            schema: String::new().into(),
             children: vec![inner_lambda, right],
             filter: None,
             order_bys: rustdb_ast::OrderModifier { orders: Vec::new() },
             distinct: false,
             is_operator: true,
             export_state: false,
-            catalog: String::new(),
+            catalog: String::new().into(),
         })),
     );
     Ok(())
@@ -311,9 +311,10 @@ fn bind_lambda_ref<B: ExpressionBinder + ?Sized>(
 pub fn bind_lambda_parameter(
     lambda_bindings: &mut [crate::binder::Binding],
     index: u64,
-    name: &str,
+    name: impl AsRef<[u8]>,
     depth: u64,
 ) -> Result<Expression> {
+    let name = name.as_ref();
     let Some(binding) = lambda_bindings.get_mut(index as usize) else {
         return Err(Error::internal("lambda reference out of range"));
     };
@@ -348,10 +349,15 @@ fn bind_comparison<B: ExpressionBinder + ?Sized>(
     if let Some(error) = bind_children(binder, vec![&mut comparison.left, &mut comparison.right], depth)? {
         return Ok(BindResult::Unbound(error));
     }
-    let left = take_bound(&mut comparison.left)?;
-    let right = take_bound(&mut comparison.right)?;
-    let left_type = crate::expression_binder::expression_return_type(&left);
-    let right_type = crate::expression_binder::expression_return_type(&right);
+    // A failed comparison is retried by enclosing/correlated binders. Taking its
+    // children first would leave DEFAULT placeholders and mask the type error.
+    let left_type = crate::expression_binder::expression_return_type(
+        peek_bound(&comparison.left).ok_or_else(|| Error::internal("comparison left child was not bound"))?,
+    );
+    let right_type = crate::expression_binder::expression_return_type(
+        peek_bound(&comparison.right)
+            .ok_or_else(|| Error::internal("comparison right child was not bound"))?,
+    );
     let context = binder.binder_ref().context.clone();
     let Some(input_type) = try_bind_comparison(&context, &left_type, &right_type, comparison_type)? else {
         return Ok(BindResult::Unbound(
@@ -362,6 +368,8 @@ fn bind_comparison<B: ExpressionBinder + ?Sized>(
             .into(),
         ));
     };
+    let left = take_bound(&mut comparison.left)?;
+    let right = take_bound(&mut comparison.right)?;
     let context = binder.binder_ref().context.clone();
     let try_cast = input_type.id() == LogicalTypeId::Enum;
     let left = add_cast_to_type(&context, left, &input_type, try_cast)?;
@@ -610,7 +618,7 @@ fn variant_path_constant(path: &mut ParsedExpression, index: bool) -> Result<()>
 
 /// Whether `ty` is the JSON type (DuckDB's `LogicalType::IsJSONType`).
 fn is_json_type(ty: &LogicalType) -> bool {
-    ty.id() == LogicalTypeId::Varchar && ty.alias() == Some("JSON")
+    ty.id() == LogicalTypeId::Varchar && ty.alias().is_some_and(|alias| alias == "JSON")
 }
 
 /// The constant index/field of an extract from JSON as a JSON path: `$[n]` for array

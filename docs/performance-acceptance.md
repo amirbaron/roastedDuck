@@ -1,8 +1,11 @@
 # Performance acceptance
 
-Policy approved by the owner on 2026-10-23. The current signed native candidate now
-passes all130 TPC-H/ClickBench query/thread configurations and preserves the accepted
-aggregate tradeoff. See [final native measurements and all query outliers](performance-final-native-20261029.md).
+Policy approved by the owner on 2026-10-23. The preserved2026-10-29 signed native
+checkpoint passes all130 TPC-H/ClickBench query/thread configurations and preserves
+the accepted aggregate tradeoff. It predates the later Parquet, target-precision,
+client and platform corrections. Its acceptance must not be attributed to newer
+signed artifacts. The final source2551 refresh is now complete in the current acceptance section below. See
+[the preserved native measurements and all query outliers](performance-final-native-20261029.md).
 Weighted sums, maximum RSS and the63 individually reported exceptions remain explicit;
 this is native performance acceptance, not whole-port completion. Source-5 results below
 remain historical controls in [the earlier query report](performance-outliers-20261027.md).
@@ -14,6 +17,119 @@ with 60–70% less memory on TPC-H and ClickBench is acceptable. Do not increase
 merely to match C++ caching or close a small speed gap. Evaluate both metrics and
 report individual query outliers separately. Correctness, functional parity and
 storage/WAL compatibility remain required.
+
+## Current native candidate acceptance (2026-11-06)
+
+Source2551/Mac2556 passed all 130 TPC-H SF10/ClickBench query/thread configurations, independent numeric recomputation and fresh full-result controls for all 13 tied configurations. No cache, memory budget, query, dataset or image policy changed. The [current report](performance-final-native-20261106.md) applies the historical geometric-mean definition and lists all 63 flagged queries, all 130 rows, four COPY profiles and five whole-file stress outliers.
+
+Best-time geometric means are 7.2%/14.7% longer for TPC-H and 11.4%/15.6% longer for ClickBench. Adjusted geometric-mean RSS reductions are 78.1%/70.6% and 69.1%/62.2%, respectively. Raw whole-process RSS, absolute peaks, and best/median weighted sums remain visible. ClickBench's weighted sums are 22–25% longer; they do not meet a strict 20% cap. Its one-thread maximum RSS is 13.270GB C++ versus 13.116GB Rust, almost equal.
+
+The existing aggregate policy and the macro condition attached to the approved 14-thread/256MB COPY exception are met. Single-thread COPY and all five whole-file performance limitations remain explicit; they are not individually waived or claimed to match C++. The [acceptance evidence](../.context/artifacts/platform-matrix-20261029/current-native-performance-acceptance-review-2919/verification.json) retains every disposition. Raw collector reports' original creation-time acceptance fields were not rewritten.
+
+This performance acceptance changes no functional or artifact requirement. The owner separately accepted an explicit physical-device test exception on November 6, 2026; actual hardware execution/provisioning remains unverified. All other recorded software collection/review requirements are evidenced.
+
+## Historical candidate measurement status (2026-11-03)
+
+Corrected source2078/signed macOS arm64 candidate2088 supersedes source1959/1961 after the concurrent-index publication fix. No cache, buffer or query-memory policy changed. Its full SQL, selected-client, platform and storage/WAL verification is still in progress; all130 native TPC-H SF10/ClickBench configurations need fresh coupled speed/RSS measurements and individual-query dispositions on coherent corrected artifacts. Prepared2055/2066 and the source1959 client measurements below are historical preparation/evidence, and cannot grant acceptance for2078. The accepted lower-memory policy and documented memory-bound COPY exception remain unchanged.
+
+The corrected preparation is now2173, with the measurement harness, query extraction, summary and outlier policy byte-identical to the preserved run. New functional gate2171 rejects missing current receipts before issuing a benchmark prerequisite. Independent review2174 retains exact integer comparisons, weighted best/median totals, maximum whole/adjusted RSS and every outlier. Additional2179 controls will record the full-result count/hash for each limited tied answer on the actual measured shared libraries after timing. Both benchmark entry points and2179 currently reject missing evidence before creating measurement output. These are verified preparation checks; no corrected-candidate macro measurements or performance acceptance exist yet.
+
+Before final native macOS TPC-H/ClickBench timing, finish the required Linux work, verify that the
+dedicated `duckdb` profile has no running containers, then stop that owned VM to
+release its 24-GiB guest allocation. Preserve its data disk, stopped containers,
+images and receipts. The existing workload guard accepts and records a verified
+stopped profile. This isolates host memory pressure without changing either
+engine's cache or memory policy; it is still a pending measurement prerequisite.
+
+Earlier candidate measurement status (source1959/core1961):
+
+Current source1959/signed macOS arm64 candidate1961 requires the actual native
+130configuration TPC-H SF10/ClickBench refresh against authenticated C++934.
+Prepared2055 preserves the original measurement harness, query extraction,
+one warmup and three timed samples. Source gate1965 and the completed current
+macOS functional prerequisite2054 are required before timing. The prerequisite
+is not issued while required functional receipts are missing. Retired gate1660
+and old candidate1637 do not grant acceptance for these artifacts.
+
+All five current Mac Python cells and independent1980 reviews now complete under
+matrix2024:108coupled client samples across18separate workloads, recorded in
+[the binding report](python-fetch-conversion-parity.md). The current CP314 Python-
+backed workload takes31.2%longer best time/29.3%longer median time with0.6%lower
+maximum RSS; its Arrow-backed counterpart takes about21.6%of C++time with18.2%lower
+maximum RSS. Every ABI/profile/storage workload remains separate. These client
+observations do not establish macro acceptance.
+
+Independent review2066 is prepared to recompute all130rows, weighted best/median
+totals, geometric means, absolute whole-process and interpreter-adjusted maximum
+RSS, and every named outlier from the original raw samples. It checks native/source
+identities, all three samples and both original row/aggregate reports. It preserves
+the measurement workload and writes no performance acceptance. Every flagged query
+still requires a documented disposition; aggregate averages cannot close that gate.
+
+The additional answer review keeps integer-formatted values exact: the original
+float comparator accepts9007199254740992and9007199254740993as equal; the independent
+review rejects this demonstrated counterexample. Decimal tolerance remains. Tied
+limited results require a fresh recorded full-result count/hash control before
+acceptance. Preparation2066 records the counterexample and rejects missing actual
+measurements without creating an acceptance report. This exercises verification
+code; native macro measurements remain unrun. Cache and query memory policy are
+unchanged.
+
+## Current SQL-file timing outliers (2026-11-03)
+
+The corrected2078 full macOS collections retain55 individual file-time outliers. These five have the largest absolute Rust-minus-C++ file times. Both engines pass every listed file. Similar observations exist on the preceding1959candidate; this does not establish a regression caused by the index fix. Whole-file times include multiple statements, setup and finalization, and are separate from the130 TPC-H/ClickBench query configurations. Comparable peak RSS has not yet been measured for these replays, so no speed–memory acceptance is inferred.
+
+| Original SQL file | C++ seconds | Rust seconds | Rust/C++ time |
+|---|---:|---:|---:|
+| VARIANT Parquet round-trip | 8.005 | 57.402 | 7.17 |
+| Batch-insert space reclamation | 21.028 | 65.722 | 3.13 |
+| Multiple large compressed CSV files | 63.911 | 95.550 | 1.50 |
+| Concurrent attach/checkpoint | 1.413 | 25.217 | 17.85 |
+| Concurrent checkpoint/index insertion | 6.258 | 29.471 | 4.71 |
+
+All55 original rows and exact case paths remain in `.context/artifacts/platform-matrix-20261029/corrected-macos-full-corpus-review-2093/individual-file-time-outliers.json`. Prepared2188 retains all five complete original files and all assertions for three fresh samples per engine, measuring wall time, CPU and kernel peak RSS with unchanged16GiB engine budgets,20GiB safety guards and default thread policy. The original queue2189 stopped on the x86_64 corpus prerequisite; recovery dispatcher2222 schedules the unstarted outlier measurements through recovery2221 after diagnostics2220. No outlier replay has run yet. Original file timings and failures are never rewritten, and every serious outlier still needs a documented disposition. No cache or memory increase is proposed.
+
+## Historical candidate measurement status (source1634/core1637)
+
+
+Frozen source1634/signed macOS arm64 candidate1637 still requires fresh native
+TPC-H SF10 and ClickBench measurements against authenticated C++934. Prepared1705
+covers all130 query/thread configurations with checked answers, one warmup and
+three timed samples. The benchmark, query extraction and reporting policy are
+unchanged from1398; current source/artifact pins replace the historical candidate.
+Gate1660 and an explicit current native-functional verification receipt must pass
+before timing. Preparation1706 confirms that the current unreviewed state is
+rejected before benchmark output or native execution. No current-candidate macro
+performance acceptance has been granted.
+
+Corrected macOS CP310 client measurements1758 are complete:four profile/storage
+workloads and24 interleaved fresh-process samples retain coupled time/RSS and exact
+native identities. Python-backed nullable-string scans take22–24% longer for about
+1% lower whole-process RSS; Arrow-backed scans take about one fifth of the time
+with25% lower RSS. All four rows and raw samples remain explicit in
+[the binding report](python-fetch-conversion-parity.md). These client observations
+do not substitute for the still-unrun TPC-H/ClickBench acceptance or other targets.
+
+Corrected macOS CP311measurements1770and independent review1822now retain another
+24coupled samples/four individual rows. Python-backed medians are1.207/1.208times
+C++time at0.994/0.987whole-process RSS; Arrow-backed medians are0.201/0.186times
+C++time at about0.756RSS. These are separate exact-ABI client observations, not
+cross-ABI regression claims or macro acceptance. The same binding report preserves
+every row, best/median time and whole/incremental/maximum RSS.
+
+The report flags a query when its best **or median** Rust/C++ time exceeds1.25,
+or adjusted **or whole-process** RSS exceeds0.6. Each flagged row names its reasons;
+all absolute values, raw samples and query rows remain available. Both weighted
+best and median time totals are reported. These are follow-up thresholds, not
+independent speed/memory gates or automatic rejection of the accepted tradeoff.
+Because reporting now includes median and whole-process criteria, outlier counts
+alone must not be compared with the older63-case list as evidence of regressions.
+
+Reporting-policy check1468 verifies that a median-only3x slowdown is retained even
+when the best sample looks acceptable; it contains synthetic policy inputs only.
+Isolation check1469 uses the actual live Linux build to verify that the native
+benchmark refuses overlapping work inside this workspace's dedicated Docker VM.
+Neither check executes benchmark queries or substitutes for real measurements.
 
 ## Accepted memory-bound COPY tradeoff
 
@@ -238,3 +354,31 @@ NotImplemented in Rust. C++ 1.5.6 supports that path; its `column_keys` rejectio
 shared limitation and does not require implementing more than C++. Functional gaps must
 be closed, final signed artifacts reverified, and outlier evidence retained before the
 final release acceptance is claimed.
+
+
+Current source1959 concurrency-file observation (2026-11-03):
+`concurrent_checkpoint_deletes_mix_index.test_slow` passes on both engines.
+Rust took 17.296 s versus C++ 8.858 s (1.953 times). Prior Rust took 17.125 s,
+so the current Rust observation is about 1.0% longer. At 0.5-second sampling,
+the worker peak RSS observations are 122,945,536 bytes for Rust and
+443,727,872 bytes for C++ (Rust ratio 0.277, about 72.3% lower). This single
+concurrency-file observation remains an individual outlier; sampled RSS can miss
+short peaks, and these file timings are not TPC-H/ClickBench acceptance. No cache,
+buffer or memory-budget change was made in response. The complete fresh corpus
+review retains every file-time outlier. Evidence:
+`.context/artifacts/platform-matrix-20261029/current-parallel-checkpoint-timing-observation-2010.json`.
+
+
+## Corrected Linux ARM64 SQL-file observations (2026-11-03)
+
+Both complete current ARM64 collections2131are reviewed in2212:Cpp4,842passes28skips, Rust4,828passes28skips14documentedraw failures, zero unknown nonpasses/skip differences/OOM/resource kills. All41individual whole-file time outliers are retained separately. These are original multi-statement test-file observations on the dedicated2CPUVM, not isolated query benchmarks or native TPC-H/ClickBench acceptance. Comparable whole-file peakRSS rechecks are still pending; no speed–memory acceptance is inferred.
+
+| Original SQL file | C++ seconds | Rust seconds | Rust/C++ time |
+|---|---:|---:|---:|
+| `test/parquet/variant/variant_roundtrip.test_slow` | 14.593 | 113.687 | 7.79 |
+| `test/sql/storage/parallel/reclaim_space_batch_insert.test_slow` | 26.849 | 79.102 | 2.95 |
+| `test/sql/copy/csv/test_multiple_big_compressed_csvs.test_slow` | 74.719 | 113.989 | 1.53 |
+| `test/sql/storage/parallel/reclaim_space_primary_key_optimistic.test_slow` | 15.637 | 39.546 | 2.53 |
+| `test/db-benchmark/join.test_slow` | 23.594 | 42.335 | 1.79 |
+
+Every original row remains in `.context/artifacts/platform-matrix-20261029/corrected-Linux-ARM-full-SQL-review-2212/individual-file-time-outliers.json`; all9,740file observations and70nonpasses remain alongside it. The largest VARIANT/write/reclamation observations reinforce the need for the queued2188time/kernelRSS replays and individual dispositions; native130macro acceptance still requires actual measurements and every query outlier. Source2078/uncached baseline is unchanged.

@@ -26,10 +26,10 @@ pub enum CopyFunctionReturnType {
 
 impl CopyFunctionReturnType {
     /// `GetCopyFunctionReturnNames`.
-    pub fn names(self) -> Vec<String> {
+    pub fn names(self) -> Vec<rustdb_common::ByteString> {
         match self {
-            Self::ChangedRows => vec!["Count".to_owned()],
-            Self::ChangedRowsAndFileList => vec!["Count".to_owned(), "Files".to_owned()],
+            Self::ChangedRows => vec!["Count".into()],
+            Self::ChangedRowsAndFileList => vec!["Count".into(), "Files".into()],
             Self::WrittenFileStatistics => [
                 "filename",
                 "count",
@@ -39,7 +39,7 @@ impl CopyFunctionReturnType {
                 "partition_keys",
             ]
             .into_iter()
-            .map(str::to_owned)
+            .map(Into::into)
             .collect(),
         }
     }
@@ -69,7 +69,7 @@ impl CopyFunctionReturnType {
 /// One part of a [`FilenamePattern`] (DuckDB's `FileNameSegment`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FileNameSegment {
-    Literal(String),
+    Literal(rustdb_common::ByteString),
     Offset,
     UuidV4,
     UuidV7,
@@ -86,10 +86,7 @@ impl Default for FilenamePattern {
     /// `data_{i}`.
     fn default() -> Self {
         Self {
-            segments: vec![
-                FileNameSegment::Literal("data_".to_owned()),
-                FileNameSegment::Offset,
-            ],
+            segments: vec![FileNameSegment::Literal("data_".into()), FileNameSegment::Offset],
         }
     }
 }
@@ -119,10 +116,19 @@ fn random_uuid(version: u8) -> String {
 impl rustdb_serde::Serialize for FileNameSegment {
     fn serialize(&self, serializer: &mut dyn rustdb_serde::Serializer) -> rustdb_common::Result<()> {
         let (segment_type, data) = match self {
-            Self::Literal(text) => (crate::FileNameSegmentType::Literal, text.as_str()),
-            Self::Offset => (crate::FileNameSegmentType::Offset, ""),
-            Self::UuidV4 => (crate::FileNameSegmentType::UuidV4, ""),
-            Self::UuidV7 => (crate::FileNameSegmentType::UuidV7, ""),
+            Self::Literal(text) => (crate::FileNameSegmentType::Literal, text),
+            Self::Offset => (
+                crate::FileNameSegmentType::Offset,
+                &rustdb_common::ByteString::new(),
+            ),
+            Self::UuidV4 => (
+                crate::FileNameSegmentType::UuidV4,
+                &rustdb_common::ByteString::new(),
+            ),
+            Self::UuidV7 => (
+                crate::FileNameSegmentType::UuidV7,
+                &rustdb_common::ByteString::new(),
+            ),
         };
         serializer.write_object(&crate::generated::logical_operator::FileNameSegment { segment_type, data })
     }
@@ -134,7 +140,7 @@ impl rustdb_serde::Serialize for FilenamePattern {
     fn serialize(&self, serializer: &mut dyn rustdb_serde::Serializer) -> rustdb_common::Result<()> {
         let mut placeholders = 0;
         let mut legacy = true;
-        let mut base = String::new();
+        let mut base = rustdb_common::ByteString::new();
         let mut pos = 0;
         for segment in &self.segments {
             match segment {
@@ -147,8 +153,9 @@ impl rustdb_serde::Serialize for FilenamePattern {
             }
         }
         let legacy = legacy && placeholders == 1;
+        let empty = rustdb_common::ByteString::new();
         serializer.write_object(&crate::generated::logical_operator::FilenamePattern {
-            base: if legacy { &base } else { "" },
+            base: if legacy { &base } else { &empty },
             pos: if legacy { pos } else { 0 },
             uuid: self.has_uuid(),
             segments: if legacy { &[] } else { &self.segments },
@@ -158,28 +165,29 @@ impl rustdb_serde::Serialize for FilenamePattern {
 
 impl FilenamePattern {
     /// `SetFilenamePattern`.
-    pub fn set_pattern(&mut self, pattern: &str) {
+    pub fn set_pattern(&mut self, pattern: impl AsRef<[u8]>) {
         const PATTERNS: [(&str, Option<FileNameSegment>); 4] = [
             ("{i}", Some(FileNameSegment::Offset)),
             ("{uuid}", Some(FileNameSegment::UuidV4)),
             ("{uuidv4}", Some(FileNameSegment::UuidV4)),
             ("{uuidv7}", Some(FileNameSegment::UuidV7)),
         ];
+        let pattern = pattern.as_ref();
         self.segments.clear();
         let mut current_pos = 0;
         let mut i = 0;
         while i < pattern.len() {
-            if pattern.as_bytes()[i] != b'{' {
+            if pattern[i] != b'{' {
                 i += 1;
                 continue;
             }
             let found = PATTERNS
                 .iter()
-                .find(|(text, _)| pattern.as_bytes()[i..].starts_with(text.as_bytes()));
+                .find(|(text, _)| pattern[i..].starts_with(text.as_bytes()));
             if let Some((text, Some(segment))) = found {
                 if current_pos < i {
                     self.segments
-                        .push(FileNameSegment::Literal(pattern[current_pos..i].to_owned()));
+                        .push(FileNameSegment::Literal(pattern[current_pos..i].into()));
                 }
                 self.segments.push(segment.clone());
                 current_pos = i + text.len();
@@ -190,7 +198,7 @@ impl FilenamePattern {
         }
         if current_pos < pattern.len() {
             self.segments
-                .push(FileNameSegment::Literal(pattern[current_pos..].to_owned()));
+                .push(FileNameSegment::Literal(pattern[current_pos..].into()));
         }
         if let [FileNameSegment::Literal(_)] = self.segments.as_slice() {
             // Only a literal: the offset is appended.
@@ -206,8 +214,8 @@ impl FilenamePattern {
     }
 
     /// `CreateFilename`: `<path>/<name>.<extension>`.
-    pub fn create_filename(&self, path: &str, extension: &str, offset: u64) -> String {
-        let mut result = String::new();
+    pub fn create_filename(&self, path: &[u8], extension: &str, offset: u64) -> rustdb_common::ByteString {
+        let mut result = rustdb_common::ByteString::new();
         for segment in &self.segments {
             match segment {
                 FileNameSegment::Literal(text) => result += text,
@@ -216,8 +224,8 @@ impl FilenamePattern {
                 FileNameSegment::Offset => result += &offset.to_string(),
             }
         }
-        let separator = if path.ends_with('/') { "" } else { "/" };
-        format!("{path}{separator}{result}.{extension}")
+        let separator = if path.is_empty() { "" } else { "/" };
+        rustdb_common::byte_format!("{path}{separator}{result}.{extension}")
     }
 }
 
@@ -227,7 +235,7 @@ impl FilenamePattern {
 pub struct LogicalCopyToFile {
     pub function: CopyFunction,
     pub bind_data: Arc<dyn FunctionData>,
-    pub file_path: String,
+    pub file_path: rustdb_common::ByteString,
     pub use_tmp_file: bool,
     pub overwrite_mode: CopyOverwriteMode,
     pub filename_pattern: FilenamePattern,
@@ -243,7 +251,7 @@ pub struct LogicalCopyToFile {
     /// The `PRESERVE_ORDER` option (`PreserveOrderType`); `None` when not given.
     pub preserve_order: Option<bool>,
     pub return_type: CopyFunctionReturnType,
-    pub names: Vec<String>,
+    pub names: Vec<rustdb_common::ByteString>,
     pub expected_types: Vec<LogicalType>,
     /// The statement, its query filled in (DuckDB's `copy_info`).
     pub copy_info: Box<rustdb_ast::CopyInfo>,
@@ -269,24 +277,19 @@ impl LogicalCopyToFile {
 }
 
 /// A table written by `EXPORT DATABASE` (DuckDB's `ExportedTableData`).
-#[derive(Clone, Debug)]
-pub struct ExportedTable {
-    pub schema_name: String,
-    pub table_name: String,
-    pub file_path: String,
-    /// Columns with a NOT NULL constraint (read back with `force_not_null`).
-    pub not_null_columns: Vec<String>,
-}
+pub type ExportedTable = rustdb_ast::ExportedTableData;
 
 /// `EXPORT DATABASE` (DuckDB's `LogicalExport`): its child (if any) copies the tables;
 /// the operator then writes `schema.sql` and `load.sql`.
 #[derive(Clone, Debug)]
 pub struct LogicalExport {
+    /// The actual bound export options, including defaults/readable options.
+    pub copy_info: rustdb_ast::CopyInfo,
     pub function: CopyFunction,
-    pub file_path: String,
-    pub format: String,
+    pub file_path: rustdb_common::ByteString,
+    pub format: rustdb_common::ByteString,
     /// The options of the generated `COPY ... FROM` statements.
-    pub options: Vec<(String, Vec<rustdb_types::Value>)>,
-    pub catalog: String,
+    pub options: Vec<(rustdb_common::ByteString, Vec<rustdb_types::Value>)>,
+    pub catalog: rustdb_common::ByteString,
     pub tables: Vec<ExportedTable>,
 }

@@ -31,7 +31,7 @@ const fn transform_column_order(order: PgInsertColumnOrder) -> InsertColumnOrder
 }
 
 /// `TransformInsertColumns`: the names of the target columns.
-fn transform_insert_columns(columns: &List) -> Result<Vec<String>> {
+fn transform_insert_columns(columns: &List) -> Result<Vec<rustdb_common::ByteString>> {
     columns
         .iter()
         .map(|node| Ok(res_target_name(node)?.unwrap_or_default()))
@@ -39,7 +39,7 @@ fn transform_insert_columns(columns: &List) -> Result<Vec<String>> {
 }
 
 /// `TransformConflictTarget`: the columns of `ON CONFLICT (...)`.
-fn transform_conflict_target(list: &List) -> Result<Vec<String>> {
+fn transform_conflict_target(list: &List) -> Result<Vec<rustdb_common::ByteString>> {
     let mut columns = Vec::with_capacity(list.len());
     for node in list {
         let element: &IndexElem = cast_node(node)?;
@@ -89,13 +89,13 @@ fn dummy_on_conflict_clause(alias: OnConflictActionAlias) -> Result<OnConflictIn
 /// `CopyInfo()`: the defaults of a COPY / EXPORT.
 pub(crate) fn copy_info() -> CopyInfo {
     CopyInfo {
-        catalog: String::new(),
-        schema: "main".to_owned(),
-        table: String::new(),
+        catalog: String::new().into(),
+        schema: "main".to_owned().into(),
+        table: String::new().into(),
         select_list: Vec::new(),
         is_from: false,
-        format: String::new(),
-        file_path: String::new(),
+        format: rustdb_common::ByteString::new(),
+        file_path: rustdb_common::ByteString::new(),
         options: CaseInsensitiveMap::default(),
         select_statement: None,
         is_format_auto_detected: true,
@@ -322,7 +322,7 @@ impl<'a> Transformer<'a> {
             if action.condition.is_none() {
                 if unconditional.contains_key(&condition) {
                     let name = action_condition_to_string(condition);
-                    return Err(Error::parser(format!(
+                    return Err(Error::parser(rustdb_common::byte_format!(
                         "Unconditional {name} clause was already defined - only one unconditional {name} clause \
                          is supported"
                     )));
@@ -340,7 +340,7 @@ impl<'a> Transformer<'a> {
             target: Box::new(target),
             source: Box::new(source),
             join_condition,
-            using_columns,
+            using_columns: using_columns.into_iter().collect(),
             actions,
             returning_list,
             cte_map,
@@ -349,12 +349,15 @@ impl<'a> Transformer<'a> {
 
     /// `TransformCopyOptions`: `(FORMAT csv, HEADER, ...)`.
     pub(crate) fn transform_copy_options(&mut self, info: &mut CopyInfo, options: &'a List) -> Result<()> {
-        let mut parsed: CiHashMap<Option<ParsedExpression>> = CiHashMap::new();
+        let mut parsed: CiHashMap<Option<ParsedExpression>, rustdb_common::ByteString> =
+            CiHashMap::new_with_keys();
         for node in options {
             let def_elem: &'a DefElem = cast_node(node)?;
             let name = def_elem.defname.clone().unwrap_or_default();
             if parsed.contains_key(&name) {
-                return Err(Error::parser(format!("Unexpected duplicate option \"{name}\"")));
+                return Err(Error::parser(rustdb_common::byte_format!(
+                    "Unexpected duplicate option \"{name}\""
+                )));
             }
             let expr = self.transform_opt_expression(def_elem.arg.as_ref())?;
             parsed.set(name, expr);
@@ -372,11 +375,7 @@ impl<'a> Transformer<'a> {
             ParsedExpressionKind::Constant(constant)
                 if constant.value.logical_type().id() == LogicalTypeId::Varchar =>
             {
-                constant
-                    .value
-                    .as_str()
-                    .unwrap_or_default()
-                    .clone_into(&mut info.file_path);
+                info.file_path = constant.value.as_bytes().unwrap_or_default().into();
             }
             _ => info.file_path_expression = Some(Box::new(file_path)),
         }

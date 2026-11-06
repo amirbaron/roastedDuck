@@ -50,7 +50,10 @@ pub struct CastParameters {
     pub strict: bool,
     /// The alias of the cast's source expression; error messages then end with
     /// `when casting from source column <alias>`.
-    pub source_column: Option<String>,
+    pub source_column: Option<rustdb_common::ByteString>,
+    /// The cast expression's location, attached by `HandleCastError::AssignError`.
+    /// Exceptions thrown directly by a cast do not acquire this location.
+    pub query_location: Option<u64>,
     try_cast: bool,
     /// Under `TRY_CAST`, a list whose elements fail to convert becomes NULL itself, so
     /// the reader can report the row (the CSV scanner's `nullify_parent`).
@@ -102,7 +105,8 @@ impl CastParameters {
             message.extend_from_slice(column.as_bytes());
         }
         if !self.try_cast {
-            return Err(Error::new_bytes(rustdb_common::ErrorKind::Conversion, message));
+            return Err(Error::new_bytes(rustdb_common::ErrorKind::Conversion, message)
+                .with_position(self.query_location));
         }
         // DuckDB fills an empty error string; an empty first message can be replaced.
         if self.error_message.as_ref().is_none_or(Vec::is_empty) {
@@ -182,7 +186,7 @@ impl BoundCastInfo {
             let has_value = (0..count).any(|row| !input.is_null(row));
             *result = Vector::constant_null(result.logical_type().clone());
             if has_value {
-                params.assign_error(message.clone())?;
+                params.assign_error_bytes(message.clone().into_bytes())?;
                 return Ok(false);
             }
             Ok(true)
@@ -191,8 +195,8 @@ impl BoundCastInfo {
 }
 
 /// `Unimplemented type for cast (SOURCE -> TARGET)`.
-pub fn unimplemented_cast_message(source: &LogicalType, target: &LogicalType) -> String {
-    format!("Unimplemented type for cast ({source} -> {target})")
+pub fn unimplemented_cast_message(source: &LogicalType, target: &LogicalType) -> rustdb_common::ByteString {
+    rustdb_common::byte_format!("Unimplemented type for cast ({source} -> {target})")
 }
 
 /// Binds the cast from `source` to `target`, recursing into `set` for child casts.
@@ -443,7 +447,7 @@ mod error_tests {
     #[test]
     fn byte_cast_error_keeps_source_column_context() {
         let mut params = CastParameters::new();
-        params.source_column = Some("café".to_owned());
+        params.source_column = Some("café".into());
         let error = params.assign_error_bytes(b"bad \xff".to_vec()).unwrap_err();
         assert_eq!(error.kind(), ErrorKind::Conversion);
         assert_eq!(

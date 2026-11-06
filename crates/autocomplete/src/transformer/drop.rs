@@ -8,9 +8,9 @@ use super::prelude::*;
 fn drop_info(catalog_type: CatalogType) -> DropInfo {
     DropInfo {
         catalog_type,
-        catalog: String::new(),
-        schema: String::new(),
-        name: String::new(),
+        catalog: String::new().into(),
+        schema: String::new().into(),
+        name: String::new().into(),
         if_not_found: OnEntryNotFound::ThrowException,
         cascade: false,
         allow_drop_internal: false,
@@ -74,7 +74,7 @@ impl PegTransformer {
         let if_exists = list.has(1)?;
         let table_function = single_entry(list.child(2)?)?;
         let mut info = drop_info(catalog_type);
-        table_function.identifier()?.clone_into(&mut info.name);
+        info.name = table_function.identifier()?.into();
         info.if_not_found = on_entry_not_found(if_exists);
         Ok(info)
     }
@@ -114,7 +114,7 @@ impl PegTransformer {
         if let Some(catalog) = self.transform_optional(list, 0)? {
             result.catalog = catalog;
         }
-        list.identifier(1)?.clone_into(&mut result.schema);
+        result.schema = list.identifier(1)?.into();
         Ok(result)
     }
 
@@ -144,7 +144,7 @@ impl PegTransformer {
         if let Some(schema) = self.transform_optional(list, 1)? {
             result.schema = schema;
         }
-        list.identifier(2)?.clone_into(&mut result.name);
+        result.name = list.identifier(2)?.into();
         Ok(result)
     }
 
@@ -172,7 +172,7 @@ impl PegTransformer {
         let if_exists = list.has(1)?;
         let collation = single_entry(list.child(2)?)?.identifier()?;
         let mut info = drop_info(CatalogType::SequenceEntry);
-        collation.clone_into(&mut info.name);
+        info.name = collation.into();
         info.if_not_found = on_entry_not_found(if_exists);
         Ok(info)
     }
@@ -207,7 +207,7 @@ impl PegTransformer {
         let mut info = drop_info(CatalogType::SecretEntry);
         let mut extra_drop_info = ExtraDropSecretInfo {
             persist_mode: SecretPersistType::Default,
-            secret_storage: String::new(),
+            secret_storage: String::new().into(),
         };
         if let Some(persist_mode) = self.transform_optional(list, 0)? {
             extra_drop_info.persist_mode = persist_mode;

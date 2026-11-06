@@ -74,7 +74,7 @@ rustdb_serde::impl_pointee_serde!(ExtensionTypeInfo);
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ExtraTypeInfo {
     /// `alias` (property 101).
-    pub alias: String,
+    pub alias: rustdb_common::ByteString,
     /// `extension_info` (property 103).
     pub extension_info: Option<Box<ExtensionTypeInfo>>,
     /// The subclass, serialized as `type` (property 100).
@@ -172,7 +172,7 @@ impl ExtraTypeInfo {
     /// Reads the properties written by `serialize_fields`; some subclasses read as no object.
     pub fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Option<Self>> {
         let extra_type_info_type: ExtraTypeInfoType = deserializer.read_property(100, "type")?;
-        let alias: String = deserializer.read_property_with_default(101, "alias")?;
+        let alias: rustdb_common::ByteString = deserializer.read_property_with_default(101, "alias")?;
         deserializer.read_deleted_property::<Vec<Value>>(102, "modifiers")?;
         let extension_info: Option<Box<ExtensionTypeInfo>> =
             deserializer.read_property_with_default(103, "extension_info")?;
@@ -249,7 +249,7 @@ impl DeserializeObject for DecimalTypeInfo {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct StringTypeInfo {
     /// `collation` (property 200).
-    pub collation: String,
+    pub collation: rustdb_common::ByteString,
 }
 
 impl SerializeObject for StringTypeInfo {
@@ -261,7 +261,8 @@ impl SerializeObject for StringTypeInfo {
 
 impl DeserializeObject for StringTypeInfo {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let collation: String = deserializer.read_property_with_default(200, "collation")?;
+        let collation: rustdb_common::ByteString =
+            deserializer.read_property_with_default(200, "collation")?;
         Ok(Self { collation })
     }
 }
@@ -291,7 +292,7 @@ impl DeserializeObject for ListTypeInfo {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct StructTypeInfo {
     /// `child_types` (property 200).
-    pub child_types: Vec<(String, LogicalType)>,
+    pub child_types: Vec<(rustdb_common::ByteString, LogicalType)>,
 }
 
 impl SerializeObject for StructTypeInfo {
@@ -303,7 +304,7 @@ impl SerializeObject for StructTypeInfo {
 
 impl DeserializeObject for StructTypeInfo {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let child_types: Vec<(String, LogicalType)> =
+        let child_types: Vec<(rustdb_common::ByteString, LogicalType)> =
             deserializer.read_property_with_default(200, "child_types")?;
         Ok(Self { child_types })
     }

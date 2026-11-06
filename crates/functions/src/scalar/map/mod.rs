@@ -260,8 +260,8 @@ fn map_signature() -> (LogicalType, LogicalType, LogicalType) {
 pub fn map_unpack_functions() -> Vec<ScalarFunctionSet> {
     let (map, key, value) = map_signature();
     let row = LogicalType::struct_type(vec![
-        ("key".to_owned(), key.clone()),
-        ("value".to_owned(), value.clone()),
+        ("key".to_owned().into(), key.clone()),
+        ("value".to_owned().into(), value.clone()),
     ]);
     let mut sets = Vec::new();
     for (name, return_type, field) in [
@@ -427,7 +427,10 @@ fn verify_map(map: &Vector, count: usize) -> Result<()> {
 pub fn map_from_entries_functions() -> ScalarFunctionSet {
     let key = template("K");
     let value = template("V");
-    let row = LogicalType::struct_type(vec![(String::new(), key.clone()), (String::new(), value.clone())]);
+    let row = LogicalType::struct_type(vec![
+        (String::new().into(), key.clone()),
+        (String::new().into(), value.clone()),
+    ]);
     let function = ScalarFunction::new(
         "map_from_entries",
         vec![LogicalType::list(row)],

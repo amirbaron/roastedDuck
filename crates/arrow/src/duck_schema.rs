@@ -427,8 +427,8 @@ impl ArrowType {
                 };
                 let map_type = LogicalType::map(key_type.duck_type(false), value_type.duck_type(false));
                 let entry_type = LogicalType::struct_type(vec![
-                    ("key".to_owned(), key_type.duck_type(false)),
-                    ("value".to_owned(), value_type.duck_type(false)),
+                    ("key".into(), key_type.duck_type(false)),
+                    ("value".into(), value_type.duck_type(false)),
                 ]);
                 let inner_struct = Self::new(
                     entry_type,
@@ -525,7 +525,7 @@ impl ArrowType {
 }
 
 /// The Arrow types of the children of a struct or union, and their names and DuckDB types.
-type MemberTypes = (Vec<ArrowType>, Vec<(String, LogicalType)>);
+type MemberTypes = (Vec<ArrowType>, Vec<(rustdb_common::ByteString, LogicalType)>);
 
 /// The error of reading layout details a type does not have (`ArrowTypeInfo::Cast`).
 fn type_info_mismatch(expected: &str) -> Error {
@@ -594,12 +594,12 @@ fn decimal_type(format: &str) -> Result<ArrowType> {
 pub struct ArrowTableSchema {
     columns: Vec<ArrowType>,
     types: Vec<LogicalType>,
-    names: Vec<String>,
+    names: Vec<rustdb_common::ByteString>,
 }
 
 impl ArrowTableSchema {
     /// Adds the next column (`AddColumn`); its DuckDB type is that of dictionary values.
-    pub fn add_column(&mut self, arrow_type: ArrowType, name: String) {
+    pub fn add_column(&mut self, arrow_type: ArrowType, name: rustdb_common::ByteString) {
         self.types.push(arrow_type.duck_type(true));
         self.names.push(name);
         self.columns.push(arrow_type);
@@ -616,7 +616,7 @@ impl ArrowTableSchema {
     }
 
     /// `GetNames`
-    pub fn names(&self) -> &[String] {
+    pub fn names(&self) -> &[rustdb_common::ByteString] {
         &self.names
     }
 }

@@ -821,14 +821,47 @@ impl TemporaryDirectoryHandle {
         max_swap_space: Option<u64>,
         encryption: Arc<TemporaryFileEncryption>,
     ) -> Result<Self> {
-        let created_directory = !path.is_dir();
-        if created_directory {
-            std::fs::create_dir_all(&path).map_err(|err| {
-                io_error(format!(
-                    "Failed to create directory \"{}\": {err}",
+        let created_directory = match std::fs::metadata(&path) {
+            Ok(metadata) if metadata.is_dir() => false,
+            Ok(_) => {
+                return Err(io_error(format!(
+                    "Failed to create directory \"{}\": path exists but is not a directory!",
                     path.display()
                 ))
-            })?;
+                .with_extra_info("errno", "0"));
+            }
+            Err(_) => true,
+        };
+        if created_directory {
+            // C++ creates one directory with mode 0755, subject to the process
+            // umask. Missing ancestors must fail without creating parents.
+            let mut directory = std::fs::DirBuilder::new();
+            directory.recursive(false);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                directory.mode(0o755);
+            }
+            directory
+                .create(&path)
+                .or_else(|err| {
+                    if err.kind() == std::io::ErrorKind::AlreadyExists && path.is_dir() {
+                        Ok(())
+                    } else {
+                        Err(err)
+                    }
+                })
+                .map_err(|err| {
+                    let error = io_error(format!(
+                        "Failed to create directory \"{}\": {}",
+                        path.display(),
+                        rustdb_common::os_error_text(&err)
+                    ));
+                    match err.raw_os_error() {
+                        Some(code) => error.with_extra_info("errno", code.to_string()),
+                        None => error,
+                    }
+                })?;
         }
         let manager = TemporaryFileManager::new(path.clone(), size_on_disk, encryption);
         manager.set_max_swap_space(max_swap_space)?;
@@ -899,6 +932,108 @@ pub(crate) fn read_exact_at(file: &File, mut data: &mut [u8], mut offset: u64) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn directory_fixture(label: &str) -> PathBuf {
+        static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "rustdb-temp-directory-{label}-{}-{}",
+            std::process::id(),
+            NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir(&path).expect("create dedicated directory fixture");
+        path
+    }
+
+    fn directory_handle(path: PathBuf) -> Result<TemporaryDirectoryHandle> {
+        TemporaryDirectoryHandle::new(
+            path,
+            Arc::new(AtomicU64::new(0)),
+            Some(1 << 20),
+            Arc::new(TemporaryFileEncryption::default()),
+        )
+    }
+
+    #[test]
+    fn temporary_directory_missing_parent_does_not_create_ancestors() {
+        let root = directory_fixture("missing-parent");
+        let parent = root.join("missing");
+        let path = parent.join("spill");
+        let result = directory_handle(path.clone());
+        let error = result.as_ref().err().map(ToString::to_string);
+        #[cfg(unix)]
+        let has_errno = result
+            .as_ref()
+            .err()
+            .is_some_and(|error| error.extra_info().contains(&("errno", &b"2"[..])));
+        let created_parent = parent.exists();
+        drop(result);
+        std::fs::remove_dir_all(&root).expect("remove owned fixture");
+        let error = error.expect("missing parent must fail like C++ CreateDirectory");
+        assert!(
+            error.starts_with("IO Error: Failed to create directory"),
+            "{error}"
+        );
+        assert!(!created_parent, "a failed request must not create ancestors");
+        assert!(!error.contains("(os error "), "{error}");
+        #[cfg(unix)]
+        assert!(has_errno, "missing-parent errors must carry errno 2");
+    }
+
+    #[test]
+    fn temporary_directory_creates_only_owned_leaf_and_removes_it() {
+        let root = directory_fixture("owned-leaf");
+        let path = root.join("spill");
+        let handle = directory_handle(path.clone()).expect("existing parent permits one new leaf");
+        assert!(path.is_dir());
+        drop(handle);
+        assert!(!path.exists());
+        assert!(root.is_dir());
+        std::fs::remove_dir(&root).expect("remove owned fixture parent");
+    }
+
+    #[test]
+    fn temporary_directory_preserves_preexisting_directory_and_user_file() {
+        let root = directory_fixture("preexisting");
+        let path = root.join("spill");
+        std::fs::create_dir(&path).unwrap();
+        let user_file = path.join("keep.txt");
+        std::fs::write(&user_file, b"unchanged").unwrap();
+        let handle = directory_handle(path.clone()).expect("preexisting directory is valid");
+        drop(handle);
+        assert_eq!(std::fs::read(&user_file).unwrap(), b"unchanged");
+        assert!(path.is_dir());
+        let file_path = root.join("not-a-directory");
+        std::fs::write(&file_path, b"also unchanged").unwrap();
+        let error = directory_handle(file_path.clone())
+            .err()
+            .expect("a regular file is not a temporary directory");
+        assert_eq!(
+            error.raw_message(),
+            format!(
+                "Failed to create directory \"{}\": path exists but is not a directory!",
+                file_path.display()
+            )
+        );
+        assert!(error.extra_info().contains(&("errno", &b"0"[..])));
+        assert_eq!(std::fs::read(file_path).unwrap(), b"also unchanged");
+        std::fs::remove_dir_all(&root).expect("remove only owned fixtures");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temporary_directory_never_adds_group_or_other_write_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = directory_fixture("permissions");
+        let path = root.join("spill");
+        let handle = directory_handle(path.clone()).expect("create one temporary directory");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        drop(handle);
+        std::fs::remove_dir(&root).expect("remove owned fixture parent");
+        // Also run this binary under umask 000: the caller's permissive mask
+        // must not add writes that C++'s explicit 0755 mode does not request.
+        assert_eq!(mode & 0o022, 0);
+    }
 
     #[test]
     fn index_manager_reuses_lowest_free_index_and_shrinks() {

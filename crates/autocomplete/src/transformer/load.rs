@@ -10,8 +10,8 @@ impl PegTransformer {
         Ok(SqlStatement::new(SqlStatementKind::Load(LoadInfo {
             filename,
             load_type: LoadType::Load,
-            repository: String::new(),
-            version: String::new(),
+            repository: ByteString::new(),
+            version: ByteString::new(),
             repo_is_alias: false,
         })))
     }
@@ -29,13 +29,13 @@ impl PegTransformer {
         let mut info = LoadInfo {
             filename: extension_name.name,
             load_type,
-            repository: String::new(),
-            version: String::new(),
+            repository: ByteString::new(),
+            version: ByteString::new(),
             repo_is_alias: false,
         };
         if let Some(from_source) = list.optional(3)? {
             let repository_info: ExtensionRepositoryInfo = self.transform(from_source)?;
-            info.repository = repository_info.name;
+            info.repository = repository_info.name.into();
             info.repo_is_alias = repository_info.repository_is_alias;
         }
         if let Some(version) = self.transform_optional(list, 4)? {
@@ -74,14 +74,15 @@ impl PegTransformer {
         };
         if let Some(extensions) = parse_result.list()?.optional(2)? {
             for extension in extensions.parens_content()?.list_elements()? {
-                info.extensions_to_update.push(extension.identifier()?.to_owned());
+                info.extensions_to_update
+                    .push(extension.identifier()?.to_owned().into());
             }
         }
         Ok(SqlStatement::new(SqlStatementKind::UpdateExtensions(info)))
     }
 
     /// `TransformVersionNumber`: `VERSION IdentifierOrStringLiteral`.
-    pub(super) fn transform_version_number(&mut self, parse_result: &ParseResult) -> Result<String> {
+    pub(super) fn transform_version_number(&mut self, parse_result: &ParseResult) -> Result<ByteString> {
         let version: QualifiedName = self.transform_child(parse_result.list()?, 1)?;
         Ok(version.name)
     }

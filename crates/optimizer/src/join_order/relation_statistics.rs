@@ -30,8 +30,8 @@ pub struct RelationStats {
     pub cardinality: u64,
     pub filter_strength: f64,
     pub stats_initialized: bool,
-    pub column_names: Vec<String>,
-    pub table_name: String,
+    pub column_names: Vec<rustdb_common::ByteString>,
+    pub table_name: rustdb_common::ByteString,
 }
 
 impl Default for RelationStats {
@@ -42,7 +42,7 @@ impl Default for RelationStats {
             filter_strength: 1.0,
             stats_initialized: false,
             column_names: Vec::new(),
-            table_name: String::new(),
+            table_name: rustdb_common::ByteString::new(),
         }
     }
 }
@@ -122,10 +122,10 @@ pub fn extract_get_stats(op: &mut LogicalOperator, context: &ClientContext) -> R
     };
     let mut stats = RelationStats::default();
     let mut cardinality_after_filters = base_table_cardinality;
-    let name = get
-        .table
-        .as_ref()
-        .map_or_else(|| "some table".to_owned(), |table| table.name().to_owned());
+    let name = get.table.as_ref().map_or_else(
+        || rustdb_common::ByteString::from("some table"),
+        |table| table.name().to_owned(),
+    );
     if get.table.is_some() {
         stats.table_name.clone_from(&name);
     }
@@ -135,19 +135,21 @@ pub fn extract_get_stats(op: &mut LogicalOperator, context: &ClientContext) -> R
             .names
             .get(column.index as usize)
             .cloned()
-            .unwrap_or_else(|| "column".to_owned());
+            .unwrap_or_else(|| rustdb_common::ByteString::from("column"));
         if count > 0 {
             stats.column_distinct_count.push(DistinctCount {
                 distinct_count: count,
                 from_hll: true,
             });
-            stats.column_names.push(format!("{name}.{column_name}"));
+            stats
+                .column_names
+                .push(rustdb_common::byte_format!("{name}.{column_name}"));
         } else {
             stats.column_distinct_count.push(DistinctCount {
                 distinct_count: cardinality_after_filters,
                 from_hll: false,
             });
-            stats.column_names.push(format!(
+            stats.column_names.push(rustdb_common::byte_format!(
                 "{}.{column_name}",
                 get.function.name.to_ascii_uppercase()
             ));
@@ -224,7 +226,7 @@ pub fn extract_projection_stats(op: &LogicalOperator, child_stats: &RelationStat
                     .and_then(|(binding, _)| binding)
                     .map_or(usize::MAX, |binding| binding.column_index as usize);
                 if column_index >= child_stats.column_distinct_count.len()
-                    && expression.to_string() == "count_star()"
+                    && expression.to_bytes() == "count_star()"
                 {
                     DistinctCount {
                         distinct_count: 1,
@@ -265,8 +267,8 @@ pub fn uniform_stats(
             columns
         ],
         cardinality,
-        column_names: vec![name.to_owned(); columns],
-        table_name: table.to_owned(),
+        column_names: vec![name.into(); columns],
+        table_name: table.into(),
         stats_initialized: true,
         ..RelationStats::default()
     }
@@ -287,7 +289,7 @@ pub fn extract_window_stats(op: &LogicalOperator, child_stats: &RelationStats) -
             distinct_count: child_stats.cardinality,
             from_hll: false,
         });
-        stats.column_names.push("window".to_owned());
+        stats.column_names.push("window".into());
     }
     stats
 }
@@ -360,7 +362,7 @@ pub fn extract_aggregation_stats(
                 from_hll: false,
             });
         }
-        stats.column_names.push("aggregate".to_owned());
+        stats.column_names.push("aggregate".into());
     }
     stats
 }
@@ -375,8 +377,8 @@ pub fn combine_stats_of_reorderable_operator(relation_stats: &[RelationStats]) -
             .column_distinct_count
             .extend_from_slice(&child.column_distinct_count);
         stats.column_names.extend(child.column_names.iter().cloned());
-        stats.table_name.push_str("joined with ");
-        stats.table_name.push_str(&child.table_name);
+        stats.table_name.push_bytes("joined with ");
+        stats.table_name.push_bytes(&child.table_name);
         max_card = max_card.max(child.cardinality);
     }
     stats.stats_initialized = true;
@@ -434,9 +436,9 @@ pub fn combine_stats_of_non_reorderable_operator(
     stats.filter_strength = 1.0;
     for child in child_stats {
         if !stats.table_name.is_empty() {
-            stats.table_name.push_str(" joined with ");
+            stats.table_name.push_bytes(" joined with ");
         }
-        stats.table_name.push_str(&child.table_name);
+        stats.table_name.push_bytes(&child.table_name);
         if !child.stats_initialized {
             continue;
         }
@@ -457,4 +459,40 @@ pub fn comparison_type(filter: &Expression) -> Option<ExpressionType> {
         }
     });
     found
+}
+
+#[cfg(test)]
+mod native_name_tests {
+    use super::*;
+    #[test]
+    fn projection_fallback_keeps_native_column_names() {
+        for name in [b"caf\xe9".as_slice(), b"column-\xff", b"a\x80"] {
+            let expression = Expression::column_ref(
+                name,
+                rustdb_types::LogicalType::INTEGER,
+                ColumnBinding {
+                    table_index: 1,
+                    column_index: 0,
+                },
+                0,
+            );
+            let projection = LogicalOperator::new(LogicalKind::Projection { table_index: 2 })
+                .with_expressions(vec![expression]);
+            let child = RelationStats {
+                cardinality: 17,
+                ..RelationStats::default()
+            };
+            let stats = extract_projection_stats(&projection, &child);
+            assert_eq!(stats.column_names[0].as_bytes(), name);
+            assert_eq!(
+                stats.column_distinct_count,
+                vec![DistinctCount {
+                    distinct_count: 17,
+                    from_hll: false
+                }]
+            );
+            assert_eq!(stats.cardinality, 17);
+            assert!(stats.stats_initialized);
+        }
+    }
 }

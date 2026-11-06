@@ -5,7 +5,7 @@ use std::any::Any;
 use std::fmt;
 use std::sync::Arc;
 
-use rustdb_common::{CaseInsensitiveMap, OrderedMap};
+use rustdb_common::{ByteString, CaseInsensitiveMap, OrderedMap};
 use rustdb_serde::{DeserializeObject, Deserializer, Result, SerializeObject, Serializer};
 use rustdb_types::Value;
 
@@ -22,7 +22,7 @@ impl ParsedExpression {
     pub const fn new(expression_type: ExpressionType, kind: ParsedExpressionKind) -> Self {
         Self {
             expression_type,
-            alias: String::new(),
+            alias: rustdb_common::ByteString::new(),
             query_location: None,
             kind,
         }
@@ -37,7 +37,7 @@ impl ParsedExpression {
     }
 
     /// A column reference: `column`, `table.column`, ...
-    pub fn column_ref<S: Into<String>>(names: impl IntoIterator<Item = S>) -> Self {
+    pub fn column_ref<S: Into<rustdb_common::ByteString>>(names: impl IntoIterator<Item = S>) -> Self {
         Self::new(
             ExpressionType::ColumnRef,
             ParsedExpressionKind::ColumnRef(ColumnRefExpression {
@@ -47,19 +47,19 @@ impl ParsedExpression {
     }
 
     /// A call of function `name` (`FunctionExpression(name, children)`).
-    pub fn function(name: &str, children: Vec<Self>) -> Self {
+    pub fn function(name: impl AsRef<[u8]>, children: Vec<Self>) -> Self {
         Self::new(
             ExpressionType::Function,
             ParsedExpressionKind::Function(Box::new(FunctionExpression {
-                function_name: name.to_ascii_lowercase(),
-                schema: String::new(),
+                function_name: name.as_ref().to_ascii_lowercase().into(),
+                schema: ByteString::new(),
                 children,
                 filter: None,
                 order_bys: OrderModifier { orders: Vec::new() },
                 distinct: false,
                 is_operator: false,
                 export_state: false,
-                catalog: String::new(),
+                catalog: ByteString::new(),
             })),
         )
     }
@@ -110,7 +110,7 @@ impl ParsedExpression {
         Self::new(
             ExpressionType::Star,
             ParsedExpressionKind::Star(Box::new(StarExpression {
-                relation_name: String::new(),
+                relation_name: rustdb_common::ByteString::new(),
                 exclude_list: Vec::new(),
                 replace_list: CaseInsensitiveMap::default(),
                 rename_list: OrderedMap::default(),
@@ -122,7 +122,7 @@ impl ParsedExpression {
 
     /// The same expression under an alias (`expr AS alias`).
     #[must_use]
-    pub fn with_alias(mut self, alias: impl Into<String>) -> Self {
+    pub fn with_alias(mut self, alias: impl Into<rustdb_common::ByteString>) -> Self {
         self.alias = alias.into();
         self
     }
@@ -140,11 +140,11 @@ pub struct BoundExpression {
     /// The binder's bound expression.
     pub payload: Arc<dyn Any + Send + Sync>,
     /// How the bound expression prints (its `ToString`).
-    pub text: String,
+    pub text: rustdb_common::ByteString,
 }
 
 impl BoundExpression {
-    pub fn new(payload: impl Any + Send + Sync, text: impl Into<String>) -> Self {
+    pub fn new(payload: impl Any + Send + Sync, text: impl Into<rustdb_common::ByteString>) -> Self {
         Self {
             payload: Arc::new(payload),
             text: text.into(),
@@ -154,7 +154,7 @@ impl BoundExpression {
 
 impl fmt::Debug for BoundExpression {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "BoundExpression({})", self.text)
+        f.debug_tuple("BoundExpression").field(&self.text).finish()
     }
 }
 
@@ -170,13 +170,13 @@ impl PartialEq for BoundExpression {
 #[derive(Clone, Debug, PartialEq)]
 pub struct StarExpression {
     /// The table in `t.*`, or empty.
-    pub relation_name: String,
+    pub relation_name: rustdb_common::ByteString,
     /// `EXCLUDE (...)`: plain and qualified column names, in order.
     pub exclude_list: Vec<QualifiedColumnName>,
     /// `REPLACE (expr AS name, ...)`.
-    pub replace_list: CaseInsensitiveMap<ParsedExpression>,
+    pub replace_list: CaseInsensitiveMap<ParsedExpression, rustdb_common::ByteString>,
     /// `RENAME (old AS new, ...)`.
-    pub rename_list: OrderedMap<QualifiedColumnName, String>,
+    pub rename_list: OrderedMap<QualifiedColumnName, rustdb_common::ByteString>,
     /// `COLUMNS(...)` rather than `*`.
     pub columns: bool,
     /// The argument of `COLUMNS(expr)`.
@@ -185,7 +185,7 @@ pub struct StarExpression {
 
 impl QualifiedColumnName {
     /// An unqualified column name.
-    pub fn column(column: impl Into<String>) -> Self {
+    pub fn column(column: impl Into<rustdb_common::ByteString>) -> Self {
         Self {
             column: column.into(),
             ..Self::default()
@@ -202,14 +202,14 @@ impl SerializeObject for StarExpression {
     fn serialize_fields(&self, serializer: &mut dyn Serializer) -> Result<()> {
         serializer.write_property_with_default(200, "relation_name", &self.relation_name)?;
         // Unqualified exclusions are written as plain names, for backwards compatibility.
-        let plain: Vec<&str> = self
+        let plain: Vec<&[u8]> = self
             .exclude_list
             .iter()
             .filter(|name| !name.is_qualified())
-            .map(|name| name.column.as_str())
+            .map(|name| name.column.as_bytes())
             .collect();
         serializer.write_list_property(201, "exclude_list", plain.len(), |serializer, i| {
-            serializer.write_str(plain[i]);
+            serializer.write_string_bytes(plain[i]);
             Ok(())
         })?;
         serializer.write_property_with_default(202, "replace_list", &self.replace_list)?;
@@ -232,7 +232,7 @@ impl StarExpression {
     /// (`*COLUMNS(...)` before it became an `OPERATOR_UNPACK` around the star).
     fn deserialize_with_unpacked(deserializer: &mut dyn Deserializer) -> Result<(Self, bool)> {
         let relation_name = deserializer.read_property_with_default(200, "relation_name")?;
-        let plain: Vec<String> = deserializer.read_property(201, "exclude_list")?;
+        let plain: Vec<rustdb_common::ByteString> = deserializer.read_property(201, "exclude_list")?;
         let replace_list = deserializer.read_property_with_default(202, "replace_list")?;
         let columns = deserializer.read_property_with_default(203, "columns")?;
         let expr = deserializer.read_property_with_default(204, "expr")?;

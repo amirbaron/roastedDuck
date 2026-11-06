@@ -6,7 +6,7 @@ use std::sync::{Arc, PoisonError};
 
 use rustdb_ast::{BaseTableRef, ColumnDataRef, ExpressionListRef, SubqueryRef, TableRef, TableRefKind};
 use rustdb_catalog::{CatalogType, EntryKind};
-use rustdb_common::{Error, Result};
+use rustdb_common::{ByteString, Error, Result};
 use rustdb_function::TableFunction;
 use rustdb_types::LogicalType;
 
@@ -19,8 +19,8 @@ mod plan_joinref;
 pub use bind_showref::SHOW_TABLES_EXPANDED;
 pub use plan_joinref::{JoinSide, create_join, extract_join_conditions};
 
-pub use plan_joinref::extract_join_conditions_from;
 pub(crate) use bind_table_function::bind_named_parameters;
+pub use plan_joinref::extract_join_conditions_from;
 pub(crate) use plan_joinref::table_references;
 
 use super::bind_context::alias_column_names;
@@ -33,6 +33,7 @@ use crate::operator::{ColumnIndex, LogicalGet, LogicalKind, LogicalOperator};
 
 /// Binds a FROM-clause item (DuckDB's `Binder::Bind(TableRef &)`).
 pub fn bind_table_ref(scope: &mut BindScope<'_>, table_ref: &mut TableRef) -> Result<BoundStatement> {
+    let mut external_replacement = None;
     let mut result = match &mut table_ref.kind {
         TableRefKind::Empty => Ok(BoundStatement::new(
             LogicalOperator::new(LogicalKind::DummyScan {
@@ -43,9 +44,13 @@ pub fn bind_table_ref(scope: &mut BindScope<'_>, table_ref: &mut TableRef) -> Re
         )),
         TableRefKind::ExpressionList(list) => bind_expression_list(scope, list, &table_ref.alias),
         TableRefKind::Subquery(subquery) => bind_subquery_ref(scope, subquery, &table_ref.alias),
-        TableRefKind::BaseTable(base) => {
-            bind_base_table(scope, base, &table_ref.alias, table_ref.query_location)
-        }
+        TableRefKind::BaseTable(base) => bind_base_table(
+            scope,
+            base,
+            &table_ref.alias,
+            table_ref.query_location,
+            &mut external_replacement,
+        ),
         TableRefKind::Join(join) => bind_joinref::bind_join(scope, join, table_ref.query_location),
         TableRefKind::TableFunction(function) => bind_table_function::bind_table_function(
             scope,
@@ -57,6 +62,12 @@ pub fn bind_table_ref(scope: &mut BindScope<'_>, table_ref: &mut TableRef) -> Re
         TableRefKind::Show(show) => bind_showref::bind_show(scope, show),
         TableRefKind::ColumnData(column_data) => bind_column_data(scope, column_data, &table_ref.alias),
     }?;
+    if let Some(mut replacement) = external_replacement {
+        replacement.sample = table_ref.sample.take();
+        replacement.query_location = table_ref.query_location;
+        scope.binder.retain_external_replacement(&replacement);
+        *table_ref = replacement;
+    }
     if let Some(sample_options) = table_ref.sample.take() {
         result.plan =
             LogicalOperator::new(LogicalKind::Sample { sample_options }).with_children(vec![result.plan]);
@@ -69,7 +80,7 @@ pub fn bind_table_ref(scope: &mut BindScope<'_>, table_ref: &mut TableRef) -> Re
 fn bind_column_data(
     scope: &mut BindScope<'_>,
     column_data: &ColumnDataRef,
-    alias: &str,
+    alias: &[u8],
 ) -> Result<BoundStatement> {
     let collection = column_data
         .collection
@@ -78,7 +89,7 @@ fn bind_column_data(
     let types = collection.types().to_vec();
     let mut names = column_data.expected_names.clone();
     for i in names.len()..types.len() {
-        names.push(format!("col{}", i + 1));
+        names.push(rustdb_common::byte_format!("col{}", i + 1));
     }
     let table_index = scope.binder.generate_table_index();
     scope
@@ -97,7 +108,7 @@ fn bind_column_data(
 fn bind_expression_list(
     scope: &mut BindScope<'_>,
     list: &mut ExpressionListRef,
-    alias: &str,
+    alias: &[u8],
 ) -> Result<BoundStatement> {
     let mut types = list.expected_types.clone();
     let mut names = list.expected_names.clone();
@@ -105,7 +116,9 @@ fn bind_expression_list(
     let mut values: Vec<Vec<crate::expression::Expression>> = Vec::with_capacity(list.values.len());
     for row in &mut list.values {
         if names.is_empty() {
-            names = (0..row.len()).map(|i| format!("col{i}")).collect();
+            names = (0..row.len())
+                .map(|i| rustdb_common::byte_format!("col{i}"))
+                .collect();
         }
         scope.binder.can_contain_nulls = true;
         let mut bound_row = Vec::with_capacity(row.len());
@@ -166,7 +179,7 @@ fn bind_expression_list(
 pub(crate) fn bind_subquery_ref(
     scope: &mut BindScope<'_>,
     subquery: &mut SubqueryRef,
-    alias: &str,
+    alias: &[u8],
 ) -> Result<BoundStatement> {
     let mut binder = scope.binder.child()?;
     binder.can_contain_nulls = true;
@@ -178,15 +191,15 @@ pub(crate) fn bind_subquery_ref(
         bind_node(&mut child_scope, &mut subquery.subquery.node)?
     };
     binder.alias = if alias.is_empty() {
-        "unnamed_subquery".to_owned()
+        ByteString::from("unnamed_subquery")
     } else {
-        alias.to_owned()
+        ByteString::from(alias)
     };
     let bind_index = bound.plan.root_index()?;
     let subquery_alias = if alias.is_empty() {
         scope.binder.next_unnamed_subquery_name()
     } else {
-        alias.to_owned()
+        ByteString::from(alias)
     };
     binder.is_outside_flattened = scope.binder.is_outside_flattened;
     if binder.has_unplanned_dependent_joins {
@@ -204,22 +217,22 @@ pub(crate) fn bind_subquery_ref(
 }
 
 /// Renames duplicate names `x` to `x_1`, `x_2`, ... (DuckDB's `QueryResult::DeduplicateColumns`).
-pub fn deduplicate_columns(names: &mut [String]) {
-    let mut counts: HashMap<String, u64> = HashMap::new();
+pub fn deduplicate_columns(names: &mut [ByteString]) {
+    let mut counts: HashMap<ByteString, u64> = HashMap::new();
     for name in names.iter_mut() {
-        let lower = name.to_lowercase();
+        let lower = name.to_ascii_lowercase();
         let Some(count) = counts.get(&lower).copied() else {
             counts.insert(lower, 1);
             continue;
         };
         let mut count = count;
-        let mut candidate = format!("{name}_{count}");
-        while counts.contains_key(&candidate.to_lowercase()) {
+        let mut candidate = rustdb_common::byte_format!("{name}_{count}");
+        while counts.contains_key(&candidate.to_ascii_lowercase()) {
             count += 1;
             counts.insert(lower.clone(), count);
-            candidate = format!("{name}_{count}");
+            candidate = rustdb_common::byte_format!("{name}_{count}");
         }
-        *counts.entry(candidate.to_lowercase()).or_insert(0) += 1;
+        *counts.entry(candidate.to_ascii_lowercase()).or_insert(0) += 1;
         *name = candidate;
     }
 }
@@ -227,7 +240,7 @@ pub fn deduplicate_columns(names: &mut [String]) {
 /// The outcome of looking up a CTE through the enclosing binders.
 enum CteLookup {
     /// Bound and referenced: `(cte index, names, types)`.
-    Found(u64, Vec<String>, Vec<LogicalType>),
+    Found(u64, Vec<ByteString>, Vec<LogicalType>),
     /// Only a CTE that may not be referenced here (a self-reference).
     Circular,
     NotFound,
@@ -317,31 +330,45 @@ fn bind_cte_query(
     Ok(())
 }
 
+/// Local path probing keeps the platform's filename representation.
+fn replacement_path_is_file(path: &[u8]) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        std::path::Path::new(std::ffi::OsStr::from_bytes(path)).is_file()
+    }
+    #[cfg(not(unix))]
+    {
+        // The Windows filesystem API receives UTF-8 through its wide-string adapter.
+        std::str::from_utf8(path).is_ok_and(|path| std::path::Path::new(path).is_file())
+    }
+}
+
 /// `FileSystem::ExtractBaseName`: the file name up to its first dot.
-fn extract_base_name(path: &str) -> String {
+fn extract_base_name(path: &[u8]) -> ByteString {
     let file = path
-        .split(['/', '\\'])
+        .split(|byte| matches!(byte, b'/' | b'\\'))
         .rfind(|part| !part.is_empty())
-        .unwrap_or("");
-    file.split('.')
+        .unwrap_or_default();
+    file.split(|byte| *byte == b'.')
         .find(|part| !part.is_empty())
-        .unwrap_or("")
-        .to_owned()
+        .unwrap_or_default()
+        .into()
 }
 
 /// `ReplacementScan::GetFullPath`: the catalog, schema and table names joined by dots.
-fn replacement_full_path(base: &BaseTableRef) -> String {
+fn replacement_full_path(base: &BaseTableRef) -> ByteString {
     let mut full_path = base.catalog_name.clone();
     if !base.schema_name.is_empty() {
         if !full_path.is_empty() {
-            full_path.push('.');
+            full_path.push(b'.');
         }
-        full_path += &base.schema_name;
+        full_path.push_bytes(&base.schema_name);
     }
     if !full_path.is_empty() {
-        full_path.push('.');
+        full_path.push(b'.');
     }
-    full_path += &base.table_name;
+    full_path.push_bytes(&base.table_name);
     full_path
 }
 
@@ -352,25 +379,30 @@ fn replacement_full_path(base: &BaseTableRef) -> String {
     clippy::case_sensitive_file_extension_comparisons,
     reason = "the name is lowercased"
 )]
-fn csv_replacement_scan(base: &BaseTableRef, alias: &str) -> Option<TableRef> {
+fn csv_replacement_scan(base: &BaseTableRef, alias: &[u8]) -> Result<Option<TableRef>> {
     let full_path = replacement_full_path(base);
-    let mut lower_name = full_path.to_lowercase();
-    if lower_name.ends_with(".gz") {
+    let mut lower_name = full_path.as_bytes().to_ascii_lowercase();
+    if lower_name.ends_with(b".gz") {
         lower_name.truncate(lower_name.len() - 3);
-    } else if lower_name.ends_with(".zst") {
+    } else if lower_name.ends_with(b".zst") {
         lower_name.truncate(lower_name.len() - 4);
     }
     // `ReplacementScan::CanReplace` for the CSV reader, then `read_duckdb`'s
     // (`ReadDuckDBTableFunction::ReplacementScan`, on the whole name), then the Parquet
     // extension's `ParquetScanReplacement`.
-    let can_replace = |extension: &str| {
-        lower_name.ends_with(&format!(".{extension}")) || lower_name.contains(&format!(".{extension}?"))
+    let has_extension = |name: &[u8], extension: &str| {
+        let suffix = format!(".{extension}");
+        let query_suffix = format!("{suffix}?");
+        name.ends_with(suffix.as_bytes())
+            || name
+                .windows(query_suffix.len())
+                .any(|part| part == query_suffix.as_bytes())
     };
-    let full_lower_name = full_path.to_lowercase();
-    let is_duckdb_file = ["db", "ddb", "duckdb"].iter().any(|extension| {
-        full_lower_name.ends_with(&format!(".{extension}"))
-            || full_lower_name.contains(&format!(".{extension}?"))
-    });
+    let can_replace = |extension: &str| has_extension(&lower_name, extension);
+    let full_lower_name = full_path.as_bytes().to_ascii_lowercase();
+    let is_duckdb_file = ["db", "ddb", "duckdb"]
+        .iter()
+        .any(|extension| has_extension(&full_lower_name, extension));
     let function_name = if can_replace("csv") || can_replace("tsv") {
         "read_csv_auto"
     } else if is_duckdb_file {
@@ -381,30 +413,31 @@ fn csv_replacement_scan(base: &BaseTableRef, alias: &str) -> Option<TableRef> {
         // The JSON extension's `ReadJSONReplacement`.
         "read_json_auto"
     } else {
-        return None;
+        return Ok(None);
     };
     let function = rustdb_ast::FunctionExpression {
-        function_name: function_name.to_owned(),
-        schema: String::new(),
+        function_name: function_name.to_owned().into(),
+        schema: String::new().into(),
         children: vec![rustdb_ast::ParsedExpression::constant(
-            rustdb_types::Value::varchar(&full_path),
+            rustdb_types::Value::try_varchar(full_path.as_bytes())?,
         )],
         filter: None,
         order_bys: rustdb_ast::OrderModifier { orders: Vec::new() },
         distinct: false,
         is_operator: false,
         export_state: false,
-        catalog: String::new(),
+        catalog: String::new().into(),
     };
-    let has_glob = full_path.contains(['*', '?', '[']);
+    let has_glob = full_path.iter().any(|byte| matches!(byte, b'*' | b'?' | b'['));
     let alias = if !alias.is_empty() {
-        alias.to_owned()
+        ByteString::from(alias)
     } else if !has_glob {
         extract_base_name(&full_path)
     } else {
         base.table_name.clone()
     };
-    Some(TableRef {
+    Ok(Some(TableRef {
+        external_dependency: rustdb_ast::ExternalDependency::default(),
         alias,
         sample: None,
         query_location: None,
@@ -416,7 +449,7 @@ fn csv_replacement_scan(base: &BaseTableRef, alias: &str) -> Option<TableRef> {
             column_name_alias: base.column_name_alias.clone(),
             with_ordinality: rustdb_ast::OrdinalityType::WithoutOrdinality,
         }),
-    })
+    }))
 }
 
 /// The replacement scans clients added (the rest of `Binder::BindWithReplacementScan`):
@@ -426,9 +459,10 @@ fn csv_replacement_scan(base: &BaseTableRef, alias: &str) -> Option<TableRef> {
 fn client_replacement_scan(
     context: &crate::ClientContext,
     base: &BaseTableRef,
-    alias: &str,
+    alias: &[u8],
 ) -> Result<Option<TableRef>> {
     let input = crate::context::ReplacementScanInput {
+        context,
         catalog_name: &base.catalog_name,
         schema_name: &base.schema_name,
         table_name: &base.table_name,
@@ -438,7 +472,7 @@ fn client_replacement_scan(
             continue;
         };
         if !alias.is_empty() {
-            alias.clone_into(&mut replacement.alias);
+            replacement.alias = alias.into();
         } else if replacement.alias.is_empty() {
             replacement.alias.clone_from(&base.table_name);
         }
@@ -461,17 +495,18 @@ fn client_replacement_scan(
 fn bind_extracted_table_name(
     scope: &mut BindScope<'_>,
     base: &BaseTableRef,
-    alias: &str,
+    alias: &[u8],
     mode: BindingMode,
 ) -> Result<BoundStatement> {
     let name = if mode == BindingMode::ExtractQualifiedNames {
         TableRef {
-            alias: alias.to_owned(),
+            external_dependency: rustdb_ast::ExternalDependency::default(),
+            alias: ByteString::from(alias),
             sample: None,
             query_location: None,
             kind: TableRefKind::BaseTable(Box::new(base.clone())),
         }
-        .to_string()
+        .to_sql_bytes()
     } else {
         base.table_name.clone()
     };
@@ -479,7 +514,7 @@ fn bind_extracted_table_name(
     let table_index = scope.generate_table_index();
     let binding_alias = if alias.is_empty() { &base.table_name } else { alias };
     let types = vec![LogicalType::INTEGER];
-    let names = vec![format!("__dummy_col{table_index}")];
+    let names = vec![rustdb_common::byte_format!("__dummy_col{table_index}")];
     scope
         .bind_context
         .add_generic_binding(table_index, binding_alias, names.clone(), types.clone())?;
@@ -491,8 +526,9 @@ fn bind_extracted_table_name(
 fn bind_base_table(
     scope: &mut BindScope<'_>,
     base: &mut BaseTableRef,
-    alias: &str,
+    alias: &[u8],
     location: Option<u64>,
+    external_replacement: &mut Option<TableRef>,
 ) -> Result<BoundStatement> {
     let cte_alias = BindingAlias::qualified("", &base.schema_name, &base.table_name);
     let lookup = {
@@ -504,7 +540,7 @@ fn bind_base_table(
         let alias = if alias.is_empty() {
             base.table_name.clone()
         } else {
-            alias.to_owned()
+            ByteString::from(alias)
         };
         let names = alias_column_names(&alias, &cte_names, &base.column_name_alias)?;
         scope
@@ -554,21 +590,28 @@ fn bind_base_table(
         return bind_extracted_table_name(scope, base, alias, mode);
     }
     let Some(found) = found else {
-        if let Some(mut replacement) = csv_replacement_scan(base, alias) {
+        if let Some(mut replacement) = csv_replacement_scan(base, alias)? {
             return bind_table_ref(scope, &mut replacement);
         }
         if let Some(mut replacement) = client_replacement_scan(&context, base, alias)? {
+            if !replacement.external_dependency.is_empty() {
+                // Binding consumes table-function arguments into bind data. Keep the
+                // original call for a relation/view that will bind again later.
+                *external_replacement = Some(replacement.clone());
+            }
             return bind_table_ref(scope, &mut replacement);
         }
         // An existing file no replacement scan reads (`ExtensionHelper::IsFullPath`).
         let full_path = replacement_full_path(base);
-        if full_path.contains(['.', '/', '\\']) && std::path::Path::new(&full_path).is_file() {
-            return Err(Error::binder(format!(
+        if full_path.iter().any(|byte| matches!(byte, b'.' | b'/' | b'\\'))
+            && replacement_path_is_file(&full_path)
+        {
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "No extension found that is capable of reading the file \"{full_path}\"\n* If this file is a supported file format you can explicitly use the reader functions, such as read_csv, read_json or read_parquet"
             )));
         }
         if matches!(lookup, CteLookup::Circular) {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Circular reference to CTE \"{}\", use WITH RECURSIVE to use recursive CTEs.",
                 base.table_name
             ))
@@ -599,7 +642,8 @@ fn bind_base_table(
                 .iter()
                 .map(|column| column.logical_type.clone())
                 .collect();
-            let column_names: Vec<String> = table.columns.iter().map(|column| column.name.clone()).collect();
+            let column_names: Vec<ByteString> =
+                table.columns.iter().map(|column| column.name.clone()).collect();
             let names = alias_column_names(&base.table_name, &column_names, &base.column_name_alias)?;
             let binding_alias = if alias.is_empty() {
                 BindingAlias::qualified(&found.catalog, &found.schema, found.entry.name())
@@ -614,7 +658,7 @@ fn bind_base_table(
                         entry: Some(Arc::clone(&found.entry)),
                         virtual_columns: vec![(
                             crate::operator::COLUMN_IDENTIFIER_ROW_ID,
-                            "rowid".to_owned(),
+                            "rowid".into(),
                             LogicalType::BIGINT,
                         )],
                     },

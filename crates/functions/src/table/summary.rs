@@ -1,7 +1,7 @@
 //! `summary(TABLE)` (DuckDB's `function/table/summary.cpp`): a demo of table parameters;
 //! each input row with a text rendering of its values in front.
 
-use rustdb_common::Result;
+use rustdb_common::{ByteString, Result};
 use rustdb_function::{
     FunctionData, InOutResult, TableFunction, TableFunctionBindInput, TableFunctionBindOutput,
     TableFunctionSet, TableScanState,
@@ -15,7 +15,7 @@ use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
 )]
 fn summary_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOutput> {
     let mut return_types = vec![LogicalType::VARCHAR];
-    let mut names = vec!["summary".to_owned()];
+    let mut names = vec![ByteString::from("summary")];
     return_types.extend(input.input_table_types.iter().cloned());
     names.extend(input.input_table_names.iter().cloned());
     Ok(TableFunctionBindOutput {
@@ -26,11 +26,11 @@ fn summary_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindO
 }
 
 /// `Value::ToString`.
-fn value_text(value: &Value) -> Result<String> {
+fn value_text(value: &Value) -> Result<ByteString> {
     if value.is_null() {
-        Ok("NULL".to_owned())
+        Ok("NULL".into())
     } else {
-        value.to_varchar()
+        value.to_varchar_bytes()
     }
 }
 
@@ -48,7 +48,13 @@ fn summary_in_out(
             .iter()
             .map(|column| value_text(&column.get_value(row)))
             .collect::<Result<Vec<_>>>()?;
-        summary.set_value(row, &Value::varchar(format!("[{}]", values.join(", "))))?;
+        summary.set_value(
+            row,
+            &Value::try_varchar(&rustdb_common::byte_format!(
+                "[{}]",
+                ByteString::join(&values, b", ")
+            ))?,
+        )?;
     }
     let mut columns = vec![summary];
     columns.extend(input.columns().iter().cloned());

@@ -3,6 +3,7 @@
 //! `-help`.
 
 use rustdb::Value;
+use rustdb_common::ByteString;
 
 use crate::highlight::{
     self, HighlightElementType, HighlightMode, PrintColor, PrintIntensity, ShellHighlight,
@@ -13,7 +14,7 @@ use crate::state::{BailOnError, MetadataResult, RenderMode, SEP_RECORD, SEP_UNIT
 
 /// The callback of an option (`metadata_command_t`), given the option's name and
 /// arguments.
-pub type OptionCallback = fn(&mut Shell, &[String]) -> MetadataResult;
+pub type OptionCallback = fn(&mut Shell, &[ByteString]) -> MetadataResult;
 
 /// A command-line option (`CommandLineOption`).
 #[derive(Debug)]
@@ -35,96 +36,96 @@ fn set_mode(state: &mut ShellState, mode: RenderMode) -> MetadataResult {
     MetadataResult::Success
 }
 
-fn toggle_ascii_mode(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn toggle_ascii_mode(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     let state = &mut shell.state;
     set_mode(state, RenderMode::Ascii);
-    SEP_UNIT.clone_into(&mut state.col_separator);
-    SEP_RECORD.clone_into(&mut state.row_separator);
+    state.col_separator = SEP_UNIT.into();
+    state.row_separator = SEP_RECORD.into();
     MetadataResult::Success
 }
 
-fn toggle_box_mode(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn toggle_box_mode(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     set_mode(&mut shell.state, RenderMode::Box)
 }
 
-fn toggle_column_mode(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn toggle_column_mode(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     set_mode(&mut shell.state, RenderMode::Column)
 }
 
-fn toggle_csv_mode(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn toggle_csv_mode(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     set_mode(&mut shell.state, RenderMode::Csv);
-    ",".clone_into(&mut shell.state.col_separator);
+    shell.state.col_separator = ",".into();
     MetadataResult::Success
 }
 
-fn toggle_html_mode(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn toggle_html_mode(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     set_mode(&mut shell.state, RenderMode::Html)
 }
 
-fn toggle_json_mode(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn toggle_json_mode(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     set_mode(&mut shell.state, RenderMode::Json)
 }
 
-fn toggle_json_lines_mode(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn toggle_json_lines_mode(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     set_mode(&mut shell.state, RenderMode::JsonLines)
 }
 
-fn toggle_line_mode(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn toggle_line_mode(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     set_mode(&mut shell.state, RenderMode::Line)
 }
 
-fn toggle_list_mode(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn toggle_list_mode(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     set_mode(&mut shell.state, RenderMode::List)
 }
 
-fn toggle_markdown_mode(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn toggle_markdown_mode(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     set_mode(&mut shell.state, RenderMode::Markdown)
 }
 
-fn toggle_quote_mode(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn toggle_quote_mode(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     set_mode(&mut shell.state, RenderMode::Quote)
 }
 
-fn toggle_table_mode(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn toggle_table_mode(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     set_mode(&mut shell.state, RenderMode::Table)
 }
 
-fn enable_bail(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn enable_bail(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     shell.state.bail = BailOnError::BailOnError;
     MetadataResult::Success
 }
 
-fn enable_batch(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn enable_batch(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     shell.state.stdin_is_interactive = false;
     MetadataResult::Success
 }
 
-fn disable_batch(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn disable_batch(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     shell.state.stdin_is_interactive = true;
     MetadataResult::Success
 }
 
-fn set_read_only_mode(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn set_read_only_mode(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     shell.state.config.access_mode = rustdb::AccessMode::ReadOnly;
     MetadataResult::Success
 }
 
-fn enable_header(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn enable_header(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     shell.state.show_header = true;
     MetadataResult::Success
 }
 
-fn disable_header(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn disable_header(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     shell.state.show_header = false;
     MetadataResult::Success
 }
 
-fn disable_stdin(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn disable_stdin(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     shell.state.read_stdin = false;
     MetadataResult::Success
 }
 
-fn enable_echo(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn enable_echo(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     shell.state.set_flag(ShellFlag::Echo);
     MetadataResult::Success
 }
@@ -138,15 +139,15 @@ fn set_config_flag(shell: &mut Shell, name: &str) -> MetadataResult {
     MetadataResult::Success
 }
 
-fn allow_unredacted(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn allow_unredacted(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     set_config_flag(shell, "allow_unredacted_secrets")
 }
 
-fn allow_unsigned(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn allow_unsigned(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     set_config_flag(shell, "allow_unsigned_extensions")
 }
 
-fn show_version_and_exit(_shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn show_version_and_exit(_shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     ShellState::printf_stdout(format!(
         "{} ({}) {}\n",
         rustdb::Database::library_version(),
@@ -158,13 +159,13 @@ fn show_version_and_exit(_shell: &mut Shell, _args: &[String]) -> MetadataResult
 
 /// `PrintHelpAndExit`: DuckDB's `PrintUsage` exits with code 0 after destroying the
 /// shell's state; returning `Exit` ends the shell the same way.
-fn print_help_and_exit(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn print_help_and_exit(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     print_usage(&shell.state);
     MetadataResult::Exit
 }
 
 /// `-ui`: runs the UI command, exiting if it fails.
-fn launch_ui(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn launch_ui(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     let command = shell.state.ui_command.clone();
     let rc = shell.run_initial_command(&command, true);
     if rc != 0 {
@@ -173,13 +174,13 @@ fn launch_ui(shell: &mut Shell, _args: &[String]) -> MetadataResult {
     MetadataResult::Success
 }
 
-fn set_newline_separator(shell: &mut Shell, args: &[String]) -> MetadataResult {
-    args[1].clone_into(&mut shell.state.row_separator);
+fn set_newline_separator(shell: &mut Shell, args: &[ByteString]) -> MetadataResult {
+    shell.state.row_separator = args[1].clone();
     MetadataResult::Success
 }
 
 /// `-storage-version VER` (`SerializationCompatibility::FromString`).
-fn set_storage_version(shell: &mut Shell, args: &[String]) -> MetadataResult {
+fn set_storage_version(shell: &mut Shell, args: &[ByteString]) -> MetadataResult {
     let storage_version = &args[1];
     let parsed = if storage_version.is_empty() {
         Err(rustdb::Error::invalid_input("Version string can not be empty"))
@@ -189,12 +190,13 @@ fn set_storage_version(shell: &mut Shell, args: &[String]) -> MetadataResult {
     let set = parsed.and_then(|()| {
         shell.state.config.set_option_by_name(
             "storage_compatibility_version",
-            Value::varchar(storage_version.clone()),
+            Value::try_varchar(storage_version)?,
         )
     });
     if let Err(error) = set {
-        shell.state.print_err(format!(
-            "{}: Error: unknown argument ({storage_version}) for '-storage-version': {error}\n",
+        let error_bytes = error.to_bytes();
+        shell.state.print_err(rustdb_common::byte_format!(
+            "{}: Error: unknown argument ({storage_version}) for '-storage-version': {error_bytes}\n",
             shell.state.program_name
         ));
         return MetadataResult::Exit;
@@ -209,16 +211,16 @@ fn set_color_scheme(shell: &mut Shell, mode: HighlightMode) -> MetadataResult {
     MetadataResult::Success
 }
 
-fn set_dark_mode(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn set_dark_mode(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     set_color_scheme(shell, HighlightMode::DarkMode)
 }
 
-fn set_light_mode(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn set_light_mode(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     set_color_scheme(shell, HighlightMode::LightMode)
 }
 
 /// `-f FILENAME`: runs the file and exits if it fails.
-fn process_file(shell: &mut Shell, args: &[String]) -> MetadataResult {
+fn process_file(shell: &mut Shell, args: &[ByteString]) -> MetadataResult {
     shell.state.read_stdin = false;
     if !shell.process_file(&args[1], crate::state::InputMode::File, false) {
         crate::state::exit(1);
@@ -226,19 +228,19 @@ fn process_file(shell: &mut Shell, args: &[String]) -> MetadataResult {
     MetadataResult::Success
 }
 
-fn set_init_file(shell: &mut Shell, args: &[String]) -> MetadataResult {
+fn set_init_file(shell: &mut Shell, args: &[ByteString]) -> MetadataResult {
     args[1].clone_into(&mut shell.state.init_file);
     MetadataResult::Success
 }
 
-fn skip_init(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn skip_init(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     shell.state.run_init = false;
     MetadataResult::Success
 }
 
 /// `RunCommand<EXIT>` of `-c`, `-s` and `-cmd`: a failing command exits, as `-c` and `-s`
 /// bail on errors unless `.bail` says otherwise.
-fn run_command(shell: &mut Shell, args: &[String], exit: bool) -> MetadataResult {
+fn run_command(shell: &mut Shell, args: &[ByteString], exit: bool) -> MetadataResult {
     if exit {
         shell.state.read_stdin = false;
     }
@@ -253,41 +255,41 @@ fn run_command(shell: &mut Shell, args: &[String], exit: bool) -> MetadataResult
     MetadataResult::Success
 }
 
-fn run_command_and_continue(shell: &mut Shell, args: &[String]) -> MetadataResult {
+fn run_command_and_continue(shell: &mut Shell, args: &[ByteString]) -> MetadataResult {
     run_command(shell, args, false)
 }
 
-fn run_command_and_exit(shell: &mut Shell, args: &[String]) -> MetadataResult {
+fn run_command_and_exit(shell: &mut Shell, args: &[ByteString]) -> MetadataResult {
     run_command(shell, args, true)
 }
 
 /// `ShellState::SetNullValue` (`-nullvalue` and `.nullvalue`).
-pub fn set_null_value(state: &mut ShellState, args: &[String]) -> MetadataResult {
-    args[1].clone_into(&mut state.null_value);
+pub fn set_null_value<S: AsRef<[u8]>>(state: &mut ShellState, args: &[S]) -> MetadataResult {
+    state.null_value = args[1].as_ref().into();
     MetadataResult::Success
 }
 
 /// `ShellState::SetSeparator` (`-separator` and `.separator`).
-pub fn set_separator(state: &mut ShellState, args: &[String]) -> MetadataResult {
+pub fn set_separator<S: AsRef<[u8]>>(state: &mut ShellState, args: &[S]) -> MetadataResult {
     if args.len() < 2 || args.len() > 3 {
         return MetadataResult::PrintUsage;
     }
-    args[1].clone_into(&mut state.col_separator);
+    state.col_separator = args[1].as_ref().into();
     if let Some(row_separator) = args.get(2) {
-        row_separator.clone_into(&mut state.row_separator);
+        state.row_separator = row_separator.as_ref().into();
     }
     MetadataResult::Success
 }
 
-fn set_null_value_option(shell: &mut Shell, args: &[String]) -> MetadataResult {
+fn set_null_value_option(shell: &mut Shell, args: &[ByteString]) -> MetadataResult {
     set_null_value(&mut shell.state, args)
 }
 
-fn set_separator_option(shell: &mut Shell, args: &[String]) -> MetadataResult {
+fn set_separator_option(shell: &mut Shell, args: &[ByteString]) -> MetadataResult {
     set_separator(&mut shell.state, args)
 }
 
-fn enable_safe_mode(shell: &mut Shell, _args: &[String]) -> MetadataResult {
+fn enable_safe_mode(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     shell.enable_safe_mode();
     MetadataResult::Success
 }
@@ -606,29 +608,33 @@ pub static COMMAND_LINE_OPTIONS: [CommandLineOption; 39] = [
 ];
 
 /// `FindOption`.
-fn find_option(name: &str) -> Option<&'static CommandLineOption> {
-    COMMAND_LINE_OPTIONS.iter().find(|option| option.option == name)
+fn find_option(name: &[u8]) -> Option<&'static CommandLineOption> {
+    COMMAND_LINE_OPTIONS
+        .iter()
+        .find(|option| option.option.as_bytes() == name)
 }
 
 /// `ShellState::FindCommandLineOption`: the option `option` names (with `_` for `-` as a
 /// legacy spelling), or the error with the closest names.
 pub fn find_command_line_option(
     state: &ShellState,
-    option: &str,
-) -> std::result::Result<&'static CommandLineOption, String> {
-    if let Some(found) = find_option(option).or_else(|| find_option(&option.replace('_', "-"))) {
+    option: &[u8],
+) -> std::result::Result<&'static CommandLineOption, ByteString> {
+    if let Some(found) =
+        find_option(option).or_else(|| find_option(&ByteString::from(option).replace_byte(b'_', b"-")))
+    {
         return Ok(found);
     }
     let option_names: Vec<String> = COMMAND_LINE_OPTIONS
         .iter()
         .map(|option| format!("-{}", option.option))
         .collect();
-    let candidates = rustdb_common::string_util::candidates_error_message(
+    let candidates = rustdb_common::string_util::candidates_error_message_bytes(
         &option_names,
-        &format!("-{option}"),
-        "Did you mean",
+        &rustdb_common::byte_format!("-{option}"),
+        b"Did you mean",
     );
-    Err(format!(
+    Err(rustdb_common::byte_format!(
         "Unknown Option Error: Unrecognized option '-{option}'\n{candidates}\nRun '{} -help' for a list of options.\n",
         state.program_name
     ))
@@ -645,7 +651,7 @@ pub fn print_usage(state: &ShellState) {
         PrintColor::STANDARD,
         PrintIntensity::Bold,
     );
-    highlighter.print_text(
+    highlighter.print_bytes(
         &state.program_name,
         PrintOutput::Stdout,
         HighlightElementType::Keyword,

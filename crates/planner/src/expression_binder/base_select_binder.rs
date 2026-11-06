@@ -38,7 +38,7 @@ use crate::parsed_equality::ParsedExpressionMap;
 #[derive(Clone, Debug, Default)]
 pub struct SelectBindState {
     /// Select-list aliases and their positions.
-    pub alias_map: CaseInsensitiveMap<usize>,
+    pub alias_map: CaseInsensitiveMap<usize, rustdb_common::ByteString>,
     /// Select-list expressions and their positions.
     pub projection_map: ParsedExpressionMap<usize>,
     /// The select list before binding.
@@ -57,7 +57,7 @@ impl SelectBindState {
             .get(index)
             .ok_or_else(|| Error::internal("alias index out of range"))?;
         if self.volatile_expressions.contains(&index) {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Alias \"{}\" referenced - but the expression has side effects. This is not yet supported.",
                 original.alias
             )));
@@ -74,7 +74,7 @@ impl SelectBindState {
                 .get(index)
                 .map(|e| e.alias.clone())
                 .unwrap_or_default();
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Alias \"{alias}\" referenced - but the expression has side effects. This is not yet supported."
             )));
         }
@@ -115,7 +115,7 @@ pub struct BoundGroupInformation {
     /// Unbound (qualified) group expressions and their indexes.
     pub map: ParsedExpressionMap<usize>,
     /// Select-list aliases used as groups.
-    pub alias_map: CaseInsensitiveMap<usize>,
+    pub alias_map: CaseInsensitiveMap<usize, rustdb_common::ByteString>,
     /// Groups with a collation: group index → index of the `first()` aggregate.
     pub collated_groups: HashMap<usize, usize>,
 }
@@ -304,19 +304,19 @@ impl<'a> SelectBinder<'a> {
         let aggregate_handling = *aggregate_handling;
         if let Some(result) = self.bind_alias(expr, depth, root_expression)? {
             if depth > 0 {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "Having clause cannot reference alias \"{column_name}\" in correlated subquery"
                 )));
             }
             return Ok(result);
         }
         if aggregate_handling != AggregateHandling::ForceAggregates {
-            return Ok(BindResult::error(format!(
+            return Ok(BindResult::error(rustdb_common::byte_format!(
                 "column {column_name} must appear in the GROUP BY clause or be used in an aggregate function"
             )));
         }
         if depth > 0 {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Having clause cannot reference column \"{column_name}\" in correlated subquery and group by all"
             )));
         }
@@ -349,7 +349,7 @@ impl<'a> SelectBinder<'a> {
             return Ok(result);
         }
         Ok(BindResult::Unbound(
-            Error::binder(format!(
+            Error::binder(rustdb_common::byte_format!(
                 "Referenced column {text} not found in FROM clause and can't find in alias map."
             ))
             .with_position(location)
@@ -403,9 +403,9 @@ impl<'a> SelectBinder<'a> {
         }
         // Ordered-set aggregates (`quantile_cont(0.5) WITHIN GROUP (ORDER BY x)`): the
         // ordering expression becomes the first argument when it is missing.
-        let ordered_set_agg = match (function.order_bys.orders.len(), function.function_name.as_str()) {
-            (1, "mode") => 1,
-            (1, "quantile_cont" | "quantile_disc") => 2,
+        let ordered_set_agg = match (function.order_bys.orders.len(), function.function_name.as_bytes()) {
+            (1, b"mode") => 1,
+            (1, b"quantile_cont" | b"quantile_disc") => 2,
             _ => 0,
         };
         let negate_fractions = ordered_set_agg == 2
@@ -546,7 +546,7 @@ impl<'a> SelectBinder<'a> {
         };
         let aggregate = &self.node.aggregates[index];
         let name = if alias.is_empty() {
-            aggregate.to_string()
+            aggregate.to_bytes()
         } else {
             alias
         };
@@ -580,7 +580,7 @@ fn is_functionally_dependent(expression: &Expression, dependencies: &[Expression
 }
 
 expression_binder_base!(SelectBinder {
-    fn does_column_alias_exist(&self, names: &[String]) -> bool {
+    fn does_column_alias_exist(&self, names: &[rustdb_common::ByteString]) -> bool {
         match &self.role {
             SelectRole::Select => names.last().is_some_and(|name| self.node.bind_state.alias_map.contains_key(name)),
             SelectRole::Having { .. } | SelectRole::Qualify { .. } => {
@@ -591,7 +591,7 @@ expression_binder_base!(SelectBinder {
 
     fn qualify_column_name(
         &self,
-        names: &[String],
+        names: &[rustdb_common::ByteString],
         location: Option<u64>,
     ) -> Result<std::result::Result<ParsedExpression, BindError>> {
         let qualified = default_qualify_column_name(self, names, location)?;
@@ -661,13 +661,13 @@ impl ExpressionBinder for SelectBinder<'_> {
             return Ok(None);
         };
         if index >= self.node.bound_column_count {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Column \"{name}\" referenced that exists in the SELECT clause - but this column cannot be referenced \
                  before it is defined"
             )));
         }
         if self.node.bind_state.alias_has_subquery(index) {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Alias \"{name}\" referenced in a SELECT clause - but the expression has a subquery. This is not yet \
                  supported."
             ))
@@ -677,7 +677,7 @@ impl ExpressionBinder for SelectBinder<'_> {
         self.bind_expression(&mut copy, depth, false).map(Some)
     }
 
-    fn sql_value_function(&self, column_name: &str) -> Option<ParsedExpression> {
+    fn sql_value_function(&self, column_name: &[u8]) -> Option<ParsedExpression> {
         if self.node.bind_state.alias_map.contains_key(column_name) {
             return None;
         }
@@ -712,7 +712,7 @@ impl ExpressionBinder for SelectBinder<'_> {
             super::qualify_column_names(self.base.binder, child)?;
             let Some(index) = self.try_bind_group(child) else {
                 return Ok(BindResult::Unbound(
-                    Error::binder(format!(
+                    Error::binder(rustdb_common::byte_format!(
                         "GROUPING child \"{}\" must be a grouping column",
                         child.name()
                     ))
@@ -792,14 +792,14 @@ fn resolve_window_expression_type(
         | E::WindowFill => 1,
         E::WindowNthValue => 2,
         _ => {
-            return Err(Error::internal(format!(
+            return Err(Error::internal(rustdb_common::byte_format!(
                 "Unrecognized window expression type {}",
                 expression_type_to_string(window_type)
             )));
         }
     };
     if child_types.len() != parameter_count {
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "{} needs {parameter_count} parameter{}, got {}",
             expression_type_to_string(window_type),
             if parameter_count == 1 { "" } else { "s" },
@@ -877,7 +877,9 @@ fn bind_range_expression(
         )?
         .ok_or_else(|| Error::internal("function lookup returned nothing"))?;
     let rustdb_catalog::EntryKind::ScalarFunction(functions) = &entry.entry.kind else {
-        return Err(Error::internal(format!("{name} is not a scalar function")));
+        return Err(Error::internal(rustdb_common::byte_format!(
+            "{name} is not a scalar function"
+        )));
     };
     let function = FunctionBinder::new(context)
         .bind_scalar_function(functions, vec![order.clone(), bound], true)?
@@ -1051,7 +1053,7 @@ impl SelectBinder<'_> {
             let functions = match entry.as_ref().map(|entry| &entry.entry.kind) {
                 Some(rustdb_catalog::EntryKind::AggregateFunction(functions)) => functions.clone(),
                 Some(_) => {
-                    return Err(Error::catalog(format!(
+                    return Err(Error::catalog(rustdb_common::byte_format!(
                         "{} is not an aggregate function",
                         window.function_name
                     ))
@@ -1228,21 +1230,22 @@ impl SelectBinder<'_> {
     ) -> Result<BindResult> {
         let location = expr.query_location;
         let alias = expr.alias.clone();
-        let positioned =
-            |message: String| BindResult::Unbound(BindError::binder(message).with_position(location));
+        let positioned = |message: rustdb_common::ByteString| {
+            BindResult::Unbound(BindError::binder(message).with_position(location))
+        };
         let ParsedExpressionKind::Function(function) = &mut expr.kind else {
             return Err(Error::internal("expected an UNNEST call"));
         };
         if depth > 0 {
             return Ok(positioned(
-                "UNNEST() for correlated expressions is not supported yet".to_owned(),
+                "UNNEST() for correlated expressions is not supported yet".into(),
             ));
         }
         if function.children.is_empty() {
-            return Ok(positioned("UNNEST() requires at lease one argument".to_owned()));
+            return Ok(positioned("UNNEST() requires at lease one argument".into()));
         }
         if self.inside_window {
-            return Ok(positioned(self.unsupported_unnest_message()));
+            return Ok(positioned(self.unsupported_unnest_message().into()));
         }
         if function.distinct || function.filter.is_some() || !function.order_bys.orders.is_empty() {
             return Err(Error::invalid_input(
@@ -1266,20 +1269,20 @@ impl SelectBinder<'_> {
                 if !super::parsed_is_scalar(child) {
                     break;
                 }
-                let name = child.alias.to_lowercase();
+                let name = child.alias.to_ascii_lowercase();
                 self.bind_child(child, depth, &mut error)?;
                 if let Some(error) = error.take() {
                     return Ok(BindResult::Unbound(error));
                 }
                 let bound = peek_bound(child).ok_or_else(|| Error::internal("unnest argument not bound"))?;
                 let value = context.evaluator.evaluate_scalar(bound)?;
-                match name.as_str() {
-                    "recursive" => {
+                match name.as_bytes() {
+                    b"recursive" => {
                         if value_get_bool(&value)? {
                             max_depth = u64::MAX;
                         }
                     }
-                    "max_depth" => {
+                    b"max_depth" => {
                         max_depth = value
                             .as_i128()
                             .and_then(|depth| u64::try_from(depth).ok())
@@ -1288,10 +1291,10 @@ impl SelectBinder<'_> {
                             return Err(Error::binder("UNNEST cannot have a max depth of 0"));
                         }
                     }
-                    "keep_parent_names" => keep_parent_names = value_get_bool(&value)?,
-                    "" => break,
+                    b"keep_parent_names" => keep_parent_names = value_get_bool(&value)?,
+                    b"" => break,
                     other => {
-                        return Err(Error::binder(format!(
+                        return Err(Error::binder(rustdb_common::byte_format!(
                             "Unsupported parameter \"{other}\" for unnest"
                         )));
                     }
@@ -1302,7 +1305,7 @@ impl SelectBinder<'_> {
                 return Ok(positioned(
                     "UNNEST - unsupported extra argument, unnest only supports recursive := [true/false], max_depth := \
                      # or keep_parent_names := [true/false]"
-                        .to_owned(),
+                        .into(),
                 ));
             }
         }
@@ -1339,7 +1342,7 @@ impl SelectBinder<'_> {
             LogicalTypeId::Unknown => return Err(super::parameter_not_resolved()),
             LogicalTypeId::List | LogicalTypeId::Struct | LogicalTypeId::SqlNull => {}
             _ => {
-                return Ok(positioned(format!(
+                return Ok(positioned(rustdb_common::byte_format!(
                     "UNNEST() can only be applied to lists, structs and NULL, not {child_type}"
                 )));
             }
@@ -1364,7 +1367,7 @@ impl SelectBinder<'_> {
         if struct_unnests > 0 && !root_expression {
             return Ok(positioned(
                 "UNNEST() on a struct column can only be applied as the root element of a SELECT expression"
-                    .to_owned(),
+                    .into(),
             ));
         }
         let mut unnest_expr = child;
@@ -1379,7 +1382,7 @@ impl SelectBinder<'_> {
                 ExpressionKind::Unnest(Box::new(BoundUnnestExpression { child: unnest_expr })),
             );
             let name = if alias.is_empty() {
-                result.to_string()
+                result.to_bytes()
             } else {
                 alias.clone()
             };
@@ -1425,7 +1428,7 @@ impl SelectBinder<'_> {
                         for index in 0..fields.len() {
                             let key = Value::bigint(index as i64 + 1);
                             let mut field = self.bind_struct_extract(expression.clone(), key, depth)?;
-                            field.alias = format!("element{}", index + 1);
+                            field.alias = rustdb_common::byte_format!("element{}", index + 1);
                             expanded.push(field);
                         }
                     } else {
@@ -1437,11 +1440,14 @@ impl SelectBinder<'_> {
                                 key_path.push(expression.alias.clone());
                             }
                             key_path.push(name.clone());
-                            let mut field =
-                                self.bind_struct_extract(expression.clone(), Value::varchar(name), depth)?;
+                            let mut field = self.bind_struct_extract(
+                                expression.clone(),
+                                Value::try_varchar(name.as_bytes())?,
+                                depth,
+                            )?;
                             field.alias = if keep_parent_names {
-                                let alias = key_path.join(".");
-                                alias.strip_prefix('.').map_or(alias.clone(), str::to_owned)
+                                let alias = rustdb_common::ByteString::join(&key_path, ".");
+                                alias.strip_prefix(b".").map_or_else(|| alias.clone(), Into::into)
                             } else {
                                 key_path[0].clone()
                             };

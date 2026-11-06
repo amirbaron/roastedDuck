@@ -6,6 +6,10 @@
     reason = "every callback has the signature of the command table, `MetadataCommandFn`"
 )]
 
+#[cfg(not(target_os = "linux"))]
+use rustdb_common::libcxx_sort::sort;
+#[cfg(target_os = "linux")]
+use rustdb_common::libstdcxx_sort::sort;
 use std::fmt::Write as _;
 
 use rustdb::Result;
@@ -20,7 +24,7 @@ use crate::prompt::{MainPromptOptions, Prompt};
 use crate::shell::{Shell, value_to_string};
 use crate::state::{
     BailOnError, LargeNumberRendering, MetadataResult, OptionType, PagerMode, ReadLineVersion, ShellFlag,
-    ShellState, StartupText, SuccessState, sql_identifier, sql_string,
+    ShellState, StartupText, SuccessState, sql_identifier, sql_string_bytes,
 };
 
 /// A dot command's callback (`metadata_command_t`); an error is printed like an
@@ -53,9 +57,9 @@ impl MetadataCommand {
     }
 }
 
-fn toggle_bail(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn toggle_bail<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     let state = &mut shell.state;
-    state.bail = if args[1] == "auto" {
+    state.bail = if args[1].as_ref() == b"auto" {
         BailOnError::Automatic
     } else if state.string_to_bool(&args[1]) {
         BailOnError::BailOnError
@@ -66,12 +70,12 @@ fn toggle_bail(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
 }
 
 /// `.binary`: binary output only differs from text output on Windows.
-fn toggle_binary(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn toggle_binary<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     shell.state.string_to_bool(&args[1]);
     Ok(MetadataResult::Success)
 }
 
-fn change_directory(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn change_directory<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     if shell.state.safe_mode {
         shell.state.print_err(".cd cannot be used in -safe mode\n");
         return Ok(MetadataResult::Fail);
@@ -79,7 +83,7 @@ fn change_directory(shell: &mut Shell, args: &[String]) -> Result<MetadataResult
     Ok(success_or_fail(shell.change_directory(&args[1])))
 }
 
-fn toggle_changes(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn toggle_changes<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     shell.state.set_or_clear_flag(ShellFlag::CountChanges, &args[1]);
     Ok(MetadataResult::Success)
 }
@@ -97,9 +101,9 @@ fn success_or_fail(result: SuccessState) -> MetadataResult {
 }
 
 /// `SetSeparator` of `.decimal_sep` and `.thousand_sep`.
-fn set_number_separator(
+fn set_number_separator<S: AsRef<[u8]>>(
     state: &ShellState,
-    args: &[String],
+    args: &[S],
     separator_name: &str,
     separator: &mut Option<u8>,
 ) -> MetadataResult {
@@ -111,40 +115,40 @@ fn set_number_separator(
         state.print(line);
     } else if args.len() != 2 {
         return MetadataResult::PrintUsage;
-    } else if args[1] == "space" {
+    } else if args[1].as_ref() == b"space" {
         *separator = Some(b' ');
-    } else if args[1] == "none" {
+    } else if args[1].as_ref() == b"none" {
         *separator = None;
-    } else if args[1].len() != 1 {
+    } else if args[1].as_ref().len() != 1 {
         state.print_err(format!(
             ".{separator_name}_sep SEP must be one byte, \"space\" or \"none\"\n"
         ));
         return MetadataResult::Fail;
     } else {
-        *separator = Some(args[1].as_bytes()[0]);
+        *separator = Some(args[1].as_ref()[0]);
     }
     MetadataResult::Success
 }
 
-fn set_decimal_sep(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_decimal_sep<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     let mut separator = shell.state.decimal_separator;
     let result = set_number_separator(&shell.state, args, "decimal", &mut separator);
     shell.state.decimal_separator = separator;
     Ok(result)
 }
 
-fn set_thousand_sep(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_thousand_sep<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     let mut separator = shell.state.thousand_separator;
     let result = set_number_separator(&shell.state, args, "thousand", &mut separator);
     shell.state.thousand_separator = separator;
     Ok(result)
 }
 
-fn set_large_number_rendering(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_large_number_rendering<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     let state = &mut shell.state;
-    state.large_number_rendering = match args[1].as_str() {
-        "all" => LargeNumberRendering::All,
-        "footer" => LargeNumberRendering::Footer,
+    state.large_number_rendering = match args[1].as_ref() {
+        b"all" => LargeNumberRendering::All,
+        b"footer" => LargeNumberRendering::Footer,
         arg if state.string_to_bool(arg) => LargeNumberRendering::Default,
         _ => LargeNumberRendering::None,
     };
@@ -152,37 +156,38 @@ fn set_large_number_rendering(shell: &mut Shell, args: &[String]) -> Result<Meta
 }
 
 /// `.dump`: the schema and contents of the database as SQL.
-fn dump_table(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
-    let mut like = String::new();
+fn dump_table<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
+    let args: Vec<rustdb_common::ByteString> = args.iter().map(|arg| arg.as_ref().into()).collect();
+    let mut like = rustdb_common::ByteString::new();
     let saved_show_header = shell.state.show_header;
     let saved_shell_flags = shell.state.shell_flags;
     shell.state.clear_flag(ShellFlag::Newlines);
     shell.state.clear_flag(ShellFlag::Echo);
     for arg in &args[1..] {
-        if let Some(option) = arg.strip_prefix('-') {
-            let option = option.strip_prefix('-').unwrap_or(option);
-            if option == "newlines" {
+        if let Some(option) = arg.strip_prefix(b"-") {
+            let option = option.strip_prefix(b"-").unwrap_or(option);
+            if option == b"newlines" {
                 shell.state.set_flag(ShellFlag::Newlines);
             } else {
-                shell
-                    .state
-                    .print_err(format!("Unknown option \"{arg}\" on \".dump\"\n"));
+                shell.state.print_err(rustdb_common::byte_format!(
+                    "Unknown option \"{arg}\" on \".dump\"\n"
+                ));
                 return Ok(MetadataResult::Fail);
             }
         } else if like.is_empty() {
-            like = format!("name LIKE {} ESCAPE '\\'", sql_string(arg));
+            like = rustdb_common::byte_format!("name LIKE {} ESCAPE '\\'", sql_string_bytes(arg));
         } else {
-            like = format!("{like} OR name LIKE {} ESCAPE '\\'", sql_string(arg));
+            like = rustdb_common::byte_format!("{like} OR name LIKE {} ESCAPE '\\'", sql_string_bytes(arg));
         }
     }
     shell.state.print("BEGIN TRANSACTION;\n");
     shell.state.show_header = false;
     shell.state.n_err = 0;
     if like.is_empty() {
-        "true".clone_into(&mut like);
+        like = "true".into();
     }
     // CREATE SCHEMA for the schemas other than main first.
-    let query = format!(
+    let query = rustdb_common::byte_format!(
         "SELECT DISTINCT table_schema FROM information_schema.tables WHERE table_schema != 'main' AND table_schema \
          NOT LIKE 'pg_%' AND table_schema != 'information_schema' AND table_name IN (SELECT name FROM \
          sqlite_schema WHERE ({like}) AND type=='table') ORDER BY table_schema"
@@ -195,11 +200,11 @@ fn dump_table(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
             shell.state.print(format!("{create_schema};\n"));
         }
     }
-    shell.run_schema_dump_query(&format!(
+    shell.run_schema_dump_query(&rustdb_common::byte_format!(
         "SELECT name, type, sql FROM sqlite_schema WHERE ({like}) AND type=='table'  AND sql NOT NULL ORDER BY \
          tbl_name='sqlite_sequence'"
-    ));
-    shell.run_table_dump_query(&format!(
+    ))?;
+    shell.run_table_dump_query(&rustdb_common::byte_format!(
         "SELECT sql FROM sqlite_schema WHERE ({like}) AND sql NOT NULL  AND type IN ('index','trigger','view')"
     ));
     shell.state.print(if shell.state.n_err > 0 {
@@ -212,13 +217,13 @@ fn dump_table(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
     Ok(MetadataResult::Success)
 }
 
-fn toggle_echo(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn toggle_echo<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     shell.state.set_or_clear_flag(ShellFlag::Echo, &args[1]);
     Ok(MetadataResult::Success)
 }
 
 /// `.exit ?CODE?`: a non-zero code exits at once.
-fn exit_process(_shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn exit_process<S: AsRef<[u8]>>(_shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     if args.len() > 2 {
         return Ok(MetadataResult::PrintUsage);
     }
@@ -231,21 +236,21 @@ fn exit_process(_shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
     Ok(MetadataResult::Exit)
 }
 
-fn toggle_headers(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn toggle_headers<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     shell.state.show_header = shell.state.string_to_bool(&args[1]);
     shell.state.set_flag(ShellFlag::HeaderSet);
     Ok(MetadataResult::Success)
 }
 
-fn set_highlight_colors(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_highlight_colors<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     if args.len() < 3 || args.len() > 4 {
         return Ok(MetadataResult::PrintUsage);
     }
     if !set_color(
         &mut shell.state,
-        &args[1],
-        &args[2],
-        args.get(3).map(String::as_str),
+        args[1].as_ref(),
+        args[2].as_ref(),
+        args.get(3).map(AsRef::as_ref),
     ) {
         return Ok(MetadataResult::Fail);
     }
@@ -253,7 +258,7 @@ fn set_highlight_colors(shell: &mut Shell, args: &[String]) -> Result<MetadataRe
 }
 
 /// `ShellHighlight::SetColor(element_type, color, intensity)` from their names.
-fn set_color(state: &mut ShellState, element_type: &str, color: &str, intensity: Option<&str>) -> bool {
+fn set_color(state: &mut ShellState, element_type: &[u8], color: &[u8], intensity: Option<&[u8]>) -> bool {
     let element = match highlight::try_get_highlight_element(element_type) {
         Ok(element) => element,
         Err(error) => {
@@ -270,12 +275,12 @@ fn set_color(state: &mut ShellState, element_type: &str, color: &str, intensity:
     };
     let print_intensity = match intensity {
         None => PrintIntensity::Standard,
-        Some(intensity) if intensity.eq_ignore_ascii_case("standard") => PrintIntensity::Standard,
-        Some(intensity) if intensity.eq_ignore_ascii_case("bold") => PrintIntensity::Bold,
-        Some(intensity) if intensity.eq_ignore_ascii_case("underline") => PrintIntensity::Underline,
-        Some(intensity) if intensity.eq_ignore_ascii_case("bold_underline") => PrintIntensity::BoldUnderline,
+        Some(intensity) if intensity.eq_ignore_ascii_case(b"standard") => PrintIntensity::Standard,
+        Some(intensity) if intensity.eq_ignore_ascii_case(b"bold") => PrintIntensity::Bold,
+        Some(intensity) if intensity.eq_ignore_ascii_case(b"underline") => PrintIntensity::Underline,
+        Some(intensity) if intensity.eq_ignore_ascii_case(b"bold_underline") => PrintIntensity::BoldUnderline,
         Some(intensity) => {
-            state.print_err(format!(
+            state.print_err(rustdb_common::byte_format!(
                 "Unknown intensity '{intensity}', supported options: standard, bold, underline\n"
             ));
             return false;
@@ -285,7 +290,7 @@ fn set_color(state: &mut ShellState, element_type: &str, color: &str, intensity:
     true
 }
 
-fn toggle_highlight_errors(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn toggle_highlight_errors<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     shell.state.highlight_errors = if shell.state.string_to_bool(&args[1]) {
         OptionType::On
     } else {
@@ -306,7 +311,7 @@ fn toggle_highlight_mode(shell: &mut Shell, args: &[String]) -> Result<MetadataR
     Ok(MetadataResult::Success)
 }
 
-fn toggle_highlight_result(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn toggle_highlight_result<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     shell.state.highlight_results = if shell.state.string_to_bool(&args[1]) {
         OptionType::On
     } else {
@@ -316,7 +321,8 @@ fn toggle_highlight_result(shell: &mut Shell, args: &[String]) -> Result<Metadat
 }
 
 /// `.help ?-all? ?PATTERN?`, and `.help shortcuts` for the keyboard shortcuts.
-fn show_help(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn show_help<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
+    let args: Vec<rustdb_common::ByteString> = args.iter().map(|arg| arg.as_ref().into()).collect();
     let state = &shell.state;
     if let Some(pattern) = args.get(1) {
         if pattern.eq_ignore_ascii_case("shortcuts") {
@@ -340,7 +346,7 @@ fn show_help(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
             return Ok(MetadataResult::Success);
         }
         if print_help(state, Some(pattern)) == 0 {
-            state.print(format!("Nothing matches '{pattern}'\n"));
+            state.print(rustdb_common::byte_format!("Nothing matches '{pattern}'\n"));
         }
     } else {
         print_help(state, None);
@@ -352,7 +358,7 @@ fn render_last_result(shell: &mut Shell, _args: &[String]) -> Result<MetadataRes
     shell.render_last_result()
 }
 
-fn toggle_log(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn toggle_log<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     if shell.state.safe_mode {
         shell.state.print_err(".log cannot be used in -safe mode\n");
         return Ok(MetadataResult::Fail);
@@ -364,7 +370,7 @@ fn toggle_log(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
     Ok(MetadataResult::Success)
 }
 
-fn set_max_rows(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_max_rows<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     let state = &mut shell.state;
     if args.len() > 3 {
         return Ok(MetadataResult::PrintUsage);
@@ -381,7 +387,7 @@ fn set_max_rows(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
 }
 
 /// `.maxwidth ?COUNT?` (DuckDB prints the width as "max rows").
-fn set_max_width(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_max_width<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     let state = &mut shell.state;
     if args.len() > 2 {
         return Ok(MetadataResult::PrintUsage);
@@ -403,7 +409,7 @@ fn set_row_rendering(shell: &mut Shell, _args: &[String]) -> Result<MetadataResu
     Ok(MetadataResult::Success)
 }
 
-fn import_data(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn import_data<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     Ok(success_or_fail_bool(shell.import_data(args)?))
 }
 
@@ -415,7 +421,7 @@ fn success_or_fail_bool(success: bool) -> MetadataResult {
     }
 }
 
-fn open_database(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn open_database<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     Ok(success_or_fail_bool(shell.open_database(args)?))
 }
 
@@ -436,10 +442,10 @@ fn print_argument_bytes(shell: &mut Shell, args: &[Vec<u8>]) -> Result<MetadataR
 }
 
 /// `.prompt MAIN ?CONTINUE? ...`: the main prompt, then the continuation prompts.
-fn set_prompt(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_prompt<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     let state = &mut shell.state;
     if let Some(main) = args.get(1) {
-        state.main_prompt = Prompt::parse(main, &mut MainPromptOptions)?;
+        state.main_prompt = Prompt::parse(main.as_ref(), &mut MainPromptOptions)?;
     }
     if let Some(prompt) = args.get(2) {
         state.continue_prompt = ShellState::truncated_prompt(prompt);
@@ -462,24 +468,24 @@ fn set_prompt(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
     Ok(MetadataResult::Success)
 }
 
-fn configure_progress_bar(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn configure_progress_bar<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     let progress_bar = &mut shell.state.progress_bar;
-    match (args.len(), args.get(1).map(String::as_str)) {
-        (2, Some("--clear")) => progress_bar.clear_components(),
-        (3, Some("--add")) => progress_bar.add_component(&args[2])?,
+    match (args.len(), args.get(1).map(AsRef::as_ref)) {
+        (2, Some(b"--clear")) => progress_bar.clear_components(),
+        (3, Some(b"--add")) => progress_bar.add_component(&args[2])?,
         _ => return Ok(MetadataResult::PrintUsage),
     }
     Ok(MetadataResult::Success)
 }
 
-fn set_output_mode(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_output_mode<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     let state = &mut shell.state;
     if args.len() > 3 {
         return Ok(MetadataResult::PrintUsage);
     }
     if args.len() == 1 {
         state.print(format!("current output mode: {}\n", state.mode.name()));
-    } else if !state.set_output_mode(&args[1], args.get(2).map(String::as_str)) {
+    } else if !state.set_output_mode(args[1].as_ref(), args.get(2).map(AsRef::as_ref)) {
         return Ok(MetadataResult::Fail);
     }
     Ok(MetadataResult::Success)
@@ -489,23 +495,23 @@ fn quit_process(_shell: &mut Shell, _args: &[String]) -> Result<MetadataResult> 
     Ok(MetadataResult::Exit)
 }
 
-fn set_output(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_output<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     Ok(success_or_fail_bool(shell.set_output_file(args, '\0')))
 }
 
-fn set_output_once(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_output_once<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     Ok(success_or_fail_bool(shell.set_output_file(args, 'o')))
 }
 
-fn set_output_excel(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_output_excel<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     Ok(success_or_fail_bool(shell.set_output_file(args, 'e')))
 }
 
-fn read_from_file(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn read_from_file<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     Ok(success_or_fail_bool(shell.read_from_file(&args[1])))
 }
 
-fn display_schemas(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn display_schemas<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     Ok(success_or_fail_bool(shell.display_schemas(args)?))
 }
 
@@ -580,7 +586,7 @@ fn show_version(shell: &mut Shell, _args: &[String]) -> Result<MetadataResult> {
     Ok(MetadataResult::Success)
 }
 
-fn set_widths(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_widths<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     shell.state.col_width = args[1..]
         .iter()
         .map(|width| ShellState::string_to_int(width) as i32)
@@ -588,30 +594,37 @@ fn set_widths(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
     Ok(MetadataResult::Success)
 }
 
-fn show_indexes(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn show_indexes<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     shell.display_entries(args, 'i')
 }
 
-fn show_tables(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn show_tables<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     Ok(shell.display_tables(args))
 }
 
-fn set_ui_command(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
-    shell.state.ui_command = format!("CALL {}", args[1..].join(" "));
+fn set_ui_command<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
+    let mut command = rustdb_common::ByteString::from("CALL ");
+    for (index, argument) in args.iter().skip(1).enumerate() {
+        if index > 0 {
+            command.push(b' ');
+        }
+        command.push_bytes(argument.as_ref());
+    }
+    shell.state.ui_command = command;
     Ok(MetadataResult::Success)
 }
 
-fn toggle_highlighting(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn toggle_highlighting<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     highlight::set_highlighting(shell.state.string_to_bool(&args[1]));
     Ok(MetadataResult::Success)
 }
 
-fn toggle_error_rendering(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn toggle_error_rendering<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     linenoise::set_error_rendering(shell.state.string_to_bool(&args[1]));
     Ok(MetadataResult::Success)
 }
 
-fn toggle_completion_rendering(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn toggle_completion_rendering<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     linenoise::set_completion_rendering(shell.state.string_to_bool(&args[1]));
     Ok(MetadataResult::Success)
 }
@@ -645,18 +658,19 @@ enum DeprecatedHighlightColors {
 }
 
 /// `SetHighlightingColor<T>`: a deprecated command sets its `.highlight_colors` element.
-fn set_highlighting_color(
+fn set_highlighting_color<S: AsRef<[u8]>>(
     shell: &mut Shell,
-    args: &[String],
+    args: &[S],
     color: DeprecatedHighlightColors,
 ) -> MetadataResult {
+    let argument = args[1].as_ref();
     let (literal, hint) = match color {
         DeprecatedHighlightColors::Comment => ("comment", "comment"),
         DeprecatedHighlightColors::Constant => {
-            shell.state.print_err(format!(
+            shell.state.print_err(rustdb_common::byte_format!(
                 ".constant has been split into numeric_constant and string_constant, use .highlight_colors \
                  numeric_constant {0} and .highlight_colors string_constant {0} instead\n",
-                args[1]
+                argument
             ));
             return MetadataResult::Fail;
         }
@@ -665,19 +679,19 @@ fn set_highlighting_color(
         DeprecatedHighlightColors::Cont => ("cont", "continuation"),
         DeprecatedHighlightColors::ContSel => ("cont_sel", "continuation_selected"),
     };
-    shell.state.print_err(format!(
+    shell.state.print_err(rustdb_common::byte_format!(
         "WARNING: .{literal} [COLOR] will be removed in a future release, use .highlight_colors {hint} {} instead\n",
-        args[1]
+        argument
     ));
     // `TrySetHighlightColor`.
-    if set_color(&mut shell.state, hint, &args[1], None) {
+    if set_color(&mut shell.state, hint.as_bytes(), argument, None) {
         MetadataResult::Success
     } else {
         MetadataResult::Fail
     }
 }
 
-fn set_comment_color(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_comment_color<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     Ok(set_highlighting_color(
         shell,
         args,
@@ -685,7 +699,7 @@ fn set_comment_color(shell: &mut Shell, args: &[String]) -> Result<MetadataResul
     ))
 }
 
-fn set_constant_color(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_constant_color<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     Ok(set_highlighting_color(
         shell,
         args,
@@ -693,7 +707,7 @@ fn set_constant_color(shell: &mut Shell, args: &[String]) -> Result<MetadataResu
     ))
 }
 
-fn set_cont_color(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_cont_color<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     Ok(set_highlighting_color(
         shell,
         args,
@@ -701,7 +715,7 @@ fn set_cont_color(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> 
     ))
 }
 
-fn set_cont_sel_color(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_cont_sel_color<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     Ok(set_highlighting_color(
         shell,
         args,
@@ -709,7 +723,7 @@ fn set_cont_sel_color(shell: &mut Shell, args: &[String]) -> Result<MetadataResu
     ))
 }
 
-fn set_error_color(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_error_color<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     Ok(set_highlighting_color(
         shell,
         args,
@@ -717,7 +731,7 @@ fn set_error_color(shell: &mut Shell, args: &[String]) -> Result<MetadataResult>
     ))
 }
 
-fn set_keyword_color(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_keyword_color<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     Ok(set_highlighting_color(
         shell,
         args,
@@ -804,7 +818,7 @@ fn display_colors(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> 
         color_list.push((find_color_group(&COLOR_GROUPS, info.color_name)?, code, info));
     }
     // By group, then hue, then luminosity.
-    rustdb_common::libcxx_sort::sort(&mut color_list, &mut |a, b| {
+    sort(&mut color_list, &mut |a, b| {
         if a.0 != b.0 {
             return a.0 < b.0;
         }
@@ -839,7 +853,7 @@ fn set_read_line_version(shell: &mut Shell, args: &[String]) -> Result<MetadataR
 
 /// `.pager ?on|off|automatic|COMMAND?`, `.pager set_row_threshold N`, and the current
 /// configuration without arguments.
-fn set_pager(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn set_pager<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     let state = &mut shell.state;
     if args.len() == 1 {
         let mode = match state.pager_mode {
@@ -862,11 +876,14 @@ fn set_pager(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
             state.print(page_mode);
         }
         if state.pager_mode != PagerMode::Off || !state.pager_command.is_empty() {
-            state.print(format!("Pager command: {}\n", state.pager_command));
+            state.print(rustdb_common::byte_format!(
+                "Pager command: {}\n",
+                state.pager_command
+            ));
         }
         return Ok(MetadataResult::Success);
     }
-    if args[1] == "set_row_threshold" {
+    if args[1].as_ref() == b"set_row_threshold" {
         if args.len() != 3 {
             return Ok(MetadataResult::PrintUsage);
         }
@@ -876,16 +893,16 @@ fn set_pager(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
     if args.len() != 2 {
         return Ok(MetadataResult::PrintUsage);
     }
-    match args[1].as_str() {
-        "on" => {
+    match args[1].as_ref() {
+        b"on" => {
             state.pager_mode = PagerMode::On;
             if state.pager_command.is_empty() {
                 state.pager_command = ShellState::system_pager();
             }
         }
-        "off" => state.pager_mode = PagerMode::Off,
-        "automatic" => state.pager_mode = PagerMode::Automatic,
-        command => command.clone_into(&mut state.pager_command),
+        b"off" => state.pager_mode = PagerMode::Off,
+        b"automatic" => state.pager_mode = PagerMode::Automatic,
+        command => state.pager_command = command.into(),
     }
     Ok(MetadataResult::Success)
 }
@@ -898,12 +915,20 @@ fn set_separator(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
     Ok(crate::command_line_option::set_separator(&mut shell.state, args))
 }
 
+fn set_null_value_bytes(shell: &mut Shell, args: &[Vec<u8>]) -> Result<MetadataResult> {
+    Ok(crate::command_line_option::set_null_value(&mut shell.state, args))
+}
+
+fn set_separator_bytes(shell: &mut Shell, args: &[Vec<u8>]) -> Result<MetadataResult> {
+    Ok(crate::command_line_option::set_separator(&mut shell.state, args))
+}
+
 fn enable_safe_mode(shell: &mut Shell, _args: &[String]) -> Result<MetadataResult> {
     shell.enable_safe_mode();
     Ok(MetadataResult::Success)
 }
 
-fn toggle_timer(shell: &mut Shell, args: &[String]) -> Result<MetadataResult> {
+fn toggle_timer<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
     shell.state.enable_timer = shell.state.string_to_bool(&args[1]);
     Ok(MetadataResult::Success)
 }
@@ -940,7 +965,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Stop after hitting an error.  Default OFF",
         3,
         Some(""),
-    ),
+    )
+    .with_byte_callback(toggle_bail),
     command(
         "binary",
         2,
@@ -949,7 +975,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Turn binary output on or off.  Default OFF",
         3,
         Some(""),
-    ),
+    )
+    .with_byte_callback(toggle_binary),
     command(
         "cd",
         2,
@@ -958,7 +985,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Change the working directory to DIRECTORY",
         0,
         Some(""),
-    ),
+    )
+    .with_byte_callback(change_directory),
     command(
         "changes",
         2,
@@ -967,7 +995,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Show number of rows changed by SQL",
         3,
         Some(""),
-    ),
+    )
+    .with_byte_callback(toggle_changes),
     command(
         "columns",
         1,
@@ -985,7 +1014,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "DEPRECATED: Sets the syntax highlighting color used for comment values",
         0,
         None,
-    ),
+    )
+    .with_byte_callback(set_comment_color),
     command(
         "constant",
         2,
@@ -994,7 +1024,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "DEPRECATED: Sets the syntax highlighting color used for constant values",
         0,
         None,
-    ),
+    )
+    .with_byte_callback(set_constant_color),
     command(
         "cont",
         2,
@@ -1003,7 +1034,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "DEPRECATED: Sets the syntax highlighting color used for continuation markers",
         0,
         None,
-    ),
+    )
+    .with_byte_callback(set_cont_color),
     command(
         "cont_sel",
         2,
@@ -1012,7 +1044,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "DEPRECATED: Sets the syntax highlighting color used for continuation markers",
         0,
         None,
-    ),
+    )
+    .with_byte_callback(set_cont_sel_color),
     command(
         "decimal_sep",
         0,
@@ -1021,7 +1054,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Sets the decimal separator used when rendering numbers. Only for duckbox mode.",
         3,
         Some(""),
-    ),
+    )
+    .with_byte_callback(set_decimal_sep),
     command(
         "databases",
         1,
@@ -1042,7 +1076,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
             "Options:\n\t--newlines\tAllow unescaped newline characters in output\nTABLE is a LIKE pattern for the \
              tables to dump\nAdditional LIKE patterns can be given in subsequent arguments",
         ),
-    ),
+    )
+    .with_byte_callback(dump_table),
     command(
         "display_colors",
         0,
@@ -1060,7 +1095,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Turn command echo on or off",
         3,
         Some(""),
-    ),
+    )
+    .with_byte_callback(toggle_echo),
     command(
         "edit",
         0,
@@ -1082,7 +1118,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "DEPRECATED: Sets the syntax highlighting color used for errors",
         0,
         None,
-    ),
+    )
+    .with_byte_callback(set_error_color),
     command(
         "excel",
         0,
@@ -1091,7 +1128,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Display the output of next command in spreadsheet",
         0,
         Some("--bom\tPut a UTF8 byte-order mark on intermediate file"),
-    ),
+    )
+    .with_byte_callback(set_output_excel),
     command(
         "exit",
         0,
@@ -1100,7 +1138,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Exit this program with return-code CODE",
         0,
         Some(""),
-    ),
+    )
+    .with_byte_callback(exit_process),
     command(
         "headers",
         2,
@@ -1109,7 +1148,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Turn display of headers on or off",
         0,
         Some(""),
-    ),
+    )
+    .with_byte_callback(toggle_headers),
     command(
         "help",
         0,
@@ -1118,7 +1158,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Show help text for PATTERN",
         0,
         Some(""),
-    ),
+    )
+    .with_byte_callback(show_help),
     command(
         "highlight",
         2,
@@ -1127,7 +1168,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Toggle syntax highlighting in the shell on/off",
         0,
         Some(""),
-    ),
+    )
+    .with_byte_callback(toggle_highlighting),
     command(
         "highlight_colors",
         0,
@@ -1136,7 +1178,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Configure highlighting colors",
         0,
         Some(""),
-    ),
+    )
+    .with_byte_callback(set_highlight_colors),
     command(
         "highlight_errors",
         2,
@@ -1145,7 +1188,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Turn highlighting of errors on or off",
         0,
         Some(""),
-    ),
+    )
+    .with_byte_callback(toggle_highlight_errors),
     command(
         "highlight_mode",
         2,
@@ -1163,7 +1207,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Turn highlighting of results on or off",
         0,
         Some(""),
-    ),
+    )
+    .with_byte_callback(toggle_highlight_result),
     command(
         "import",
         0,
@@ -1178,7 +1223,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
              file type is not selected, the input mode is derived from the file extension\n\t* Generic parameters \
              are passed to the reader functions",
         ),
-    ),
+    )
+    .with_byte_callback(import_data),
     command(
         "indexes",
         0,
@@ -1189,7 +1235,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         Some(
             "Notes:\n\t* If TABLE is specified, only show indexes for\n\t  tables matching TABLE using the LIKE operator.",
         ),
-    ),
+    )
+    .with_byte_callback(show_indexes),
     command(
         "indices",
         0,
@@ -1207,7 +1254,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "DEPRECATED: Sets the syntax highlighting color used for keywords",
         0,
         None,
-    ),
+    )
+    .with_byte_callback(set_keyword_color),
     command(
         "last",
         1,
@@ -1225,7 +1273,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Toggle readable rendering of large numbers (duckbox only)",
         0,
         Some("Mode: all|footer|off"),
-    ),
+    )
+    .with_byte_callback(set_large_number_rendering),
     command(
         "log",
         2,
@@ -1234,7 +1283,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Turn logging on or off.  FILE can be stderr/stdout",
         0,
         Some(""),
-    ),
+    )
+    .with_byte_callback(toggle_log),
     command(
         "maxrows",
         0,
@@ -1243,7 +1293,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Sets the maximum number of rows for display (default: 40). Only for duckbox mode.",
         0,
         Some(""),
-    ),
+    )
+    .with_byte_callback(set_max_rows),
     command(
         "maxwidth",
         0,
@@ -1252,7 +1303,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Sets the maximum width in characters. 0 defaults to terminal width. Only for duckbox mode.",
         0,
         Some(""),
-    ),
+    )
+    .with_byte_callback(set_max_width),
     command(
         "mode",
         0,
@@ -1269,7 +1321,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
              \"|\"\n\tmarkdown\tMarkdown table format\n\tquote\tEscape answers as for SQL\n\ttable\tASCII-art \
              table\n\ttabs\tTab-separated values\n\ttcl\tTCL list elements\n\ttrash\tNo output",
         ),
-    ),
+    )
+    .with_byte_callback(set_output_mode),
     command(
         "multiline",
         1,
@@ -1287,7 +1340,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Use STRING in place of NULL values",
         0,
         Some(""),
-    ),
+    )
+    .with_byte_callback(set_null_value_bytes),
     command(
         "open",
         0,
@@ -1299,7 +1353,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
             "Options:\n\t--new\tInitialize FILE to an empty database\n\t--nofollow\tDo not follow symbolic \
              links\n\t--readonly\tOpen FILE in read-only mode\n\t--sql\tSet FILE using SQL",
         ),
-    ),
+    )
+    .with_byte_callback(open_database),
     command(
         "once",
         0,
@@ -1312,7 +1367,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
              beginning\n\t-e\tSend output to the system text editor\n\t-x\tSend output as CSV to a spreadsheet \
              (same as \".excel\")",
         ),
-    ),
+    )
+    .with_byte_callback(set_output_once),
     command(
         "output",
         0,
@@ -1325,7 +1381,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
              beginning\n\t-e\tSend output to the system text editor\n\t-x\tSend output as CSV to a spreadsheet \
              (same as \".excel\")",
         ),
-    ),
+    )
+    .with_byte_callback(set_output),
     command(
         "pager",
         0,
@@ -1339,7 +1396,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
              result has more rows/columns than this\n\t[pager_command]\tSet the pager command to invoke\nNote: Set \
              DUCKDB_PAGER or PAGER environment variable or <cmd> to configure default pager",
         ),
-    ),
+    )
+    .with_byte_callback(set_pager),
     command(
         "print",
         0,
@@ -1360,7 +1418,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         Some(
             "OPTIONS:\n\t--add [COMPONENT]\tAdd a component to the progress bar\n\t--clear\tClear all components",
         ),
-    ),
+    )
+    .with_byte_callback(configure_progress_bar),
     command(
         "prompt",
         0,
@@ -1369,7 +1428,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Replace the standard prompts",
         0,
         Some(""),
-    ),
+    )
+    .with_byte_callback(set_prompt),
     command(
         "quit",
         0,
@@ -1387,7 +1447,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Read input from FILE",
         3,
         Some(""),
-    ),
+    )
+    .with_byte_callback(read_from_file),
     command(
         "read_line_version",
         2,
@@ -1441,7 +1502,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Change the column and row separators",
         0,
         Some(""),
-    ),
+    )
+    .with_byte_callback(set_separator_bytes),
     command(
         "schema",
         0,
@@ -1450,7 +1512,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Show the CREATE statements matching PATTERN",
         0,
         Some("Options:\n\t--indent\tTry to pretty-print the schema"),
-    ),
+    )
+    .with_byte_callback(display_schemas),
     command(
         "shell",
         0,
@@ -1504,7 +1567,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "List names of tables matching LIKE pattern TABLE",
         2,
         Some(""),
-    ),
+    )
+    .with_byte_callback(show_tables),
     command(
         "thousand_sep",
         0,
@@ -1513,7 +1577,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Sets the thousand separator used when rendering numbers. Only for duckbox mode.",
         4,
         Some(""),
-    ),
+    )
+    .with_byte_callback(set_thousand_sep),
     command(
         "timer",
         2,
@@ -1522,7 +1587,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Turn SQL timer on or off",
         0,
         Some(""),
-    ),
+    )
+    .with_byte_callback(toggle_timer),
     command(
         "ui_command",
         0,
@@ -1531,7 +1597,8 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Set the UI command",
         0,
         Some(""),
-    ),
+    )
+    .with_byte_callback(set_ui_command),
     command(
         "version",
         1,
@@ -1549,12 +1616,13 @@ pub static METADATA_COMMANDS: [MetadataCommand; 64] = [
         "Set minimum column widths for columnar output",
         0,
         Some("Negative values right-justify"),
-    ),
+    )
+    .with_byte_callback(set_widths),
 ];
 
 /// `ShouldPrintCommand`: commands with help text that are not deprecated, matching the
 /// glob pattern if there is one.
-fn should_print_command(command: &MetadataCommand, glob_pattern: &str) -> bool {
+fn should_print_command(command: &MetadataCommand, glob_pattern: &[u8]) -> bool {
     if command.extra_description.is_none() || command.description.contains("DEPRECATED") {
         return false;
     }
@@ -1572,14 +1640,14 @@ struct PrintCommandInfo {
 
 /// `ShellState::PrintHelp`: the commands matching `pattern` (with their extended
 /// help), or all of them; returns the number of lines printed.
-pub fn print_help(state: &ShellState, pattern: Option<&str>) -> usize {
+pub fn print_help(state: &ShellState, pattern: Option<&[u8]>) -> usize {
     const MIN_SPACING: usize = 4;
     const SPACING_PER_LAYER: usize = 2;
     let print_extended = pattern.is_some();
     let glob_pattern = match pattern {
         // `--all` matches every command.
-        Some("-a" | "-all" | "--all") | None => String::new(),
-        Some(pattern) => format!("{pattern}*"),
+        Some(b"-a" | b"-all" | b"--all") | None => rustdb_common::ByteString::new(),
+        Some(pattern) => rustdb_common::byte_format!("{pattern}*"),
     };
     let mut print_info_list = Vec::new();
     for command in &METADATA_COMMANDS {

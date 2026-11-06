@@ -66,5 +66,5 @@ for arg in "${PYTEST_ARGS[@]+"${PYTEST_ARGS[@]}"}"; do
 done
 cd "$RUN_DIR"
 # The tests import their conftest as `tools.shell.tests.conftest`.
-PYTHONPATH="$REF" "$PYTEST" -p no:cacheprovider -q -rfEs \
-  --shell-binary "$SHELL_BINARY" "${PYTEST_ARGS[@]+"${PYTEST_ARGS[@]}"}" "${TESTS[@]+"${TESTS[@]}"}"
+PYTHONPATH="$ROOT/scripts:$REF${PYTHONPATH:+:$PYTHONPATH}" "$PYTEST" -p no:cacheprovider -q -rfEs \
+  "${PYTEST_ARGS[@]+"${PYTEST_ARGS[@]}"}" "${TESTS[@]+"${TESTS[@]}"}" --shell-binary "$SHELL_BINARY"

@@ -8,7 +8,7 @@ use rustdb_ast::{
     ColumnDefinition, ColumnList, CompressionType, CreateInfo, CreateInfoKind, CreateTableInfo,
     LogicalDependencyList, OnCreateConflict, TableColumnType,
 };
-use rustdb_catalog::{Catalog, CatalogEntry, CatalogType, DEFAULT_SCHEMA, EntryKind, Transaction, TypeEntry};
+use rustdb_catalog::{Catalog, CatalogType, DEFAULT_SCHEMA, EntryKind, Transaction, TypeEntry};
 use rustdb_common::{CaseInsensitiveMap, Error, OrderedMap, Result, STANDARD_VECTOR_SIZE};
 use rustdb_execution::operators::{CatalogTableCreator, TableCreator};
 use rustdb_function::cast::ValueCast;
@@ -30,7 +30,9 @@ impl rustdb_function::TempCatalog for StatementTempCatalog {
     }
 
     fn create_type(&self, name: &str, ty: LogicalType) -> Result<()> {
-        let mut entry = CatalogEntry::new(name, EntryKind::Type(TypeEntry { user_type: ty }));
+        let mut entry = self
+            .catalog
+            .new_entry(name, EntryKind::Type(TypeEntry { user_type: ty }));
         entry.temporary = true;
         self.catalog.create_entry(
             &self.transaction,
@@ -45,7 +47,7 @@ impl rustdb_function::TempCatalog for StatementTempCatalog {
         let columns = columns
             .iter()
             .map(|(name, ty)| ColumnDefinition {
-                name: name.clone(),
+                name: name.clone().into(),
                 logical_type: ty.clone(),
                 expression: None,
                 category: TableColumnType::Standard,
@@ -55,17 +57,17 @@ impl rustdb_function::TempCatalog for StatementTempCatalog {
             })
             .collect();
         let info = CreateInfo {
-            catalog: self.catalog.name().to_string(),
-            schema: DEFAULT_SCHEMA.to_owned(),
+            catalog: (&*self.catalog.name()).into(),
+            schema: DEFAULT_SCHEMA.to_owned().into(),
             temporary: true,
             internal: false,
             on_conflict: OnCreateConflict::IgnoreOnConflict,
-            sql: String::new(),
+            sql: String::new().into(),
             comment: Value::default(),
             tags: CaseInsensitiveMap::default(),
             dependencies: LogicalDependencyList::default(),
             kind: CreateInfoKind::Table(Box::new(CreateTableInfo {
-                table: name.to_owned(),
+                table: name.to_owned().into(),
                 columns: ColumnList { columns },
                 constraints: Vec::new(),
                 query: None,
@@ -76,7 +78,7 @@ impl rustdb_function::TempCatalog for StatementTempCatalog {
         };
         let creator = CatalogTableCreator {
             catalog: Arc::clone(&self.catalog),
-            schema: DEFAULT_SCHEMA.to_owned(),
+            schema: DEFAULT_SCHEMA.to_owned().into(),
             info,
             io: Arc::clone(self.catalog.io()?),
         };

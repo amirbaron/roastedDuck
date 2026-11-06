@@ -55,3 +55,5 @@ opt-level = 2
 # stored-block decision so compressed output matches DuckDB's byte for byte.
 [patch.crates-io]
 miniz_oxide = { path = "third_party/miniz_oxide" }
+
+ureq-proto = { path = "third_party/ureq-proto" }

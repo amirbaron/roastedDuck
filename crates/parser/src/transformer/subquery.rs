@@ -117,7 +117,7 @@ impl<'a> Transformer<'a> {
                     ExpressionType::Invalid,
                 )))
             }
-            other => Err(Error::not_implemented(format!(
+            other => Err(Error::not_implemented(rustdb_common::byte_format!(
                 "Subquery of type {} not implemented\n",
                 other as i32
             ))),
@@ -132,7 +132,7 @@ fn transform_array_subquery(mut subquery: SelectStatement, location: Option<u64>
     let is_select = matches!(subquery.node.kind, QueryNodeKind::Select(_));
     let array_agg_child = if let QueryNodeKind::Select(select) = &subquery.node.kind {
         if select.select_list.len() != 1 {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Subquery returns {} columns - expected 1",
                 select.select_list.len()
             ))
@@ -166,7 +166,7 @@ fn transform_array_subquery(mut subquery: SelectStatement, location: Option<u64>
             }
         } else if is_select {
             array_idx += 1;
-            let alias = format!("__array_internal_idx_{array_idx}");
+            let alias = rustdb_common::byte_format!("__array_internal_idx_{array_idx}");
             let mut expression =
                 std::mem::replace(&mut *order.expression, build::column_ref(vec![alias.clone()]));
             expression.alias = alias;

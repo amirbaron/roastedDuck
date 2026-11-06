@@ -56,7 +56,7 @@ impl<'a> Transformer<'a> {
                     "PIVOT statement with multiple names in pivot entry!?",
                 ));
             };
-            let enum_name = format!("__pivot_enum_{}", build::random_uuid());
+            let enum_name = rustdb_common::byte_format!("__pivot_enum_{}", build::random_uuid());
             let mut base_cte_map = CommonTableExpressionMap::default();
             self.extract_ctes(&mut base_cte_map);
             let mut base = build::select_node();
@@ -85,9 +85,9 @@ impl<'a> Transformer<'a> {
         let mut pivot_ref = build::table_ref(TableRefKind::Pivot(Box::new(PivotRef {
             source: Box::new(source),
             aggregates,
-            unpivot_names,
+            unpivot_names: unpivot_names.into_iter().collect(),
             pivots: columns,
-            groups,
+            groups: groups.into_iter().collect(),
             column_name_alias: Vec::new(),
             include_nulls: false,
             bound: None,
@@ -106,7 +106,7 @@ impl<'a> Transformer<'a> {
         let mut statements = Vec::with_capacity(self.pivot_entries.len() + 1);
         for entry in std::mem::take(&mut self.pivot_entries) {
             if entry.has_parameters {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "PIVOT statements with pivot elements extracted from the data cannot have parameters in \
                      their source.\nIn order to use parameters the PIVOT values must be manually specified, \
                      e.g.:\nPIVOT ... ON {} IN (val1, val2, ...)",
@@ -160,11 +160,11 @@ fn generate_create_enum_statement(entry: PivotEntry) -> SqlStatementKind {
 }
 
 /// `SQLStatement::ToString` for the statements a PIVOT expands into.
-fn statement_to_string(statement: &SqlStatement) -> String {
+fn statement_to_string(statement: &SqlStatement) -> rustdb_common::ByteString {
     match &statement.kind {
-        SqlStatementKind::Select(select) => select.to_string(),
+        SqlStatementKind::Select(select) => select.to_sql_bytes(),
         // `CreateStatement::ToString`.
         SqlStatementKind::Create(info) => info.to_sql().unwrap_or_default(),
-        _ => String::new(),
+        _ => rustdb_common::ByteString::new(),
     }
 }

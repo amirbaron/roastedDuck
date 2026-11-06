@@ -1,15 +1,178 @@
+Current disposition, November 6, 2026: the owner explicitly approved a physical-device test exception. The goal is complete under that scope: all 22 scoped software collection/review requirements are evidenced; actual iPhone/iPad execution and provisioning remain **unverified, excepted by the owner**. Device builds, signatures and simulator tests retain their verified status. The [delivery index](release-candidate-index-20261106.md) links the new signed disposition, unchanged archive and all known limitations. Older dated statuses below are historical.
+
+The exact Mac2556 and Linux2663 engine images have completed the recorded SQL, shell, C API/ADBC, Python, Go, Swift, storage and codec checks. All 15 normal Python wheels are qualified. Final relocation/runtime audit2921 passed, and the signed candidate archive2924 extracted with all 300 payload files and symlink targets unchanged. Known SQL failures, matching skips, reference crashes and shell differences remain explicit; this is scoped verification, not a universal no-exception claim.
+
+The unchanged aggregate performance policy is met: best-time geometric means are 7.2–15.6% longer, with 62.2–78.1% less interpreter-adjusted geometric-mean RSS. ClickBench summed times remain 22–25% longer, and its largest one-thread peak is almost C++'s. The [current performance report](performance-final-native-20261106.md) retains all 63 flagged configurations, four COPY profiles, five whole-file stress outliers and every raw sample. No cache or memory budget was increased.
+
+The live worktree matches 2,439 of the frozen snapshot's 2,446 inputs byte for byte. The seven differences are status Markdown files; no Rust, Cargo, runtime, test or fixture inputs differ, and no additional source files were found. The tested snapshot and raw records remain unchanged.
+
+Historical verification as of November 4, 2026 uses frozen source 2253, signed Mac artifacts 2268 and signed Linux artifacts 2255. The Mac SQL review covers all 4,870 original files: Rust has 4,826 passes, 30 skips and 14 documented raw failures; the unchanged C++ reference has 4,839 passes, 30 skips and one retained reference failure. All 75 nonpasses were reviewed with no unexplained results or skip differences. The 57 individual file-time outliers remain available for coupled measurements.
+
+Mac focused controls and all CAST/TRY_CAST queries match. The public C API, native ADBC, complete Go and Swift suites, and four typed Go persistence/WAL journeys passed. All 149 workspace harnesses compiled fresh, were signed before execution, and produced 1,085 passes, zero failures and seven unchanged ignores. All five normal Mac Python ABI cells, 3.10 through 3.14, passed independent review: 31,135 matching XML outcomes per engine, comprising 30,743 passes and 392 retained nonpasses. The evidence also covers 36 typed WAL journeys, 216 encryption cases, 18 installed ADBC environments, 40 typing runs and 108 client workload samples. Individual speed/RSS outliers remain explicit; these results do not grant native benchmark or release acceptance.
+
+All three signed Apple ARM64 SDK slices and the full iOS simulator checks have passed their scoped reviews. Both Linux architectures completed the 4,870-file Rust corpus with 4,828 passes, 28 skips and 14 reviewed raw failures each. The shell review then found 531 GNU diagnostic mismatches: C++ emits `Invalid Error: stoull`, while Rust added conversion details. The fix is frozen as source2418; both strict release builds and signature gates passed. The full corrected arm64 shell collection and independent review passed: 21,460 byte cases and all 399 native filename obligations are covered, with documented reference/stack differences retained. All 531 original GNU diagnostic cases now match C++ on both current Linux targets, with exact per-platform stdout, stderr, exit and file comparisons. Both Linux full shell collections and independent reviews have passed, with all original inputs and documented differences retained. The original HTTP logging test also passed on C++ and Rust for both architectures after installing the authenticated offline prerequisite; the original full-suite skips remain unchanged. Both Linux public C API suites passed all 30 harnesses and 155 cases per engine, with independent raw-log and library-loader review. Both Linux ADBC suites also passed all 64 cases and 3,040 assertions per engine, with independent runtime-image, default-restore and public-consumer checks. Go and Swift suites and their independent typed persistence/WAL consumers passed on both Linux targets. A Python-3.10-incompatible evidence hash caused a post-success Swift export failure; completed arm64 controls were recovered byte-for-byte without replay, and x86_64 consumers ran with a streaming hash fix. Independent Go/Swift reviews passed. All five normal Linux arm64 Python 3.10–3.14 cells passed independent review: 30,743 passes and 392 matching nonpasses per engine, plus 36 typed persistence journeys, 216 secure encryption cases, packaging, typing and installed ADBC. All ten Linux normal Python cells (CPython3.10–3.14 on arm64/x86_64) passed independent review:62270 matching XML outcomes per engine (61486 PASS/784 retained nonpasses),72 typed persistence/WAL journeys,432 encryption cases,36 installed public ADBC environments and80 typing runs. All36 client workloads and216 samples remain individual, separate from native macro acceptance. The final HTTP readiness race was corrected with atomic publication and deterministic red/green testing; completed C++ and nine-cell cohorts were reused without replay. Current general cross-engine Linux storage/WAL verification is active. The native Linux build target preserves source, image, compiler flags and memory limits; three earlier native-crypto build failures and the stale-review-receipt failure remain preserved. The actual build/wheel/signature and full client reviews match the selected native bytes; completed cohorts were not replayed during review recovery. General storage/codec and final measurements remain pending. Linux test-observer and fixture setup repairs preserved the existing signed wheel and all data/assertion payloads; completed native stages were reused. The archive export now preserves raw Linux filename bytes that Mac filesystems cannot represent; the complete original ARM tree was verified through two independent reads. Core library/SLT payloads are unchanged, with dependency/module proof2420 preserving their exact evidence scope. Remaining Linux Python, storage/codec, functional controls, COPY and SQL-file measurements, final TPC-H/ClickBench measurements, documented coupled performance acceptance and coherent artifact audit remain required. C++ reference SIGSEGV/invalid-UTF8 errors remain explicit; physical iOS hardware is unavailable and unverified without a waiver. Live paths are recorded in `.context/release-verification-queue-20261104.md` and `.context/corpus-resume-state.json`.
+
+Current corrected Mac evidence (2026-11-04): source2253/signed2268 full4870 collection and independent review2279 complete. Rust4826PASS/30SKIP/14documented rawFAIL; unchanged C++ reference4839PASS/30SKIP/1retained referenceFAIL. All75nonpasses reviewed,0unknown/0skipdiff;57whole-file time outliers retained for current coupled measurements. Focused2276 allsixcohorts1893literalrecords each match; allCAST2277 55232cases/110464CAST+TRYqueries perengine match. Both original checkpoint-reader and index-publication races pass inside the current Mac corpus. CAPI2280 is active. These are scoped Mac component results; full selected-client/platform/storage/shell/runtime/performance and physical-device acceptance remain incomplete. See `.context/release-verification-queue-20261104.md` for the serial continuation.
+
+Current corrected-artifact execution (2026-11-04): recovery build2267 and signing2268 completed successfully on frozen source2253. The Mac library SHA256 is 11a1047d91ba57efd71c854b11e530914b494780ad760e9b4f90db5af3c32cfb. Fresh Rust full4870 collection2274 is running after signature authentication under controller2275; focused2276 and all-cast2277 follow serially under2278. Both signed Linux2255 bundles remain ready for their fresh complete corpus runs. No full-corpus, selected-client, persistence/WAL, codec or performance acceptance is claimed by the build/signing receipts.
+
+Current build recovery (2026-11-04): both corrected Linux core bundles 2255 are built and signed, independently indexed in 2265. A host restart interrupted Mac build2260/controller2262 before a successful release terminal receipt; evidence2266 preserves that interruption. Recovery2267 uses the same frozen source2253 and a fresh release rebuild of the three target packages; strict all-target checks pass. Signing2268 precedes every execution. Controller2275 waits for signing before collecting all4870 original Rust cases in macos-full-corpus-2274, with the unchanged completed C++2091 raw reference copied byte-for-byte and its original failure retained. Linux collector2272/controller2273 and focused2276/all-cast2277 are prepared but unexecuted. These preparations grant no corpus, client, storage or performance acceptance. All23 completion requirements remain in scope.
+
+Corrected native checkpoint verification (2026-11-04): frozen source 2253 / signed Linux x86_64 artifacts 2255 pass all 30 Rust and three C++ runs of the unchanged concurrent checkpoint/delete test. Independent review 2263 verifies every raw worker, original source, fixture/signature stability and zero OOM/max events. Together with the deterministic signed red/green and 125 strict component tests, this resolves the observed checkpoint-reader failure for the original case. The existing source-2078 artifacts stay retired; they are not made valid by this correction. Source gate 2264 permits broader corrected verification without granting release acceptance. ARM build 2259 and Mac build/signing 2260/2261 run serially next; all full corpus, shell, C API/ADBC, Python/Go/Swift, storage/WAL/codec, coupled performance and physical-iOS gates remain required.
+
+New correctness fix in progress (2026-11-04): source 2078 / signed Mac 2088 and Linux 2080 are retired from final acceptance. The unchanged concurrent checkpoint/delete test failed on Rust with an invalidated database: destructive metadata conversion encountered active readers. The current C++ control passes and its metadata flush explicitly uses THREAD_SAFE conversion. Rust now copies that metadata block before persistence, keeping old readers alive. Signed deterministic verification fails on the old path and passes after the fix; all nine buffer/storage harnesses pass 125 tests with no ignores, and strict all-target checks pass. Existing lower-memory cache policy is unchanged; the temporary metadata copy is required for correctness and matches C++. The original native SQL case still needs corrected-artifact replay, followed by a new coherent candidate and all final gates. All prior receipts retain their source/artifact scope; none accepts the corrected code. Evidence: checkpoint-reader-regression-2251, checkpoint-reader-component-verification-2252 and concurrent-checkpoint-reader-gap-2250 under the external artifact directory. The goal remains incomplete.
+
+Current recovery (2026-11-04): an external VM/host-controller interruption stopped the prior Rust run at 2,825 of 4,870 cases. Evidence 2237 preserves that partial collection and the stopped container (exit 255, Docker OOM flag false). The existing owned VM is restored with the same CPU, RAM, disk and image IDs. Its previous build-swap file is reactivated; the SQL container still has no swap. Fresh collection 2238 reruns all 4,870 Rust cases from canonical native fixtures under host controller 2239. The completed C++ collection is retained byte-for-byte with explicit provenance: 4,841 passes, 28 original skips and one unapproved SIGSEGV. Fresh-run review 2244 checks the first 12 actual Rust nonpasses; older partial-run dispositions do not accept the new run. Serial root 2241 and independent review tail 2246 restore every remaining gate, including the codec refresh. Current counts are in `.context/corpus-resume-state.json`. No engine memory/cache policy changed, and final release/performance/physical-iOS acceptance remains incomplete.
+
+Current x86_64 checkpoint (2026-11-03): the recovered C++ collection 2215 is complete at 4,870 files: 4,841 passes, 28 original prerequisite skips and one unresolved SIGSEGV worker crash. Independent review 2233 verifies all records, skip clauses, native/source/fixture signatures and zero OOM/max/resource-kill events. The crash in `float_decimal_cast.test` remains raw and unapproved; its core is preserved in evidence 2226. The fresh Rust collection is now running. The original 40-GB, extended-precision and concurrent-index C++ cases all pass. Scoped cast controls 2227 and all remaining client/shell/storage/performance/artifact/hardware gates remain required. A final-artifact codec coverage audit also added the original FSST/DICT_FSST WAL and ZSTD Parquet integrations on all three native targets; signed preparation 2231/2232 is queued, not passed. The goal is incomplete.
+
+Recovery in progress (2026-11-03): the full x86_64 pair is being rerun in collection 2215 with the same signed source 2078 / shipping 2080 binaries, original tests and engine memory limits. The only runtime adjustment is a higher inherited file-descriptor limit. Diagnostic 2214 passed the first unrecorded case on both engines; observation of growing `/proc/<pid>/auxv` descriptors in the translated monitor supports descriptor exhaustion as the cause of the earlier Rosetta stop. The original failed collection and evidence 2213 remain preserved. Serial dispatcher 2222 will resume the unstarted components after the recovered corpus succeeds. Independent AMD nonpass review, final coupled performance acceptance and physical iOS verification remain required; the goal is incomplete.
+
+Latest environment stop (2026-11-03): Linux x86_64 reference full2131 stopped at828/4870 (821pass7skip0SQLfail recorded) with Rosetta temporary-file assertion/actualexit133; no OOM kill and no verdict for the next case. All downstream queues stopped on this prerequisite; their payloads did not run. Evidence2213 preserves the stopped container, raw logs and native fixtures. Native disk has63GBfree and TMPDIRexists. Isolated unchanged nextcase2214 Cpppasses; diagnosis/recovery remains in progress. Current ARM fullSQL2212 and completed Mac/Apple/client receipts remain valid. Final performance and physicaliOS acceptance remain incomplete.
+
+Current verified macOS SQL/C API checkpoint (2026-11-03): both fresh4,870-file collections and independent review2093 are complete on corrected source2078/signed2088. Rust has4,826passes,30shared skips and14documented divergences (11private C++engine ABI cases;3tests expecting OOM where Rust succeeds). C++has4,839passes,30skips and one diagnosed metadata-concurrency reference failure. All75raw nonpasses are retained/reviewed; there are zero unknown nonpasses, skip differences or resource kills. All55individual SQL-file timing outliers are retained; these file timings are not TPC-H/ClickBench performance acceptance. The original concurrent-index case passes on both engines. C API2094passes all30harnesses/155cases/705,024actual assertions; independent2187checks all raw summaries/native/source pins. Assertion totals differ only in the unchanged pending/streaming polling loops. ADBC2095nowpasses64cases/3,040assertions per engine; independent2190verifies all original case names, selected libraries and separate-testbridge/default-restore/signature evidence. Shipping remains547exports/zero private hooks and the same library hash. Workspace2096nowpasses149harnesses/1,083tests with zero failures and seven declared ignores; independent2191verifies every original harness/raw summary/native hash and the exact two added regressions. Required ignored CAST/RE2 supplements remain pending. Matrix2104nowpasses all five fresh CP310–314normalABI cells with independent reviews:31,135matching XMLrecords per engine/30,743passes392retainednonpasses,36typedWAL journeys216encryptedParquet cases18installedADBC environments40typing runs18individualclientworkloads/108samples. CurrentGo2107passes652cases per engine and independent2109fourtypedWAL journeys; Swift2110passes all133upstream/identitycases perengine. Independent2198checks currentGo/Swift/native/typedhandoffs. CorrectedApple2128/independent2126nowpasses all3signedARM SDKs with547exports each,MacSDKrelocation/2normaltypedconsumers/4WAL journeys,all133actualsimulatorSwiftcases,typedconsumerand4additionalcrossengineWAL journeys. Main-disk simulator use is authorized. Physicaldevice runtime/provisioning remains unavailable/unverified/notwaived. CorrectedLinuxx86_64build2082/sign2080nowpasses, alongside ARM2079/2080:both2451inputsource2078 builds have547exports/zeroADBCtesthooks andcurrentcontent signatures. Read-onlycapacity2130confirms64,146,907,136nativefree bytes with unchangedCPU2/RAM24GiB/disk100GiB. FreshLinuxARM Cppfull2131nowcompletes4,870files:4,842passes28originalprerequisiteskips0failures. Independent2206checks all28worker/sourceclauses/nativefixtures/CMS/soleCppimage andzeroOOM/max/resource-kill events;40GBcaseand2Linuxextendedprecisioncasesexecute/pass. ARM Rustfull2131nowcompletes4,870files:4,828passes28skips14documentedrawFAIL. Independent2212reviewsall9,740ARMrecords/70rawnonpasseswith0unknown/skipdifferences/OOM/max/resourcekill events; all28literalprerequisite/source/worker checks andall41individualfiletimingoutliers retained. Original40GB/concurrent-index20001/Linuxlongdouble cases pass onbothcurrentengines. x86_64 Cppfull2131is now active, followedbyRust; theseRosettafunctionalresultsarenotnativex86performance. Equal16GiBengine/20GiBsampledRSS/900s/jobs1/22GiBnoswapbudgets remainunchanged. AMDfullrecords/nonpassreviews andremainingLinuxclients/APIs/shell/storage/Macstorage/COPY/outliers/native130macro/finalartifact/hardware gates remainrequired. Other clients/platforms/shell/storage/WAL/coupled-performance/physical-iOS gates remain required. The goal is incomplete.
+
+Corrected candidate frontier (2026-11-03): source2078 contains the index-publication
+fix: the existing DataTable append lock now spans the build scan through index
+registration. It adds no cache, buffer or query-memory budget. Controlled2077fails
+on old code (indexrowIDs{0}, table{0,1}) and passes after the fix; all10constraint/
+index tests and strict storagealltarget checks pass. Linux ARM build2079/sign2080
+has547Cexports and zero private ADBC hooks. Its shared-library SHA-256 is
+`e53d7d6c32788b472e2bd27dd072201c7db5ffbbc9e50d47496b96efdccab6c1`.
+
+Independent2085checks the unchanged whole original concurrent SQLcase: oldsigned
+Rust fails14/30runs; corrected2080passes all30, with3Cppcontrols passing. This
+resolves the observed nativeARM race; whole-candidate correctness is not accepted.
+Source1959/core1961/Linux2005stay permanently retired from final acceptance; their
+original failures/partialcollections/signedpayloads are preserved.
+
+At a verified idle checkpoint, disk-capacity2083changed only the ownedLinuxVMdata
+disk60→100GiB. CPU2/RAM24GiB/context/images/stoppedcontainers/existingbuildswap are
+preserved; actualnativefree space is64,148,267,008bytes. The original40gb prerequisite
+SQLcase now executes and passes on bothCpp and correctedRustARM2084; originalraw
+skips remain. CorrectedAMD/originalfullcollections still need verification.
+
+Mac strict/release2087 completes actual0; sign2088 authenticates547Cexports/zero
+private ADBC hooks. Current librarySHA:
+`2a34c28766702536cbe4a87a5a48a33410b2e0d333d6e3c61e6783da0d7784df`.
+Serial nativeverification2092/session68951 now runs full4,870-file pairedMac2091.
+Both engines freshlypassed allsixfocused cohorts2089 (1,893records each,0diff)
+and all110,464CAST/TRYqueries each2090 (0diff, ICUloaded/UTC). Every fullcorpus
+rawnonpass/resource/fileoutlier still requires currentindependentreview. All applicable core/SQL/shell/CAPIADBC/PythonGoSwift/AppleSDKsimulator/
+Linux/storageWAL and130nativecoupledspeedRSS/documentedacceptance gates must use
+the corrected coherent artifacts. PhysicaliOS is unavailable, unverified and not
+waived. The goal is incomplete. Live pointers: `.context/corpus-resume-state.json`.
+
+Earlier frontier text below is historical and retains its original evidence scope.
+
+Open correctness gap (2026-11-03): current source1959 is not release-ready.
+Linux Rust ARM's original concurrent_writes_during_index_creation.test_slow
+returned indexedCOUNT1,682 instead of20,001 after its grouped table count passed.
+The current C++reference passes. Exact unchanged native replay2076 reproduces the
+mismatch in14/30Rust runs; all3Cppcontrols pass. This is a new correctness failure,
+separate from the documented privateCppABI/expectedOOM cases. Evidence2075keeps
+original source/worker/partiallogs and the controlled stop of only the owned ARM
+corpus container. Dispatcher2069/session59928 is terminal1; later roles are unstarted.
+No full Rust/Linux corpus acceptance is inferred from that incomplete collection.
+
+The controlled storage regression2077 fails on old code with indexrowIDs{0}
+versus table{0,1}; after holding the existing append lock across build/publication,
+the signed nativeMac harness passes all10constraint/index tests. Strictall-target
+storageClippy also passes. No cache/querymemory/buffer policy changed. The corrected
+source2078 still needs fresh nativeLinux original-case replay and a new coherent
+signed candidate followed by all required final gates. Source1959/1961/2005 remain
+retired from final acceptance;2054 rejects their known correctness failure.
+Prior component receipts below retain their original native bytes and scope.
+The disk-prerequisite gap2071 and unavailable physicaliOS hardware also stay open.
+
+Current frontier (2026-11-03): source1959/core1961 is the signed macOS arm64
+candidate after the S3 upload-context fix. Its library SHA-256 is
+`e65b5ac5f6e05912a9bd6d81d095445f0b701b82d1c3bacfb0f63c359feafe31`.
+Strict checks, nine HTTPFS unit tests, six native control groups (1,893 records
+per engine), the permanent S3 regression and 110,464 exact CAST/TRY_CAST queries
+per engine pass.
+
+Both complete 4,870-file macOS SQL collections are reviewed in2022: C++4,838pass,
+30skip and two raw failures; Rust4,826pass,30skip and14raw failures. All76nonpasses
+are classified and retained; there are no unknown verdicts, skip differences or
+resource kills. Exceptions remain explicit in `conformance/divergences.md`.
+C API1971 passes30harnesses/155cases/745,460assertions. ADBC1972 passes64cases/
+3,040assertions per engine. Workspace1973 passes149harnesses/1,082tests with seven
+declared ignores; independent inventory2058 confirms the sole additional pass is
+the new HTTPFS regression. Shipping1961 retains547C API exports and no private
+ADBC test hooks.
+
+All five current macOS Python3.10–3.14 functional cells and independent1980
+reviews pass; matrix2024 exits0. Summary2062 verifies31,135matching XML records
+per engine,30,743passes and392retained nonpasses,36typed WAL journeys,216encrypted
+Parquet cases,18installed ADBC environments,40typing runs and108coupled client
+samples across18separate workloads. These client measurements do not establish
+macro acceptance; individual rows and warnings remain in
+`docs/python-fetch-conversion-parity.md`.
+
+Current Go1982 passes652cases per engine; independent1984 passes four typed
+checkpoint/WAL journeys. Full Swift1985 passes133cases per engine. Dispatcher2032
+stopped before iOS compilation because the source verifier assumed workspace CWD.
+Recovery2063 preserves that failure and verifies the same source/native/certificate
+checks from both working directories. New dispatcher2065/session65225 preserved the completed Mac roles. Apple2064 now
+exits0; independent2001 verifies all three signed ARM SDK slices with547Cexports,
+Mac SDK relocation/two normal consumers/four typed WAL journeys, all133actual
+simulator Swift cases, the typed simulator consumer and four additional WAL
+journeys. Exact133case IDs agree on C++Mac/RustMac/RustiOS. Simulator runtime uses
+the authorized main disk. Physical device execution/provisioning remains unverified.
+Both Linux ARM2003/x86_64 2004 builds and signed freezes2005 pass with547Cexports/
+zero test hooks each. Dispatcher2065 then stopped on a stale verifier pin in the
+corpus script_hashes preparation before any corpus payload. Recovery2067 preserves
+that failure and checks both preparation map formats; no engine/test/native or
+crypto pins changed. Dispatcher2069/session59928 resumes at corpus2068. ARM C++
+collection2010 now completes4,870files:4,841passes/29skips/0failures, actualterminal0.
+Reference review2073checks every skip/source prerequisite/worker/nativefixture and
+zeroOOM/resourcekill events;28skips match MacCpp, one40gbcoveragegap stays open.
+TwoLinuxlongdoublecases execute/pass and the twoMacCppconcurrencyfailures do not
+reproduce. Rust ARM collection is now running; both AMD collections and final
+Linux-specific dispositions remain required.
+Correctness capacity2008 changes only the owned VM8→24GiB, retaining CPU2/disk60/
+images/stopped containers/build swap. Both engines use16GiB budgets with20GiB worker
+RSS guards,900s/file,one worker and22GiB/no-swap containers. This is correctness
+capacity, not performance or a cache-policy change.
+
+Early Linux ARM C++ review2070 identifies one unresolved coverage gap2071:
+`distinct_grouping_tpch.test_slow` requires40gbfree native disk; the guest has
+about24.2GBfree and skipped it, while current Mac C++passed. This is the only
+disk-space prerequisite in the4,870original files. Preserve the rawskip and
+execute the unchanged full original test for both engines/architectures with its
+prerequisite met before finalSQLacceptance. Current collection remains running;
+no prerequisite, corpus filter, native test or memory/cache policy was relaxed. PhaseB2047 (Linux Python, storage/
+WAL and full macOS shell) and the130configuration native benchmark2055 are prepared,
+not passing evidence. Linux SQL nonpasses still require their own disposition
+review after collection. Final artifact audit and documented coupled speed/RSS
+acceptance remain required. Preserve `release_on_unpin` and the accepted lower-
+memory tradeoff. Physical iOS hardware is unavailable, unverified and not waived.
+
+Old source1634/core1637 and final gate1660 are historical, retired from final
+acceptance. Gate1965 permits further verification only. The goal is incomplete.
+Live handles: `.context/corpus-resume-state.json`. Evidence:
+`.context/artifacts/platform-matrix-20261029/` on the external SSD.
+Earlier checkpoint text below is historical; its running/pending descriptions do
+not replace this frontier.
+
 # Handoff
 
 State of the DuckDB 1.5.6 → Rust port ("rustdb") on the main line
-(`amirbaron/rust-duckdb-port`), updated 2026-10-29, to continue the work in a new session.
+(`amirbaron/rust-duckdb-port`), updated 2026-11-02, to continue the work in a new session.
 
 ## Goal
 
 Every test of DuckDB's sqllogictest corpus passes, except the ones rustdb cannot pass by
 design (`conformance/divergences.md`: C++ extension binaries, and tests that expect an
 out-of-memory error rustdb avoids by using less memory). Along the way: byte-compatible
-storage and WAL with C++ DuckDB, the same C API, no C/C++ in the shipped artifact, and the
+storage and WAL with C++ DuckDB, the same C API, a Rust DuckDB engine, and the
 documented speed–memory acceptance of `docs/performance-acceptance.md`.
+
+On 2026-11-01 the owner explicitly allowed third-party native crypto, including
+OpenSSL and ring's native crypto. This supersedes the earlier literal "no C/C++ in
+the shipped artifact" requirement. The DuckDB engine must remain Rust; this does
+not authorize shipping the C++ DuckDB engine as the implementation.
 
 The owner updated the goal on 2026-10-23: preserve the measured lower-memory baseline;
 roughly 15–20% longer execution with 60–70% less memory on TPC-H and ClickBench is
@@ -20,7 +183,276 @@ The owner narrowed the client scope on 2026-10-25: complete **Python, Go and Swi
 only**, and preserve existing C API and ADBC functionality. Other language clients
 are outside this goal. `docs/language-bindings.md` records the current scope.
 
-## Latest source frontier (2026-10-29)
+## Current release verification (2026-11-02)
+
+Current matrix update: all five declared Mac CP310–314functional cells and
+independent reviews now pass (index1831:31,135matching XML records per engine,
+392retained nonpasses,36typed WAL journeys,108coupled client samples). Current
+iOS ARM build1686is the sole heavy job in1819. Earlier phase updates below are
+historical; all other platform/client/storage/focused-control and final native
+macro acceptance gates remain open.
+
+Update2026-11-03local: Mac CP310–313functional cells and independent reviews pass;
+CP314strict build is live. Refer to current verification for exact receipts,
+individual client timings and reference-only warning diagnostics. Device query1829
+finds12simulated and zero physical devices. All remaining release gates stay open.
+
+The goal is incomplete. The current common engine is frozen source1634, signed
+macOS arm64 release1637. Library SHA-256:
+`2f34b6d2a2fbeb03bf7a16b873e52f24d33e063b7176e73cf624e5235b9d398d`.
+Corrected Python source1742 changes five private binding files; equivalence1749
+checks that the common engine, C API, storage, Cargo inputs and cache policy did
+not change. Current native gate index1806 and Python reviews1816/1822 identify
+exact component evidence; they do not accept the whole distribution.
+
+| Current verified scope | Evidence and limits |
+|---|---|
+| SQL corpus | Both fresh4,870-file collections reviewed in1714. Rust4,826pass/30skip/14rawFAIL; C++4,839pass/30skip/one known reference failure. All75nonpasses reviewed and retained; no resource kills. |
+| CAST and HTTP errors | Signed SQL1639matches all110,464queries per engine, including errors and ICU. Shipping HTTP JSON1713matches complete C++bytes. |
+| Workspace | 149harnesses/1,081passes/seven declared ignores in1765. Two functional supplements now run: implemented cast/flat cases1785match; full RE2 library inventory1802passes. Raw unit-only ICU diagnostics remain explicit; signed SQL is the runtime proof. |
+| C API/ADBC | C API1661:30harnesses/155cases/704,636assertions. ADBC1662:64cases/3,040assertions each; test bridge separate, shipping library retains547exports and zero test hooks. |
+| macOS Go/Swift | Go1668:652cases per engine and four typed WAL journeys1670. Swift1671:132upstream+one identity case per engine. Current SDK relocation/standalone/WAL remains queued. |
+| Shell/storage | Mac shell1796reviews395upstream,768differential and21,460byte cases with explicit metadata/native-stack exceptions.399filename fixtures still require Linux. Storage1683/1684passes20typed journeys and40tail recoveries. |
+| macOS Python3.10–3.14 | Signed exact-ABI wheels1744/1752, all required functional stages and independent reviews1816/1822pass. CP310–313each match6,891records (6,804pass/87nonpass); CP314matches3,571 (3,527pass/44nonpass). The18client workloads remain separate; no macro acceptance inferred. |
+
+Mac CPython3.10–3.14complete their functional stages and independent reviews.
+Serial chain1818is now building CP314. Apple1819then builds/signs required ARM
+slices and runs SDK consumers/full simulator tests; typed iOS1820follows, then
+Linux build/sign1821and native-filesystem shell follow-up1825. Focused current-image
+HF/TLS/S3/secret controls1827then refresh the historical component evidence. These are pending
+jobs, not accepted results. Physical-device runtime remains unverified.
+
+Required targets are macOS arm64, iOS arm64 device/simulator, and Linux arm64/
+x86_64. Mac Intel, other Apple families and additional language clients are out of
+scope. Keep Python/Go/Swift and existing C API/ADBC coverage intact. Linux full
+SQL/API/ADBC/client/storage/WAL, all applicable current signed artifacts, remaining
+Python cells and native130-query TPC-H/ClickBench coupled speed/RSS/outlier review
+remain required. Preserve uncached `release_on_unpin`; no memory increase to chase
+small speed gaps. The accepted COPY tradeoff remains conditional on final macros.
+
+Continue from `.context/corpus-resume-state.json`, not historical process IDs below.
+Use one heavy job, jobs1/low priority and no subagents. Evidence stays under
+`.context/artifacts/platform-matrix-20261029/`; simulator runtime may use the main
+disk. [Current verification](current-source-verification.md),
+[platform matrix](release-platform-matrix.md) and
+[performance acceptance](performance-acceptance.md) record remaining gates.
+
+## Historical release verification (2026-11-01)
+
+
+Frozen source1337/signed macOS arm64 candidate1344 completes all4,870 original
+SQL files:4,826 pass,30 skip and14 documented divergences, with no crashes,
+timeouts or resource kills. The divergences are11 private C++ engine ABI demos
+and3 tests expecting OOM where Rust succeeds. Stable C ABI extensions remain
+required. The exact C++934 full baseline and its explicit reuse lineage are
+preserved separately; raw failures are never converted into passes.
+
+Workspace build1361/runtime1410 completes148 harnesses:1,066 tests pass, zero
+fail and7 are explicitly ignored. Review1412 leaves two ignored functional
+supplements outstanding and identifies five diagnostic tools. Final C API1360
+passes30 files/155 cases/747,104 assertions on candidate1344. Both engines finish
+395 upstream shell cases (393 pass,2 skip), with matching IDs/dispositions.
+Full Mac shell review1421 covers21,460 byte cases:20,385 exact matches,676 native
+stack suffixes and399 unavailable filename fixtures that remain required on
+Linux. The768 differential has4 build-ID/1 native-frame exceptions, no unexpected
+difference. Native Mac ADBC1434 passes64/3,040 assertions each; storage1437
+passes20 cross-engine journeys/40 recovery checks; Go1438 passes652 cases each
+plus4 independent journeys1425; Swift1443 passes132+1 cases per engine. First
+Python cell tail1476 now builds CP310 Linux x86_64 in the restored existing VM,
+with complete Perl build prerequisites; Rust/OpenSSL versions are unchanged.
+
+The goal remains incomplete. All15 Python ABI/platform cells, installed Python
+ADBC, Linux client/API/storage suites, Apple/Linux artifacts and relocatable
+consumers, Swift WAL/iOS runtime and native130-query coupled speed/RSS acceptance
+remain required. Continue
+from the live process and receipts recorded in `.context/corpus-resume-state.json`;
+see [current verification](current-source-verification.md). Keep one heavy job,
+jobs1/low priority, no subagents, and preserve SSD evidence and the accepted
+uncached lower-memory policy. Main-disk simulator work is explicitly authorized.
+
+## Prior component history
+
+Persistent config-refresh metadata now interoperates in both directions on signed
+1135/1136:two create/other-engine-refresh/original-engine-reopen journeys,six native
+stages. Direct-provider BOOLEAN validation matches C++,fixing over-permissive casts
+found by1131;14 signed refresh cases pass on both engines. Current regressions pass
+36wire/31TLS/40transactions(644matchingobservations)/155CAPI andwrite accounting.
+Audit1141/source1142 preserve the development checkpoint. See
+`docs/persistent-refresh-interoperability.md`; concurrent/lifecycle and final
+release/client/platform/performance acceptance remain open.
+
+
+Config-provider credential refresh is verified in signed1117/1118:13 independent
+SigV4 cases pass on both engines,including GET/PUT/multipart/list and endpoint
+replacement. Three isolated signed units and strict1120/fresh1116 pass. Current
+regressions pass36 wire,31TLS,write controls,40 secret-transaction cases/644 matching
+observations and155 C API cases. Audit1129/source1130 preserve this scoped
+component; nested refresh credentials are deliberately redacted by default. See
+`docs/s3-config-credential-refresh.md`; broader refresh/lifecycle/persistence and
+final release/client/platform/performance acceptance remain open.
+
+
+S3 Location redirects now precede region retries, with measured Curl/httplib method
+rules and limits. Signed1088/1089 passes36 wire cases/405 outcomes,80 policy cases
+per engine,4 URI/proxy units,31 TLS cases,155 C API cases and existing write controls.
+Binary PUT success bodies are drained without UTF-8 decoding; the independent
+before/after failure is preserved. Cross-origin credentials are stripped, an explicit
+exception to C++ session-token forwarding in38 synthetic cases. Audit1097/source1099
+preserve this development component. See `docs/s3-location-redirect-parity.md`.
+
+
+Plain HTTP proxies now use absolute-form forwarding; HTTPS retains CONNECT/TLS.
+Signed1063/1064 matches314 outcomes across28 independent S3/proxy cases, including
+Basic proxy auth and420022-byte method-looking upload. Two protocol units,31 TLS
+cases/293records and155 C API cases pass; strict1061/fresh1062 and audit1068/source1069
+preserve evidence. The extra S3 ETag SQL caret and97-versus73 requests remain
+explicit. See `docs/http-forward-proxy-parity.md`; this is development verification.
+
+
+S3 version pinning now uses initial HEAD/GET metadata only, matching C++ when a
+version first appears on a later range body. Signed1048/1049 passes23 independent
+S3 cases and256 matching status/row records, plus155 C API cases; strict1046,
+fresh1047 and audit1052/source1053 preserve evidence. One extra Rust SQL line/caret
+and82-versus62 requests remain explicit. See `docs/s3-metadata-version-pinning.md`.
+
+
+Encrypted cross-engine matrix1041 now passes all GCM/CTR x v0/v1 profiles on signed
+Mac ARM64 development1031 versus C++934:16 checkpoint/nonempty-WAL receiver
+mutation/checkpoint/original-readback journeys and32 incomplete-tail recovery
+checks,88 native process stages. Audit1042 checks56 physical encrypted headers;
+source1043 preserves the reusable authenticated harness and current code. See
+`docs/encrypted-storage-cross-engine-parity.md`. These are current development
+receipts; final release and other-platform/client persistence gates remain.
+
+
+Catalog-entry autoload now loads missing Rust providers and retries typed lookup.
+PRAGMA preprocessing publishes current settings, and active statements see newly
+registered extension defaults while retaining session overrides. Signed component
+1031/1032 passes all34 original encrypted/HTTPFS files on BOTH engines, with zero
+skips, including four encrypted WAL files;12 integration cases and155 C API cases
+pass. Strict workspace1026/fresh1030 and audit1035/source1036 preserve evidence.
+See `docs/catalog-entry-autoload-parity.md`; all15 individual file-time outliers
+remain explicit. Those original files are same-engine cases; subsequent1041 provides separate
+cross-engine development proof. Neither is final release persistence acceptance.
+
+The prior checked arithmetic/WAL component fixes all nine original failure files,
+passes190 affected files/five exact C++ skips,20 integration cases and155 C API
+cases (`docs/arithmetic-wal-recovery-parity.md`). The later CSV ownership fix halves
+large-gzip COPY/readback RSS without caches; original-budget gzip passes96.187s/
+4580560KiB sampled RSS. Its539-file COPY comparison matches C++ (518pass/21skips),
+with all27 file-time outliers retained (`docs/csv-copy-memory-parity.md`). Preserve
+those earlier immutable images/source counts separately from the latest component.
+
+Final common-source signed release/client/platform, full SQL/shell/C API/ADBC,
+Python/Go/Swift, cross-engine checkpoint/nonempty/torn/encrypted DB/WAL and coupled
+native speed/RSS/outlier acceptance remain open. Other HTTPFS/lifecycle behavior
+still needs verification. Goal remains ACTIVE/incomplete. Current execution state
+is `.context/current-verification-status.md`.
+
+### Prior source frontier (2026-10-30)
+
+The owner removed **Mac Intel support** from the required goal and authorized
+internal storage for iOS simulator work or other work blocked on the SSD. Required
+targets remain Mac arm64, iOS arm64 device/simulator and Linux arm64/x86_64. Preserve
+the existing Intel evidence, but do not spend final-release work refreshing it.
+
+The dedicated internal iOS 26.5 simulator now runs the signed arm64 Swift consumer.
+Its typed checks and four real C++/Rust checkpoint/nonempty-WAL journeys pass,
+including receiver mutation/checkpoint and original-engine readback. The owned
+simulator is shut down with data preserved. Three-slice arm64 Apple packaging,
+whole-SDK signatures and a relocated consumer pass without Intel inputs. The full iOS Swift suite passes; wider engine suites and physical-device
+provisioning remain open. See
+`docs/apple-swift-package.md` and `docs/release-platform-matrix.md`.
+
+Linux x86_64 runs through Rosetta in the dedicated ARM Linux VM, not native
+x86 hardware. Source 46 passes full-LTO build/signing, native preflight, all
+155 C API cases and five literal C++ process-memory-limit comparisons. Its
+container default is corrected from 6.1 GiB to C++'s 5.5 GiB, without increasing
+memory or restoring caching. Both engines pass 392 upstream shell tests/three
+matching skips. The complete differential rerun retains 19 raw differences. Four targeted
+startup/path/native-frame checks pass after further harness repairs; JSON/color
+ordering gaps remain open. Linux x86_64 Go now matches all 652 cases and passes
+four independent typed checkpoint/nonempty-WAL journeys. See
+`docs/linux-shell-parity.md` and `docs/linux-x86_64-go-client-parity.md`.
+See `docs/linux-process-memory-parity.md` and `docs/linux-x86_64-native-preflight.md`.
+
+The canonical source-39 pair ran all 4,870 SQL files: Rust 4,779 pass/75 matching
+skips/15 existing exceptions/one shared gzip OOM. C++ has 4,793 passes/75 skips,
+the same gzip resource failure and a VARIANT TPC-H timeout. The unmodified
+ratchet fails on gzip. These original failures and 21 individual whole-file
+outliers remain open; historical component results do not accept the final release.
+
+The source-43 embedded iOS framework now passes all 132 upstream Swift cases
+plus one exact loaded-image identity case on the actual iOS 26.5 simulator.
+All required Apple arm64 slices and Mac arm64 C API 155 cases are refreshed;
+physical-device and wider iOS core/C API/ADBC gates remain open. Original C++
+Python controls for all 15 required CP310–CP314/target cells are prepared and
+signed, but this does not verify any additional Rust ABI cell.
+
+Final common-source signed release verification, remaining supported Python ABI
+coverage, full applicable target suites, coupled native TPC-H/ClickBench refresh
+and individual outlier dispositions remain open. The accepted lower-memory policy
+and COPY tradeoff are unchanged; historical benchmarks do not accept newer artifacts.
+
+### Preserved component frontier and history
+
+The sections below retain earlier checkpoints. Their “current,” “next” or
+“pending” wording applies to those recorded candidates, not the latest scope above.
+
+The latest Mac Python wheel also validates the named-memory and ArrowString fixes:
+both complete Arrow19/21 matrices, all focused/package/non-fast/typing/ADBC/producer
+controls, eight typed WAL journeys and48 encryption cases match fresh C++ controls.
+Current wheelcfe1b176…/nativee5d8b108…; Python-string time/RSS1.180x/0.992x,
+Arrow-string0.165x/0.826x. See `docs/macos-python-client-parity.md`. Other Python ABIs,
+architectures, iOS runtime and all final integrated native/performance gates remain open.
+
+Python named-memory correctness is the newest Linux client frontier. The signed
+source28 wheel maps named connections to memory instances and uses byte-string
+pool keys, fixing persisted files/lifetime, `chdir` dependence and path-spelling
+aliasing. Eleven controls per Arrow profile, both full fast matrices and all
+supplemental/package/typing/ADBC/eight typed WAL/48 encryption gates pass.
+See `docs/python-named-memory-parity.md` for hashes, rejected intermediate and
+coupled measurements; Python-backed strings retain the1.217x timing outlier.
+The iOS arm64 device and simulator native slices are built/content-signed, and
+the current macOS native cache fix passes155 C API cases plus independent controls.
+iOS runtime is pending CoreSimulator SSD access. macOS Python refresh and other
+architectures/packaging/runtime/final integrated gates remain open.
+
+Linux core resource follow-ups now pass both engines: the unchanged4.3008GB gzip
+round trip under7 GiB RAM+8 GiB SSD swap, and the VARIANT SF1 checkpoint/restart plus
+all22 official answers under7 GiB RAM/no swap with a900-second bound. The C++ VARIANT
+control takes332s, beyond the original300s timeout. Gzip swap peaks remain an explicit
+resource outlier (Rust2.47GB versus C++1.39GB). These diagnostics preserve original
+canonical failures and do not establish speed–memory acceptance. See
+`docs/linux-core-resource-followups.md`. Apple target-toolchain preparation is next.
+
+Linux client frontier (2026-10-30): signed arm64 Go matches652 pinned root cases
+and four independent typed checkpoint/WAL journeys. Native ADBC matches64 cases/
+3,040 assertions on both engines, plus feature-free public-ABI controls. Swift
+matches132 upstream+identity cases on both engines; relocated packages/deployed
+consumers and four typed checkpoint/nonempty-WAL journeys pass with authenticated
+payloads and exact loaded-image identities. See the Linux Go/ADBC/Swift client reports.
+
+The newer Python ArrowString scanner candidate captures immutable buffers at each
+Pandas bind and converts only one engine chunk at a time. Both complete Arrow19/21
+fast matrices,23 focused controls per profile, the71-case non-fast cohort/eight shared
+skips, object-buffer boundaries and installed stubs/exports/typing/ADBC checks pass.
+The current wheel is3b7db7f7…/native818d5153…; eight typed persistence journeys and48
+encrypted-Parquet cases also pass. Arrow strings measure10.90ms/149.23MB versus
+C++79.56ms/195.65MB; Python strings remain1.217x time/1.004x RSS. The early whole-frame Arrow snapshot was
+rejected because it missed C++'s observable in-place mutations on repeat execution.
+See `docs/python-arrow-string-scan-parity.md`. This does not close final core,
+performance or other-platform acceptance.
+
+Newer Linux core frontier (2026-10-30): wide integer AVG finalization now follows
+the target's native long-double precision. Each219,668-case standalone Linux/Intel
+bit matrix has zero differences; the integrated candidate passes workspace Clippy
+and50 signed debug functions/SDK tests. Optimized signed release tests also pass;
+the affected514-file numeric cohort has510 passes,two exact C++ skips and two
+unchanged documented exceptions, with both AVG failures fixed and no regressions.
+This closes neither final release acceptance nor the broader platform/client
+matrix. The earlier full Linux corpus and155-case C API result are pre-fix controls;
+see `docs/integer-average-precision-parity.md` for scope and remaining gates.
 
 Python object-buffer scanner component is verified: signed wheel3,17 permanent
 boundary outcomes in each Arrow19/21 CPP/Rust environment, both full fast matrices,
@@ -2613,3 +3045,34 @@ by host interchange, expressions, UDF/replacement scans and the rest of the inve
 Full upstream Python, remaining clients and final core/native/storage/WAL/shell/corpus/
 performance acceptance remain open. Evidence: python-bindings-20261024/
 python-foundation-checkpoint.json; implementation scope: docs/python-bindings.md.
+
+
+## Secret lifecycle checkpoint (2026-11-01)
+
+Signed development1135 and native C++934 match all644 SQL and84 file-presence
+observations across48 cases per engine: disconnect, interruption, invalidated
+transactions and actual WAL-open COMMIT failures. Audit1146 preserves actual zero
+process exits and before/after manifest authentication. The first control's
+legacy failed-commit label means rollback-on-COMMIT after an invalidated INSERT;
+1145 separately proves actual COMMIT I/O failure. See docs/secret-lifecycle-parity.md.
+Concurrent credential refresh remains explicitly unverified; custom C++ provider/
+serializer APIs stay within the documented C++ binary-extension boundary.
+Prepare a common-source release candidate for the required final gates; do not
+combine component receipts into final acceptance. No memory/cache policy change.
+
+
+## Optimized release candidate1154 (2026-11-01)
+
+Source1147 is frozen separately on SSD; optimized build1148 actually succeeds.
+Signed/authenticated release1154 and separate testtools1154 retain feature-free
+547-export C API. Current CAPI1155 passes30files/155cases/794716assertions;
+upstream shell1161 matches393pass/2skip on both engines. Differential1156 retains
+raw exit1: exactly four source-ID output differences are independently reviewed
+1159, plus one existing native-frame exception, no other differences in768cases.
+Full4870 paired SQL1158 is live under serial parent1161. Missing optional inet
+in the private autoload repository produces a preserved C++ fixture failure1168;
+it needs later disposition, not an in-place verdict rewrite. Current Go/Swift
+recipes1163–1166 are prepared and unstarted; remaining full goal gates stay open.
+See docs/release-candidate-20261101.md and .context/corpus-resume-state.json.
+These post-build documentation edits do not alter the immutable source1147 used
+by the running corpus and prepared client scripts. No engine/memory/cache change.

@@ -2,11 +2,19 @@
 //!
 //! `cargo run -p rustdb-pg-parser --example pg_parse -- "SELECT 1"`
 
-fn main() {
+fn main() -> std::io::Result<()> {
+    use std::io::Write;
+    let mut stdout = std::io::stdout().lock();
     for sql in std::env::args().skip(1) {
         match rustdb_pg_parser::parse(&sql) {
-            Ok(stmts) => println!("{}", rustdb_pg_parser::nodes::to_json(&stmts)),
-            Err(err) => println!("ERROR {:?} {}", err.query_location(), err),
+            Ok(stmts) => {
+                stdout.write_all(&rustdb_pg_parser::nodes::to_json(&stmts))?;
+                stdout.write_all(b"\n")?;
+            }
+            Err(err) => {
+                writeln!(stdout, "ERROR {:?} {}", err.query_location(), err)?;
+            }
         }
     }
+    Ok(())
 }

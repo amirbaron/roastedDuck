@@ -60,7 +60,7 @@ impl<'a> WhereBinder<'a> {
 }
 
 expression_binder_base!(WhereBinder {
-    fn does_column_alias_exist(&self, names: &[String]) -> bool {
+    fn does_column_alias_exist(&self, names: &[rustdb_common::ByteString]) -> bool {
         self.bind_state
             .as_deref()
             .is_some_and(|state| ColumnAliasBinder::does_column_alias_exist(state, names))
@@ -90,8 +90,8 @@ impl ExpressionBinder for WhereBinder<'_> {
         }
     }
 
-    fn unsupported_aggregate_message(&self) -> String {
-        "WHERE clause cannot contain aggregates!".to_owned()
+    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+        "WHERE clause cannot contain aggregates!".into()
     }
 
     fn try_resolve_alias_reference(
@@ -116,11 +116,15 @@ impl ExpressionBinder for WhereBinder<'_> {
 #[derive(Debug)]
 pub struct ConstantBinder<'a> {
     base: BinderBase<'a>,
-    clause: String,
+    clause: rustdb_common::ByteString,
 }
 
 impl<'a> ConstantBinder<'a> {
-    pub fn new(binder: &'a mut Binder, outer: Option<&'a mut dyn Scope>, clause: impl Into<String>) -> Self {
+    pub fn new(
+        binder: &'a mut Binder,
+        outer: Option<&'a mut dyn Scope>,
+        clause: impl Into<rustdb_common::ByteString>,
+    ) -> Self {
         Self {
             base: BinderBase::new(binder, outer),
             clause: clause.into(),
@@ -154,26 +158,30 @@ impl ExpressionBinder for ConstantBinder<'_> {
                     *expr = function.clone();
                     return self.bind_expression(&mut function, depth, root_expression);
                 }
-                Err(unsupported(expr, format!("{} cannot contain column names", self.clause)).error)
+                Err(unsupported(
+                    expr,
+                    rustdb_common::byte_format!("{} cannot contain column names", self.clause),
+                )
+                .error)
             }
-            ParsedExpressionKind::Subquery(_) => Err(Error::binder(format!(
+            ParsedExpressionKind::Subquery(_) => Err(Error::binder(rustdb_common::byte_format!(
                 "{} cannot contain subqueries",
                 self.clause
             ))),
             ParsedExpressionKind::Default => {
-                let message = format!("{} cannot contain DEFAULT clause", self.clause);
+                let message = rustdb_common::byte_format!("{} cannot contain DEFAULT clause", self.clause);
                 bind_unsupported_expression(self, expr, depth, &message)
             }
             ParsedExpressionKind::Window(_) => {
-                let message = format!("{} cannot contain window functions!", self.clause);
+                let message = rustdb_common::byte_format!("{} cannot contain window functions!", self.clause);
                 bind_unsupported_expression(self, expr, depth, &message)
             }
             _ => bind_expression_base(self, expr, depth, root_expression),
         }
     }
 
-    fn unsupported_aggregate_message(&self) -> String {
-        format!("{} cannot contain aggregates!", self.clause)
+    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+        rustdb_common::byte_format!("{} cannot contain aggregates!", self.clause)
     }
 }
 
@@ -213,8 +221,8 @@ impl ExpressionBinder for AggregateBinder<'_> {
         bind_expression_base(self, expr, depth, root_expression)
     }
 
-    fn unsupported_aggregate_message(&self) -> String {
-        "aggregate function calls cannot be nested".to_owned()
+    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+        "aggregate function calls cannot be nested".into()
     }
 }
 
@@ -261,8 +269,8 @@ impl ExpressionBinder for InsertBinder<'_> {
         }
     }
 
-    fn unsupported_aggregate_message(&self) -> String {
-        "INSERT statement cannot contain aggregates!".to_owned()
+    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+        "INSERT statement cannot contain aggregates!".into()
     }
 }
 
@@ -272,7 +280,7 @@ impl ExpressionBinder for InsertBinder<'_> {
 pub struct TableFunctionBinder<'a> {
     base: BinderBase<'a>,
     table_function_name: String,
-    clause: String,
+    clause: rustdb_common::ByteString,
     /// Whether `current_date` and similar names are evaluated.
     pub accept_sql_value_functions: bool,
 }
@@ -282,7 +290,7 @@ impl<'a> TableFunctionBinder<'a> {
         binder: &'a mut Binder,
         outer: Option<&'a mut dyn Scope>,
         table_function_name: impl Into<String>,
-        clause: impl Into<String>,
+        clause: impl Into<rustdb_common::ByteString>,
     ) -> Self {
         Self {
             base: BinderBase::new(binder, outer),
@@ -308,7 +316,7 @@ impl<'a> TableFunctionBinder<'a> {
             .binder
             .macro_binding
             .as_ref()
-            .is_some_and(|binding| binding.has_matching_binding(&expr.name()));
+            .is_some_and(|binding| binding.has_matching_binding(expr.name()));
         if names.len() == 1 {
             if let Some(index) = self
                 .base
@@ -328,16 +336,20 @@ impl<'a> TableFunctionBinder<'a> {
             if macro_parameter {
                 return Err(parameter_not_resolved());
             }
-        } else if names[0].contains(DUMMY_NAME) && macro_parameter {
+        } else if names[0]
+            .windows(DUMMY_NAME.len())
+            .any(|part| part == DUMMY_NAME.as_bytes())
+            && macro_parameter
+        {
             return Err(parameter_not_resolved());
         }
         let location = expr.query_location;
-        let result_name = names.join(".");
+        let result_name = rustdb_common::ByteString::join(&names, ".");
         let placeholder = || BindError::binder("error");
         if !self.table_function_name.is_empty()
             && self.bind_correlated_columns(expr, placeholder())?.is_none()
         {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Table function \"{}\" does not support lateral join column parameters - cannot use column \"{}\" \
                  in this context.\nThe function only supports literals as parameters.",
                 self.table_function_name, result_name
@@ -355,13 +367,13 @@ impl<'a> TableFunctionBinder<'a> {
             return Ok(bound.into());
         }
         if self.table_function_name.is_empty() {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Failed to bind \"{result_name}\" - COLUMNS expression can only contain lambda parameters"
             ))
             .with_position(location));
         }
         let _ = is_potential_alias(&names);
-        Ok(Expression::constant(Value::varchar(result_name)).into())
+        Ok(Expression::constant(Value::try_varchar(result_name.as_bytes())?).into())
     }
 }
 
@@ -378,15 +390,15 @@ impl ExpressionBinder for TableFunctionBinder<'_> {
     ) -> Result<BindResult> {
         match &expr.kind {
             ParsedExpressionKind::ColumnRef(_) => self.bind_column_reference(expr, depth, root_expression),
-            ParsedExpressionKind::Subquery(_) => Err(Error::binder(format!(
+            ParsedExpressionKind::Subquery(_) => Err(Error::binder(rustdb_common::byte_format!(
                 "{} cannot contain subqueries",
                 self.clause
             ))),
-            ParsedExpressionKind::Default => Ok(BindResult::error(format!(
+            ParsedExpressionKind::Default => Ok(BindResult::error(rustdb_common::byte_format!(
                 "{} cannot contain DEFAULT clause",
                 self.clause
             ))),
-            ParsedExpressionKind::Window(_) => Ok(BindResult::error(format!(
+            ParsedExpressionKind::Window(_) => Ok(BindResult::error(rustdb_common::byte_format!(
                 "{} cannot contain window functions!",
                 self.clause
             ))),
@@ -394,7 +406,7 @@ impl ExpressionBinder for TableFunctionBinder<'_> {
         }
     }
 
-    fn unsupported_aggregate_message(&self) -> String {
-        format!("{} cannot contain aggregates!", self.clause)
+    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+        rustdb_common::byte_format!("{} cannot contain aggregates!", self.clause)
     }
 }

@@ -26,8 +26,8 @@ pub fn terminal_width() -> usize {
     }
 }
 
-/// C's `stdout`: buffered unless it is a terminal, where every write goes out at once
-/// (the line buffering of a terminal, as the shell's lines end in newlines).
+/// C's `stdout`: fully buffered for files/pipes and line-buffered for a terminal.
+/// A terminal write's bytes after its last newline wait for a later line or flush.
 #[derive(Debug)]
 enum StdoutBuffer {
     Terminal(Stdout),
@@ -109,7 +109,7 @@ static STDOUT: LazyLock<Mutex<StdoutBuffer>> = LazyLock::new(|| {
 pub fn write_stdout(bytes: &[u8]) {
     let mut stdout = STDOUT.lock().unwrap_or_else(PoisonError::into_inner);
     let _ = match &mut *stdout {
-        StdoutBuffer::Terminal(stdout) => stdout.write_all(bytes).and_then(|()| stdout.flush()),
+        StdoutBuffer::Terminal(stdout) => stdout.write_all(bytes),
         StdoutBuffer::Buffered(buffer) => buffer.write(bytes),
     };
 }

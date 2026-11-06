@@ -26,7 +26,7 @@ use rustdb_ast::{
     ParsedExpression, ParsedExpressionKind,
 };
 use rustdb_common::string_util::top_n_strings;
-use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_common::{ByteString, Error, ErrorKind, Result, byte_format};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::binder::{Binder, Binding, Scope};
@@ -56,8 +56,8 @@ pub use simple_binders::{
 /// merged into one candidate list (DuckDB's `COLUMN_NOT_FOUND` error subtype).
 #[derive(Clone, Debug)]
 pub struct MissingColumn {
-    pub name: String,
-    pub candidates: Vec<String>,
+    pub name: ByteString,
+    pub candidates: Vec<ByteString>,
 }
 
 /// A soft binding failure (DuckDB's `ErrorData` inside a `BindResult`).
@@ -78,19 +78,24 @@ impl From<Error> for BindError {
 
 impl BindError {
     /// A Binder Error.
-    pub fn binder(message: impl Into<String>) -> Self {
-        Error::binder(message.into()).into()
+    pub fn binder(message: impl Into<ByteString>) -> Self {
+        Error::new_bytes(ErrorKind::Binder, message.into().into_bytes()).into()
     }
 
     /// "Referenced column ... not found" as binding a column reference reports it: DuckDB's
     /// `BinderException::ColumnNotFound` without a position, caught into an `ErrorData`
     /// that then gets the reference's position (`AddQueryLocation`).
-    pub fn column_not_found(name: &str, candidates: Vec<String>, location: Option<u64>) -> Self {
+    pub fn column_not_found(
+        name: impl AsRef<[u8]>,
+        candidates: Vec<ByteString>,
+        location: Option<u64>,
+    ) -> Self {
+        let name = name.as_ref();
         let error = column_not_found_error(name, &candidates, None).with_position(location);
         Self {
             error,
             missing_column: Some(MissingColumn {
-                name: name.to_owned(),
+                name: name.into(),
                 candidates,
             }),
         }
@@ -121,10 +126,10 @@ impl BindError {
             return self;
         }
         let name = current.name.clone();
-        let mut seen: Vec<String> = Vec::new();
+        let mut seen: Vec<ByteString> = Vec::new();
         let mut scores = Vec::new();
         for candidate in current.candidates.iter().chain(&other.candidates) {
-            let Some(column) = candidate.split('.').next_back() else {
+            let Some(column) = candidate.split(|byte| *byte == b'.').next_back() else {
                 continue;
             };
             if seen.contains(candidate) {
@@ -144,24 +149,25 @@ impl BindError {
 }
 
 /// DuckDB's `BinderException::ColumnNotFound`, caught into an `ErrorData`.
-fn column_not_found_error(name: &str, candidates: &[String], location: Option<u64>) -> Error {
+fn column_not_found_error(name: impl AsRef<[u8]>, candidates: &[ByteString], location: Option<u64>) -> Error {
+    let name = name.as_ref();
     let message = if candidates.is_empty() {
-        format!("Referenced column \"{name}\" was not found because the FROM clause is missing")
+        byte_format!("Referenced column \"{name}\" was not found because the FROM clause is missing")
     } else {
-        let quoted: Vec<String> = candidates.iter().map(|c| format!("\"{c}\"")).collect();
-        format!(
+        let quoted: Vec<ByteString> = candidates.iter().map(|c| byte_format!("\"{c}\"")).collect();
+        byte_format!(
             "Referenced column \"{name}\" not found in FROM clause!\nCandidate bindings: {}",
-            quoted.join(", ")
+            ByteString::join(&quoted, ", ")
         )
     };
-    let error = Error::binder(message)
+    let error = Error::new_bytes(ErrorKind::Binder, message.into_bytes())
         .with_subtype("COLUMN_NOT_FOUND")
         .with_position(location)
         .with_extra_info("name", name);
     let error = if candidates.is_empty() {
         error
     } else {
-        error.with_extra_info("candidates", candidates.join(","))
+        error.with_extra_info("candidates", ByteString::join(candidates, ","))
     };
     error.with_extra_info_round_trip()
 }
@@ -181,7 +187,7 @@ impl From<Expression> for BindResult {
 
 impl BindResult {
     /// A soft Binder Error.
-    pub fn error(message: impl Into<String>) -> Self {
+    pub fn error(message: impl Into<ByteString>) -> Self {
         Self::Unbound(BindError::binder(message))
     }
 }
@@ -189,7 +195,7 @@ impl BindResult {
 /// A column reference that bound successfully (DuckDB's `BoundColumnReferenceInfo`).
 #[derive(Clone, Debug)]
 pub struct BoundColumnReferenceInfo {
-    pub name: String,
+    pub name: ByteString,
     pub query_location: Option<u64>,
 }
 
@@ -217,7 +223,7 @@ fn not_bound() -> Error {
 
 /// Replaces a parsed node by its bound form (DuckDB's `make_uniq<BoundExpression>`).
 pub fn set_bound(expr: &mut ParsedExpression, bound: Expression) {
-    let text = bound.to_string();
+    let text = bound.to_bytes();
     let alias = std::mem::take(&mut expr.alias);
     *expr = ParsedExpression {
         expression_type: ExpressionType::Invalid,
@@ -267,7 +273,7 @@ pub fn expression_return_type(expression: &Expression) -> LogicalType {
 }
 
 /// The collation of a VARCHAR type, if any.
-pub fn collation(ty: &LogicalType) -> Option<&str> {
+pub fn collation(ty: &LogicalType) -> Option<&[u8]> {
     match ty.info() {
         Some(rustdb_types::TypeInfo::String(info)) if !info.collation.is_empty() => Some(&info.collation),
         _ => None,
@@ -343,32 +349,32 @@ pub fn parameter_not_resolved() -> Error {
 
 /// The unsupported-construct error at an expression's location (DuckDB's
 /// `BinderException::Unsupported`).
-pub fn unsupported(expr: &ParsedExpression, message: impl Into<String>) -> BindError {
-    Error::binder(message.into())
+pub fn unsupported(expr: &ParsedExpression, message: impl Into<ByteString>) -> BindError {
+    Error::new_bytes(ErrorKind::Binder, message.into().into_bytes())
         .with_position(expr.query_location)
         .into()
 }
 
 /// Whether a function name is UNNEST (DuckDB's `IsUnnestFunction`).
-pub fn is_unnest_function(name: &str) -> bool {
-    name == "unnest" || name == "unlist"
+pub fn is_unnest_function(name: impl AsRef<[u8]>) -> bool {
+    matches!(name.as_ref(), b"unnest" | b"unlist")
 }
 
 /// The function a SQL value keyword stands for (`current_date` → `current_date()`)
 /// (DuckDB's `GetSQLValueFunctionName`).
-pub fn sql_value_function_name(column_name: &str) -> Option<&'static str> {
-    Some(match column_name.to_lowercase().as_str() {
-        "current_catalog" => "current_catalog",
-        "current_date" => "current_date",
-        "current_schema" => "current_schema",
-        "current_role" => "current_role",
-        "current_time" => "get_current_time",
-        "current_timestamp" => "get_current_timestamp",
-        "current_user" => "current_user",
-        "localtime" => "current_localtime",
-        "localtimestamp" => "current_localtimestamp",
-        "session_user" => "session_user",
-        "user" => "user",
+pub fn sql_value_function_name(column_name: impl AsRef<[u8]>) -> Option<&'static str> {
+    Some(match column_name.as_ref().to_ascii_lowercase().as_slice() {
+        b"current_catalog" => "current_catalog",
+        b"current_date" => "current_date",
+        b"current_schema" => "current_schema",
+        b"current_role" => "current_role",
+        b"current_time" => "get_current_time",
+        b"current_timestamp" => "get_current_timestamp",
+        b"current_user" => "current_user",
+        b"localtime" => "current_localtime",
+        b"localtimestamp" => "current_localtimestamp",
+        b"session_user" => "session_user",
+        b"user" => "user",
         _ => return None,
     })
 }
@@ -378,15 +384,15 @@ pub fn function_call(name: &str, children: Vec<ParsedExpression>) -> ParsedExpre
     ParsedExpression::new(
         ExpressionType::Function,
         ParsedExpressionKind::Function(Box::new(FunctionExpression {
-            function_name: name.to_owned(),
-            schema: String::new(),
+            function_name: name.to_owned().into(),
+            schema: String::new().into(),
             children,
             filter: None,
             order_bys: rustdb_ast::OrderModifier { orders: Vec::new() },
             distinct: false,
             is_operator: false,
             export_state: false,
-            catalog: String::new(),
+            catalog: String::new().into(),
         })),
     )
 }
@@ -473,8 +479,8 @@ pub trait ExpressionBinder: ColumnQualifier {
         ))
     }
 
-    fn unsupported_aggregate_message(&self) -> String {
-        "Aggregate functions are not supported here".to_owned()
+    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+        "Aggregate functions are not supported here".into()
     }
 
     fn unsupported_unnest_message(&self) -> String {
@@ -488,7 +494,7 @@ pub trait ExpressionBinder: ColumnQualifier {
     }
 
     /// The SQL value function a bare name stands for (DuckDB's `GetSQLValueFunction`).
-    fn sql_value_function(&self, column_name: &str) -> Option<ParsedExpression> {
+    fn sql_value_function(&self, column_name: &[u8]) -> Option<ParsedExpression> {
         sql_value_function_name(column_name).map(|name| function_call(name, Vec::new()))
     }
 
@@ -650,7 +656,7 @@ pub fn null_constant() -> Expression {
 
 /// Whether a parsed expression is a column reference that could be a select-list alias:
 /// unqualified, or qualified with the table name `alias` (DuckDB's `IsPotentialAlias`).
-pub fn is_potential_alias(names: &[String]) -> bool {
+pub fn is_potential_alias(names: &[ByteString]) -> bool {
     match names {
         [_] => true,
         [table, _] => table.eq_ignore_ascii_case("alias"),

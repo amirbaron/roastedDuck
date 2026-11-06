@@ -22,6 +22,8 @@ pub struct UnorderedOrder<K> {
     hashes: Vec<u64>,
     next: Vec<Option<usize>>,
     head: Option<usize>,
+    size: usize,
+    free: Vec<usize>,
     buckets: Vec<Option<Before>>,
 }
 
@@ -32,6 +34,8 @@ impl<K> Default for UnorderedOrder<K> {
             hashes: Vec::new(),
             next: Vec::new(),
             head: None,
+            size: 0,
+            free: Vec::new(),
             buckets: Vec::new(),
         }
     }
@@ -114,6 +118,48 @@ impl<K> UnorderedOrder<K> {
         None
     }
 
+    /// Erases an equal key, preserving libc++'s bucket and iteration order.
+    /// Erased indices are invalid and may be reused by a later insertion.
+    pub fn remove(&mut self, hash: u64, key: &K, eq: impl Fn(&K, &K) -> bool) -> bool {
+        let count = self.buckets.len();
+        if count == 0 {
+            return false;
+        }
+        let bucket = constrain(hash, count);
+        let Some(mut before) = self.buckets[bucket] else {
+            return false;
+        };
+        while let Some(index) = self.link_next(before) {
+            if constrain(self.hashes[index], count) != bucket {
+                break;
+            }
+            if self.hashes[index] == hash && eq(&self.keys[index], key) {
+                let next = self.next[index];
+                let previous_in_bucket = match before {
+                    Before::Head => false,
+                    Before::Node(previous) => constrain(self.hashes[previous], count) == bucket,
+                };
+                let next_in_bucket = next.is_some_and(|n| constrain(self.hashes[n], count) == bucket);
+                if !previous_in_bucket && !next_in_bucket {
+                    self.buckets[bucket] = None;
+                }
+                if let Some(next) = next {
+                    let next_bucket = constrain(self.hashes[next], count);
+                    if next_bucket != bucket {
+                        self.buckets[next_bucket] = Some(before);
+                    }
+                }
+                self.set_next(before, next);
+                self.next[index] = None;
+                self.size -= 1;
+                self.free.push(index);
+                return true;
+            }
+            before = Before::Node(index);
+        }
+        false
+    }
+
     /// libc++'s `__do_rehash<true>`.
     fn rehash_to(&mut self, count: usize) {
         self.buckets = vec![None; count];
@@ -157,21 +203,33 @@ impl<K> UnorderedOrder<K> {
     }
 
     /// Inserts `key` unless an equal key is present (`emplace`); returns whether it was
-    /// inserted and the key's index in insertion order.
+    /// inserted and the key's slot index (stable until erased).
     pub fn insert(&mut self, hash: u64, key: K, eq: impl Fn(&K, &K) -> bool) -> (bool, usize) {
         if let Some(existing) = self.find(hash, &key, &eq) {
             return (false, existing);
         }
+        (true, self.insert_distinct::<false>(hash, key))
+    }
+
+    fn insert_distinct<const APPEND_TO_BUCKET: bool>(&mut self, hash: u64, key: K) -> usize {
         let count = self.buckets.len();
-        let size = self.keys.len();
+        let size = self.size;
         if size + 1 > count || count == 0 {
             let grow = 2 * count + usize::from(!is_hash_power2(count));
             self.rehash(grow.max(size + 1));
         }
-        let index = self.keys.len();
-        self.keys.push(key);
-        self.hashes.push(hash);
-        self.next.push(None);
+        let index = if let Some(index) = self.free.pop() {
+            self.keys[index] = key;
+            self.hashes[index] = hash;
+            index
+        } else {
+            let index = self.keys.len();
+            self.keys.push(key);
+            self.hashes.push(hash);
+            self.next.push(None);
+            index
+        };
+        self.size += 1;
         let count = self.buckets.len();
         let bucket = constrain(hash, count);
         match self.buckets[bucket] {
@@ -185,16 +243,33 @@ impl<K> UnorderedOrder<K> {
                 }
             }
             Some(before) => {
+                // __assign_multi appends a distinct key to its bucket, unlike
+                // emplace_unique, which inserts before the bucket's first node.
+                let mut before = before;
+                if APPEND_TO_BUCKET {
+                    while let Some(next) = self.link_next(before) {
+                        if constrain(self.hashes[next], count) != bucket {
+                            break;
+                        }
+                        before = Before::Node(next);
+                    }
+                }
                 self.next[index] = self.link_next(before);
                 self.set_next(before, Some(index));
+                if let Some(following) = self.next[index] {
+                    let following_bucket = constrain(self.hashes[following], count);
+                    if following_bucket != bucket {
+                        self.buckets[following_bucket] = Some(Before::Node(index));
+                    }
+                }
             }
         }
-        (true, index)
+        index
     }
 
-    /// The keys' insertion indices in iteration order.
+    /// The live keys' slot indices in iteration order.
     pub fn order(&self) -> Vec<usize> {
-        let mut order = Vec::with_capacity(self.keys.len());
+        let mut order = Vec::with_capacity(self.size);
         let mut node = self.head;
         while let Some(index) = node {
             order.push(index);
@@ -203,17 +278,47 @@ impl<K> UnorderedOrder<K> {
         order
     }
 
-    /// The keys in insertion order.
+    /// Key slots. Use `order()` to visit live keys after any erasures.
     pub fn keys(&self) -> &[K] {
         &self.keys
+    }
+
+    /// libc++'s unordered-map copy constructor reserves the source bucket count,
+    /// then inserts the source's iteration order. This differs from assignment
+    /// into an empty map, which grows while assigning its elements.
+    #[must_use]
+    pub fn copy_constructed(&self, eq: impl Fn(&K, &K) -> bool) -> Self
+    where
+        K: Clone,
+    {
+        let mut copied = Self::default();
+        copied.rehash_to(self.buckets.len());
+        for index in self.order() {
+            copied.insert(self.hashes[index], self.keys[index].clone(), &eq);
+        }
+        copied
+    }
+
+    /// Copy assignment into an empty libc++ map uses `__assign_multi`, even for
+    /// unique-key maps. Distinct keys are appended within their bucket.
+    #[must_use]
+    pub fn copy_assigned_to_empty(&self) -> Self
+    where
+        K: Clone,
+    {
+        let mut copied = Self::default();
+        for index in self.order() {
+            copied.insert_distinct::<true>(self.hashes[index], self.keys[index].clone());
+        }
+        copied
     }
 }
 
 /// DuckDB's `StringUtil::CIHash`, the hash of `case_insensitive_map_t` keys: Jenkins'
 /// one-at-a-time hash of the lowercased bytes.
-pub fn ci_hash(text: &str) -> u64 {
+pub fn ci_hash(text: impl AsRef<[u8]>) -> u64 {
     let mut hash: u32 = 0;
-    for byte in text.bytes() {
+    for &byte in text.as_ref() {
         hash = hash.wrapping_add(u32::from(byte.to_ascii_lowercase()));
         hash = hash.wrapping_add(hash << 10);
         hash ^= hash >> 6;
@@ -437,12 +542,104 @@ mod tests {
     }
 
     #[test]
+    fn erase_reinsert_and_live_size_match_native_libcxx() {
+        // Independent signed C++ std::unordered_set oracle; includes collisions,
+        // missing erasures, bucket boundaries, emptying and growth after reuse.
+        let mut table = UnorderedOrder::default();
+        for (step, line) in include_str!("../tests/data/libcxx_erase_order.tsv")
+            .lines()
+            .enumerate()
+        {
+            let fields: Vec<_> = line.split('\t').collect();
+            let key: u64 = fields[1].parse().unwrap();
+            let hash: u64 = fields[2].parse().unwrap();
+            let changed = if fields[0] == "I" {
+                table.insert(hash, key, |a, b| a == b).0
+            } else {
+                table.remove(hash, &key, |a, b| a == b)
+            };
+            assert_eq!(changed, fields[3] == "1", "step {step}");
+            let actual = table
+                .order()
+                .into_iter()
+                .map(|i| table.keys()[i].to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            assert_eq!(actual, fields[4], "step {step}");
+            assert_eq!(table.keys.len(), table.size + table.free.len());
+        }
+    }
+
+    #[test]
     fn matches_libcxx_iteration() {
         // Verified against libc++: std::unordered_set<int64_t> iteration after inserting
         // these values in order.
         assert_eq!(order_of(&[1, 2, 3]), vec![3, 2, 1]);
         assert_eq!(order_of(&[3, 1, 3, 2]), vec![2, 1, 3]);
         assert_eq!(order_of(&[]), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn map_copy_order_matches_frozen_libcxx_configuration_lifecycle() {
+        // Recorded with the reference-era CLT libc++ headers: assignment into an
+        // empty map versus a copy constructor that reserves the source buckets.
+        let keys = ["TimeZone", "Calendar", "binary_as_string"];
+        let mut user = UnorderedOrder::default();
+        for key in keys {
+            user.insert(ci_hash(key), key, |a, b| a.eq_ignore_ascii_case(b));
+        }
+        let configured = user.copy_assigned_to_empty();
+        let ordered = |map: &UnorderedOrder<&str>| {
+            map.order()
+                .into_iter()
+                .map(|index| map.keys()[index].to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ordered(&configured), ["TimeZone", "binary_as_string", "Calendar"]);
+        let snapshot = configured.copy_constructed(|a, b| a.eq_ignore_ascii_case(b));
+        assert_eq!(ordered(&snapshot), ["Calendar", "binary_as_string", "TimeZone"]);
+        assert_eq!(ordered(&configured), ["TimeZone", "binary_as_string", "Calendar"]);
+        let empty = UnorderedOrder::<&str>::default().copy_constructed(|a, b| a == b);
+        assert_eq!(ordered(&empty), [] as [String; 0]);
+
+        let mut user = UnorderedOrder::default();
+        for key in [
+            "TimeZone",
+            "Calendar",
+            "binary_as_string",
+            "disable_parquet_prefetching",
+            "prefetch_all_parquet_files",
+            "parquet_metadata_cache",
+            "enable_geoparquet_conversion",
+        ] {
+            user.insert(ci_hash(key), key, |a, b| a.eq_ignore_ascii_case(b));
+        }
+        let configured = user.copy_assigned_to_empty();
+        assert_eq!(
+            ordered(&configured),
+            [
+                "enable_geoparquet_conversion",
+                "TimeZone",
+                "binary_as_string",
+                "parquet_metadata_cache",
+                "Calendar",
+                "prefetch_all_parquet_files",
+                "disable_parquet_prefetching",
+            ]
+        );
+        let snapshot = configured.copy_constructed(|a, b| a.eq_ignore_ascii_case(b));
+        assert_eq!(
+            ordered(&snapshot),
+            [
+                "disable_parquet_prefetching",
+                "prefetch_all_parquet_files",
+                "Calendar",
+                "parquet_metadata_cache",
+                "binary_as_string",
+                "TimeZone",
+                "enable_geoparquet_conversion",
+            ]
+        );
     }
 
     #[test]

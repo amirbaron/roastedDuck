@@ -1,11 +1,12 @@
 use std::fmt;
 use std::sync::Arc;
 
-use crate::identifier::{sql_identifier, write_quoted};
+use crate::identifier::{sql_identifier_bytes as sql_identifier, write_quoted};
 use crate::{
     AnyTypeInfo, ArrayTypeInfo, DecimalTypeInfo, EnumTypeInfo, ExtraTypeInfo, IntegerLiteralTypeInfo,
     ListTypeInfo, LogicalTypeId, PhysicalType, StructTypeInfo, TypeInfo, Value,
 };
+use rustdb_common::{ByteString, byte_write as write};
 
 /// A SQL type: an id plus optional parameters, cheap to clone.
 ///
@@ -73,7 +74,7 @@ fn interned_decimal(width: u8, scale: u8) -> Option<&'static ExtraTypeInfo> {
     let all = DECIMALS.get_or_init(|| {
         (0..side * side)
             .map(|index| ExtraTypeInfo {
-                alias: String::new(),
+                alias: ByteString::new(),
                 extension_info: None,
                 kind: TypeInfo::Decimal(DecimalTypeInfo {
                     width: (index / side) as u8,
@@ -160,7 +161,7 @@ impl LogicalType {
     }
 
     /// `STRUCT(name type, ...)`.
-    pub fn struct_type(children: Vec<(String, Self)>) -> Self {
+    pub fn struct_type(children: Vec<(ByteString, Self)>) -> Self {
         Self::with_info(
             LogicalTypeId::Struct,
             TypeInfo::Struct(StructTypeInfo {
@@ -171,7 +172,11 @@ impl LogicalType {
 
     /// `AGGREGATE_STATE<function(arguments)::return_type>`: the exported state of an
     /// aggregate, stored as its raw bytes.
-    pub fn aggregate_state(function_name: impl Into<String>, return_type: Self, bound_argument_types: Vec<Self>) -> Self {
+    pub fn aggregate_state(
+        function_name: impl Into<String>,
+        return_type: Self,
+        bound_argument_types: Vec<Self>,
+    ) -> Self {
         Self::with_info(
             LogicalTypeId::AggregateState,
             TypeInfo::AggregateState(crate::AggregateStateTypeInfo {
@@ -184,7 +189,7 @@ impl LogicalType {
 
     /// `MAP(key, value)`: a list of `{key, value}` structs.
     pub fn map(key: Self, value: Self) -> Self {
-        let entry = Self::struct_type(vec![("key".to_owned(), key), ("value".to_owned(), value)]);
+        let entry = Self::struct_type(vec![("key".into(), key), ("value".into(), value)]);
         Self::with_info(
             LogicalTypeId::Map,
             TypeInfo::List(ListTypeInfo { child_type: entry }),
@@ -192,9 +197,9 @@ impl LogicalType {
     }
 
     /// `UNION(name type, ...)`: a struct whose first, unnamed field is the member tag.
-    pub fn union_type(members: Vec<(String, Self)>) -> Self {
+    pub fn union_type(members: Vec<(ByteString, Self)>) -> Self {
         let mut children = Vec::with_capacity(members.len() + 1);
-        children.push((String::new(), Self::UTINYINT));
+        children.push((ByteString::new(), Self::UTINYINT));
         children.extend(members);
         Self::with_info(
             LogicalTypeId::Union,
@@ -210,21 +215,21 @@ impl LogicalType {
             Self::list(Self::struct_type(
                 fields
                     .into_iter()
-                    .map(|(name, ty)| (name.to_owned(), ty))
+                    .map(|(name, ty)| (ByteString::from(name), ty))
                     .collect(),
             ))
         };
         let children = vec![
-            ("keys".to_owned(), Self::list(Self::VARCHAR)),
+            ("keys".into(), Self::list(Self::VARCHAR)),
             (
-                "children".to_owned(),
+                "children".into(),
                 entries([("keys_index", Self::UINTEGER), ("values_index", Self::UINTEGER)]),
             ),
             (
-                "values".to_owned(),
+                "values".into(),
                 entries([("type_id", Self::UTINYINT), ("byte_offset", Self::UINTEGER)]),
             ),
-            ("data".to_owned(), Self::BLOB),
+            ("data".into(), Self::BLOB),
         ];
         Self::with_info(
             LogicalTypeId::Variant,
@@ -277,6 +282,11 @@ impl LogicalType {
 
     /// `ENUM('a', 'b', ...)`.
     pub fn enum_type(values: Vec<String>) -> Self {
+        Self::enum_type_bytes(values.into_iter().map(Into::into).collect())
+    }
+
+    /// A native ENUM dictionary, including names received from a UNION or file codec.
+    pub fn enum_type_bytes(values: Vec<ByteString>) -> Self {
         Self::with_info(LogicalTypeId::Enum, TypeInfo::Enum(EnumTypeInfo { values }))
     }
 
@@ -285,7 +295,7 @@ impl LogicalType {
         Self::from_parts(
             id,
             Some(ExtraTypeInfo {
-                alias: String::new(),
+                alias: ByteString::new(),
                 extension_info: None,
                 kind: info,
             }),
@@ -302,10 +312,10 @@ impl LogicalType {
 
     /// This type under an alias (`JSON` is `VARCHAR` aliased as `JSON`).
     #[must_use]
-    pub fn with_alias(self, alias: impl Into<String>) -> Self {
+    pub fn with_alias(self, alias: impl Into<ByteString>) -> Self {
         let mut info = self.info.map_or_else(
             || ExtraTypeInfo {
-                alias: String::new(),
+                alias: ByteString::new(),
                 extension_info: None,
                 kind: TypeInfo::Generic,
             },
@@ -331,9 +341,9 @@ impl LogicalType {
     }
 
     /// The alias, if one is set.
-    pub fn alias(&self) -> Option<&str> {
+    pub fn alias(&self) -> Option<&ByteString> {
         self.extra_info()
-            .map(|info| info.alias.as_str())
+            .map(|info| &info.alias)
             .filter(|alias| !alias.is_empty())
     }
 
@@ -355,7 +365,7 @@ impl LogicalType {
     }
 
     /// The `(name, type)` fields of a STRUCT or UNION (for UNION, the tag comes first).
-    pub fn struct_children(&self) -> Option<&[(String, Self)]> {
+    pub fn struct_children(&self) -> Option<&[(ByteString, Self)]> {
         match self.info() {
             Some(TypeInfo::Struct(info)) => Some(&info.child_types),
             _ => None,
@@ -378,7 +388,7 @@ impl LogicalType {
     }
 
     /// The members of a UNION (without the tag field).
-    pub fn union_members(&self) -> Option<&[(String, Self)]> {
+    pub fn union_members(&self) -> Option<&[(ByteString, Self)]> {
         match (self.id, self.info()) {
             (LogicalTypeId::Union, Some(TypeInfo::Struct(info))) => info.child_types.get(1..),
             _ => None,
@@ -397,7 +407,7 @@ impl LogicalType {
     }
 
     /// The members of an ENUM type, in definition order.
-    pub fn enum_values(&self) -> Option<&[String]> {
+    pub fn enum_values(&self) -> Option<&[ByteString]> {
         match self.info() {
             Some(TypeInfo::Enum(info)) => Some(&info.values),
             _ => None,
@@ -489,9 +499,14 @@ impl LogicalType {
                 Some((w, _)) if w <= 38 => PhysicalType::Int128,
                 _ => PhysicalType::Invalid,
             },
-            L::Bignum | L::Varchar | L::Char | L::Blob | L::Bit | L::Type | L::Geometry | L::AggregateState => {
-                PhysicalType::Varchar
-            }
+            L::Bignum
+            | L::Varchar
+            | L::Char
+            | L::Blob
+            | L::Bit
+            | L::Type
+            | L::Geometry
+            | L::AggregateState => PhysicalType::Varchar,
             L::Interval => PhysicalType::Interval,
             L::Union | L::Variant | L::Struct => PhysicalType::Struct,
             L::List | L::Map => PhysicalType::List,
@@ -640,24 +655,24 @@ impl fmt::Debug for LogicalType {
     }
 }
 
-impl fmt::Display for LogicalType {
+impl LogicalType {
     /// DuckDB's `LogicalType::ToString`.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn write_type_bytes(&self, f: &mut ByteString) -> fmt::Result {
         use LogicalTypeId as L;
         if let Some(alias) = self.alias() {
-            return f.write_str(alias);
+            return f.write_bytes(alias);
         }
-        let write_fields = |f: &mut fmt::Formatter<'_>, fields: &[(String, Self)], named: bool| {
+        let write_fields = |f: &mut ByteString, fields: &[(ByteString, Self)], named: bool| {
             for (i, (name, ty)) in fields.iter().enumerate() {
                 if i > 0 {
-                    f.write_str(", ")?;
+                    f.write_bytes(", ")?;
                 }
                 if named {
                     write!(f, "{} ", sql_identifier(name))?;
                 }
                 write!(f, "{ty}")?;
             }
-            f.write_str(")")
+            f.write_bytes(")")
         };
         match (self.id, self.info()) {
             (L::Decimal, Some(TypeInfo::Decimal(info))) if info.width > 0 => {
@@ -666,49 +681,77 @@ impl fmt::Display for LogicalType {
             (L::List, Some(TypeInfo::List(info))) => write!(f, "{}[]", info.child_type),
             (L::Map, Some(_)) => match self.map_key_value() {
                 Some((key, value)) => write!(f, "MAP({key}, {value})"),
-                None => f.write_str("MAP"),
+                None => f.write_bytes("MAP"),
             },
             (L::Array, Some(TypeInfo::Array(info))) if info.size == 0 => {
                 write!(f, "{}[ANY]", info.child_type)
             }
             (L::Array, Some(TypeInfo::Array(info))) => write!(f, "{}[{}]", info.child_type, info.size),
             (L::Struct, Some(TypeInfo::Struct(info))) => {
-                f.write_str("STRUCT(")?;
+                f.write_bytes("STRUCT(")?;
                 write_fields(f, &info.child_types, !self.is_unnamed_struct())
             }
             (L::Union, Some(TypeInfo::Struct(info))) => {
-                f.write_str("UNION(")?;
+                f.write_bytes("UNION(")?;
                 write_fields(f, info.child_types.get(1..).unwrap_or_default(), true)
             }
             (L::Enum, Some(TypeInfo::Enum(info))) => {
-                f.write_str("ENUM(")?;
+                f.write_bytes("ENUM(")?;
                 for (i, value) in info.values.iter().enumerate() {
                     if i > 0 {
-                        f.write_str(", ")?;
+                        f.write_bytes(", ")?;
                     }
-                    f.write_str(&write_quoted(value, '\''))?;
+                    f.write_bytes(crate::identifier::write_quoted_bytes(value, b'\''))?;
                 }
-                f.write_str(")")
+                f.write_bytes(")")
             }
-            (L::Template, Some(TypeInfo::Template(info))) => f.write_str(&info.name),
-            (L::Template, None) => f.write_str("T"),
+            (L::Template, Some(TypeInfo::Template(info))) => f.write_bytes(&info.name),
+            (L::Template, None) => f.write_bytes("T"),
             // `AggregateStateType::GetTypeName`.
             (L::AggregateState, Some(TypeInfo::AggregateState(info))) => {
                 write!(f, "AGGREGATE_STATE<{}(", info.function_name)?;
                 for (i, argument) in info.bound_argument_types.iter().enumerate() {
                     if i > 0 {
-                        f.write_str(", ")?;
+                        f.write_bytes(", ")?;
                     }
                     write!(f, "{argument}")?;
                 }
                 write!(f, ")::{}>", info.return_type)
             }
-            (L::AggregateState, None) => f.write_str("AGGREGATE_STATE<?>"),
+            (L::AggregateState, None) => f.write_bytes("AGGREGATE_STATE<?>"),
             (L::Geometry, Some(TypeInfo::Geo(info))) if !info.crs.definition.is_empty() => {
                 write!(f, "GEOMETRY({})", write_quoted(&info.crs.definition, '\''))
             }
-            (id, _) => f.write_str(type_id_name(id)),
+            (id, _) => f.write_bytes(type_id_name(id)),
         }
+    }
+}
+
+trait TypeByteWriter {
+    fn write_bytes(&mut self, bytes: impl AsRef<[u8]>) -> fmt::Result;
+}
+impl TypeByteWriter for ByteString {
+    fn write_bytes(&mut self, bytes: impl AsRef<[u8]>) -> fmt::Result {
+        self.push_bytes(bytes);
+        Ok(())
+    }
+}
+impl LogicalType {
+    pub fn to_bytes(&self) -> ByteString {
+        let mut out = ByteString::new();
+        let _ = self.write_type_bytes(&mut out);
+        out
+    }
+}
+impl rustdb_common::byte_format::NativeByteFormat for LogicalType {
+    fn append_native_bytes(&self, output: &mut ByteString) {
+        let _ = self.write_type_bytes(output);
+    }
+}
+impl fmt::Display for LogicalType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let bytes = self.to_bytes();
+        f.write_str(bytes.to_str().map_err(|_| fmt::Error)?)
     }
 }
 

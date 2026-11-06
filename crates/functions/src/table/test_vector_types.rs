@@ -220,9 +220,9 @@ fn bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOutput> {
     let names = (0..types.len())
         .map(|index| {
             if index == 0 {
-                "test_vector".to_owned()
+                rustdb_common::ByteString::from("test_vector")
             } else {
-                format!("test_vector{}", index + 1)
+                rustdb_common::byte_format!("test_vector{}", index + 1)
             }
         })
         .collect();

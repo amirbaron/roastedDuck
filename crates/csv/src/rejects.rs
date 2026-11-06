@@ -39,7 +39,11 @@ fn temp_catalog(client: &FunctionClient) -> Result<Arc<dyn TempCatalog>> {
 
 impl CsvRejectsTable {
     /// `CSVRejectsTable::GetOrCreate`.
-    pub(crate) fn get_or_create(client: &FunctionClient, rejects_scan: &str, rejects_error: &str) -> Result<Arc<Self>> {
+    pub(crate) fn get_or_create(
+        client: &FunctionClient,
+        rejects_scan: &str,
+        rejects_error: &str,
+    ) -> Result<Arc<Self>> {
         if rejects_scan == rejects_error {
             return Err(Error::binder(
                 "The names of the rejects scan and rejects error tables can't be the same. Use different names \
@@ -61,12 +65,20 @@ impl CsvRejectsTable {
         if (scan_exists || error_exists) && cached.is_none() {
             let mut message = String::new();
             if scan_exists {
-                let _ = write!(message, "Reject Scan Table name \"{rejects_scan}\" is already in use. ");
+                let _ = write!(
+                    message,
+                    "Reject Scan Table name \"{rejects_scan}\" is already in use. "
+                );
             }
             if error_exists {
-                let _ = write!(message, "Reject Error Table name \"{rejects_error}\" is already in use. ");
+                let _ = write!(
+                    message,
+                    "Reject Error Table name \"{rejects_error}\" is already in use. "
+                );
             }
-            message.push_str("Either drop the used name(s), or give other name options in the CSV Reader function.\n");
+            message.push_str(
+                "Either drop the used name(s), or give other name options in the CSV Reader function.\n",
+            );
             return Err(Error::binder(message));
         }
         if let Some(cached) = cached {
@@ -161,7 +173,7 @@ impl CsvRejectsTable {
         client: &FunctionClient,
         file: &CsvFileScan,
         (scan_idx, file_idx): (u64, u64),
-        names: &[String],
+        names: &[rustdb_common::ByteString],
         limit: u64,
     ) -> Result<()> {
         let catalog = temp_catalog(client)?;
@@ -182,16 +194,26 @@ impl CsvRejectsTable {
         };
         catalog.append(&self.errors_table, &error_rows)?;
         if count != 0 {
-            catalog.append(&self.scan_table, &[scan_row(file, scan_idx, file_idx)])?;
+            catalog.append(&self.scan_table, &[scan_row(file, scan_idx, file_idx)?])?;
         }
         Ok(())
     }
 }
 
 /// A row of the errors table (`CSVErrorHandler::FillRejectsTable`).
-fn error_row(error: &crate::error::CsvError, line: u64, (scan_idx, file_idx): (u64, u64), names: &[String]) -> Vec<Value> {
+fn error_row(
+    error: &crate::error::CsvError,
+    line: u64,
+    (scan_idx, file_idx): (u64, u64),
+    names: &[rustdb_common::ByteString],
+) -> Vec<Value> {
     let column_idx = error.column_idx as usize;
-    let name = |index: usize| names.get(index).map_or_else(|| Value::null(LogicalType::VARCHAR), Value::varchar);
+    let name = |index: usize| {
+        names.get(index).map_or_else(
+            || Value::null(LogicalType::VARCHAR),
+            |name| Value::bytes(LogicalType::VARCHAR, name),
+        )
+    };
     let column_name = match error.error_type {
         CsvErrorType::TooManyColumns | CsvErrorType::MaximumLineSize => Value::null(LogicalType::VARCHAR),
         CsvErrorType::TooFewColumns => name(column_idx + 1),
@@ -203,9 +225,10 @@ fn error_row(error: &crate::error::CsvError, line: u64, (scan_idx, file_idx): (u
         Value::ubigint(line),
         Value::ubigint(error.row_byte_position + 1),
         // Errors found while flushing have no position.
-        error
-            .byte_position
-            .map_or_else(|| Value::null(LogicalType::UBIGINT), |position| Value::ubigint(position + 1)),
+        error.byte_position.map_or_else(
+            || Value::null(LogicalType::UBIGINT),
+            |position| Value::ubigint(position + 1),
+        ),
         if error.error_type == CsvErrorType::MaximumLineSize {
             Value::null(LogicalType::UBIGINT)
         } else {
@@ -214,22 +237,22 @@ fn error_row(error: &crate::error::CsvError, line: u64, (scan_idx, file_idx): (u
         column_name,
         Value::varchar(error.error_type.reject_name()),
         Value::varchar(&error.csv_row),
-        Value::varchar(&error.error_message),
+        Value::bytes(LogicalType::VARCHAR, &error.error_message),
     ]
 }
 
 /// The row of the scans table of a file (`FillScanErrorTable`).
-fn scan_row(file: &CsvFileScan, scan_idx: u64, file_idx: u64) -> Vec<Value> {
+fn scan_row(file: &CsvFileScan, scan_idx: u64, file_idx: u64) -> Result<Vec<Value>> {
     let options = &file.options;
     let sm = &options.dialect_options.state_machine_options;
-    let mut columns = "{".to_owned();
+    let mut columns = rustdb_common::ByteString::from("{");
     for (i, (name, ty)) in file.names.iter().zip(&file.types).enumerate() {
-        let _ = write!(columns, "'{name}': '{ty}'");
+        let _ = rustdb_common::byte_write!(columns, "'{name}': '{ty}'");
         if i + 1 != file.types.len() {
-            columns.push(',');
+            columns.push(b',');
         }
     }
-    columns.push('}');
+    columns.push(b'}');
     let format = |ty: FormatType| {
         let format = options.dialect_options.date_format(ty);
         if format.get().is_empty() {
@@ -238,23 +261,23 @@ fn scan_row(file: &CsvFileScan, scan_idx: u64, file_idx: u64) -> Vec<Value> {
             Value::varchar(format.get().format_specifier())
         }
     };
-    vec![
+    Ok(vec![
         Value::ubigint(scan_idx),
         Value::ubigint(file_idx),
-        Value::varchar(&file.file_path),
+        Value::try_varchar(&file.file_path)?,
         Value::varchar(sm.delimiter.format_value()),
         Value::varchar(sm.quote.format_value()),
         Value::varchar(sm.escape.format_value()),
         Value::varchar(options.newline()),
         Value::uinteger(u32::try_from(options.dialect_options.skip_rows.value()).unwrap_or(u32::MAX)),
         Value::boolean(options.dialect_options.header.value()),
-        Value::varchar(columns),
+        Value::bytes(LogicalType::VARCHAR, &columns),
         format(FormatType::Date),
         format(FormatType::Timestamp),
         if options.user_defined_parameters.is_empty() {
             Value::null(LogicalType::VARCHAR)
         } else {
-            Value::varchar(options.user_defined_parameters_string())
+            Value::bytes(LogicalType::VARCHAR, &options.user_defined_parameters_string())
         },
-    ]
+    ])
 }

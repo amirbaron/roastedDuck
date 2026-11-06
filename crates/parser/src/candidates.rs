@@ -63,10 +63,10 @@ fn jaro_winkler(p: &[u8], t: &[u8]) -> f64 {
 
 /// `StringUtil::TopNJaroWinkler(strings, target)`: the best match, plus up to four more
 /// scoring at least 0.5.
-fn top_n_jaro_winkler<'s>(strings: &[&'s str], target: &str) -> Vec<&'s str> {
+fn top_n_jaro_winkler<'s>(strings: &[&'s str], target: &[u8]) -> Vec<&'s str> {
     let mut scores: Vec<(&str, f64)> = strings
         .iter()
-        .map(|candidate| (*candidate, jaro_winkler(candidate.as_bytes(), target.as_bytes())))
+        .map(|candidate| (*candidate, jaro_winkler(candidate.as_bytes(), target)))
         .collect();
     scores.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
@@ -96,9 +96,10 @@ fn candidates_message(candidates: &[&str], label: &str) -> String {
 }
 
 /// The error of `StringUtil::StringToEnum` for a value that names no member.
-pub(crate) fn enum_error(value: &str, enum_name: &str, names: &[&str]) -> Error {
+pub(crate) fn enum_error(value: impl AsRef<[u8]>, enum_name: &str, names: &[&str]) -> Error {
+    let value = value.as_ref();
     let closest = top_n_jaro_winkler(names, value);
-    Error::not_implemented(format!(
+    Error::not_implemented(rustdb_common::byte_format!(
         "Enum value: unrecognized value \"{value}\" for enum \"{enum_name}\"\n{}",
         candidates_message(&closest, "Candidates")
     ))

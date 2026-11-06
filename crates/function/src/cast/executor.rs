@@ -16,6 +16,8 @@ use super::CastParameters;
 pub enum RowError {
     /// The row cannot be converted: `CAST` raises this message, `TRY_CAST` yields NULL.
     Invalid(String),
+    /// A reported conversion failure whose message may contain arbitrary bytes.
+    InvalidBytes(Vec<u8>),
     /// An error raised even under `TRY_CAST` (DuckDB throws these directly).
     Fatal(Error),
     /// The row becomes NULL without counting as a failed conversion.
@@ -67,6 +69,12 @@ pub fn cast_rows<O: NativeType>(
             match error {
                 RowError::Invalid(message) => {
                     params.assign_error(message)?;
+                    all_converted = false;
+                    null_rows.push(row);
+                    Ok(())
+                }
+                RowError::InvalidBytes(message) => {
+                    params.assign_error_bytes(message)?;
                     all_converted = false;
                     null_rows.push(row);
                     Ok(())

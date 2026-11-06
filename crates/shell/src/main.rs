@@ -20,6 +20,7 @@ mod shell;
 mod state;
 mod utf8;
 
+use rustdb_common::ByteString;
 use std::io::IsTerminal;
 use std::process::ExitCode;
 
@@ -31,12 +32,12 @@ use state::{BailOnError, Input, InputMode, MetadataResult, ShellState, StartupTe
 /// An option of the command line with its arguments (`CommandLineCall`).
 struct CommandLineCall {
     option: &'static command_line_option::CommandLineOption,
-    arguments: Vec<String>,
+    arguments: Vec<ByteString>,
 }
 
 /// `RunShell`: reads the command line, opens the database, runs the init file and the
 /// options, then the SQL of the command line or standard input; returns the exit code.
-fn run_shell(shell: &mut Shell, args: &[String]) -> i32 {
+fn run_shell(shell: &mut Shell, args: &[ByteString]) -> i32 {
     let state = &mut shell.state;
     state.stdin_is_interactive = std::io::stdin().is_terminal();
     state.stdout_is_console = std::io::stdout().is_terminal();
@@ -54,7 +55,7 @@ fn run_shell(shell: &mut Shell, args: &[String]) -> i32 {
     let mut i = 1;
     while i < args.len() {
         let arg = &args[i];
-        let Some(option_name) = arg.strip_prefix('-') else {
+        let Some(option_name) = arg.strip_prefix(b"-") else {
             if shell.state.db_filename.is_empty() {
                 arg.clone_into(&mut shell.state.db_filename);
             } else {
@@ -67,7 +68,7 @@ fn run_shell(shell: &mut Shell, args: &[String]) -> i32 {
             continue;
         };
         // `--init` and `-init` are both accepted.
-        let option_name = option_name.strip_prefix('-').unwrap_or(option_name);
+        let option_name = option_name.strip_prefix(b"-").unwrap_or(option_name);
         let option = match command_line_option::find_command_line_option(&shell.state, option_name) {
             Ok(option) => option,
             Err(error) => {
@@ -75,10 +76,10 @@ fn run_shell(shell: &mut Shell, args: &[String]) -> i32 {
                 return 1;
             }
         };
-        let mut arguments = vec![option.option.to_owned()];
+        let mut arguments = vec![ByteString::from(option.option)];
         for arg_idx in 0..option.argument_count {
             if i + 1 >= args.len() {
-                let error = format!(
+                let error = rustdb_common::byte_format!(
                     "Missing Argument Error: Argument '-{}' needs {} arguments, but got {arg_idx}\nOPTION:\n  -{} {}    \
                      {}\n\nRun '{} -help' for a list of options.\n",
                     option.option,
@@ -103,7 +104,7 @@ fn run_shell(shell: &mut Shell, args: &[String]) -> i32 {
         i += 1;
     }
     if shell.state.db_filename.is_empty() {
-        ":memory:".clone_into(&mut shell.state.db_filename);
+        shell.state.db_filename = ":memory:".into();
     }
     if let Err(error) = shell.open_db(ShellOpenFlags::ExitOnFailure) {
         shell::fatal(&error);
@@ -114,7 +115,7 @@ fn run_shell(shell: &mut Shell, args: &[String]) -> i32 {
         let init_file = (!shell.state.init_file.is_empty()).then(|| shell.state.init_file.clone());
         if !shell.process_duckdbrc(init_file.as_deref()) && shell.state.bail != BailOnError::DontBailOnError {
             if !shell.state.duckdb_rc_path.is_empty() {
-                let error = format!(
+                let error = rustdb_common::byte_format!(
                     "Encountered errors while executing init file \"{}\". Exiting.",
                     shell.state.duckdb_rc_path
                 );
@@ -138,8 +139,8 @@ fn run_shell(shell: &mut Shell, args: &[String]) -> i32 {
     if !shell.state.read_stdin {
         // Every argument after the database file is a separate input.
         for command in &extra_commands {
-            if command.starts_with('.') {
-                rc = shell.do_meta_command(command);
+            if command.starts_with(b".") {
+                rc = shell.do_meta_command_bytes(command);
                 if rc != 0 {
                     return if rc == 2 { 0 } else { rc };
                 }
@@ -191,9 +192,10 @@ fn print_startup_text(state: &ShellState) {
 }
 
 fn main() -> ExitCode {
-    // The arguments as UTF-8, invalid bytes becoming U+FFFD as in the input.
-    let args: Vec<String> = std::env::args_os()
-        .map(|arg| arg.to_string_lossy().into_owned())
+    rustdb_capi::register_extension_loader();
+    // Preserve the OS argument bytes until the consuming operation validates them.
+    let args: Vec<ByteString> = std::env::args_os()
+        .map(|arg| arg.as_encoded_bytes().into())
         .collect();
     let mut shell = Shell::new(ShellState::new());
     let rc = run_shell(&mut shell, &args);

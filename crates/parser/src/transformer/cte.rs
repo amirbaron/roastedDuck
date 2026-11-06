@@ -69,7 +69,9 @@ impl<'a> Transformer<'a> {
             };
             let cte_name = cte.ctename.clone().unwrap_or_default();
             if cte_map.map.contains_key(&cte_name) {
-                return Err(Error::parser(format!("Duplicate CTE name \"{cte_name}\"")));
+                return Err(Error::parser(rustdb_common::byte_format!(
+                    "Duplicate CTE name \"{cte_name}\""
+                )));
             }
             let materialized = match cte.ctematerialized {
                 PgCteMaterialize::Default => CteMaterialize::CteMaterializeDefault,
@@ -77,7 +79,7 @@ impl<'a> Transformer<'a> {
                 PgCteMaterialize::Never => CteMaterialize::CteMaterializeNever,
             };
             let info = CommonTableExpressionInfo {
-                aliases,
+                aliases: aliases.into_iter().collect(),
                 query: Box::new(query),
                 materialized,
                 key_targets,
@@ -85,7 +87,7 @@ impl<'a> Transformer<'a> {
             if let Some(slot) = slot {
                 self.frame().stored_cte_maps[slot]
                     .map
-                    .insert(cte_name.as_str(), info.clone());
+                    .insert(cte_name.clone(), info.clone());
             }
             cte_map.map.insert(cte_name, info);
         }
@@ -97,7 +99,7 @@ impl<'a> Transformer<'a> {
     fn transform_recursive_cte(
         &mut self,
         cte: &'a CommonTableExpr,
-        aliases: &[String],
+        aliases: &[rustdb_common::ByteString],
         key_targets: &[ParsedExpression],
     ) -> Result<SelectStatement> {
         let query = required(cte.ctequery.as_ref(), "CTE query")?;
@@ -119,7 +121,7 @@ impl<'a> Transformer<'a> {
             union_all: stmt.all,
             left: Box::new(left),
             right: Box::new(right),
-            aliases: aliases.to_vec(),
+            aliases: aliases.iter().map(Into::into).collect(),
             key_targets: key_targets.to_vec(),
         })));
         node.cte_map = cte_map;

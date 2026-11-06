@@ -12,7 +12,7 @@ const fn pivot_column() -> PivotColumn {
         pivot_expressions: Vec::new(),
         unpivot_names: Vec::new(),
         entries: Vec::new(),
-        pivot_enum: String::new(),
+        pivot_enum: ByteString::new(),
         subquery: None,
     }
 }
@@ -49,14 +49,13 @@ fn unpivot_entries(target_list: Vec<ParsedExpression>) -> impl Iterator<Item = P
 }
 
 /// `SQLStatement::ToString` of a statement a `PIVOT` expands into.
-fn statement_to_string(statement: &SqlStatement) -> String {
-    match &statement.kind {
-        SqlStatementKind::Select(select) => select.to_string(),
-        SqlStatementKind::Insert(insert) => insert.to_string(),
+fn statement_to_string(statement: &SqlStatement) -> Result<ByteString> {
+    Ok(match &statement.kind {
+        SqlStatementKind::Select(select) => rustdb_common::byte_format!("{select}"),
+        SqlStatementKind::Insert(insert) => rustdb_common::byte_format!("{insert}"),
         SqlStatementKind::Create(info) => info.to_sql().unwrap_or_default(),
-        // The parse tree has no SQL rendering of the other statements.
-        _ => String::new(),
-    }
+        _ => ByteString::new(),
+    })
 }
 
 /// `PEGTransformer::GenerateCreateEnumStmt`: `CREATE TEMPORARY TYPE name AS ENUM (SELECT
@@ -95,17 +94,17 @@ fn generate_create_enum_stmt(entry: CreatePivotEntry) -> Result<SqlStatement> {
         select_node
     };
     let info = CreateInfo {
-        catalog: String::new(),
-        schema: String::new(),
+        catalog: String::new().into(),
+        schema: String::new().into(),
         temporary: true,
         internal: false,
         on_conflict: OnCreateConflict::ReplaceOnConflict,
-        sql: String::new(),
+        sql: String::new().into(),
         comment: Value::default(),
         tags: CaseInsensitiveMap::default(),
         dependencies: LogicalDependencyList::default(),
         kind: CreateInfoKind::Type(CreateTypeInfo {
-            name: entry.enum_name,
+            name: entry.enum_name.into(),
             logical_type: LogicalType::INVALID,
             query: Some(Box::new(build::select_statement(subselect))),
         }),
@@ -163,7 +162,7 @@ impl PegTransformer {
             let column = pivot_expression.clone();
             let subquery = col.subquery.take().map(|subquery| *subquery);
             self.add_pivot_entry(enum_name.clone(), new_select, column, subquery, has_parameters);
-            col.pivot_enum = enum_name;
+            col.pivot_enum = enum_name.into();
         }
         Ok(())
     }
@@ -372,7 +371,7 @@ impl PegTransformer {
             unpivot_names = name_and_values.unpivot_names;
         } else {
             let mut col = pivot_column();
-            col.unpivot_names.push("name".to_owned());
+            col.unpivot_names.push("name".to_owned().into());
             col.entries.extend(unpivot_entries(target_list));
             columns.push(col);
         }
@@ -380,7 +379,7 @@ impl PegTransformer {
 
         let mut pivot_ref = pivot_ref(source);
         if unpivot_names_opt.is_none() {
-            pivot_ref.unpivot_names.push("value".to_owned());
+            pivot_ref.unpivot_names.push("value".to_owned().into());
         } else {
             pivot_ref.unpivot_names = unpivot_names;
         }
@@ -402,7 +401,7 @@ impl PegTransformer {
             column,
         };
         for identifier in list.child(4)?.list_elements()? {
-            result.unpivot_names.push(identifier.identifier()?.to_owned());
+            result.unpivot_names.push(identifier.identifier()?.into());
         }
         Ok(result)
     }
@@ -421,13 +420,13 @@ impl PegTransformer {
                 )));
             }
             let mut enum_stmt = generate_create_enum_stmt(pivot)?;
-            enum_stmt.query = statement_to_string(&enum_stmt);
+            enum_stmt.query = statement_to_string(&enum_stmt)?;
             statements.push(enum_stmt);
         }
         let location = statement.location;
         let length = statement.length;
         let mut statement = statement;
-        statement.query = statement_to_string(&statement);
+        statement.query = statement_to_string(&statement)?;
         statements.push(statement);
         let mut result = SqlStatement::new(SqlStatementKind::Multi(statements));
         result.location = location;

@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use rustdb_common::string_util::{candidates_message, top_n_jaro_winkler};
-use rustdb_common::{Error, Result};
+use rustdb_common::string_util::{candidates_message_bytes, top_n_jaro_winkler};
+use rustdb_common::{ByteString, Error, Result};
 use rustdb_function::{BindInput, FunctionData, ScalarFunction, ScalarFunctionSet};
 use rustdb_types::{LogicalType, LogicalTypeId};
 
@@ -21,7 +21,7 @@ impl FunctionData for FieldIndex {
 }
 
 /// The field types of a STRUCT argument, with DuckDB's checks.
-fn struct_children<'a>(input: &'a BindInput<'_>) -> Result<&'a [(String, LogicalType)]> {
+fn struct_children<'a>(input: &'a BindInput<'_>) -> Result<&'a [(ByteString, LogicalType)]> {
     let ty = &input.argument_types[0];
     if ty.id() == LogicalTypeId::Unknown {
         return Err(crate::parameter_not_resolved());
@@ -53,17 +53,20 @@ fn bind_key(function: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Opti
             ));
         }
     };
-    let key = key.as_str().unwrap_or_default();
+    let key = key.as_bytes().unwrap_or_default();
     if key.is_empty() {
         return Err(Error::binder(
             "Key name for struct_extract needs to be neither NULL nor empty",
         ));
     }
-    let key = key.to_lowercase();
-    let Some(index) = children.iter().position(|(name, _)| name.to_lowercase() == key) else {
-        let names: Vec<String> = children.iter().map(|(name, _)| name.clone()).collect();
-        let message = candidates_message(&top_n_jaro_winkler(&names, &key), "Candidate Entries");
-        return Err(Error::binder(format!(
+    let key = ByteString::from(key.to_ascii_lowercase());
+    let Some(index) = children
+        .iter()
+        .position(|(name, _)| name.eq_ignore_ascii_case(&key))
+    else {
+        let names: Vec<ByteString> = children.iter().map(|(name, _)| name.clone()).collect();
+        let message = candidates_message_bytes(&top_n_jaro_winkler(&names, &key), b"Candidate Entries");
+        return Err(Error::binder(rustdb_common::byte_format!(
             "Could not find key \"{key}\" in struct\n{message}"
         )));
     };
@@ -93,7 +96,7 @@ fn bind_index(
         };
         let index = as_bigint(key)?;
         if index <= 0 || index as u64 > children.len() as u64 {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Key index {index} for struct_extract out of range - expected an index between 1 and {}",
                 children.len()
             )));

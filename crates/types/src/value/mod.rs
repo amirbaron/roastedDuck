@@ -297,7 +297,7 @@ impl Value {
     }
 
     /// A STRUCT whose type is derived from its named fields.
-    pub fn struct_value(fields: Vec<(String, Value)>) -> Self {
+    pub fn struct_value(fields: Vec<(rustdb_common::ByteString, Value)>) -> Self {
         let ty = LogicalType::struct_type(
             fields
                 .iter()
@@ -572,6 +572,23 @@ impl Value {
         Ok(String::from_utf8(out).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
     }
 
+    /// Native bytes of DuckDB's `Value::ToString`, including byte-owned nested names.
+    pub fn to_varchar_bytes(&self) -> Result<rustdb_common::ByteString> {
+        if self.is_null() {
+            return Ok("NULL".into());
+        }
+        let mut out = Vec::new();
+        self.write_text(&mut out)?;
+        // ToString casts to VARCHAR, then materializes a Value from that vector.
+        // That construction validates UTF-8. A VARCHAR identity cast returns the
+        // original value, including raw bytes already stored by native code.
+        if self.ty.id() != LogicalTypeId::Varchar {
+            std::str::from_utf8(&out)
+                .map_err(|_| rustdb_common::utf8::invalid_unicode_error(&out, "value construction"))?;
+        }
+        Ok(out.into())
+    }
+
     /// Appends the VARCHAR text of a non-NULL value.
     fn write_text(&self, out: &mut Vec<u8>) -> Result<()> {
         use LogicalTypeId as L;
@@ -586,7 +603,7 @@ impl Value {
                 let text = usize::try_from(index)
                     .ok()
                     .and_then(|index| self.ty.enum_values()?.get(index));
-                out.extend_from_slice(text.map_or("", String::as_str).as_bytes());
+                out.extend_from_slice(text.map_or(b"".as_slice(), rustdb_common::ByteString::as_bytes));
             }
             (Payload::I8(v), L::TinyInt) => format::write_i64((*v).into(), out),
             (Payload::I16(v), L::SmallInt) => format::write_i64((*v).into(), out),
@@ -618,7 +635,7 @@ impl Value {
                 crate::bignum::write_text(bytes, out).map_err(Error::invalid_input)?;
             }
             (Payload::I128(v), L::Uuid) => Uuid(*v).write_to(out),
-            (Payload::Type(ty), L::Type) => out.extend_from_slice(ty.to_string().as_bytes()),
+            (Payload::Type(ty), L::Type) => out.extend_from_slice(ty.to_bytes().as_bytes()),
             (Payload::Nested(items), L::List | L::Array) => {
                 let quoting = Self::child_quoting(self.list_element_type());
                 let raw_array = self.ty.id() == L::Array;
@@ -854,14 +871,14 @@ mod tests {
         );
         assert_eq!(array.to_varchar().unwrap(), "[x,y, ]");
         let row = Value::struct_value(vec![
-            ("k y".to_owned(), Value::varchar("v,w")),
-            ("b".to_owned(), Value::null(LogicalType::INTEGER)),
+            ("k y".into(), Value::varchar("v,w")),
+            ("b".into(), Value::null(LogicalType::INTEGER)),
         ]);
         assert_eq!(row.to_varchar().unwrap(), "{'k y': 'v,w', 'b': NULL}");
         let unnamed = Value::from_children(
             LogicalType::struct_type(vec![
-                (String::new(), LogicalType::INTEGER),
-                (String::new(), LogicalType::VARCHAR),
+                (rustdb_common::ByteString::new(), LogicalType::INTEGER),
+                (rustdb_common::ByteString::new(), LogicalType::VARCHAR),
             ]),
             vec![Value::integer(1), Value::varchar("a b")],
         );
@@ -875,7 +892,7 @@ mod tests {
             ],
         );
         assert_eq!(map.to_varchar().unwrap(), "{'a,b'=c d, n=NULL}");
-        let union_type = LogicalType::union_type(vec![("t".to_owned(), LogicalType::VARCHAR)]);
+        let union_type = LogicalType::union_type(vec![("t".into(), LogicalType::VARCHAR)]);
         let union = Value::union_value(union_type, 0, Value::varchar("x,y"));
         assert_eq!(union.to_varchar().unwrap(), "x,y");
         let nested = Value::list(

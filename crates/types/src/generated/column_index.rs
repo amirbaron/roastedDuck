@@ -14,7 +14,7 @@ pub struct ColumnIndex<'a> {
     /// `type` (property 4).
     pub ty: &'a crate::LogicalType,
     /// `field` (property 5).
-    pub field: &'a str,
+    pub field: &'a rustdb_common::ByteString,
     /// `has_index` (property 6).
     pub has_index: bool,
 }

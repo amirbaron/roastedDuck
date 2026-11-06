@@ -8,10 +8,14 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::{Error, ErrorKind, Result};
+use super::batch_memory_manager::BatchMemoryManager;
+use rustdb_buffer::{BufferManager, MemoryTag};
+use rustdb_common::{ByteString, Error, ErrorKind, Result};
 use rustdb_function::copy::{CopyFunctionFileStatistics, CopyGlobalState};
+use rustdb_function::file_system::native_path;
 use rustdb_function::{CopyFunction, FunctionData};
 use rustdb_planner::operator::{CopyFunctionReturnType, CopyOverwriteMode, FilenamePattern};
+use rustdb_row::{ColumnDataAppendState, ColumnDataCollection};
 use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
 
 use crate::operator::{
@@ -19,15 +23,15 @@ use crate::operator::{
 };
 use crate::{ExecutionContext, Sink, SinkFinalize, SinkResult, Source, SourceResult};
 
-fn io_error(message: String) -> Error {
-    Error::new(ErrorKind::Io, message)
+fn io_error(message: impl Into<ByteString>) -> Error {
+    Error::new_bytes(ErrorKind::Io, message.into())
 }
 
 /// The settings of a `COPY ... TO` (the fields of DuckDB's `PhysicalCopyToFile`).
 #[derive(Clone, Debug)]
 #[allow(clippy::struct_excessive_bools)]
 pub struct CopyToFileOptions {
-    pub file_path: String,
+    pub file_path: ByteString,
     pub use_tmp_file: bool,
     pub overwrite_mode: CopyOverwriteMode,
     pub filename_pattern: FilenamePattern,
@@ -41,7 +45,7 @@ pub struct CopyToFileOptions {
     pub write_empty_file: bool,
     pub hive_file_pattern: bool,
     pub return_type: CopyFunctionReturnType,
-    pub names: Vec<String>,
+    pub names: Vec<rustdb_common::ByteString>,
     pub expected_types: Vec<LogicalType>,
 }
 
@@ -98,7 +102,7 @@ impl PhysicalCopyToFile {
     /// `initialize_operator`.
     fn initialize_global(
         &self,
-        path: &str,
+        path: &[u8],
         logger: Option<&rustdb_function::logging::OperatorLogger>,
     ) -> Result<CopyGlobalState> {
         let initialize = self
@@ -132,8 +136,10 @@ impl PhysicalCopyToFile {
     }
 
     /// `GetTrimmedPath`.
-    fn trimmed_path(&self) -> String {
-        self.options.file_path.trim_end_matches('/').to_owned()
+    fn trimmed_path(&self) -> ByteString {
+        let bytes = self.options.file_path.as_bytes();
+        let end = bytes.iter().rposition(|byte| *byte != b'/').map_or(0, |i| i + 1);
+        bytes[..end].into()
     }
 
     /// `CreateFileState`: a new numbered file in the output directory.
@@ -201,9 +207,9 @@ impl PhysicalCopyToFile {
                     let value = if value.is_null() {
                         "__HIVE_DEFAULT_PARTITION__".to_owned()
                     } else {
-                        url_encode(&value.to_varchar()?)
+                        url_encode(value.to_varchar_bytes()?)
                     };
-                    path = format!("{path}/{}={value}", url_encode(name));
+                    path = rustdb_common::byte_format!("{path}/{}={value}", url_encode(name));
                     create_dir(&mut inner.created_directories, &path)?;
                 }
             }
@@ -219,7 +225,7 @@ impl PhysicalCopyToFile {
                     .filename_pattern
                     .create_filename(&path, &self.options.file_extension, offset);
             if self.options.overwrite_mode == CopyOverwriteMode::Append {
-                while std::path::Path::new(&full_path).exists() {
+                while native_path(&full_path)?.exists() {
                     if !self.options.filename_pattern.has_uuid() {
                         return Err(Error::internal(
                             "CopyOverwriteMode::COPY_APPEND without {uuid} - and file exists",
@@ -244,7 +250,7 @@ impl PhysicalCopyToFile {
                     } else {
                         Value::varchar(value.to_varchar()?)
                     };
-                    entries.push((Value::varchar(&self.options.names[*column]), text));
+                    entries.push((Value::try_varchar(&self.options.names[*column])?, text));
                 }
                 let keys = Value::map(LogicalType::VARCHAR, LogicalType::VARCHAR, entries);
                 Some(inner.add_file(full_path.clone(), keys))
@@ -305,17 +311,32 @@ impl PhysicalCopyToFile {
 
     /// Prepares the output directory (`GetGlobalSinkState` for directory outputs).
     fn prepare_directory(&self) -> Result<()> {
-        let path = std::path::Path::new(&self.options.file_path);
+        if let Some(fs) = rustdb_function::registered_files::lookup(&self.options.file_path) {
+            if !fs.is_remote() && fs.is_file(&self.options.file_path)? {
+                if self.options.overwrite_mode == CopyOverwriteMode::Overwrite {
+                    fs.remove(&self.options.file_path)?;
+                } else {
+                    return Err(io_error("Cannot write to an existing file as a directory"));
+                }
+            }
+            if fs.is_dir(&self.options.file_path)? {
+                check_directory(&self.options.file_path, self.options.overwrite_mode)?;
+            } else {
+                fs.mkdir(&self.options.file_path)?;
+            }
+            return Ok(());
+        }
+        let path = native_path(&self.options.file_path)?;
         if path.is_file() {
             if self.options.overwrite_mode == CopyOverwriteMode::Overwrite {
-                std::fs::remove_file(path).map_err(|error| {
-                    io_error(format!(
+                std::fs::remove_file(&path).map_err(|error| {
+                    io_error(rustdb_common::byte_format!(
                         "Could not remove file \"{}\": {error}",
                         self.options.file_path
                     ))
                 })?;
             } else {
-                return Err(io_error(format!(
+                return Err(io_error(rustdb_common::byte_format!(
                     "Cannot write to \"{}\" - it exists and is a file, not a directory! Enable OVERWRITE option to overwrite the file",
                     self.options.file_path
                 )));
@@ -324,8 +345,8 @@ impl PhysicalCopyToFile {
         if path.is_dir() {
             check_directory(&self.options.file_path, self.options.overwrite_mode)
         } else {
-            std::fs::create_dir_all(path).map_err(|error| {
-                io_error(format!(
+            std::fs::create_dir_all(&path).map_err(|error| {
+                io_error(rustdb_common::byte_format!(
                     "Failed to create directory \"{}\": {error}",
                     self.options.file_path
                 ))
@@ -334,11 +355,11 @@ impl PhysicalCopyToFile {
     }
 
     /// The name of a written file as the copy returns it.
-    fn returned_path(&self, path: &str) -> String {
+    fn returned_path(&self, path: &[u8]) -> ByteString {
         if self.options.use_tmp_file {
             Self::non_tmp_file(path)
         } else {
-            path.to_owned()
+            path.into()
         }
     }
 
@@ -362,7 +383,7 @@ impl PhysicalCopyToFile {
             let default = CopyFunctionFileStatistics::default();
             let stats = file.stats.as_ref().unwrap_or(&default);
             // `CreateColumnStatistics`: columns and statistics in name order.
-            let mut column_stats: Vec<&(String, Vec<(String, Value)>)> =
+            let mut column_stats: Vec<&(rustdb_common::ByteString, Vec<(String, Value)>)> =
                 stats.column_statistics.iter().collect();
             column_stats.sort_by(|a, b| a.0.cmp(&b.0));
             let mut entries = Vec::with_capacity(column_stats.len());
@@ -379,7 +400,7 @@ impl PhysicalCopyToFile {
                     inner_entries.push((Value::varchar(name), text));
                 }
                 entries.push((
-                    Value::varchar(column),
+                    Value::try_varchar(column)?,
                     Value::map(LogicalType::VARCHAR, LogicalType::VARCHAR, inner_entries),
                 ));
             }
@@ -394,7 +415,7 @@ impl PhysicalCopyToFile {
                 file.partition_keys.clone()
             };
             let values = [
-                Value::varchar(self.returned_path(&file.path)),
+                Value::try_varchar(&self.returned_path(&file.path))?,
                 Value::ubigint(stats.row_count),
                 Value::ubigint(stats.file_size_bytes),
                 footer,
@@ -415,20 +436,20 @@ impl PhysicalCopyToFile {
     }
 
     /// `GetNonTmpFile`: the final name of a file written as `tmp_<name>`.
-    fn non_tmp_file(path: &str) -> String {
-        let (directory, base) = match path.rfind('/') {
+    fn non_tmp_file(path: &[u8]) -> ByteString {
+        let (directory, base) = match path.iter().rposition(|byte| *byte == b'/') {
             Some(slash) => (&path[..=slash], &path[slash + 1..]),
-            None => ("", path),
+            None => (b"".as_slice(), path),
         };
-        let base = base.strip_prefix("tmp_").unwrap_or(base);
-        format!("{directory}{base}")
+        let base = base.strip_prefix(b"tmp_").unwrap_or(base);
+        rustdb_common::byte_format!("{directory}{base}")
     }
 }
 
 /// A partition's values, compared by their text (NULLs equal).
 #[derive(Clone, Debug)]
 struct PartitionKey {
-    text: Vec<Option<String>>,
+    text: Vec<Option<ByteString>>,
     values: Vec<Value>,
 }
 
@@ -440,7 +461,7 @@ impl PartitionKey {
                 if value.is_null() {
                     Ok(None)
                 } else {
-                    value.to_varchar().map(Some)
+                    value.to_varchar_bytes().map(Some)
                 }
             })
             .collect::<Result<Vec<_>>>()?;
@@ -463,9 +484,9 @@ impl std::hash::Hash for PartitionKey {
 }
 
 /// `StringUtil::URLEncode` as `HivePartitioning::Escape` uses it.
-fn url_encode(input: &str) -> String {
+fn url_encode(input: impl AsRef<[u8]>) -> String {
     let mut result = String::new();
-    for byte in input.bytes() {
+    for &byte in input.as_ref() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
             result.push(char::from(byte));
         } else {
@@ -475,20 +496,50 @@ fn url_encode(input: &str) -> String {
     result
 }
 
-fn create_dir(created: &mut Vec<String>, path: &str) -> Result<()> {
-    if created.iter().any(|existing| existing == path) {
+fn create_dir(created: &mut Vec<ByteString>, path: &[u8]) -> Result<()> {
+    if let Some(fs) = rustdb_function::registered_files::lookup(path) {
+        if !created.iter().any(|p| p.as_bytes() == path) {
+            if !fs.is_dir(path)? {
+                fs.mkdir(path)?;
+            }
+            created.push(path.into());
+        }
         return Ok(());
     }
-    if !std::path::Path::new(path).is_dir() {
-        std::fs::create_dir_all(path)
-            .map_err(|error| io_error(format!("Failed to create directory \"{path}\": {error}")))?;
+    if created.iter().any(|existing| existing.as_bytes() == path) {
+        return Ok(());
     }
-    created.push(path.to_owned());
+    if !native_path(path)?.is_dir() {
+        std::fs::create_dir_all(native_path(path)?).map_err(|error| {
+            io_error(rustdb_common::byte_format!(
+                "Failed to create directory \"{path}\": {error}"
+            ))
+        })?;
+    }
+    created.push(path.into());
     Ok(())
 }
 
 /// `CheckDirectory`: an existing output directory must be empty unless overwriting.
-fn check_directory(path: &str, overwrite_mode: CopyOverwriteMode) -> Result<()> {
+fn check_directory(path: &[u8], overwrite_mode: CopyOverwriteMode) -> Result<()> {
+    if let Some(fs) = rustdb_function::registered_files::lookup(path) {
+        if matches!(
+            overwrite_mode,
+            CopyOverwriteMode::OverwriteOrIgnore | CopyOverwriteMode::Append
+        ) {
+            return Ok(());
+        }
+        let files = fs.list_files_recursive(path)?;
+        if files.is_empty() {
+            return Ok(());
+        }
+        if overwrite_mode == CopyOverwriteMode::Overwrite {
+            return fs.remove_files(&files);
+        }
+        return Err(io_error(rustdb_common::byte_format!(
+            "Directory \"{path}\" is not empty! Enable OVERWRITE option to overwrite files"
+        )));
+    }
     if matches!(
         overwrite_mode,
         CopyOverwriteMode::OverwriteOrIgnore | CopyOverwriteMode::Append
@@ -496,7 +547,7 @@ fn check_directory(path: &str, overwrite_mode: CopyOverwriteMode) -> Result<()> 
         return Ok(());
     }
     let mut files = Vec::new();
-    let mut directories = vec![path.to_owned()];
+    let mut directories = vec![native_path(path)?];
     while let Some(directory) = directories.pop() {
         let Ok(entries) = std::fs::read_dir(&directory) else {
             continue;
@@ -504,7 +555,7 @@ fn check_directory(path: &str, overwrite_mode: CopyOverwriteMode) -> Result<()> 
         for entry in entries.flatten() {
             let full = entry.path();
             if full.is_dir() {
-                directories.push(full.to_string_lossy().into_owned());
+                directories.push(full);
             } else {
                 files.push(full);
             }
@@ -519,7 +570,7 @@ fn check_directory(path: &str, overwrite_mode: CopyOverwriteMode) -> Result<()> 
         }
         return Ok(());
     }
-    Err(io_error(format!(
+    Err(io_error(rustdb_common::byte_format!(
         "Directory \"{path}\" is not empty! Enable OVERWRITE option to overwrite files"
     )))
 }
@@ -542,7 +593,7 @@ impl std::fmt::Debug for OpenFile {
 /// A file a copy wrote (DuckDB's `CopyToFileInfo`).
 #[derive(Debug)]
 struct WrittenFile {
-    path: String,
+    path: ByteString,
     /// The partition's values, a MAP(VARCHAR, VARCHAR) (NULL without partitions).
     partition_keys: Value,
     stats: Option<CopyFunctionFileStatistics>,
@@ -557,9 +608,9 @@ struct CopyInner {
     last_file_offset: u64,
     global_offset: u64,
     global_state: Option<OpenFile>,
-    created_files: Vec<String>,
+    created_files: Vec<ByteString>,
     written_files: Vec<WrittenFile>,
-    created_directories: Vec<String>,
+    created_directories: Vec<ByteString>,
     partitions: HashMap<PartitionKey, OpenFile>,
     partition_order: Vec<PartitionKey>,
     /// The operator's logger, if the query logs it; the files' writers log with it.
@@ -568,7 +619,7 @@ struct CopyInner {
 
 impl CopyInner {
     /// `AddFile`: records a file whose name (and statistics) the copy returns.
-    fn add_file(&mut self, path: String, partition_keys: Value) -> usize {
+    fn add_file(&mut self, path: ByteString, partition_keys: Value) -> usize {
         self.written_files.push(WrittenFile {
             path,
             partition_keys,
@@ -595,38 +646,41 @@ pub struct CopyGlobal {
     batch: BatchCopy,
 }
 
-/// Rows of one batch, or of consecutive batches merged (`FixedRawBatchData`).
-#[derive(Debug, Default)]
+/// Buffer-managed rows and their original allocation charge (`FixedRawBatchData`).
+#[derive(Debug)]
 struct RawBatch {
-    chunks: Vec<DataChunk>,
-    count: usize,
+    collection: ColumnDataCollection,
+    memory_usage: u64,
 }
 
 impl RawBatch {
-    /// Moves the first `rows` rows of `self` to `target`.
-    fn move_rows(&mut self, rows: usize, target: &mut Self) {
-        let mut remaining = rows;
-        while remaining > 0 && !self.chunks.is_empty() {
-            let chunk = self.chunks.remove(0);
-            let len = chunk.len();
-            if len <= remaining {
-                remaining -= len;
-                self.count -= len;
-                target.count += len;
-                target.chunks.push(chunk);
-                continue;
-            }
-            let head = SelectionVector::incremental(remaining);
-            let tail = SelectionVector::new((remaining as u32..len as u32).collect::<Vec<u32>>());
-            let head_columns = chunk.columns().iter().map(|column| column.slice(&head)).collect();
-            let tail_columns = chunk.columns().iter().map(|column| column.slice(&tail)).collect();
-            target.chunks.push(DataChunk::new(head_columns, remaining));
-            target.count += remaining;
-            self.chunks
-                .insert(0, DataChunk::new(tail_columns, len - remaining));
-            self.count -= remaining;
-            remaining = 0;
+    fn new(buffer_manager: BufferManager, types: Vec<LogicalType>) -> Result<Self> {
+        let mut collection = ColumnDataCollection::new(buffer_manager, types, MemoryTag::ColumnData)?;
+        collection.set_partition_index(0)?;
+        Ok(Self {
+            collection,
+            memory_usage: 0,
+        })
+    }
+    fn count(&self) -> usize {
+        self.collection.count()
+    }
+}
+
+impl rustdb_function::copy::CopyBatch for RawBatch {
+    fn count(&self) -> usize {
+        self.count()
+    }
+    fn scan(&self, column: Option<usize>, visit: &mut dyn FnMut(&DataChunk) -> Result<()>) -> Result<()> {
+        let mut state = if let Some(index) = column {
+            self.collection.initialize_scan_columns(&[index])?
+        } else {
+            self.collection.initialize_scan()
+        };
+        while let Some(chunk) = self.collection.scan(&mut state)? {
+            visit(&chunk)?;
         }
+        Ok(())
     }
 }
 
@@ -648,7 +702,7 @@ struct BatchState {
     raw_batches: BTreeMap<u64, RawBatch>,
     tasks: VecDeque<BatchTask>,
     /// Prepared batches ready to be written, by their index in the output.
-    prepared: BTreeMap<u64, rustdb_function::copy::PreparedBatch>,
+    prepared: BTreeMap<u64, (u64, rustdb_function::copy::PreparedBatch)>,
     scheduled_batch_index: u64,
     flushed_batch_index: u64,
     /// Whether a thread has finished sinking (`any_finished`).
@@ -668,6 +722,9 @@ impl std::fmt::Debug for BatchState {
 
 #[derive(Debug, Default)]
 struct BatchCopy {
+    memory_manager: Option<BatchMemoryManager>,
+    minimum_memory_per_thread: u64,
+    buffer_manager: Option<BufferManager>,
     state: Mutex<BatchState>,
     /// Whether a thread is writing prepared batches (`any_flushing`).
     flushing: AtomicBool,
@@ -682,7 +739,10 @@ pub struct CopyLocal {
     function_local: Option<rustdb_function::copy::CopyLocalState>,
     batch_index: u64,
     min_batch_index: u64,
-    batch: RawBatch,
+    batch: Option<RawBatch>,
+    append_state: ColumnDataAppendState,
+    /// Retained across a blocked sink (`PROCESSING_TASKS`).
+    processing_tasks: bool,
     rows_copied: u64,
 }
 
@@ -706,21 +766,27 @@ impl PhysicalCopyToFile {
 
     /// `RepartitionBatches`: merges and splits the complete raw batches (those below
     /// `min_index`) into batches of the desired size, as tasks.
-    fn repartition_batches(state: &mut BatchState, min_index: u64, final_batch: bool) {
+    fn repartition_batches(
+        state: &mut BatchState,
+        min_index: u64,
+        final_batch: bool,
+        buffer_manager: &BufferManager,
+        types: &[LogicalType],
+    ) -> Result<()> {
         if state.raw_batches.is_empty() {
-            return;
+            return Ok(());
         }
         if !final_batch {
             if state.any_finished {
-                return;
+                return Ok(());
             }
             let candidate_rows: usize = state
                 .raw_batches
                 .range(..min_index)
-                .map(|(_, batch)| batch.count)
+                .map(|(_, batch)| batch.count())
                 .sum();
             if candidate_rows < state.batch_size {
-                return;
+                return Ok(());
             }
         }
         let indexes: Vec<u64> = state
@@ -729,16 +795,17 @@ impl PhysicalCopyToFile {
             .map(|(&index, _)| index)
             .collect();
         let Some(&max_batch_index) = indexes.last() else {
-            return;
+            return Ok(());
         };
         let batch_size = state.batch_size;
         let mut append: Option<RawBatch> = None;
+        let mut append_state = ColumnDataAppendState::default();
         for index in indexes {
-            let Some(mut current) = state.raw_batches.remove(&index) else {
+            let Some(current) = state.raw_batches.remove(&index) else {
                 continue;
             };
             if append.is_none() {
-                if correct_size_for_batch(current.count, batch_size) {
+                if correct_size_for_batch(current.count(), batch_size) {
                     let batch_index = state.scheduled_batch_index;
                     state.scheduled_batch_index += 1;
                     state.tasks.push_back(BatchTask::Prepare {
@@ -747,23 +814,28 @@ impl PhysicalCopyToFile {
                     });
                     continue;
                 }
-                if current.count < batch_size {
+                if current.count() < batch_size {
                     append = Some(current);
                     continue;
                 }
-                append = Some(RawBatch::default());
+                append = Some(RawBatch::new(buffer_manager.clone(), types.to_vec())?);
             }
-            // Append the batch vector by vector (the chunks of a `ColumnDataCollection`).
-            while current.count > 0 {
-                let Some(target) = append.as_mut() else {
-                    break;
-                };
-                let rows = current.count.min(rustdb_common::STANDARD_VECTOR_SIZE);
-                current.move_rows(rows, target);
-                if target.count < batch_size {
-                    continue;
-                }
-                if let Some(full) = append.replace(RawBatch::default()) {
+            // Preserve the original charge through repartitioning, as C++ does;
+            // a source's charge transfers to the first output it contributes to.
+            if let Some(target) = append.as_mut() {
+                target.memory_usage += current.memory_usage;
+            }
+            let mut scan = current.collection.initialize_scan();
+            while let Some(chunk) = current.collection.scan(&mut scan)? {
+                let target = append
+                    .as_mut()
+                    .ok_or_else(|| Error::internal("COPY repartition without target"))?;
+                target.collection.append(&mut append_state, &chunk)?;
+                if target.count() >= batch_size {
+                    target.collection.finalize_append(&mut append_state);
+                    let full = append
+                        .replace(RawBatch::new(buffer_manager.clone(), types.to_vec())?)
+                        .ok_or_else(|| Error::internal("COPY repartition lost target"))?;
                     let batch_index = state.scheduled_batch_index;
                     state.scheduled_batch_index += 1;
                     state.tasks.push_back(BatchTask::Prepare {
@@ -773,20 +845,22 @@ impl PhysicalCopyToFile {
                 }
             }
         }
-        if let Some(rest) = append
-            && rest.count > 0
-        {
-            if final_batch || correct_size_for_batch(rest.count, batch_size) {
-                let batch_index = state.scheduled_batch_index;
-                state.scheduled_batch_index += 1;
-                state.tasks.push_back(BatchTask::Prepare {
-                    batch_index,
-                    batch: rest,
-                });
-            } else {
-                state.raw_batches.insert(max_batch_index, rest);
+        if let Some(rest) = append {
+            rest.collection.finalize_append(&mut append_state);
+            if rest.count() > 0 {
+                if final_batch || correct_size_for_batch(rest.count(), batch_size) {
+                    let batch_index = state.scheduled_batch_index;
+                    state.scheduled_batch_index += 1;
+                    state.tasks.push_back(BatchTask::Prepare {
+                        batch_index,
+                        batch: rest,
+                    });
+                } else {
+                    state.raw_batches.insert(max_batch_index, rest);
+                }
             }
         }
+        Ok(())
     }
 
     /// `ExecuteTask`: runs one queued task; returns whether there was one.
@@ -806,10 +880,16 @@ impl PhysicalCopyToFile {
                     .as_ref()
                     .ok_or_else(|| Error::internal("batched copy without prepare_batch"))?;
                 let file_state = self.batch_file_state(global)?;
-                let prepared = prepare(self.bind_data.as_ref(), &file_state, batch.chunks)?;
+                let memory_usage = batch.memory_usage;
+                let prepared = prepare(self.bind_data.as_ref(), &file_state, &batch)?;
+                drop(batch);
                 let mut state = global.batch.state.lock().unwrap_or_else(PoisonError::into_inner);
-                if state.prepared.insert(batch_index, prepared).is_some() {
-                    return Err(Error::internal(format!(
+                if state
+                    .prepared
+                    .insert(batch_index, (memory_usage, prepared))
+                    .is_some()
+                {
+                    return Err(Error::internal(rustdb_common::byte_format!(
                         "Duplicate batch index {batch_index} encountered in PhysicalFixedBatchCopy"
                     )));
                 }
@@ -843,11 +923,15 @@ impl PhysicalCopyToFile {
                         _ => None,
                     }
                 };
-                let Some(batch) = batch else {
+                let Some((memory_usage, batch)) = batch else {
                     return Ok(());
                 };
                 let file_state = self.batch_file_state(global)?;
                 flush(self.bind_data.as_ref(), &file_state, batch)?;
+                if let Some(manager) = &global.batch.memory_manager {
+                    manager.reduce_unflushed_memory(memory_usage)?;
+                    manager.unblock_tasks();
+                }
                 let mut state = global.batch.state.lock().unwrap_or_else(PoisonError::into_inner);
                 state.flushed_batch_index += 1;
             }
@@ -859,22 +943,45 @@ impl PhysicalCopyToFile {
     /// `AddLocalBatch`: hands the thread's finished batch to the global state, then
     /// helps preparing and writing batches.
     fn add_local_batch(&self, global: &CopyGlobal, local: &mut CopyLocal) -> Result<()> {
-        if local.batch.count == 0 {
+        let Some(batch) = local.batch.take() else {
+            return Ok(());
+        };
+        batch.collection.finalize_append(&mut local.append_state);
+        if batch.count() == 0 {
             return Ok(());
         }
-        let batch = std::mem::take(&mut local.batch);
         {
             let mut state = global.batch.state.lock().unwrap_or_else(PoisonError::into_inner);
             if state.raw_batches.insert(local.batch_index, batch).is_some() {
-                return Err(Error::internal(format!(
+                return Err(Error::internal(rustdb_common::byte_format!(
                     "Duplicate batch index {} encountered in PhysicalFixedBatchCopy",
                     local.batch_index
                 )));
             }
-            Self::repartition_batches(&mut state, local.min_batch_index, false);
+            Self::repartition_batches(
+                &mut state,
+                local.min_batch_index,
+                false,
+                global
+                    .batch
+                    .buffer_manager
+                    .as_ref()
+                    .ok_or_else(|| Error::internal("COPY without buffer manager"))?,
+                self.children[0].types(),
+            )?;
         }
-        self.execute_batch_task(global)?;
-        self.flush_batch_data(global)
+        let any_unblocked = global
+            .batch
+            .memory_manager
+            .as_ref()
+            .is_some_and(BatchMemoryManager::unblock_tasks);
+        // A woken helper can prepare queued work while this source advances its
+        // batch index. Preparing here would hold back the minimum source batch.
+        if !any_unblocked {
+            self.execute_batch_task(global)?;
+            self.flush_batch_data(global)?;
+        }
+        Ok(())
     }
 
     /// `FinalFlush`: writes what is left and completes the file.
@@ -893,6 +1000,9 @@ impl PhysicalCopyToFile {
                 ));
             }
         }
+        if let Some(manager) = &global.batch.memory_manager {
+            manager.final_check()?;
+        }
         let mut inner = global.inner.lock().unwrap_or_else(PoisonError::into_inner);
         self.finish_single_file(&mut inner)?;
         inner.finalized = true;
@@ -907,12 +1017,18 @@ impl PhysicalCopyToFile {
             drop(file);
             if options.use_tmp_file {
                 let target = Self::non_tmp_file(&options.file_path);
-                std::fs::rename(&options.file_path, &target).map_err(|error| {
-                    io_error(format!(
-                        "Could not rename \"{}\" to \"{target}\": {error}",
-                        options.file_path
-                    ))
-                })?;
+                if let Some(fs) = rustdb_function::registered_files::lookup(&options.file_path) {
+                    fs.rename(&options.file_path, &target)?;
+                } else {
+                    std::fs::rename(native_path(&options.file_path)?, native_path(&target)?).map_err(
+                        |error| {
+                            io_error(rustdb_common::byte_format!(
+                                "Could not rename \"{}\" to \"{target}\": {error}",
+                                options.file_path
+                            ))
+                        },
+                    )?;
+                }
             }
         }
         Ok(())
@@ -929,7 +1045,9 @@ impl Drop for CopyGlobal {
         inner.global_state = None;
         inner.partitions.clear();
         for file in &inner.created_files {
-            let _ = std::fs::remove_file(file);
+            if let Ok(path) = native_path(file) {
+                let _ = std::fs::remove_file(path);
+            }
         }
     }
 }
@@ -1015,7 +1133,17 @@ impl Sink for PhysicalCopyToFile {
     type Local = CopyLocal;
 
     fn global_sink_state(&self, ctx: &ExecutionContext) -> Result<CopyGlobal> {
-        let global = CopyGlobal::default();
+        let mut global = CopyGlobal::default();
+        if self.batch {
+            let minimum = self.children[0].types().len().max(1) as u64 * 4 * 1024 * 1024;
+            global.batch.memory_manager = Some(BatchMemoryManager::new(
+                ctx.env.buffer_manager.clone(),
+                ctx.env.threads(),
+                minimum,
+            ));
+            global.batch.minimum_memory_per_thread = minimum;
+            global.batch.buffer_manager = Some(ctx.env.buffer_manager.clone());
+        }
         {
             let mut inner = global.inner.lock().unwrap_or_else(PoisonError::into_inner);
             inner.logger = ctx.operator_logger(self);
@@ -1046,13 +1174,22 @@ impl Sink for PhysicalCopyToFile {
         Ok(global)
     }
 
+    fn max_threads(&self, global: &CopyGlobal, source_max: usize) -> usize {
+        let Some(manager) = &global.batch.memory_manager else {
+            return source_max;
+        };
+        let minimum = global.batch.minimum_memory_per_thread;
+        manager.request_memory(source_max as u64 * minimum);
+        source_max.min((manager.available_memory() / minimum) as usize + 1)
+    }
+
     fn local_sink_state(&self, _: &ExecutionContext, _: &CopyGlobal) -> Result<CopyLocal> {
         Ok(CopyLocal::default())
     }
 
     fn sink(
         &self,
-        _: &ExecutionContext,
+        ctx: &ExecutionContext,
         chunk: &DataChunk,
         global: &CopyGlobal,
         local: &mut CopyLocal,
@@ -1079,12 +1216,54 @@ impl Sink for PhysicalCopyToFile {
             return Ok(SinkResult::NeedMoreInput);
         }
         if self.batch {
+            let manager = global
+                .batch
+                .memory_manager
+                .as_ref()
+                .ok_or_else(|| Error::internal("COPY without memory manager"))?;
+            let index = ctx.partition_info.batch_index;
+            loop {
+                if local.processing_tasks {
+                    while self.execute_batch_task(global)? {}
+                    self.flush_batch_data(global)?;
+                    if !manager.is_minimum_batch_index(index)
+                        && manager.out_of_memory(index)
+                        && let Some(blocked) = manager.block_if_out_of_memory(index, &ctx.interrupt_state)
+                    {
+                        return Ok(blocked);
+                    }
+                    local.processing_tasks = false;
+                }
+                if !manager.is_minimum_batch_index(index) {
+                    manager.update_min_batch_index(ctx.partition_info.min_batch_index);
+                    if manager.out_of_memory(index) {
+                        local.processing_tasks = true;
+                        continue;
+                    }
+                }
+                break;
+            }
             if !self.options.write_empty_file && local.rows_copied == 0 {
                 self.batch_file_state(global)?;
             }
             local.rows_copied += chunk.len() as u64;
-            local.batch.count += chunk.len();
-            local.batch.chunks.push(chunk.compacted());
+            if local.batch.is_none() {
+                local.batch = Some(RawBatch::new(
+                    ctx.env.buffer_manager.clone(),
+                    self.children[0].types().to_vec(),
+                )?);
+            }
+            let batch = local
+                .batch
+                .as_mut()
+                .ok_or_else(|| Error::internal("COPY missing local batch"))?;
+            batch.collection.append(&mut local.append_state, chunk)?;
+            let new_memory = batch.collection.allocation_size() as u64;
+            let increase = new_memory
+                .checked_sub(batch.memory_usage)
+                .ok_or_else(|| Error::internal("COPY local allocation decreased"))?;
+            manager.increase_unflushed_memory(increase);
+            batch.memory_usage = new_memory;
             return Ok(SinkResult::NeedMoreInput);
         }
         if self.options.per_thread_output && !self.options.partition_output {
@@ -1141,11 +1320,14 @@ impl Sink for PhysicalCopyToFile {
     ) -> Result<()> {
         local.min_batch_index = partition.min_batch_index;
         self.add_local_batch(global, local)?;
+        if let Some(manager) = &global.batch.memory_manager {
+            manager.update_min_batch_index(partition.min_batch_index);
+        }
         local.batch_index = partition.batch_index;
         Ok(())
     }
 
-    fn combine(&self, _: &ExecutionContext, global: &CopyGlobal, mut local: CopyLocal) -> Result<()> {
+    fn combine(&self, ctx: &ExecutionContext, global: &CopyGlobal, mut local: CopyLocal) -> Result<()> {
         if self.parallel {
             global
                 .inner
@@ -1176,7 +1358,14 @@ impl Sink for PhysicalCopyToFile {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .any_finished = true;
+            if let Some(manager) = &global.batch.memory_manager {
+                manager.update_min_batch_index(ctx.partition_info.min_batch_index);
+            }
             while self.execute_batch_task(global)? {}
+            self.flush_batch_data(global)?;
+            if let Some(manager) = &global.batch.memory_manager {
+                manager.unblock_tasks();
+            }
             return Ok(());
         }
         if let Some(file) = local.file {
@@ -1186,7 +1375,7 @@ impl Sink for PhysicalCopyToFile {
         Ok(())
     }
 
-    fn finalize(&self, _: &ExecutionContext, global: &mut CopyGlobal) -> Result<SinkFinalize> {
+    fn finalize(&self, ctx: &ExecutionContext, global: &mut CopyGlobal) -> Result<SinkFinalize> {
         if self.batch {
             let pending = {
                 let state = global
@@ -1194,7 +1383,13 @@ impl Sink for PhysicalCopyToFile {
                     .state
                     .get_mut()
                     .unwrap_or_else(PoisonError::into_inner);
-                Self::repartition_batches(state, u64::MAX, true);
+                Self::repartition_batches(
+                    state,
+                    u64::MAX,
+                    true,
+                    &ctx.env.buffer_manager,
+                    self.children[0].types(),
+                )?;
                 state.tasks.len()
             };
             if pending <= 1 {
@@ -1303,8 +1498,8 @@ impl Source for PhysicalCopyToFile {
             let files = inner
                 .written_files
                 .iter()
-                .map(|file| Value::varchar(self.returned_path(&file.path)))
-                .collect();
+                .map(|file| Value::try_varchar(&self.returned_path(&file.path)))
+                .collect::<Result<_>>()?;
             columns.push(Vector::constant(&Value::list(LogicalType::VARCHAR, files))?);
         }
         let mut flat = Vec::with_capacity(columns.len());

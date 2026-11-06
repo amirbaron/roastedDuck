@@ -4,8 +4,8 @@
 //! closest thing it can and the gap is noted on the method.
 
 use rustdb::{
-    AccessMode, Config, Connection, Database, LogicalType, LogicalTypeId, MaterializedResult,
-    QueryResultMemoryType, Value,
+    AccessMode, ClientSessionSnapshot, Config, ConfigurationSnapshot, Connection, Database, LogicalType,
+    LogicalTypeId, MaterializedResult, QueryResultMemoryType, Value,
 };
 
 use super::{ColumnClass, Engine, ExtensionLoad, QueryResult, RequireSetting};
@@ -23,6 +23,7 @@ pub struct RustEngine {
 impl RustEngine {
     /// `build_directory` is what `__BUILD_DIRECTORY__` expands to in test files.
     pub fn new(build_directory: impl Into<String>) -> Self {
+        rustdb_capi::register_extension_loader();
         Self {
             build_directory: build_directory.into(),
         }
@@ -58,10 +59,10 @@ impl QueryResult for RustResult {
         self.result().map_or(0, MaterializedResult::row_count)
     }
 
-    fn column_name(&self, column: usize) -> &str {
+    fn column_name(&self, column: usize) -> &[u8] {
         self.result()
             .and_then(|result| result.names().get(column))
-            .map_or("", String::as_str)
+            .map_or(b"".as_slice(), |name| name.as_bytes())
     }
 
     fn column_type(&self, column: usize) -> String {
@@ -104,7 +105,7 @@ fn is_numeric(id: LogicalTypeId) -> bool {
 /// Whether `ty` is or contains the JSON type (the only type with extension casts).
 fn contains_json(ty: &LogicalType) -> bool {
     match ty.id() {
-        LogicalTypeId::Varchar => ty.alias() == Some("JSON"),
+        LogicalTypeId::Varchar => ty.alias().is_some_and(|alias| alias == "JSON"),
         LogicalTypeId::List => ty.child_type().is_some_and(contains_json),
         LogicalTypeId::Array => ty.array_child().is_some_and(|(child, _)| contains_json(child)),
         LogicalTypeId::Map => ty
@@ -177,11 +178,11 @@ fn option_u64(config: &Config, name: &str) -> Option<u64> {
 }
 
 impl Engine for RustEngine {
-    type Config = Config;
+    type Config = ConfigurationSnapshot;
     type Database = Database;
     type Connection = Connection;
     type Result = RustResult;
-    type Session = ();
+    type Session = ClientSessionSnapshot;
 
     fn name(&self) -> &'static str {
         "rust"
@@ -197,7 +198,7 @@ impl Engine for RustEngine {
     ///
     /// `SLT_THREADS=<n>` runs every database with `threads = n` (to check that results do
     /// not depend on the number of threads).
-    fn test_config(&self) -> Result<Config, String> {
+    fn test_config(&self) -> Result<ConfigurationSnapshot, String> {
         let mut config = Config {
             load_extensions: false,
             ..Config::default()
@@ -212,25 +213,28 @@ impl Engine for RustEngine {
                 .map_err(|_| format!("SLT_THREADS must be a number, got {threads:?}"))?;
             config = config.with_option("threads", Value::ubigint(threads));
         }
-        Ok(config)
+        Ok(config.into())
     }
 
-    fn set_option(&self, config: &mut Config, name: &str, value: &str) -> Result<(), String> {
-        config.options.push((name.to_owned(), Value::varchar(value)));
+    fn set_option(&self, config: &mut ConfigurationSnapshot, name: &str, value: &str) -> Result<(), String> {
+        config
+            .config_mut()
+            .options
+            .push((name.to_owned(), Value::varchar(value)));
         Ok(())
     }
 
     /// Gap: `use_temporary_directory` has no `rustdb::Config` equivalent yet.
-    fn set_read_only(&self, config: &mut Config, read_only: bool) {
-        config.access_mode = if read_only {
+    fn set_read_only(&self, config: &mut ConfigurationSnapshot, read_only: bool) {
+        config.config_mut().access_mode = if read_only {
             AccessMode::ReadOnly
         } else {
             AccessMode::Automatic
         };
     }
 
-    fn set_storage_version(&self, config: &mut Config, version: &str) -> Result<(), String> {
-        config.options.push((
+    fn set_storage_version(&self, config: &mut ConfigurationSnapshot, version: &str) -> Result<(), String> {
+        config.config_mut().options.push((
             "storage_compatibility_version".to_owned(),
             Value::varchar(version),
         ));
@@ -239,29 +243,29 @@ impl Engine for RustEngine {
 
     /// The storage version the database uses now, set at open or by a global `SET`
     /// (`runner.db->instance->config.options.serialization_compatibility`).
-    fn inherit_storage_version(&self, config: &mut Config, database: &Database) {
-        let current = database
-            .global_setting("storage_compatibility_version")
-            .or_else(|| option(database.config(), "storage_compatibility_version").cloned());
+    fn inherit_storage_version(&self, config: &mut ConfigurationSnapshot, database: &Database) {
+        let snapshot = database.configuration_snapshot();
+        let current = option(snapshot.config(), "storage_compatibility_version").cloned();
         if let Some(version) = current {
             config
+                .config_mut()
                 .options
                 .push(("storage_compatibility_version".to_owned(), version));
         }
     }
 
-    fn setting(&self, config: &Config, setting: RequireSetting) -> u64 {
+    fn setting(&self, config: &ConfigurationSnapshot, setting: RequireSetting) -> u64 {
         let (name, default) = match setting {
             RequireSetting::DefaultBlockSize => ("default_block_size", DEFAULT_BLOCK_SIZE),
             RequireSetting::AutoloadKnownExtensions => ("autoload_known_extensions", 0),
             RequireSetting::AllowUnsignedExtensions => ("allow_unsigned_extensions", 0),
             RequireSetting::VacuumRebuildIndexes => ("vacuum_rebuild_indexes", 0),
         };
-        option_u64(config, name).unwrap_or(default)
+        option_u64(config.config(), name).unwrap_or(default)
     }
 
-    fn open(&self, path: &str, config: &Config) -> Result<Database, String> {
-        Database::open(path, config).map_err(|error| error.to_string())
+    fn open(&self, path: &str, config: &ConfigurationSnapshot) -> Result<Database, String> {
+        Database::open_from_snapshot(path, config).map_err(|error| error.to_string())
     }
 
     fn load_extension(&self, database: &Database, name: &str) -> Result<ExtensionLoad, String> {
@@ -347,19 +351,15 @@ impl Engine for RustEngine {
         crate::result_file::load(path, names.len()).map(|values| (values, names.len()))
     }
 
-    /// Carries the options set on the main connection over to the restarted database.
-    /// Gap: the search path is not carried over yet.
-    fn save_session(&self, main: &Connection, config: &mut Config) {
-        for (name, value) in main.assigned_settings() {
-            config
-                .options
-                .retain(|(existing, _)| !existing.eq_ignore_ascii_case(&name));
-            config.options.push((name, value));
-        }
+    /// Database globals/registered options and client configuration have separate
+    /// lifetimes in DuckDB's `RestartCommand`.
+    fn save_session(&self, main: &Connection, config: &mut ConfigurationSnapshot) -> ClientSessionSnapshot {
+        *config = main.configuration_snapshot();
+        main.session_snapshot()
     }
 
-    fn restore_session(&self, _main: &mut Connection, (): ()) -> Result<(), String> {
-        Ok(())
+    fn restore_session(&self, main: &mut Connection, session: ClientSessionSnapshot) -> Result<(), String> {
+        main.restore_session(session).map_err(|error| error.to_string())
     }
 }
 

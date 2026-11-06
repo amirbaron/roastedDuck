@@ -146,13 +146,13 @@ impl<K, V> DefaultValue for OrderedMap<K, V> {
     }
 }
 
-impl<V> DefaultValue for CaseInsensitiveMap<V> {
+impl<V, K> DefaultValue for CaseInsensitiveMap<V, K> {
     fn is_default(&self) -> bool {
         self.is_empty()
     }
 
     fn default_value() -> Self {
-        Self::new()
+        Self::new_with_keys()
     }
 }
 

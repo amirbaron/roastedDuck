@@ -16,7 +16,7 @@ use crate::operator::{LogicalKind, LogicalOperator};
 fn recursive_binding(
     alias: BindingAlias,
     index: u64,
-    names: &[String],
+    names: &[rustdb_common::ByteString],
     types: &[rustdb_types::LogicalType],
 ) -> Result<Binding> {
     Binding::new(

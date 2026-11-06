@@ -12,8 +12,8 @@ use super::prelude::*;
 /// other nodes are returned as they are.
 pub(super) fn to_recursive_cte(
     node: QueryNode,
-    name: &str,
-    aliases: &[String],
+    name: &[u8],
+    aliases: &[ByteString],
     key_targets: &[ParsedExpression],
 ) -> Result<QueryNode> {
     let QueryNodeKind::SetOperation(set_node) = &node.kind else {
@@ -60,7 +60,7 @@ pub(super) fn to_recursive_cte(
         return Err(Error::internal("Expected two operands in recursive CTE"));
     };
     let mut recursive_node = build::query_node(QueryNodeKind::RecursiveCte(Box::new(RecursiveCteNode {
-        cte_name: name.to_owned(),
+        cte_name: name.to_owned().into(),
         union_all,
         left: Box::new(left),
         right: Box::new(right),
@@ -74,10 +74,10 @@ pub(super) fn to_recursive_cte(
 /// `PEGTransformerFactory::WrapRecursiveView`: `SELECT aliases FROM view` with the
 /// recursive node as the CTE `view`.
 fn wrap_recursive_view(
-    catalog: &str,
-    schema: &str,
-    view_name: &str,
-    aliases: &[String],
+    catalog: &[u8],
+    schema: &[u8],
+    view_name: &[u8],
+    aliases: &[ByteString],
     inner_node: QueryNode,
 ) -> SelectStatement {
     let cte_info = CommonTableExpressionInfo {
@@ -92,10 +92,10 @@ fn wrap_recursive_view(
         .map(|column| ParsedExpression::column_ref([column.clone()]))
         .collect();
     *outer_select.from_table = build::table_ref(TableRefKind::BaseTable(Box::new(BaseTableRef {
-        schema_name: schema.to_owned(),
-        table_name: view_name.to_owned(),
+        schema_name: schema.to_owned().into(),
+        table_name: view_name.to_owned().into(),
         column_name_alias: Vec::new(),
-        catalog_name: catalog.to_owned(),
+        catalog_name: catalog.to_owned().into(),
         at_clause: None,
     })));
     let mut outer_node = build::query_node(QueryNodeKind::Select(Box::new(outer_select)));
@@ -105,10 +105,10 @@ fn wrap_recursive_view(
 
 /// `PEGTransformerFactory::ConvertToRecursiveView`: the query of a recursive view.
 fn convert_to_recursive_view(
-    catalog: &str,
-    schema: &str,
-    view_name: &str,
-    aliases: &[String],
+    catalog: &[u8],
+    schema: &[u8],
+    view_name: &[u8],
+    aliases: &[ByteString],
     node: QueryNode,
 ) -> Result<SelectStatement> {
     let result_node = to_recursive_cte(node, view_name, aliases, &[])?;
@@ -128,7 +128,7 @@ impl PegTransformer {
         let list = parse_result.list()?;
         let if_not_exists = list.has(2)?;
         let qualified_name: QualifiedName = self.transform_child(list, 3)?;
-        let column_list: Vec<String> = self.transform_optional(list, 4)?.unwrap_or_default();
+        let column_list: Vec<ByteString> = self.transform_optional(list, 4)?.unwrap_or_default();
         let select_statement: SelectStatement = self.transform_child(list, 6)?;
         let query = if list.has(0)? {
             convert_to_recursive_view(

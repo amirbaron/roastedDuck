@@ -2,8 +2,8 @@
 //! runs the plan, discarding its rows, then returns the plan annotated with the rows
 //! and time of every operator.
 
+use rustdb_common::{ByteString, byte_format, byte_write};
 use std::collections::HashMap;
-use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_ast::ExplainFormat;
@@ -22,7 +22,8 @@ pub struct PhysicalExplainAnalyze {
     types: Vec<LogicalType>,
     format: ExplainFormat,
     /// The statement's text, shown above the profile.
-    query: String,
+    query: ByteString,
+    client: Option<Arc<rustdb_function::FunctionClient>>,
     children: [PhysicalRef; 1],
     /// How the delim joins of the plan are shown, by operator.
     delim_joins: HashMap<usize, DelimExplain>,
@@ -32,7 +33,7 @@ impl PhysicalExplainAnalyze {
     pub(crate) fn new(
         types: Vec<LogicalType>,
         format: ExplainFormat,
-        query: String,
+        query: ByteString,
         child: PhysicalRef,
         delim_joins: HashMap<usize, DelimExplain>,
     ) -> Self {
@@ -40,13 +41,14 @@ impl PhysicalExplainAnalyze {
             types,
             format,
             query,
+            client: rustdb_function::file_system::opener(),
             children: [child],
             delim_joins,
         }
     }
 
     /// The profile as DuckDB's text output (`QueryProfiler::QueryTreeToStream`).
-    fn render_profile(&self, profiler: &QueryProfiler) -> String {
+    fn render_profile(&self, profiler: &QueryProfiler) -> Result<ByteString> {
         const TOTAL_BOX_WIDTH: usize = 50;
         // Without a format, the connection's profiling format applies
         // (`QueryProfiler::GetPrintFormat`).
@@ -60,41 +62,44 @@ impl PhysicalExplainAnalyze {
             profiler,
             delim_joins: &self.delim_joins,
         });
-        let plan = render(renderer_kind(self.format), tree);
+        let plan = render(renderer_kind(self.format), tree)?;
         if !matches!(self.format, ExplainFormat::Default | ExplainFormat::Text) {
-            return plan;
+            return Ok(plan);
         }
-        let mut out = String::new();
-        out.push_str("┌─────────────────────────────────────┐\n");
-        out.push_str("│┌───────────────────────────────────┐│\n");
-        out.push_str("││    Query Profiling Information    ││\n");
-        out.push_str("│└───────────────────────────────────┘│\n");
-        out.push_str("└─────────────────────────────────────┘\n");
-        out.push_str(&self.query.replace('\n', " "));
-        out.push('\n');
-        out.push_str("┌────────────────────────────────────────────────┐\n");
-        out.push_str("│┌──────────────────────────────────────────────┐│\n");
+        let mut out = ByteString::new();
+        out.push_bytes("┌─────────────────────────────────────┐\n");
+        out.push_bytes("│┌───────────────────────────────────┐│\n");
+        out.push_bytes("││    Query Profiling Information    ││\n");
+        out.push_bytes("│└───────────────────────────────────┘│\n");
+        out.push_bytes("└─────────────────────────────────────┘\n");
+        out.push_bytes(self.query.replace_byte(b'\n', b" "));
+        out.push(b'\n');
+        out.push_bytes("┌────────────────────────────────────────────────┐\n");
+        out.push_bytes("│┌──────────────────────────────────────────────┐│\n");
         let total_time = format!("Total Time: {}", render_timing(profiler.elapsed().as_secs_f64()));
-        let _ = writeln!(out, "││{}││", draw_padded(&total_time, TOTAL_BOX_WIDTH - 4));
-        out.push_str("│└──────────────────────────────────────────────┘│\n");
-        out.push_str("└────────────────────────────────────────────────┘\n");
-        out.push_str(&plan);
-        out
+        let _ = byte_write!(out, "││{}││\n", draw_padded(&total_time, TOTAL_BOX_WIDTH - 4));
+        out.push_bytes("│└──────────────────────────────────────────────┘│\n");
+        out.push_bytes("└────────────────────────────────────────────────┘\n");
+        if let Some(client) = &self.client {
+            out.push_bytes(client.http_stats().render());
+        }
+        out.push_bytes(&plan);
+        Ok(out)
     }
 }
 
 impl PhysicalExplainAnalyze {
     /// The profile as DuckDB's JSON profiling output (`QueryProfiler::ToJSON`).
-    fn render_json(&self, profiler: &QueryProfiler) -> String {
-        let mut out = String::from("{\n");
+    fn render_json(&self, profiler: &QueryProfiler) -> Result<ByteString> {
+        let mut out = ByteString::from("{\n");
         let cumulative = cumulative_cardinality(self, profiler);
-        let _ = writeln!(out, "    \"latency\": {},", profiler.elapsed().as_secs_f64());
-        let _ = writeln!(out, "    \"query_name\": \"{}\",", json_escape(&self.query));
-        let _ = writeln!(out, "    \"cumulative_cardinality\": {cumulative},");
-        out.push_str("    \"children\": [\n");
-        render_json_operator(self, profiler, 2, &mut out);
-        out.push_str("\n    ]\n}");
-        out
+        let _ = byte_write!(out, "    \"latency\": {},\n", profiler.elapsed().as_secs_f64());
+        let _ = byte_write!(out, "    \"query_name\": \"{}\",\n", json_escape(&self.query)?);
+        let _ = byte_write!(out, "    \"cumulative_cardinality\": {cumulative},\n");
+        out.push_bytes("    \"children\": [\n");
+        render_json_operator(self, profiler, 2, &mut out)?;
+        out.push_bytes("\n    ]\n}");
+        Ok(out)
     }
 }
 
@@ -118,83 +123,90 @@ fn cumulative_cardinality(op: &dyn PhysicalOperator, profiler: &QueryProfiler) -
 }
 
 /// Escapes text for a JSON string.
-fn json_escape(text: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '\n' => result.push_str("\\n"),
-            '\r' => result.push_str("\\r"),
-            '\t' => result.push_str("\\t"),
-            '"' => result.push_str("\\\""),
-            '\\' => result.push_str("\\\\"),
-            c if u32::from(c) < 0x20 => {
-                let _ = write!(result, "\\u{:04x}", u32::from(c));
-            }
-            c => result.push(c),
-        }
-    }
-    result
+fn json_escape(text: impl AsRef<[u8]>) -> Result<ByteString> {
+    // Profiling stores strings as Values before yyjson writes its C-string view.
+    let value = Value::try_varchar(text.as_ref())?;
+    let bytes = value.as_bytes().unwrap_or_default();
+    let bytes = bytes.split(|byte| *byte == 0).next().unwrap_or_default();
+    let quoted = rustdb_common::string_util::json_quote_bytes(bytes);
+    Ok(quoted[1..quoted.len() - 1].into())
 }
 
 /// One operator of the JSON profile, indented by `level` steps of four spaces.
-fn render_json_operator(op: &dyn PhysicalOperator, profiler: &QueryProfiler, level: usize, out: &mut String) {
+fn render_json_operator(
+    op: &dyn PhysicalOperator,
+    profiler: &QueryProfiler,
+    level: usize,
+    out: &mut ByteString,
+) -> Result<()> {
     let indent = "    ".repeat(level);
     let inner = "    ".repeat(level + 1);
     let profile = profiler.profile(op);
-    let _ = writeln!(out, "{indent}{{");
-    let _ = writeln!(
+    let _ = byte_write!(out, "{indent}{{\n");
+    let _ = byte_write!(
         out,
-        "{inner}\"operator_type\": \"{}\",",
-        json_escape(&op.profiler_name())
+        "{inner}\"operator_type\": \"{}\",\n",
+        json_escape(op.profiler_name())?
     );
-    let _ = writeln!(out, "{inner}\"operator_timing\": {},", profile.time.as_secs_f64());
-    let _ = writeln!(
+    let _ = byte_write!(
         out,
-        "{inner}\"operator_name\": \"{}\",",
-        json_escape(&op.explain_name())
+        "{inner}\"operator_timing\": {},\n",
+        profile.time.as_secs_f64()
+    );
+    let _ = byte_write!(
+        out,
+        "{inner}\"operator_name\": \"{}\",\n",
+        json_escape(op.explain_name())?
     );
     let mut params = op.params_to_string(0);
     for (key, value) in profiler.extra_info(op) {
         params.insert(key, value);
     }
-    let entries: Vec<String> = params
+    let entries: Vec<ByteString> = params
         .iter()
-        .filter(|(key, _)| !key.starts_with("__"))
-        .map(|(key, value)| format!("{inner}    \"{}\": \"{}\"", json_escape(key), json_escape(value)))
-        .collect();
+        .filter(|(key, _)| !key.starts_with(b"__"))
+        .map(|(key, value)| {
+            Ok(byte_format!(
+                "{inner}    \"{}\": \"{}\"",
+                json_escape(key)?,
+                json_escape(value)?
+            ))
+        })
+        .collect::<Result<_>>()?;
     if entries.is_empty() {
-        let _ = writeln!(out, "{inner}\"extra_info\": {{}},");
+        let _ = byte_write!(out, "{inner}\"extra_info\": {{}},\n");
     } else {
-        let _ = writeln!(
+        let _ = byte_write!(
             out,
-            "{inner}\"extra_info\": {{\n{}\n{inner}}},",
-            entries.join(",\n")
+            "{inner}\"extra_info\": {{\n{}\n{inner}}},\n",
+            ByteString::join(&entries, b",\n")
         );
     }
-    let _ = writeln!(
+    let _ = byte_write!(
         out,
-        "{inner}\"operator_cardinality\": {},",
+        "{inner}\"operator_cardinality\": {},\n",
         operator_rows(op, profiler)
     );
-    let _ = writeln!(
+    let _ = byte_write!(
         out,
-        "{inner}\"cumulative_cardinality\": {},",
+        "{inner}\"cumulative_cardinality\": {},\n",
         cumulative_cardinality(op, profiler)
     );
     let children = op.children();
     if children.is_empty() {
-        let _ = writeln!(out, "{inner}\"children\": []");
+        let _ = byte_write!(out, "{inner}\"children\": []\n");
     } else {
-        let _ = writeln!(out, "{inner}\"children\": [");
+        let _ = byte_write!(out, "{inner}\"children\": [\n");
         for (index, child) in children.iter().enumerate() {
             if index > 0 {
-                out.push_str(",\n");
+                out.push_bytes(",\n");
             }
-            render_json_operator(child.as_ref(), profiler, level + 2, out);
+            render_json_operator(child.as_ref(), profiler, level + 2, out)?;
         }
-        let _ = writeln!(out, "\n{inner}]");
+        let _ = byte_write!(out, "\n{inner}]\n");
     }
-    let _ = write!(out, "{indent}}}");
+    let _ = byte_write!(out, "{indent}}}");
+    Ok(())
 }
 
 /// A timing in seconds as DuckDB prints it (`RenderTiming`).
@@ -292,12 +304,12 @@ impl RenderSource for ProfileNode<'_> {
             }
             ProfileNode::DelimDistinct { delim } => {
                 let mut params = RenderParams::new();
-                let groups: Vec<String> = delim
+                let groups: Vec<ByteString> = delim
                     .distinct_groups
                     .iter()
-                    .map(|index| format!("#{index}"))
+                    .map(|index| byte_format!("#{index}"))
                     .collect();
-                params.insert("Groups".to_owned(), groups.join("\n"));
+                params.insert("Groups".to_owned(), ByteString::join(&groups, b"\n"));
                 add_profile(&mut params, 0, 0.0);
                 RenderTreeNode::new("HASH_GROUP_BY".to_owned(), params)
             }
@@ -411,12 +423,12 @@ impl Source for PhysicalExplainAnalyze {
             .profiler
             .clone()
             .unwrap_or_else(|| Arc::new(QueryProfiler::new()));
-        let text = self.render_profile(&profiler);
+        let text = self.render_profile(&profiler)?;
         let mut output = DataChunk::with_types(&self.types, 1);
         output
             .column_mut(0)
             .set_value(0, &Value::varchar("analyzed_plan"))?;
-        output.column_mut(1).set_value(0, &Value::varchar(text))?;
+        output.column_mut(1).set_value(0, &Value::try_varchar(&text)?)?;
         output.set_len(1);
         *chunk = output;
         Ok(SourceResult::Finished)

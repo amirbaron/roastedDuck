@@ -54,7 +54,7 @@ impl StorageOptions {
         if self.storage_version.is_none_or(|version| version < v1_4_0)
             && let Some(given) = storage_version_given
         {
-            return Err(rustdb_common::Error::invalid_input(format!(
+            return Err(rustdb_common::Error::invalid_input(rustdb_common::byte_format!(
                 "Explicit provided STORAGE_VERSION (\"{given}\") and ENCRYPTION_KEY (storage >= v1.4.0) are not \
                  compatible"
             )));
@@ -72,7 +72,7 @@ impl StorageOptions {
             (None, None) => self.storage_version = Some(v1_5_0),
             (Some(version), given) if target == EncryptionVersion::V0_1 && version < v1_5_0 => match given {
                 Some(given) if requested == target => {
-                    return Err(rustdb_common::Error::invalid_input(format!(
+                    return Err(rustdb_common::Error::invalid_input(rustdb_common::byte_format!(
                         "Explicit provided STORAGE_VERSION (\"{given}\") is not compatible with \
                          'debug_encryption_version = v1' (storage >= v1.5.0)"
                     )));
@@ -204,7 +204,7 @@ impl Default for CheckpointConfig {
 /// The storage of one database file.
 #[derive(Debug)]
 pub struct StorageManager {
-    path: String,
+    path: rustdb_common::ByteString,
     block_manager: Arc<SingleFileBlockManager>,
     metadata: Arc<MetadataManager>,
     io: Arc<TableIoManager>,
@@ -220,26 +220,23 @@ pub struct StorageManager {
 impl StorageManager {
     /// Opens the database file at `path`, creating it if it does not exist
     /// (`SingleFileStorageManager::LoadDatabase`).
-    pub fn open(path: &str, buffer_manager: BufferManager, options: StorageOptions) -> Result<Self> {
+    pub fn open(
+        path: impl AsRef<[u8]>,
+        buffer_manager: BufferManager,
+        options: StorageOptions,
+    ) -> Result<Self> {
+        let path = path.as_ref();
         let block_options = BlockManagerOptions {
             read_only: options.read_only,
             block_alloc_size: options.block_alloc_size,
             storage_version: options.storage_version,
         };
-        let exists = std::path::Path::new(path).exists();
+        let file_system = crate::file_system::DatabaseFileSystem::for_path(path);
+        let exists = file_system.exists(path)?;
         let created = !exists && !options.read_only;
         if created {
             // A WAL without its database file belongs to nothing.
-            match std::fs::remove_file(wal_path(path)) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(rustdb_common::Error::new(
-                        rustdb_common::ErrorKind::Io,
-                        format!("Could not remove file \"{}\": {error}", wal_path(path)),
-                    ));
-                }
-            }
+            file_system.remove_if_exists(&wal_path(path))?;
         }
         let keys = buffer_manager.encryption_keys();
         let block_manager = Arc::new(if created {
@@ -260,7 +257,7 @@ impl StorageManager {
             options.row_group_size,
         ));
         Ok(Self {
-            path: path.to_owned(),
+            path: path.into(),
             block_manager,
             metadata,
             io,
@@ -281,19 +278,19 @@ impl StorageManager {
     }
 
     /// The path of the WAL (`GetWALPath`).
-    pub fn wal_path(&self) -> String {
+    pub fn wal_path(&self) -> rustdb_common::ByteString {
         wal_path(&self.path)
     }
 
     /// The path of the WAL commits are written to while a checkpoint runs
     /// (`GetCheckpointWALPath`).
-    pub fn checkpoint_wal_path(&self) -> String {
+    pub fn checkpoint_wal_path(&self) -> rustdb_common::ByteString {
         checkpoint_wal_path(&self.path)
     }
 
     /// The path the WAL and the checkpoint WAL are merged into when a checkpoint that
     /// ran concurrently with commits failed (`GetRecoveryWALPath`).
-    pub fn recovery_wal_path(&self) -> String {
+    pub fn recovery_wal_path(&self) -> rustdb_common::ByteString {
         recovery_wal_path(&self.path)
     }
 
@@ -319,7 +316,7 @@ impl StorageManager {
         self.wal.get()
     }
 
-    pub fn path(&self) -> &str {
+    pub fn path(&self) -> &[u8] {
         &self.path
     }
 

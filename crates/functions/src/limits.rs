@@ -51,7 +51,7 @@ pub(crate) fn maximum_value(ty: &LogicalType) -> Result<Value> {
             Value::decimal(decimal_max(width), width, scale)
         }
         L::Enum => {
-            let size = ty.enum_values().map_or(0, <[String]>::len);
+            let size = ty.enum_values().map_or(0, <[_]>::len);
             Value::enum_value(ty.clone(), size.saturating_sub(1) as u32)
         }
         L::Bignum => Value::bytes(LogicalType::BIGNUM, &double_max_bignum(false)),

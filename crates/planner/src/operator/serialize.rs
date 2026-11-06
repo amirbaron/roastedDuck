@@ -259,6 +259,9 @@ impl SerializeObject for LogicalOperator {
             LogicalKind::Attach(info) => serialize_simple(&ParseInfo::Attach(info.clone()), serializer),
             LogicalKind::Detach(info) => serialize_simple(&ParseInfo::Detach(info.clone()), serializer),
             LogicalKind::Load(info) => serialize_simple(&ParseInfo::Load(info.clone()), serializer),
+            LogicalKind::UpdateExtensions(info) => {
+                serialize_simple(&ParseInfo::UpdateExtensions(info.clone()), serializer)
+            }
             LogicalKind::AlterDatabase(info) => {
                 serialize_simple(&ParseInfo::Alter(Box::new(info.clone())), serializer)
             }
@@ -269,8 +272,8 @@ impl SerializeObject for LogicalOperator {
                 // `DEALLOCATE` is a `DROP` of the prepared statement (`Binder::Bind(DropStatement&)`).
                 let info = DropInfo {
                     catalog_type: CatalogType::PreparedStatement,
-                    catalog: String::new(),
-                    schema: String::new(),
+                    catalog: rustdb_common::ByteString::new(),
+                    schema: rustdb_common::ByteString::new(),
                     name: name.clone(),
                     if_not_found: OnEntryNotFound::ThrowException,
                     cascade: false,
@@ -368,10 +371,22 @@ impl SerializeObject for LogicalOperator {
                 serializer.write_property(201, "column_id_map", &IndexMap(&vacuum.column_id_map))
             }
             LogicalKind::CopyToFile(copy) => serialize_copy_to_file(copy, serializer),
-            LogicalKind::Export(_) => Err(Error::not_implemented(format!(
-                "Serializing {} is not supported yet",
-                self.operator_type().name()
-            ))),
+            LogicalKind::Export(export) => {
+                let copy_info = ParseInfo::Copy(Box::new(export.copy_info.clone()));
+                let exported_tables = ParseInfo::BoundExportData(rustdb_ast::BoundExportData {
+                    data: export
+                        .tables
+                        .iter()
+                        .cloned()
+                        .map(|table_data| rustdb_ast::ExportedTableInfo { table_data })
+                        .collect(),
+                });
+                properties::LogicalExport {
+                    copy_info: &copy_info,
+                    exported_tables: &exported_tables,
+                }
+                .serialize_fields(serializer)
+            }
             LogicalKind::Explain { .. }
             | LogicalKind::Prepare { .. }
             | LogicalKind::Execute { .. }
@@ -432,9 +447,10 @@ fn serialize_get(get: &LogicalGet, serializer: &mut dyn Serializer) -> Result<()
     if table_scan.is_none() && get.function.serialize.is_none() {
         // Without bind data the arguments are kept to bind the function again.
         serializer.write_property(206, "parameters", &get.parameters)?;
-        let named: Vec<(&str, &rustdb_types::Value)> = named_parameters_in_map_order(&get.named_parameters)
-            .map(|(name, value)| (name.as_str(), value))
-            .collect();
+        let named: Vec<(&rustdb_common::ByteString, &rustdb_types::Value)> =
+            named_parameters_in_map_order(&get.named_parameters)
+                .map(|(name, value)| (name, value))
+                .collect();
         serializer.write_property(207, "named_parameters", &NamedParameters(&named))?;
         serializer.write_property(208, "input_table_types", &get.input_table_types)?;
         serializer.write_property(209, "input_table_names", &get.input_table_names)?;
@@ -537,21 +553,27 @@ fn serialize_copy_to_file(copy: &LogicalCopyToFile, serializer: &mut dyn Seriali
 /// `TableScanSerialize`: the scanned table.
 fn serialize_table_scan_bind_data(
     serializer: &mut dyn Serializer,
-    catalog: &str,
-    schema: &str,
-    table: &str,
+    catalog: impl AsRef<[u8]>,
+    schema: impl AsRef<[u8]>,
+    table: impl AsRef<[u8]>,
     is_create_index: bool,
 ) -> Result<()> {
-    serializer.write_property(100, "catalog", catalog)?;
-    serializer.write_property(101, "schema", schema)?;
-    serializer.write_property(102, "table", table)?;
+    serializer.on_property_begin(100, "catalog");
+    serializer.write_string_bytes(catalog.as_ref());
+    serializer.on_property_end();
+    serializer.on_property_begin(101, "schema");
+    serializer.write_string_bytes(schema.as_ref());
+    serializer.on_property_end();
+    serializer.on_property_begin(102, "table");
+    serializer.write_string_bytes(table.as_ref());
+    serializer.on_property_end();
     serializer.write_property(103, "is_index_scan", &false)?;
     serializer.write_property(104, "is_create_index", &is_create_index)?;
     serializer.write_property_with_default(105, "result_ids", &Vec::<i64>::new())
 }
 
 /// A `named_parameter_map_t` (an unordered map) in its iteration order.
-struct NamedParameters<'a>(&'a [(&'a str, &'a rustdb_types::Value)]);
+struct NamedParameters<'a>(&'a [(&'a rustdb_common::ByteString, &'a rustdb_types::Value)]);
 
 impl rustdb_serde::Serialize for NamedParameters<'_> {
     fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
@@ -592,7 +614,11 @@ impl rustdb_serde::Serialize for IndexMap<'_> {
 }
 
 /// `TableCatalogEntry::GetInfo` of the modified table.
-fn table_info(catalog: &str, schema: &str, entry: &CatalogEntry) -> Result<CreateInfo> {
+fn table_info(
+    catalog: impl AsRef<[u8]>,
+    schema: impl AsRef<[u8]>,
+    entry: &CatalogEntry,
+) -> Result<CreateInfo> {
     match &entry.kind {
         EntryKind::Table(table) => Ok(rustdb_catalog::checkpoint::table_create_info(
             catalog, schema, entry, table,

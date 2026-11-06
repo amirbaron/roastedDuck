@@ -23,10 +23,12 @@ impl SerializationCompatibility {
     pub const DEFAULT_VERSION_NAME: &'static str = "v0.10.2";
 
     /// Looks up a release name from `src/storage/version_map.json` (or `"latest"`).
-    pub fn from_version_name(name: &str) -> Result<Self> {
-        let Some(&(found, version)) = SERIALIZATION_VERSIONS.iter().find(|(n, _)| *n == name) else {
+    pub fn from_version_name(name: impl AsRef<[u8]>) -> Result<Self> {
+        let name = name.as_ref();
+        let Some(&(found, version)) = SERIALIZATION_VERSIONS.iter().find(|(n, _)| n.as_bytes() == name)
+        else {
             let candidates: Vec<&str> = SERIALIZATION_VERSIONS.iter().map(|(n, _)| *n).collect();
-            return Err(Error::invalid_input(format!(
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "The version string '{name}' is not a known DuckDB version, valid options are: {}",
                 candidates.join(", ")
             )));

@@ -32,7 +32,7 @@ fn is_integral_call(expression: &Expression, name: &str) -> bool {
     let ExpressionKind::Function(function) = &expression.kind else {
         return false;
     };
-    &*function.function.name == name
+    function.function.name.as_bytes() == name.as_bytes()
         && expression.return_type.is_integral()
         && function.children.len() == 2
         && function

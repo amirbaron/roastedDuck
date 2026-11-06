@@ -105,11 +105,11 @@ thread_local! {
 pub struct BloomTableFilter {
     filter: Arc<BloomFilter>,
     /// The build key, as `EXPLAIN` shows it.
-    key_column_name: String,
+    key_column_name: rustdb_common::ByteString,
 }
 
 impl BloomTableFilter {
-    pub fn new(filter: Arc<BloomFilter>, key_column_name: String) -> Self {
+    pub fn new(filter: Arc<BloomFilter>, key_column_name: rustdb_common::ByteString) -> Self {
         Self {
             filter,
             key_column_name,
@@ -204,8 +204,8 @@ impl ExpressionFilter for BloomTableFilter {
         }
     }
 
-    fn to_sql(&self, column_name: &str) -> String {
-        format!("{column_name} IN BF({})", self.key_column_name)
+    fn to_sql(&self, column_name: &[u8]) -> rustdb_common::ByteString {
+        rustdb_common::byte_format!("{column_name} IN BF({})", self.key_column_name)
     }
 
     fn as_any(&self) -> &dyn Any {

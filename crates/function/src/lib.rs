@@ -16,8 +16,10 @@ pub mod external_file_cache;
 pub mod file_system;
 pub mod function_descriptions;
 pub mod logging;
+pub mod object_store;
 pub mod pragma;
 pub mod random;
+pub mod registered_files;
 mod scalar;
 mod table;
 
@@ -40,9 +42,9 @@ pub use scalar::{
 pub use table::{
     FileFilterPushdown, InOutResult, ParallelScanGlobal, ParallelScanLocal, ParallelTableScan,
     PartitionRowGroup, PartitionStatistics, TableFunction, TableFunctionBind, TableFunctionBindInput,
-    TableFunctionBindOutput, TableFunctionBindReplace, TableFunctionPartitionInfo,
-    TableFunctionPartitionStats, TableFunctionPushdownFilters, TableFunctionReplacement, TableFunctionScan,
-    TableFunctionSerialize, TableFunctionSet, TableFunctionStatistics, TableFunctionTypePushdown,
-    TableFunctionVirtualColumns, TableInOutFunction, TablePartitionInfo, TableScanState,
-    named_parameters_in_map_order,
+    TableFunctionBindOutput, TableFunctionBindReplace, TableFunctionFilterSupport,
+    TableFunctionPartitionInfo, TableFunctionPartitionStats, TableFunctionPushdownFilters,
+    TableFunctionReplacement, TableFunctionScan, TableFunctionSerialize, TableFunctionSet,
+    TableFunctionStatistics, TableFunctionTypePushdown, TableFunctionVirtualColumns, TableInOutFunction,
+    TablePartitionInfo, TableScanState, named_parameters_in_map_order,
 };

@@ -38,6 +38,15 @@ pub(crate) fn as_text(value: &Value) -> Result<String> {
         .ok_or_else(|| Error::internal("VARCHAR cast did not produce a string"))
 }
 
+/// Native VARCHAR bytes for metadata paths that do not require a Unicode text view.
+pub(crate) fn as_text_bytes(value: &Value) -> Result<rustdb_common::ByteString> {
+    let value = value.default_cast_as(&LogicalType::VARCHAR)?;
+    value
+        .as_bytes()
+        .map(Into::into)
+        .ok_or_else(|| Error::internal("VARCHAR cast did not produce bytes"))
+}
+
 /// DuckDB's `CastExceptionText` for a numeric value that does not fit `target` (raised as
 /// an Invalid Input Error by `Cast::Operation`).
 pub(crate) fn cast_error<T: rustdb_function::cast::numeric::CastNumber>(value: T, target: &str) -> Error {

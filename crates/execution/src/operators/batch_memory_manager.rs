@@ -125,8 +125,7 @@ impl BatchMemoryManager {
             // Asked for more and declined: stop asking.
             state.can_increase_memory = false;
         }
-        self.available_memory
-            .store(next_reservation, Ordering::Release);
+        self.available_memory.store(next_reservation, Ordering::Release);
     }
 
     /// `SetMemorySize` from outside (`MaxThreads`).
@@ -146,7 +145,9 @@ impl BatchMemoryManager {
     /// Whether the unflushed batches take all the memory and the sink of `batch_index`,
     /// not the lowest batch, should wait (`OutOfMemory`).
     pub fn out_of_memory(&self, batch_index: u64) -> bool {
-        if self.unflushed_memory_usage.load(Ordering::Acquire) >= self.available_memory.load(Ordering::Acquire) {
+        if self.unflushed_memory_usage.load(Ordering::Acquire)
+            >= self.available_memory.load(Ordering::Acquire)
+        {
             let mut state = lock(&self.state);
             if batch_index > self.min_batch_index.load(Ordering::Acquire) {
                 // Out of memory and not the lowest batch: try to get more.
@@ -172,8 +173,7 @@ impl BatchMemoryManager {
             .load(Ordering::Acquire)
             .max(current_min_batch_index);
         if new_batch_index != self.min_batch_index.load(Ordering::Acquire) {
-            self.min_batch_index
-                .store(new_batch_index, Ordering::Release);
+            self.min_batch_index.store(new_batch_index, Ordering::Release);
             state.tasks.unblock_tasks();
         }
     }
@@ -206,9 +206,30 @@ impl BatchMemoryManager {
 
     /// Blocks the sink of `batch_index` unless the lowest batch reached it meanwhile
     /// (the locked part of `PhysicalBatchInsert::Sink`); `None` if it may go on.
-    pub fn block_unless_minimum(&self, batch_index: u64, interrupt_state: &InterruptState) -> Option<SinkResult> {
+    pub fn block_unless_minimum(
+        &self,
+        batch_index: u64,
+        interrupt_state: &InterruptState,
+    ) -> Option<SinkResult> {
         let mut state = lock(&self.state);
         if self.is_minimum_batch_index(batch_index) {
+            return None;
+        }
+        Some(state.tasks.block_sink(interrupt_state))
+    }
+
+    /// COPY rechecks both conditions under the wakeup lock, so a flush between
+    /// helping queued tasks and registering the callback cannot lose a wakeup.
+    pub fn block_if_out_of_memory(
+        &self,
+        batch_index: u64,
+        interrupt_state: &InterruptState,
+    ) -> Option<SinkResult> {
+        let mut state = lock(&self.state);
+        if self.is_minimum_batch_index(batch_index)
+            || self.unflushed_memory_usage.load(Ordering::Acquire)
+                < self.available_memory.load(Ordering::Acquire)
+        {
             return None;
         }
         Some(state.tasks.block_sink(interrupt_state))

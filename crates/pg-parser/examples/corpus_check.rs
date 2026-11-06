@@ -17,16 +17,18 @@
 
 use std::collections::BTreeMap;
 use std::error::Error;
-use std::fmt::Write as _;
 use std::time::Instant;
 
-use rustdb_common::ErrorKind;
-use rustdb_pg_parser::{nodes, parse, strip_unicode_spaces, tokenize};
+use rustdb_common::{ByteString, byte_write};
+use rustdb_pg_parser::{parse_bytes, strip_unicode_spaces_bytes, tokenize_bytes};
+#[path = "support/pg_native.rs"]
+mod pg_native;
+use pg_native::render;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 /// Reads records of the form `<byte length>\n<bytes>`.
-fn read_corpus(path: &str) -> Result<Vec<String>> {
+fn read_corpus(path: &str) -> Result<Vec<ByteString>> {
     let data = std::fs::read(path).map_err(|e| format!("cannot read {path}: {e}"))?;
     let mut records = Vec::new();
     let mut rest = &data[..];
@@ -39,66 +41,29 @@ fn read_corpus(path: &str) -> Result<Vec<String>> {
         let body = rest
             .get(newline + 1..newline + 1 + len)
             .ok_or("truncated record")?;
-        records.push(String::from_utf8_lossy(body).into_owned());
+        records.push(body.into());
         rest = &rest[newline + 1 + len..];
     }
     Ok(records)
 }
 
-fn json_string(out: &mut String, s: &str) {
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if u32::from(c) < 0x20 => {
-                let _ = write!(out, "\\u{:04x}", u32::from(c));
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-}
-
-/// The Rust result in the oracle's format.
-fn render(sql: &str) -> String {
-    let stripped = strip_unicode_spaces(sql);
-    match parse(stripped.as_deref().unwrap_or(sql)) {
-        Ok(stmts) => format!("{{\"ok\":true,\"tree\":{}}}", nodes::to_json(&stmts)),
-        Err(err) => {
-            let mut out = String::from("{\"ok\":false,\"msg\":");
-            if err.kind() == ErrorKind::Parser {
-                json_string(&mut out, &err.raw_message());
-            } else {
-                json_string(&mut out, &err.to_string());
-            }
-            match err.query_location() {
-                Some(pos) => {
-                    let _ = write!(out, ",\"pos\":{pos}}}");
-                }
-                None => out.push_str(",\"pos\":null}"),
-            }
-            out
-        }
-    }
-}
-
-fn compare(corpus: &[String], oracle_path: &str) -> Result<()> {
-    let oracle = std::fs::read_to_string(oracle_path)?;
-    let oracle: Vec<&str> = oracle.lines().collect();
+fn compare(corpus: &[ByteString], oracle_path: &str, preserve_identifier_case: bool) -> Result<()> {
+    let oracle = std::fs::read(oracle_path)?;
+    let oracle: Vec<&[u8]> = oracle
+        .strip_suffix(b"\n")
+        .unwrap_or(&oracle)
+        .split(|byte| *byte == b'\n')
+        .collect();
     if oracle.len() != corpus.len() {
         return Err(format!("{} statements but {} oracle results", corpus.len(), oracle.len()).into());
     }
     let mut stats = BTreeMap::<&str, usize>::new();
-    let mut report = String::new();
+    let mut report = ByteString::new();
     for (i, (sql, &expected)) in corpus.iter().zip(&oracle).enumerate() {
-        let actual = render(sql);
-        let expected_ok = expected.starts_with("{\"ok\":true");
-        let actual_ok = actual.starts_with("{\"ok\":true");
-        let category = match (expected_ok, actual_ok, actual == expected) {
+        let actual = render(sql, preserve_identifier_case);
+        let expected_ok = expected.starts_with(b"{\"ok\":true");
+        let actual_ok = actual.starts_with(b"{\"ok\":true");
+        let category = match (expected_ok, actual_ok, actual.as_bytes() == expected) {
             (true, true, true) => "accepted, identical tree",
             (false, false, true) => "rejected, identical error and position",
             (true, true, false) => "accepted, TREE DIFFERS",
@@ -107,10 +72,10 @@ fn compare(corpus: &[String], oracle_path: &str) -> Result<()> {
             (false, true, _) => "ACCEPT/REJECT MISMATCH (C++ rejects)",
         };
         *stats.entry(category).or_default() += 1;
-        if actual != expected {
-            let _ = writeln!(
+        if actual.as_bytes() != expected {
+            let _ = byte_write!(
                 report,
-                "#{i} {category}\nSQL: {sql}\nC++:  {expected}\nRust: {actual}\n"
+                "#{i} {category}\nSQL: {sql}\nC++:  {expected}\nRust: {actual}\n\n"
             );
         }
     }
@@ -121,24 +86,30 @@ fn compare(corpus: &[String], oracle_path: &str) -> Result<()> {
     let report_path = format!("{oracle_path}.mismatches.txt");
     std::fs::write(&report_path, report)?;
     println!("mismatch details: {report_path}");
+    if stats
+        .keys()
+        .any(|key| key.contains("DIFFERS") || key.contains("MISMATCH"))
+    {
+        return Err("parser differential mismatch".into());
+    }
     Ok(())
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn bench(corpus: &[String], iterations: usize, tokens_only: bool) {
-    let queries: Vec<String> = corpus
+fn bench(corpus: &[ByteString], iterations: usize, tokens_only: bool) {
+    let queries: Vec<ByteString> = corpus
         .iter()
-        .map(|sql| strip_unicode_spaces(sql).unwrap_or_else(|| sql.clone()))
+        .map(|sql| strip_unicode_spaces_bytes(sql).unwrap_or_else(|| sql.clone()))
         .collect();
-    let bytes: usize = queries.iter().map(String::len).sum();
+    let bytes: usize = queries.iter().map(|query| query.len()).sum();
     let start = Instant::now();
     let mut ok = 0;
     for _ in 0..iterations {
         for sql in &queries {
             ok += if tokens_only {
-                usize::from(!tokenize(sql).is_empty())
+                usize::from(!tokenize_bytes(sql).is_empty())
             } else {
-                usize::from(parse(sql).is_ok())
+                usize::from(parse_bytes(sql).is_ok())
             };
         }
     }
@@ -165,7 +136,7 @@ fn main() -> Result<()> {
             args.get(2).and_then(|n| n.parse().ok()).unwrap_or(10),
             mode == "--bench-scanner",
         ),
-        Some(oracle) => compare(&corpus, oracle)?,
+        Some(oracle) => compare(&corpus, oracle, args.get(2).is_none_or(|arg| arg != "--fold"))?,
         None => return Err("missing oracle output or --bench".into()),
     }
     Ok(())

@@ -84,7 +84,7 @@ impl PegTransformer {
         let mut result = update_set_info();
         result.columns.reserve(column_list.len());
         for column in column_list {
-            result.columns.push(column.identifier()?.to_owned());
+            result.columns.push(column.identifier()?.to_owned().into());
         }
 
         let expr: ParsedExpression = self.transform_child(list, 2)?;
@@ -114,7 +114,7 @@ impl PegTransformer {
         let mut result = update_set_info();
         for update_element in parse_result.list()?.child(0)?.list_elements()? {
             let (column, expression): (String, ParsedExpression) = self.transform(update_element)?;
-            result.columns.push(column);
+            result.columns.push(column.into());
             result.expressions.push(expression);
         }
         Ok(result)

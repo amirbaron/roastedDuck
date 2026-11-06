@@ -61,10 +61,7 @@ pub(crate) fn scalar_functions_equal(left: &ScalarFunction, right: &ScalarFuncti
 
 /// DuckDB's `AggregateFunction::operator==`.
 pub(crate) fn aggregate_functions_equal(left: &AggregateFunction, right: &AggregateFunction) -> bool {
-    left.name == right.name
-        && left.arguments == right.arguments
-        && left.return_type == right.return_type
-        && left.varargs == right.varargs
+    left.ops.callback_identity() == right.ops.callback_identity()
 }
 
 impl Expression {
@@ -73,6 +70,7 @@ impl Expression {
     pub fn equals(&self, other: &Self) -> bool {
         if self.expression_type != other.expression_type
             || self.expression_class() != other.expression_class()
+            || self.return_type != other.return_type
         {
             return false;
         }

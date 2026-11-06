@@ -96,12 +96,111 @@ pub fn write_quoted(text: &str, quote: char) -> String {
     out
 }
 
+/// Native quoted bytes, with embedded quote bytes doubled.
+pub fn write_quoted_bytes(text: &[u8], quote: u8) -> rustdb_common::ByteString {
+    let mut out = rustdb_common::ByteString::new();
+    out.push(quote);
+    for &byte in text {
+        if byte == quote {
+            out.push(quote);
+        }
+        out.push(byte);
+    }
+    out.push(quote);
+    out
+}
+
 /// An identifier rendered for SQL text, quoted only when needed (DuckDB's `SQLIdentifier`).
 pub fn sql_identifier(name: &str) -> Cow<'_, str> {
     if requires_quotes(name) {
         Cow::Owned(write_quoted(name, '"'))
     } else {
         Cow::Borrowed(name)
+    }
+}
+
+/// Native byte form of the type renderer's optionally quoted identifier.
+pub fn sql_identifier_bytes(name: &[u8]) -> rustdb_common::ByteString {
+    let plain = name
+        .iter()
+        .enumerate()
+        .all(|(i, b)| b.is_ascii_alphabetic() || *b == b'_' || (i > 0 && b.is_ascii_digit()));
+    let lower = name.to_ascii_lowercase();
+    let keyword = KEYWORDS
+        .binary_search_by(|word| word.as_bytes().cmp(&lower))
+        .is_ok();
+    if plain && !keyword {
+        return name.into();
+    }
+    let mut out = rustdb_common::ByteString::from(b"\"");
+    for &byte in name {
+        if byte == b'"' {
+            out.push(byte);
+        }
+        out.push(byte);
+    }
+    out.push(b'"');
+    out
+}
+
+/// Type names use DuckDB's `KEYWORD_COL_NAME` exclusion. Non-keywords are quoted.
+/// Categories copied from the frozen 1.5.6 kwlist snapshot used by rustdb-ast.
+pub(crate) fn type_identifier_bytes(name: &[u8]) -> rustdb_common::ByteString {
+    const COLUMN_KEYWORDS: &[&[u8]] = &[
+        b"between",
+        b"bigint",
+        b"bit",
+        b"boolean",
+        b"char",
+        b"character",
+        b"coalesce",
+        b"dec",
+        b"decimal",
+        b"exists",
+        b"extract",
+        b"float",
+        b"grouping",
+        b"grouping_id",
+        b"inout",
+        b"int",
+        b"integer",
+        b"interval",
+        b"national",
+        b"nchar",
+        b"none",
+        b"nullif",
+        b"numeric",
+        b"out",
+        b"overlay",
+        b"position",
+        b"precision",
+        b"real",
+        b"row",
+        b"setof",
+        b"smallint",
+        b"substring",
+        b"time",
+        b"timestamp",
+        b"treat",
+        b"trim",
+        b"values",
+        b"varchar",
+        b"xmlattributes",
+        b"xmlconcat",
+        b"xmlelement",
+        b"xmlexists",
+        b"xmlforest",
+        b"xmlnamespaces",
+        b"xmlparse",
+        b"xmlpi",
+        b"xmlroot",
+        b"xmlserialize",
+        b"xmltable",
+    ];
+    if COLUMN_KEYWORDS.iter().any(|word| word.eq_ignore_ascii_case(name)) {
+        name.into()
+    } else {
+        write_quoted_bytes(name, b'"')
     }
 }
 

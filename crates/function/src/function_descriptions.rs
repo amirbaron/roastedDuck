@@ -87,13 +87,13 @@ pub fn parse_logical_type(text: &str) -> Option<LogicalType> {
         let size: u32 = text[open + 1..text.len() - 1].parse().ok()?;
         return Some(LogicalType::array(parse_logical_type(&text[..open])?, size));
     }
-    let members = |inner: &str| -> Option<Vec<(String, LogicalType)>> {
+    let members = |inner: &str| -> Option<Vec<(rustdb_common::ByteString, LogicalType)>> {
         split_with_parentheses(inner, ',')
             .iter()
             .map(|member| {
                 let parts = split_with_parentheses(member.trim(), ' ');
                 match parts.as_slice() {
-                    [name, ty] => Some((name.trim().to_owned(), parse_logical_type(ty.trim())?)),
+                    [name, ty] => Some((name.trim().into(), parse_logical_type(ty.trim())?)),
                     _ => None,
                 }
             })
@@ -124,7 +124,7 @@ pub fn parse_logical_type(text: &str) -> Option<LogicalType> {
     if text.eq_ignore_ascii_case("ANY") {
         return Some(LogicalType::ANY);
     }
-    rustdb_types::builtin_type_id(&text.to_lowercase()).map(LogicalType::simple)
+    rustdb_types::builtin_type_id(text).map(LogicalType::simple)
 }
 
 /// `GetExamplesForFunctionAlias`: the examples that use the function's own name (or
@@ -207,10 +207,10 @@ fn fill_function_descriptions(definition: &StaticFunctionDefinition) -> Vec<Func
 }
 
 /// The function list entry of built-in function `name`, if it has one.
-pub fn function_info(name: &str) -> Option<FunctionInfo> {
+pub fn function_info(name: impl AsRef<[u8]>) -> Option<FunctionInfo> {
     FUNCTION_DEFINITIONS
         .iter()
-        .find(|definition| definition.name == name)
+        .find(|definition| definition.name.as_bytes() == name.as_ref())
         .map(|definition| FunctionInfo {
             alias_of: definition.alias_of.to_owned(),
             descriptions: fill_function_descriptions(definition),

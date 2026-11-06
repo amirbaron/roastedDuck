@@ -15,8 +15,8 @@ mod wal;
 pub use catalog::{AttachedInfo, Catalog, DEFAULT_SCHEMA, TEMP_CATALOG};
 pub use catalog_set::{CatalogName, CatalogSet, Lookup};
 pub use entry::{
-    CatalogEntry, CatalogType, CollationEntry, EntryKind, IndexEntry, MacroEntry, SchemaEntry, SequenceData,
-    SequenceEntry, TableColumn, TableEntry, TypeEntry, ViewEntry, next_oid,
+    CatalogEntry, CatalogType, CollationEntry, EntryKind, IndexEntry, MacroEntry, OidAllocator, SchemaEntry,
+    SequenceData, SequenceEntry, TableColumn, TableEntry, TypeEntry, ViewEntry, next_oid,
 };
 pub use transaction::{
     MAX_TRANSACTION_ID, StorageHook, TRANSACTION_ID_START, Transaction, TransactionManager,

@@ -36,6 +36,7 @@ impl LogicalOperator {
             | LogicalKind::Attach(_)
             | LogicalKind::Detach(_)
             | LogicalKind::Load(_)
+            | LogicalKind::UpdateExtensions(_)
             | LogicalKind::AlterDatabase(_)
             | LogicalKind::Transaction { .. }
             | LogicalKind::Pragma { .. }

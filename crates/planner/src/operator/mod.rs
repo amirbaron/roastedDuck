@@ -108,15 +108,15 @@ pub struct LogicalGet {
     pub bind_data: Option<Arc<dyn FunctionData>>,
     /// All columns the function can produce.
     pub returned_types: Vec<LogicalType>,
-    pub names: Vec<String>,
+    pub names: Vec<rustdb_common::ByteString>,
     /// The columns actually scanned (indexes into `returned_types`).
     pub column_ids: Vec<ColumnIndex>,
     /// The scanned columns that are output (empty: all of them).
     pub projection_ids: Vec<u64>,
     pub parameters: Vec<Value>,
-    pub named_parameters: Vec<(String, Value)>,
+    pub named_parameters: Vec<(rustdb_common::ByteString, Value)>,
     pub input_table_types: Vec<LogicalType>,
-    pub input_table_names: Vec<String>,
+    pub input_table_names: Vec<rustdb_common::ByteString>,
     /// Input columns of a table-in/table-out function passed through to the output.
     pub projected_input: Vec<u64>,
     /// The column holding `WITH ORDINALITY` numbers.
@@ -127,7 +127,7 @@ pub struct LogicalGet {
     /// The scanned table of a base table scan (DuckDB's `LogicalGet::GetTable`).
     pub table: Option<Arc<rustdb_catalog::CatalogEntry>>,
     /// The catalog and schema of the scanned table, for `EXPLAIN`.
-    pub table_schema: Option<(String, String)>,
+    pub table_schema: Option<(rustdb_common::ByteString, rustdb_common::ByteString)>,
     /// Filters pushed into the scan, keyed by the filtered column's index in
     /// `returned_types` (DuckDB's `LogicalGet::table_filters`).
     pub table_filters: rustdb_storage::TableFilterSet,
@@ -251,7 +251,7 @@ impl LogicalGet {
     }
 
     /// The name of a scanned column, virtual columns included.
-    pub fn column_name(&self, column: &ColumnIndex) -> String {
+    pub fn column_name(&self, column: &ColumnIndex) -> rustdb_common::ByteString {
         if let Some(name) = self.names.get(column.index as usize) {
             return name.clone();
         }
@@ -261,7 +261,7 @@ impl LogicalGet {
     }
 
     /// The name and type of the function's virtual column `index` (`GetVirtualColumns`).
-    pub fn virtual_column(&self, index: u64) -> Option<(String, LogicalType)> {
+    pub fn virtual_column(&self, index: u64) -> Option<(rustdb_common::ByteString, LogicalType)> {
         let virtual_columns = self.function.get_virtual_columns.as_ref()?;
         virtual_columns(self.bind_data.as_deref())
             .into_iter()
@@ -477,7 +477,7 @@ pub enum LogicalKind {
         table_index: u64,
         cte_index: u64,
         chunk_types: Vec<LogicalType>,
-        bound_columns: Vec<String>,
+        bound_columns: Vec<rustdb_common::ByteString>,
         correlated_columns: u64,
         is_recurring: bool,
     },
@@ -499,7 +499,7 @@ pub enum LogicalKind {
         allow_out_of_order: bool,
     },
     RecursiveCte {
-        ctename: String,
+        ctename: rustdb_common::ByteString,
         table_index: u64,
         column_count: u64,
         union_all: bool,
@@ -509,7 +509,7 @@ pub enum LogicalKind {
         ref_recurring: bool,
     },
     MaterializedCte {
-        ctename: String,
+        ctename: rustdb_common::ByteString,
         table_index: u64,
         column_count: u64,
         materialize: CteMaterialize,
@@ -519,10 +519,10 @@ pub enum LogicalKind {
         explain_type: ExplainType,
         explain_format: ExplainFormat,
         /// The plan before optimization, rendered when it was bound.
-        logical_plan_unopt: String,
+        logical_plan_unopt: rustdb_common::ByteString,
     },
     Prepare {
-        name: String,
+        name: rustdb_common::ByteString,
         prepared: Arc<PreparedStatementData>,
     },
     Execute {
@@ -530,13 +530,13 @@ pub enum LogicalKind {
     },
     /// `SET name = value`.
     Set {
-        name: String,
+        name: rustdb_common::ByteString,
         value: Value,
         scope: SetScope,
     },
     /// `RESET name`.
     Reset {
-        name: String,
+        name: rustdb_common::ByteString,
         scope: SetScope,
     },
     /// `ATTACH`, options evaluated.
@@ -545,6 +545,8 @@ pub enum LogicalKind {
     Detach(rustdb_ast::DetachInfo),
     /// `LOAD` / `INSTALL` (DuckDB's `LogicalSimple` of a `LoadInfo`).
     Load(Box<rustdb_ast::LoadInfo>),
+    /// `UPDATE EXTENSIONS` (DuckDB's `LogicalSimple`).
+    UpdateExtensions(rustdb_ast::UpdateExtensionsInfo),
     /// `ALTER DATABASE` (DuckDB's `LogicalSimple` of an `AlterDatabaseInfo`, run by the
     /// `DatabaseManager`): the database `catalog` of `info`.
     AlterDatabase(rustdb_ast::AlterInfo),
@@ -554,11 +556,11 @@ pub enum LogicalKind {
     },
     /// `DEALLOCATE name`.
     Deallocate {
-        name: String,
+        name: rustdb_common::ByteString,
     },
     /// A `PRAGMA` call without a result.
     Pragma {
-        name: String,
+        name: rustdb_common::ByteString,
         parameters: Vec<Value>,
     },
     /// `CREATE TABLE`, with the query of `CREATE TABLE AS` as child.
@@ -602,8 +604,8 @@ pub struct LogicalVacuum {
 /// its column types bound and its foreign keys resolved.
 #[derive(Clone, Debug)]
 pub struct BoundCreateTableInfo {
-    pub catalog: String,
-    pub schema: String,
+    pub catalog: rustdb_common::ByteString,
+    pub schema: rustdb_common::ByteString,
     /// The `CREATE TABLE` info (`CreateInfoKind::Table`).
     pub info: rustdb_ast::CreateInfo,
 }
@@ -613,8 +615,8 @@ pub struct BoundCreateTableInfo {
 pub struct BoundForeignKeyInfo {
     pub fk_type: rustdb_ast::ForeignKeyType,
     /// The other table of the constraint.
-    pub schema: String,
-    pub table: String,
+    pub schema: rustdb_common::ByteString,
+    pub table: rustdb_common::ByteString,
     /// Key columns (physical indexes) of the referenced table.
     pub pk_keys: Vec<usize>,
     /// Key columns (physical indexes) of the referencing table.
@@ -630,7 +632,7 @@ pub enum BoundConstraint {
         expression: Expression,
         bound_columns: Vec<usize>,
         /// The constraint as written, for error messages.
-        text: String,
+        text: rustdb_common::ByteString,
     },
     Unique {
         keys: Vec<usize>,
@@ -642,7 +644,7 @@ pub enum BoundConstraint {
     Generated {
         expression: Expression,
         /// `name TYPE AS (expression)`, for the error message.
-        text: String,
+        text: rustdb_common::ByteString,
     },
 }
 
@@ -654,10 +656,10 @@ pub struct CreateSecretInput {
     /// Empty for the type's default provider.
     pub provider: String,
     /// `IN storage`, or empty.
-    pub storage: String,
-    pub name: String,
+    pub storage: rustdb_common::ByteString,
+    pub name: rustdb_common::ByteString,
     pub scope: Vec<String>,
-    pub options: Vec<(String, Value)>,
+    pub options: Vec<(rustdb_common::ByteString, Value)>,
     pub on_conflict: rustdb_ast::OnCreateConflict,
     pub persist_type: rustdb_ast::SecretPersistType,
 }
@@ -667,8 +669,8 @@ pub struct CreateSecretInput {
 /// and the catalog.
 #[derive(Clone, Debug)]
 pub struct LogicalAlter {
-    pub catalog: String,
-    pub schema: String,
+    pub catalog: rustdb_common::ByteString,
+    pub schema: rustdb_common::ByteString,
     /// The altered entry; `None` with `IF EXISTS` when it does not exist.
     pub entry: Option<Arc<rustdb_catalog::CatalogEntry>>,
     pub action: AlterAction,
@@ -685,25 +687,25 @@ pub enum AlterAction {
     /// Nothing (`IF EXISTS` / `IF NOT EXISTS` found nothing to do).
     Nothing,
     /// `RENAME TO`.
-    Rename(String),
+    Rename(rustdb_common::ByteString),
     /// `COMMENT ON <entry> IS value`.
     SetComment(rustdb_types::Value),
     /// `COMMENT ON COLUMN <table or view>.column IS value`.
     SetColumnComment {
-        column: String,
+        column: rustdb_common::ByteString,
         comment: rustdb_types::Value,
     },
     /// `ALTER SEQUENCE ... OWNED BY schema.name`.
     ChangeOwnership {
-        owner_schema: String,
-        owner_name: String,
+        owner_schema: rustdb_common::ByteString,
+        owner_name: rustdb_common::ByteString,
     },
     /// A new definition over the same data (rename column, defaults, drop NOT NULL).
     Definition(rustdb_catalog::TableEntry),
     /// `ADD COLUMN`, filled with `default`.
     AddColumn {
         definition: rustdb_catalog::TableEntry,
-        name: String,
+        name: rustdb_common::ByteString,
         logical_type: LogicalType,
         default: Expression,
     },
@@ -730,9 +732,9 @@ pub enum AlterAction {
     AddPrimaryKey {
         definition: rustdb_catalog::TableEntry,
         keys: Vec<usize>,
-        index_name: String,
+        index_name: rustdb_common::ByteString,
         /// The existing primary key, as `PRIMARY KEY(a, b)`, if any.
-        existing: Option<String>,
+        existing: Option<rustdb_common::ByteString>,
     },
 }
 
@@ -758,8 +760,8 @@ pub struct LogicalCreateIndex {
 pub struct LogicalInsert {
     pub table: Arc<rustdb_catalog::CatalogEntry>,
     /// The catalog and schema of `table`.
-    pub catalog: String,
-    pub schema: String,
+    pub catalog: rustdb_common::ByteString,
+    pub schema: rustdb_common::ByteString,
     pub table_index: u64,
     /// For each physical column, the input column holding its value, or `None` to use the
     /// default; empty when the input holds every column in order.
@@ -776,8 +778,8 @@ pub struct LogicalInsert {
 pub struct LogicalDelete {
     pub table: Arc<rustdb_catalog::CatalogEntry>,
     /// The catalog and schema of `table`.
-    pub catalog: String,
-    pub schema: String,
+    pub catalog: rustdb_common::ByteString,
+    pub schema: rustdb_common::ByteString,
     pub table_index: u64,
     pub bound_constraints: Vec<BoundConstraint>,
     pub return_chunk: bool,
@@ -789,8 +791,8 @@ pub struct LogicalDelete {
 pub struct LogicalUpdate {
     pub table: Arc<rustdb_catalog::CatalogEntry>,
     /// The catalog and schema of `table`.
-    pub catalog: String,
-    pub schema: String,
+    pub catalog: rustdb_common::ByteString,
+    pub schema: rustdb_common::ByteString,
     pub table_index: u64,
     /// The updated physical columns.
     pub columns: Vec<usize>,
@@ -824,8 +826,8 @@ pub struct BoundMergeIntoAction {
 pub struct LogicalMergeInto {
     pub table: Arc<rustdb_catalog::CatalogEntry>,
     /// The catalog and schema of `table`.
-    pub catalog: String,
-    pub schema: String,
+    pub catalog: rustdb_common::ByteString,
+    pub schema: rustdb_common::ByteString,
     pub table_index: u64,
     /// The default of each physical column.
     pub bound_defaults: Vec<Expression>,
@@ -856,7 +858,7 @@ pub fn table_types(entry: &rustdb_catalog::CatalogEntry) -> Vec<LogicalType> {
 pub struct BoundPivotInfo {
     pub group_count: u64,
     pub types: Vec<LogicalType>,
-    pub pivot_values: Vec<String>,
+    pub pivot_values: Vec<rustdb_common::ByteString>,
     pub aggregates: Vec<Expression>,
 }
 
@@ -1011,6 +1013,7 @@ impl LogicalOperator {
             LogicalKind::Attach(_) => T::LogicalAttach,
             LogicalKind::Detach(_) => T::LogicalDetach,
             LogicalKind::Load(_) => T::LogicalLoad,
+            LogicalKind::UpdateExtensions(_) => T::LogicalUpdateExtensions,
             LogicalKind::Transaction { .. } => T::LogicalTransaction,
             LogicalKind::Deallocate { .. } | LogicalKind::Drop(_) => T::LogicalDrop,
             LogicalKind::Pragma { .. } => T::LogicalPragma,
@@ -1168,6 +1171,7 @@ impl LogicalOperator {
             | LogicalKind::Attach(_)
             | LogicalKind::Detach(_)
             | LogicalKind::Load(_)
+            | LogicalKind::UpdateExtensions(_)
             | LogicalKind::AlterDatabase(_)
             | LogicalKind::Transaction { .. }
             | LogicalKind::Deallocate { .. }
@@ -1369,6 +1373,7 @@ impl LogicalOperator {
             | LogicalKind::Attach(_)
             | LogicalKind::Detach(_)
             | LogicalKind::Load(_)
+            | LogicalKind::UpdateExtensions(_)
             | LogicalKind::AlterDatabase(_)
             | LogicalKind::Transaction { .. }
             | LogicalKind::Pragma { .. }

@@ -21,13 +21,15 @@ use rustdb_execution::operators::{
     CatalogTableCreator, CreateEntryAction, CreateSchemaAction, CreateSequenceAction, CreateViewAction,
     DdlAction, DropAction, TableCreator,
 };
+use rustdb_function::registered_files::OpenFlags;
 use rustdb_serde::Deserializer;
 use rustdb_storage::DataTable;
 use rustdb_storage::checkpoint::pointers::{
     PersistentCollectionData, deserialize_index_storage_info, deserialize_meta_block_pointer,
 };
 use rustdb_storage::checkpoint::vector_serde::deserialize_chunk;
-use rustdb_storage::index::UnboundIndexStorage;
+use rustdb_storage::file_system::StorageFile;
+use rustdb_storage::index::{IndexBufferWriter, UnboundIndexStorage};
 use rustdb_storage::metadata::MetaBlockPointer;
 use rustdb_storage::storage_manager::{CheckpointAbort, StorageManager};
 use rustdb_storage::wal::{WAL_ENCRYPTED_VERSION_NUMBER, WAL_VERSION_NUMBER, WalReader, WalType};
@@ -36,16 +38,8 @@ use rustdb_types::DataChunk;
 use crate::attached::AttachedDatabase;
 use crate::{Connection, Database};
 
-fn io_error(message: impl Into<std::borrow::Cow<'static, str>>) -> Error {
-    Error::new(ErrorKind::Io, message)
-}
-
-fn remove_file(path: &str) -> Result<()> {
-    match std::fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(io_error(format!("Could not remove file \"{path}\": {error}"))),
-    }
+fn io_error(message: impl Into<rustdb_common::ByteString>) -> Error {
+    Error::new_bytes(ErrorKind::Io, message.into())
 }
 
 /// `WriteAheadLogDeserializer::ThrowVersionError`.
@@ -55,7 +49,7 @@ fn version_error(checkpoint_iteration: u64, expected: u64) -> Error {
     } else {
         "a newer"
     };
-    io_error(format!(
+    io_error(rustdb_common::byte_format!(
         "This WAL was created for this database file, but the WAL checkpoint iteration does not match the \
          database file. That means the WAL was created for {relation} version of this database. File checkpoint \
          iteration: {expected}, WAL checkpoint iteration: {checkpoint_iteration}"
@@ -81,7 +75,7 @@ pub(crate) fn replay(database: &Database, attached: &Arc<AttachedDatabase>) -> R
     // `SingleFileStorageManager::LoadDatabase` times the replay.
     let _timer =
         rustdb_common::profiling::start_timer(rustdb_common::profiling::MetricType::AttachReplayWalLatency);
-    let replayed = match WalReader::open_for(&storage.wal_path(), storage.block_manager())? {
+    let replayed = match WalReader::open_for(storage.wal_path(), storage.block_manager())? {
         None => None,
         Some(reader) => replay_log(database, attached, &storage, reader, WalFile::Main)?,
     };
@@ -90,7 +84,10 @@ pub(crate) fn replay(database: &Database, attached: &Arc<AttachedDatabase>) -> R
     } else {
         // Nothing in the WAL is needed any more.
         if !storage.is_read_only() {
-            remove_file(&storage.wal_path())?;
+            storage
+                .block_manager()
+                .file_system()
+                .remove_if_exists(&storage.wal_path())?;
         }
         (0, false)
     };
@@ -128,7 +125,7 @@ fn check_header(
         header.version,
         1 | WAL_VERSION_NUMBER | WAL_ENCRYPTED_VERSION_NUMBER
     ) {
-        return Err(io_error(format!(
+        return Err(io_error(rustdb_common::byte_format!(
             "Failed to read WAL of version {} - can only read version 1, 2 and 3 (encrypted)",
             header.version
         )));
@@ -178,7 +175,7 @@ enum ScannedEntry {
 /// its end.
 fn scan_entry(d: &mut dyn Deserializer, whole: bool) -> Result<ScannedEntry> {
     if whole {
-        return Ok(match parse_entry(d, "")? {
+        return Ok(match parse_entry(d, b"", None)? {
             WalEntry::Flush => ScannedEntry::Flush,
             WalEntry::Checkpoint(meta_block) => ScannedEntry::Checkpoint(meta_block),
             WalEntry::RowGroupData(data) => ScannedEntry::RowGroupData(data),
@@ -259,9 +256,9 @@ fn scan_log(reader: &mut WalReader, storage: &StorageManager, file: WalFile) -> 
 }
 
 /// Opens the WAL at `path` of `storage`'s file, which exists.
-fn open_wal(storage: &StorageManager, path: &str) -> Result<WalReader> {
+fn open_wal(storage: &StorageManager, path: &[u8]) -> Result<WalReader> {
     WalReader::open_for(path, storage.block_manager())?
-        .ok_or_else(|| io_error(format!("Cannot open file \"{path}\"")))
+        .ok_or_else(|| io_error(rustdb_common::byte_format!("Cannot open file \"{path}\"")))
 }
 
 /// Replays the WAL read by `reader`; returns the size of the WAL to keep and whether the
@@ -287,11 +284,11 @@ fn replay_log(
         return Ok(None);
     }
     let prefix = |error: Error| {
-        Error::new(
+        Error::new_bytes(
             error.kind(),
-            format!(
+            rustdb_common::byte_format!(
                 "Failure while replaying WAL file \"{path}\": {}",
-                error.raw_message()
+                error.raw_message_bytes()
             ),
         )
     };
@@ -301,7 +298,7 @@ fn replay_log(
     let mut checkpoint_wal = None;
     if let Some((meta_block, checkpoint_position, checkpoint_end)) = scan.checkpoint {
         if file == WalFile::Checkpoint {
-            return Err(Error::invalid_input(format!(
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "Failure while replaying checkpoint WAL file \"{path}\": checkpoint WAL cannot contain a \
                  checkpoint marker"
             )));
@@ -312,7 +309,11 @@ fn replay_log(
         // `IsCheckpointClean`: the header points at the checkpoint the marker announced.
         let checkpoint_succeeded = storage.meta_block().block_pointer == meta_block.block_pointer;
         let checkpoint_wal_path = storage.checkpoint_wal_path();
-        if !std::path::Path::new(&checkpoint_wal_path).exists() {
+        if !storage
+            .block_manager()
+            .file_system()
+            .exists(&checkpoint_wal_path)?
+        {
             if checkpoint_succeeded {
                 return Ok(None);
             }
@@ -329,11 +330,18 @@ fn replay_log(
                 );
             }
             drop(reader);
-            std::fs::rename(&checkpoint_wal_path, &path).map_err(|error| {
-                io_error(format!(
-                    "Could not move file \"{checkpoint_wal_path}\" to \"{path}\": {error}"
-                ))
-            })?;
+            storage
+                .block_manager()
+                .file_system()
+                .rename(&checkpoint_wal_path, &path)
+                .map_err(|error| {
+                    if let Some(callback) = rustdb_storage::file_system::callback_error(&error) {
+                        return callback;
+                    }
+                    io_error(rustdb_common::byte_format!(
+                        "Could not move file \"{checkpoint_wal_path}\" to \"{path}\": {error}"
+                    ))
+                })?;
             return replay_log(
                 database,
                 attached,
@@ -360,18 +368,37 @@ fn replay_log(
     }
     if truncate_failed_checkpoint {
         // The marker of the failed checkpoint ends the WAL; cut it off.
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .open(&path)
+        let file = storage
+            .block_manager()
+            .file_system()
+            .open(
+                &path,
+                OpenFlags {
+                    read: false,
+                    write: true,
+                    create: false,
+                    truncate: false,
+                },
+            )
             .map_err(|error| {
-                io_error(format!(
+                if let Some(callback) = rustdb_storage::file_system::callback_error(&error) {
+                    return callback;
+                }
+                io_error(rustdb_common::byte_format!(
                     "Cannot open file \"{path}\": {}",
                     rustdb_common::os_error_text(&error)
                 ))
             })?;
         file.set_len(scan.checkpoint_truncate_offset)
             .and_then(|()| file.sync_all())
-            .map_err(|error| io_error(format!("Could not truncate file \"{path}\": {error}")))?;
+            .map_err(|error| {
+                if let Some(callback) = rustdb_storage::file_system::callback_error(&error) {
+                    return callback;
+                }
+                io_error(rustdb_common::byte_format!(
+                    "Could not truncate file \"{path}\": {error}"
+                ))
+            })?;
         if scan.checkpoint_truncate_offset == 0 {
             return Ok(Some((0, false)));
         }
@@ -383,6 +410,7 @@ fn replay_log(
         catalog: Arc::clone(&attached.catalog),
         storage: Arc::clone(storage),
         current_table: None,
+        pending_indexes: Vec::new(),
     };
     let mut successful_offset = 0;
     let mut all_succeeded = false;
@@ -392,6 +420,9 @@ fn replay_log(
         loop {
             if reader.read_entry(|d| replayer.replay_entry(&mut connection, d))? {
                 connection.query("COMMIT")?;
+                for pending in replayer.pending_indexes.drain(..) {
+                    pending.table.indexes().publish_replayed(pending.index);
+                }
                 successful_offset = reader.offset();
                 if reader.finished() {
                     all_succeeded = true;
@@ -423,20 +454,23 @@ fn replay_log(
 /// Copies `count` bytes from the position of `source` to the end of `target`
 /// (`CopyOverWAL`).
 fn copy_wal(
-    source: &mut std::fs::File,
-    source_path: &str,
+    source: &mut StorageFile,
+    source_path: &[u8],
     count: u64,
-    target: &mut std::fs::File,
-    target_path: &str,
+    target: &mut StorageFile,
+    target_path: &[u8],
 ) -> Result<()> {
     use std::io::Read;
     let copied = std::io::copy(&mut Read::by_ref(source).take(count), target).map_err(|error| {
-        io_error(format!(
+        if let Some(callback) = rustdb_storage::file_system::callback_error(&error) {
+            return callback;
+        }
+        io_error(rustdb_common::byte_format!(
             "Could not copy \"{source_path}\" to \"{target_path}\": {error}"
         ))
     })?;
     if copied != count {
-        return Err(io_error(format!(
+        return Err(io_error(rustdb_common::byte_format!(
             "Could not read file \"{source_path}\": unexpected end of file"
         )));
     }
@@ -448,21 +482,54 @@ fn copy_wal(
 /// the checkpoint WAL is removed (`MergeIntoRecoveryWAL`).
 fn merge_into_recovery_wal(
     storage: &StorageManager,
-    wal_path: &str,
+    wal_path: &[u8],
     checkpoint_position: u64,
-    checkpoint_wal_path: &str,
+    checkpoint_wal_path: &[u8],
 ) -> Result<()> {
     let recovery_path = storage.recovery_wal_path();
-    let open = |path: &str| {
-        std::fs::File::open(path).map_err(|error| {
-            io_error(format!(
-                "Cannot open file \"{path}\": {}",
-                rustdb_common::os_error_text(&error)
-            ))
-        })
+    let open = |path: &[u8]| {
+        storage
+            .block_manager()
+            .file_system()
+            .open(
+                path,
+                OpenFlags {
+                    read: true,
+                    write: false,
+                    create: false,
+                    truncate: false,
+                },
+            )
+            .map_err(|error| {
+                if let Some(callback) = rustdb_storage::file_system::callback_error(&error) {
+                    return callback;
+                }
+                io_error(rustdb_common::byte_format!(
+                    "Cannot open file \"{path}\": {}",
+                    rustdb_common::os_error_text(&error)
+                ))
+            })
     };
-    let mut recovery = std::fs::File::create(&recovery_path)
-        .map_err(|error| io_error(format!("Cannot open file \"{recovery_path}\": {error}")))?;
+    let mut recovery = storage
+        .block_manager()
+        .file_system()
+        .open(
+            &recovery_path,
+            OpenFlags {
+                read: false,
+                write: true,
+                create: true,
+                truncate: true,
+            },
+        )
+        .map_err(|error| {
+            if let Some(callback) = rustdb_storage::file_system::callback_error(&error) {
+                return callback;
+            }
+            io_error(rustdb_common::byte_format!(
+                "Cannot open file \"{recovery_path}\": {error}"
+            ))
+        })?;
     let mut main = open(wal_path)?;
     copy_wal(
         &mut main,
@@ -479,19 +546,26 @@ fn merge_into_recovery_wal(
         let version = check_header(&mut checkpoint_reader, storage, WalFile::Checkpoint, &mut state)?;
         let main_version = open_wal(storage, wal_path)?.read_header()?.version;
         if version != main_version {
-            return Err(Error::invalid_input(format!(
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "Failure while replaying checkpoint WAL file \"{checkpoint_wal_path}\": checkpoint WAL version is \
                  different from main WAL version"
             )));
         }
         let header_end = checkpoint_reader.offset();
         let mut checkpoint = open(checkpoint_wal_path)?;
-        let size = checkpoint
-            .metadata()
-            .map_err(|error| io_error(format!("Cannot open file \"{checkpoint_wal_path}\": {error}")))?
-            .len();
+        let size = checkpoint.size().map_err(|error| {
+            if let Some(callback) = rustdb_storage::file_system::callback_error(&error) {
+                return callback;
+            }
+            io_error(rustdb_common::byte_format!(
+                "Cannot open file \"{checkpoint_wal_path}\": {error}"
+            ))
+        })?;
         std::io::Seek::seek(&mut checkpoint, std::io::SeekFrom::Start(header_end)).map_err(|error| {
-            io_error(format!(
+            if let Some(callback) = rustdb_storage::file_system::callback_error(&error) {
+                return callback;
+            }
+            io_error(rustdb_common::byte_format!(
                 "Could not seek in file \"{checkpoint_wal_path}\": {error}"
             ))
         })?;
@@ -503,23 +577,42 @@ fn merge_into_recovery_wal(
             &recovery_path,
         )?;
     }
-    recovery
-        .sync_all()
-        .map_err(|error| io_error(format!("Could not fsync file \"{recovery_path}\": {error}")))?;
+    recovery.sync_all().map_err(|error| {
+        if let Some(callback) = rustdb_storage::file_system::callback_error(&error) {
+            return callback;
+        }
+        io_error(rustdb_common::byte_format!(
+            "Could not fsync file \"{recovery_path}\": {error}"
+        ))
+    })?;
     drop(recovery);
     let abort = storage.checkpoint_config().abort;
     abort.check(CheckpointAbort::BeforeMovingRecovery)?;
-    std::fs::rename(&recovery_path, wal_path).map_err(|error| {
-        io_error(format!(
-            "Could not move file \"{recovery_path}\" to \"{wal_path}\": {error}"
-        ))
-    })?;
+    storage
+        .block_manager()
+        .file_system()
+        .rename(&recovery_path, wal_path)
+        .map_err(|error| {
+            if let Some(callback) = rustdb_storage::file_system::callback_error(&error) {
+                return callback;
+            }
+            io_error(rustdb_common::byte_format!(
+                "Could not move file \"{recovery_path}\" to \"{wal_path}\": {error}"
+            ))
+        })?;
     abort.check(CheckpointAbort::BeforeDeletingCheckpointWal)?;
-    std::fs::remove_file(checkpoint_wal_path).map_err(|error| {
-        io_error(format!(
-            "Could not remove file \"{checkpoint_wal_path}\": {error}"
-        ))
-    })
+    storage
+        .block_manager()
+        .file_system()
+        .remove(checkpoint_wal_path)
+        .map_err(|error| {
+            if let Some(callback) = rustdb_storage::file_system::callback_error(&error) {
+                return callback;
+            }
+            io_error(rustdb_common::byte_format!(
+                "Could not remove file \"{checkpoint_wal_path}\": {error}"
+            ))
+        })
 }
 
 /// A WAL entry as read, before it is applied (the reading half of DuckDB's `Replay*`
@@ -538,7 +631,7 @@ enum WalEntry {
         schema: String,
         name: String,
     },
-    Alter(Box<AlterInfo>),
+    Alter(Box<AlterInfo>, Option<rustdb_storage::index::art::ArtStorageInfo>),
     SequenceValue {
         schema: String,
         name: String,
@@ -561,11 +654,15 @@ enum WalEntry {
 
 /// Reads one entry; `CREATE` entries go to the catalog `catalog` whatever the catalog
 /// name they were logged with.
-fn parse_entry(d: &mut dyn Deserializer, catalog: &str) -> Result<WalEntry> {
+fn parse_entry(
+    d: &mut dyn Deserializer,
+    catalog: &[u8],
+    storage: Option<&StorageManager>,
+) -> Result<WalEntry> {
     let wal_type = entry_type(d)?;
     let create_info = |d: &mut dyn Deserializer, expected: AstCatalogType, tag: &'static str| {
         let mut info = read_create_info_property(d, 101, expected, tag)?;
-        catalog.clone_into(&mut info.catalog);
+        info.catalog = catalog.into();
         Ok::<_, Error>(info)
     };
     let entry = match wal_type {
@@ -578,7 +675,7 @@ fn parse_entry(d: &mut dyn Deserializer, catalog: &str) -> Result<WalEntry> {
         WalType::CreateSchema => WalEntry::CreateSchema(d.read_property(101, "schema")?),
         WalType::CreateIndex => {
             let info = create_info(d, AstCatalogType::IndexEntry, "index_catalog_entry")?;
-            WalEntry::CreateIndex(info, read_index_storage(d)?)
+            WalEntry::CreateIndex(info, UnboundIndexStorage::Disk(read_index_storage(d, storage)?))
         }
         // `ReplayCreateMacro`, `ReplayCreateTableMacro` and `ReplayCreateType`.
         WalType::CreateMacro => WalEntry::CreateEntry(create_info(d, AstCatalogType::MacroEntry, "macro")?),
@@ -626,10 +723,12 @@ fn parse_entry(d: &mut dyn Deserializer, catalog: &str) -> Result<WalEntry> {
             let rustdb_ast::ParseInfo::Alter(alter) = info else {
                 return Err(Error::serialization("ALTER entry with another statement"));
             };
-            if is_add_primary_key(&alter) {
-                skip_index_storage(d)?;
-            }
-            WalEntry::Alter(alter)
+            let index = if is_add_primary_key(&alter) {
+                Some(read_index_storage(d, storage)?)
+            } else {
+                None
+            };
+            WalEntry::Alter(alter, index)
         }
         WalType::SequenceValue => WalEntry::SequenceValue {
             schema: d.read_property(101, "schema")?,
@@ -663,12 +762,20 @@ struct Replayer {
     storage: Arc<StorageManager>,
     /// The table of the last `USE_TABLE`.
     current_table: Option<Arc<DataTable>>,
+    pending_indexes: Vec<PendingIndex>,
+}
+
+struct PendingIndex {
+    table: Arc<rustdb_storage::DataTableInfo>,
+    index: rustdb_storage::index::IndexSlot,
+    schema: rustdb_common::ByteString,
+    table_name: rustdb_common::ByteString,
 }
 
 impl Replayer {
     /// Applies one entry; returns whether it was a `WAL_FLUSH` (`ReplayEntry`).
     fn replay_entry(&mut self, connection: &mut Connection, d: &mut dyn Deserializer) -> Result<bool> {
-        let entry = parse_entry(d, &self.catalog.name())?;
+        let entry = parse_entry(d, &self.catalog.name(), Some(&self.storage))?;
         self.apply(connection, entry)
     }
 
@@ -701,7 +808,7 @@ impl Replayer {
                 .execute(&transaction)?;
             }
             WalEntry::CreateSchema(schema) => {
-                let mut info = rustdb_catalog::checkpoint::schema_create_info(&self.catalog.name(), &schema);
+                let mut info = rustdb_catalog::checkpoint::schema_create_info(self.catalog.name(), &schema);
                 info.on_conflict = rustdb_ast::OnCreateConflict::ErrorOnConflict;
                 CreateSchemaAction {
                     catalog: Arc::clone(&self.catalog),
@@ -710,7 +817,18 @@ impl Replayer {
                 .execute(&transaction)?;
             }
             WalEntry::CreateIndex(info, stored) => {
-                replay_create_index(&self.catalog, &transaction, &info, stored)?;
+                let rustdb_ast::CreateInfoKind::Index(definition) = &info.kind else {
+                    return Err(Error::serialization(
+                        "CREATE INDEX WAL entry has invalid definition",
+                    ));
+                };
+                let (table, index) = replay_create_index(&self.catalog, &transaction, &info, stored)?;
+                self.pending_indexes.push(PendingIndex {
+                    table,
+                    index,
+                    schema: info.schema.clone(),
+                    table_name: definition.table.clone(),
+                });
             }
             WalEntry::CreateEntry(info) => {
                 CreateEntryAction {
@@ -724,6 +842,16 @@ impl Replayer {
                 schema,
                 name,
             } => {
+                self.pending_indexes.retain(|pending| {
+                    if !pending.schema.eq_ignore_ascii_case(&schema) {
+                        return true;
+                    }
+                    match catalog_type {
+                        AstCatalogType::TableEntry => !pending.table_name.eq_ignore_ascii_case(&name),
+                        AstCatalogType::IndexEntry => !pending.index.name().eq_ignore_ascii_case(&name),
+                        _ => true,
+                    }
+                });
                 if catalog_type == AstCatalogType::TableEntry
                     && self
                         .current_table
@@ -734,7 +862,7 @@ impl Replayer {
                 }
                 self.drop(&transaction, catalog_type, schema, name)?;
             }
-            WalEntry::Alter(mut alter) => self.alter(connection, &mut alter)?,
+            WalEntry::Alter(mut alter, index) => self.alter(connection, &mut alter, index)?,
             WalEntry::SequenceValue {
                 schema,
                 name,
@@ -744,7 +872,11 @@ impl Replayer {
                 let entry = self
                     .catalog
                     .get_entry(&transaction, CatalogType::Sequence, &schema, &name)
-                    .ok_or_else(|| Error::catalog(format!("Sequence with name {name} does not exist!")))?;
+                    .ok_or_else(|| {
+                        Error::catalog(rustdb_common::byte_format!(
+                            "Sequence with name {name} does not exist!"
+                        ))
+                    })?;
                 let EntryKind::Sequence(sequence) = &entry.kind else {
                     return Err(Error::internal("expected a sequence"));
                 };
@@ -754,16 +886,22 @@ impl Replayer {
                 let entry = self
                     .catalog
                     .get_entry(&transaction, CatalogType::Table, &schema, &name)
-                    .ok_or_else(|| Error::catalog(format!("Table with name {name} does not exist!")))?;
+                    .ok_or_else(|| {
+                        Error::catalog(rustdb_common::byte_format!(
+                            "Table with name {name} does not exist!"
+                        ))
+                    })?;
                 let EntryKind::Table(table) = &entry.kind else {
-                    return Err(Error::catalog(format!("{name} is not a table")));
+                    return Err(Error::catalog(rustdb_common::byte_format!(
+                        "{name} is not a table"
+                    )));
                 };
                 self.current_table.clone_from(&table.storage);
             }
             WalEntry::Insert(chunk) => {
                 let table = self.current_table("insert")?;
                 // Appended without verifying constraints (`LocalWALAppend`).
-                table.append_chunk(&transaction, &chunk, rustdb_storage::TableConstraints::default())?;
+                table.append_wal_chunk(&transaction, &chunk)?;
             }
             WalEntry::RowGroupData(data) => {
                 // The stored row groups join the table directly (`ReplayRowGroupData`).
@@ -806,9 +944,9 @@ impl Replayer {
     }
 
     fn current_table(&self, action: &str) -> Result<&Arc<DataTable>> {
-        self.current_table
-            .as_ref()
-            .ok_or_else(|| Error::internal(format!("Corrupt WAL: {action} without table")))
+        self.current_table.as_ref().ok_or_else(|| {
+            Error::internal(rustdb_common::byte_format!("Corrupt WAL: {action} without table"))
+        })
     }
 
     fn drop(
@@ -822,9 +960,9 @@ impl Replayer {
             catalog: Arc::clone(&self.catalog),
             info: DropInfo {
                 catalog_type,
-                catalog: self.catalog.name().to_string(),
-                schema,
-                name,
+                catalog: (&*self.catalog.name()).into(),
+                schema: schema.into(),
+                name: name.into(),
                 if_not_found: OnEntryNotFound::ThrowException,
                 cascade: false,
                 allow_drop_internal: false,
@@ -837,14 +975,30 @@ impl Replayer {
     /// Replays an `ALTER` through the binder (`Catalog::Alter`). Foreign key bookkeeping
     /// on the referenced table is skipped: replaying the referencing table's `CREATE` and
     /// `DROP` redoes it.
-    fn alter(&self, connection: &mut Connection, info: &mut AlterInfo) -> Result<()> {
+    fn alter(
+        &mut self,
+        connection: &mut Connection,
+        info: &mut AlterInfo,
+        index: Option<rustdb_storage::index::art::ArtStorageInfo>,
+    ) -> Result<()> {
         if matches!(
             &info.kind,
             AlterInfoKind::AlterTable(AlterTableInfo::ForeignKeyConstraint(_))
         ) {
             return Ok(());
         }
-        info.catalog = self.catalog.name().to_string();
+        info.catalog = (&*self.catalog.name()).into();
+        // Missing legacy storage retains the ordinary rebuild/commit append path.
+        if let Some(index) = index.filter(|index| !index.allocator_infos.is_empty()) {
+            let (table, index) = connection.replay_primary_key(info.clone(), &index)?;
+            self.pending_indexes.push(PendingIndex {
+                table,
+                index,
+                schema: info.schema.clone(),
+                table_name: info.name.clone(),
+            });
+            return Ok(());
+        }
         let statement = SqlStatement::new(SqlStatementKind::Alter(Box::new(info.clone())));
         connection.execute_statement("", statement)?;
         Ok(())
@@ -862,31 +1016,36 @@ fn is_add_primary_key(info: &AlterInfo) -> bool {
 
 /// Reads the stored index data of an index entry: its description and the bytes of its
 /// buffers per allocator (`ReplayIndexData`).
-fn read_index_storage(d: &mut dyn Deserializer) -> Result<UnboundIndexStorage> {
-    let info = d.read_object_property(102, "index_storage_info", deserialize_index_storage_info)?;
+fn read_index_storage(
+    d: &mut dyn Deserializer,
+    storage: Option<&StorageManager>,
+) -> Result<rustdb_storage::index::art::ArtStorageInfo> {
+    let mut info = d.read_object_property(102, "index_storage_info", deserialize_index_storage_info)?;
     d.on_property_begin(103, "index_storage")?;
     let count = d.on_list_begin()?;
-    let mut buffers = Vec::with_capacity(count);
-    for index in 0..count {
-        let sizes = info
-            .allocator_infos
-            .get(index)
-            .map(|allocator| allocator.allocation_sizes.as_slice())
-            .unwrap_or_default();
-        let mut allocator = Vec::with_capacity(sizes.len());
-        for &size in sizes {
+    if count != info.allocator_infos.len() {
+        return Err(Error::serialization("index WAL allocator count mismatch"));
+    }
+    let mut writer = storage.map(|storage| {
+        rustdb_storage::checkpoint::table_writer::BlockWriter::new(Arc::clone(storage.block_manager()))
+    });
+    for allocator in &mut info.allocator_infos {
+        for (position, &size) in allocator.allocation_sizes.iter().enumerate() {
             let size = usize::try_from(size).map_err(|_| Error::serialization("index buffer too large"))?;
-            allocator.push(d.read_data(size)?);
+            let bytes = d.read_data(size)?;
+            if let Some(writer) = &mut writer {
+                let pointer = writer.write(&bytes)?;
+                match allocator.block_pointers.get_mut(position) {
+                    Some(slot) => *slot = pointer,
+                    None => allocator.block_pointers.push(pointer),
+                }
+            }
         }
-        buffers.push(allocator);
     }
     d.on_list_end()?;
     d.on_property_end()?;
-    Ok(UnboundIndexStorage::Wal(info, buffers))
-}
-
-/// Reads past the stored index data of an index entry (`ReplayIndexData`); rustdb
-/// rebuilds the index from its table instead.
-fn skip_index_storage(d: &mut dyn Deserializer) -> Result<()> {
-    read_index_storage(d).map(drop)
+    if let Some(writer) = &mut writer {
+        writer.flush()?;
+    }
+    Ok(info)
 }

@@ -9,12 +9,96 @@ use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo, Value};
 
 use crate::{ParsedExpression, ParsedExpressionKind, PivotColumn, PivotColumnEntry};
 
+/// Ownership attached to an external scan (`TableRef::external_dependency`). Copies
+/// share the owner. Like C++, equality and serialization concern the query tree,
+/// rather than this process-local lifetime metadata.
+#[derive(Clone, Default)]
+pub struct ExternalDependency {
+    owner: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+}
+impl ExternalDependency {
+    pub fn new<T: std::any::Any + Send + Sync>(owner: std::sync::Arc<T>) -> Self {
+        Self { owner: Some(owner) }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.owner.is_none()
+    }
+}
+impl std::fmt::Debug for ExternalDependency {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ExternalDependency")
+            .field("present", &self.owner.is_some())
+            .finish()
+    }
+}
+impl PartialEq for ExternalDependency {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+/// Retain external references injected while binding a copy, leaving the original
+/// expressions, sampling and other syntax intact for later rebinding.
+pub fn retain_external_replacements(
+    original: &mut crate::SelectStatement,
+    bound: &mut crate::SelectStatement,
+) {
+    use crate::TableRef;
+    use crate::visit::{VisitorMut, walk_table_ref};
+    #[derive(Default)]
+    struct Collector(std::collections::HashMap<u64, TableRef>);
+    impl VisitorMut for Collector {
+        fn visit_table_ref(&mut self, table: &mut TableRef) {
+            if !table.external_dependency.is_empty()
+                && let Some(location) = table.query_location
+            {
+                self.0.entry(location).or_insert_with(|| table.clone());
+            }
+            walk_table_ref(self, table);
+        }
+    }
+    let mut collect = Collector::default();
+    collect.visit_query_node(&mut bound.node);
+    retain_external_replacement_list(original, collect.0.into_values());
+}
+
+/// Apply replacements captured before binding consumes scalar subquery/CTE trees.
+pub fn retain_external_replacement_list(
+    original: &mut crate::SelectStatement,
+    replacements: impl IntoIterator<Item = crate::TableRef>,
+) {
+    use crate::visit::{VisitorMut, walk_table_ref};
+    use crate::{TableRef, TableRefKind};
+    struct Retain(std::collections::HashMap<u64, TableRef>);
+    impl VisitorMut for Retain {
+        fn visit_table_ref(&mut self, table: &mut TableRef) {
+            if matches!(table.kind, TableRefKind::BaseTable(_))
+                && let Some(replacement) = table.query_location.and_then(|location| self.0.get(&location))
+            {
+                let sample = table.sample.clone();
+                *table = replacement.clone();
+                table.sample = sample;
+                return;
+            }
+            walk_table_ref(self, table);
+        }
+    }
+    let mut by_location = std::collections::HashMap::new();
+    for replacement in replacements {
+        if let Some(location) = replacement.query_location {
+            by_location.entry(location).or_insert(replacement);
+        }
+    }
+    Retain(by_location).visit_query_node(&mut original.node);
+}
+
 /// One output column group of a pivot: the pivot values it stands for and its name
 /// (DuckDB's `PivotValueElement`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PivotValueElement {
     pub values: Vec<Value>,
-    pub name: String,
+    pub name: rustdb_common::ByteString,
 }
 
 /// What the binder records on a pivot it rewrote into the LIST-based plan, for binding the
@@ -22,8 +106,8 @@ pub struct PivotValueElement {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BoundPivotSpec {
     pub pivot_values: Vec<PivotValueElement>,
-    pub group_names: Vec<String>,
-    pub aggregate_names: Vec<String>,
+    pub group_names: Vec<rustdb_common::ByteString>,
+    pub aggregate_names: Vec<rustdb_common::ByteString>,
 }
 
 /// From this version on, PIVOT entries may hold arbitrary expressions.
@@ -72,7 +156,7 @@ fn fold_entry(expr: &ParsedExpression, values: &mut Vec<Value>) -> Result<bool> 
     match &expr.kind {
         ParsedExpressionKind::ColumnRef(column) => match column.column_names.as_slice() {
             [name] => {
-                values.push(Value::varchar(name));
+                values.push(Value::try_varchar(name.as_bytes())?);
                 Ok(true)
             }
             _ => Ok(false),
@@ -102,12 +186,12 @@ fn fold_entry(expr: &ParsedExpression, values: &mut Vec<Value>) -> Result<bool> 
 fn fold_constant(expr: &ParsedExpression) -> Result<Option<Value>> {
     match &expr.kind {
         ParsedExpressionKind::Constant(constant) => Ok(Some(constant.value.clone())),
-        ParsedExpressionKind::Function(function) => match function.function_name.as_str() {
-            "struct_pack" => {
+        ParsedExpressionKind::Function(function) => match function.function_name.as_bytes() {
+            b"struct_pack" => {
                 let mut names = BTreeSet::new();
                 let mut fields = Vec::with_capacity(function.children.len());
                 for child in &function.children {
-                    if !names.insert(child.alias.as_str()) {
+                    if !names.insert(child.alias.as_bytes()) {
                         return Ok(None);
                     }
                     let Some(value) = fold_constant(child)? else {
@@ -117,14 +201,14 @@ fn fold_constant(expr: &ParsedExpression) -> Result<Option<Value>> {
                 }
                 Ok(Some(Value::struct_value(fields)))
             }
-            "list_value" => {
+            b"list_value" => {
                 let Some(values) = fold_all(&function.children)? else {
                     return Ok(None);
                 };
                 let child_type = common_type(&values)?;
                 Ok(Some(Value::list(child_type, values)))
             }
-            "map" => {
+            b"map" => {
                 let [keys, values] = function.children.as_slice() else {
                     return Ok(None);
                 };

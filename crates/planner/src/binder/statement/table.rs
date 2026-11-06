@@ -26,20 +26,31 @@ pub fn table_of(entry: &CatalogEntry) -> Result<&TableEntry> {
 
 /// A table looked up for INSERT/UPDATE/DELETE, with the schema it was found in.
 pub struct FoundTable {
-    pub catalog: String,
-    pub schema: String,
+    pub catalog: rustdb_common::ByteString,
+    pub schema: rustdb_common::ByteString,
     pub entry: Arc<CatalogEntry>,
 }
 
 /// `Catalog::GetEntry<TableCatalogEntry>`: the table called `name`; a view is an error.
-pub fn find_table(scope: &BindScope<'_>, catalog: &str, schema: &str, name: &str) -> Result<FoundTable> {
+pub fn find_table(
+    scope: &BindScope<'_>,
+    catalog: impl AsRef<[u8]>,
+    schema: impl AsRef<[u8]>,
+    name: impl AsRef<[u8]>,
+) -> Result<FoundTable> {
+    let name = name.as_ref();
+    let schema = schema.as_ref();
+    let catalog = catalog.as_ref();
+
     let (catalog, schema) = bind_schema_or_catalog(scope, catalog, schema)?;
     let found = scope
         .context
         .get_entry(&catalog, &schema, CatalogType::Table, name, false)?
         .ok_or_else(|| Error::internal("table lookup"))?;
     if !matches!(found.entry.kind, EntryKind::Table(_)) {
-        return Err(Error::catalog(format!("{name} is not an table")));
+        return Err(Error::catalog(rustdb_common::byte_format!(
+            "{name} is not an table"
+        )));
     }
     Ok(FoundTable {
         catalog: found.catalog,
@@ -52,17 +63,29 @@ pub fn find_table(scope: &BindScope<'_>, catalog: &str, schema: &str, name: &str
 /// catalog (see [`crate::ClientContext::bind_schema_or_catalog`]).
 pub fn bind_schema_or_catalog(
     scope: &BindScope<'_>,
-    catalog: &str,
-    schema: &str,
-) -> Result<(String, String)> {
+    catalog: impl AsRef<[u8]>,
+    schema: impl AsRef<[u8]>,
+) -> Result<(rustdb_common::ByteString, rustdb_common::ByteString)> {
+    let schema = schema.as_ref();
+    let catalog = catalog.as_ref();
+
     scope.context.bind_schema_or_catalog(catalog, schema)
 }
 
 /// "Table "t" does not have a column with name "x"" (`TableCatalogEntry::GetColumnIndex`).
-pub fn missing_column_error(table: &TableEntry, table_name: &str, name: &str) -> Error {
-    let names: Vec<String> = table.columns.iter().map(|column| column.name.clone()).collect();
-    let candidates = rustdb_common::string_util::candidates_error_message(&names, name, "Did you mean");
-    Error::binder(format!(
+pub fn missing_column_error(
+    table: &TableEntry,
+    table_name: impl AsRef<[u8]>,
+    name: impl AsRef<[u8]>,
+) -> Error {
+    let name = name.as_ref();
+    let table_name = table_name.as_ref();
+
+    let names: Vec<rustdb_common::ByteString> =
+        table.columns.iter().map(|column| column.name.clone()).collect();
+    let candidates =
+        rustdb_common::string_util::candidates_error_message_bytes(&names, name, b"Did you mean");
+    Error::binder(rustdb_common::byte_format!(
         "Table \"{table_name}\" does not have a column with name \"{name}\"\n{candidates}"
     ))
 }
@@ -93,9 +116,11 @@ pub fn check_columns(table: &TableEntry) -> Vec<CheckColumn> {
 /// Binds the constraints of `table` (DuckDB's `Binder::BindConstraints`).
 pub fn bind_constraints(
     scope: &mut BindScope<'_>,
-    table_name: &str,
+    table_name: impl AsRef<[u8]>,
     table: &TableEntry,
 ) -> Result<Vec<BoundConstraint>> {
+    let table_name = table_name.as_ref();
+
     let columns = check_columns(table);
     let mut bound = Vec::with_capacity(table.constraints.len());
     for constraint in &table.constraints {
@@ -114,7 +139,7 @@ pub fn bind_constraints(
         let bound_expression = generated_binder.bind(&mut expression, true)?;
         bound.push(BoundConstraint::Generated {
             expression: bound_expression,
-            text: format!("{} {} AS ({generated})", column.name, column.logical_type),
+            text: rustdb_common::byte_format!("{} {} AS ({generated})", column.name, column.logical_type),
         });
     }
     Ok(bound)
@@ -124,10 +149,12 @@ pub fn bind_constraints(
 pub fn bind_constraint(
     scope: &mut BindScope<'_>,
     constraint: &Constraint,
-    table_name: &str,
+    table_name: impl AsRef<[u8]>,
     table: &TableEntry,
     columns: &[CheckColumn],
 ) -> Result<BoundConstraint> {
+    let table_name = table_name.as_ref();
+
     Ok(match constraint {
         Constraint::Check(check) => {
             let mut expression = (*check.expression).clone();
@@ -137,7 +164,7 @@ pub fn bind_constraint(
             BoundConstraint::Check {
                 expression: bound,
                 bound_columns: check_binder.bound_columns.clone(),
-                text: format!("CHECK({})", check.expression),
+                text: rustdb_common::byte_format!("CHECK({})", check.expression),
             }
         }
         Constraint::NotNull(not_null) => {
@@ -166,10 +193,12 @@ pub fn bind_constraint(
 /// The physical key columns of a UNIQUE / PRIMARY KEY constraint
 /// (`Binder::BindUniqueConstraint`).
 pub fn unique_keys(
-    table_name: &str,
+    table_name: impl AsRef<[u8]>,
     table: &TableEntry,
     unique: &rustdb_ast::UniqueConstraint,
 ) -> Result<Vec<usize>> {
+    let table_name = table_name.as_ref();
+
     if unique.index.0 != u64::MAX {
         let physical = table
             .logical_to_physical(unique.index.0 as usize)
@@ -179,21 +208,26 @@ pub fn unique_keys(
     let mut keys = Vec::with_capacity(unique.columns.len());
     for name in &unique.columns {
         let Some((logical, column)) = table.column(name) else {
-            return Err(Error::catalog(format!(
+            return Err(Error::catalog(rustdb_common::byte_format!(
                 "table \"{table_name}\" does not have a column named \"{name}\""
             )));
         };
         if column.generated.is_some() {
-            return Err(Error::binder(format!(
-                "cannot create a PRIMARY KEY on a generated column: {}",
-                column.name
-            )));
+            return Err(Error::new_bytes(
+                rustdb_common::ErrorKind::Binder,
+                [
+                    "cannot create a PRIMARY KEY on a generated column: ".as_bytes(),
+                    column.name.as_bytes(),
+                    "".as_bytes(),
+                ]
+                .concat(),
+            ));
         }
         let physical = table
             .logical_to_physical(logical)
             .ok_or_else(|| Error::internal("generated column in a key"))?;
         if keys.contains(&physical) {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(rustdb_common::byte_format!(
                 "column \"{name}\" appears twice in primary key constraint"
             )));
         }
@@ -219,14 +253,20 @@ pub fn bind_default_values(scope: &mut BindScope<'_>, table: &TableEntry) -> Res
 }
 
 /// The catalog and schema of a table, found through its storage.
-pub fn table_catalog_schema(scope: &BindScope<'_>, table: &TableEntry) -> Option<(String, String)> {
+pub fn table_catalog_schema(
+    scope: &BindScope<'_>,
+    table: &TableEntry,
+) -> Option<(rustdb_common::ByteString, rustdb_common::ByteString)> {
     let storage = table.storage.as_ref()?;
     let catalog = scope
         .context
         .catalogs
         .iter()
         .find(|catalog| catalog.io().is_ok_and(|io| Arc::ptr_eq(io, storage.io())))?;
-    Some((catalog.name().to_string(), storage.info().schema_name()))
+    Some((
+        rustdb_common::ByteString::from(catalog.name().as_ref()),
+        storage.info().schema_name(),
+    ))
 }
 
 /// Binds one `DEFAULT` expression with target type `ty`.
@@ -244,7 +284,7 @@ pub fn bind_default_value_in(
     scope: &mut BindScope<'_>,
     default: Option<&ParsedExpression>,
     ty: &LogicalType,
-    path: Option<&(String, String)>,
+    path: Option<&(rustdb_common::ByteString, rustdb_common::ByteString)>,
 ) -> Result<Expression> {
     let Some(default) = default else {
         return Ok(Expression::constant(Value::null(ty.clone())));
@@ -280,12 +320,15 @@ pub fn expand_default(expr: &mut ParsedExpression, default: Option<&ParsedExpres
 pub fn bind_returning(
     scope: &mut BindScope<'_>,
     returning_list: Vec<ParsedExpression>,
-    table_name: &str,
+    table_name: impl AsRef<[u8]>,
     table: &Arc<CatalogEntry>,
-    alias: &str,
+    alias: impl AsRef<[u8]>,
     table_index: u64,
     child: LogicalOperator,
 ) -> Result<BoundStatement> {
+    let alias = alias.as_ref();
+    let table_name = table_name.as_ref();
+
     bind_returning_with_virtual(
         scope,
         returning_list,
@@ -328,13 +371,16 @@ pub const VIRTUAL_COLUMN_START: u64 = 1 << 63;
 pub fn bind_returning_with_virtual(
     scope: &mut BindScope<'_>,
     mut returning_list: Vec<ParsedExpression>,
-    table_name: &str,
+    table_name: impl AsRef<[u8]>,
     table: &Arc<CatalogEntry>,
-    alias: &str,
+    alias: impl AsRef<[u8]>,
     table_index: u64,
     child: LogicalOperator,
     extra_virtual: Option<(&str, LogicalType)>,
 ) -> Result<BoundStatement> {
+    let alias = alias.as_ref();
+    let table_name = table_name.as_ref();
+
     let entry = table_of(table)?;
     let mut binder = Binder::new(Arc::clone(&scope.context))?;
     // Every stored column is output by the child in order: pre-register them so that the
@@ -350,11 +396,11 @@ pub fn bind_returning_with_virtual(
         }
     }
     // `rowid` is not a column of the returned rows; only MERGE adds `merge_action`.
-    let virtual_columns: Vec<(u64, String, LogicalType)> = extra_virtual
-        .map(|(name, ty)| (VIRTUAL_COLUMN_START, name.to_owned(), ty))
+    let virtual_columns: Vec<(u64, rustdb_common::ByteString, LogicalType)> = extra_virtual
+        .map(|(name, ty)| (VIRTUAL_COLUMN_START, name.into(), ty))
         .into_iter()
         .collect();
-    let names: Vec<String> = entry.columns.iter().map(|c| c.name.clone()).collect();
+    let names: Vec<rustdb_common::ByteString> = entry.columns.iter().map(|c| c.name.clone()).collect();
     let types: Vec<LogicalType> = entry.columns.iter().map(|c| c.logical_type.clone()).collect();
     let binding_alias = if alias.is_empty() {
         BindingAlias::new(table_name)

@@ -24,7 +24,7 @@ impl<'a> Transformer<'a> {
             Node::RangeSubselect(subselect) => t.transform_range_subselect(subselect),
             Node::RangeFunction(function) => t.transform_range_function(function),
             Node::PivotExpr(pivot) => t.transform_pivot(pivot),
-            other => Err(Error::not_implemented(format!(
+            other => Err(Error::not_implemented(rustdb_common::byte_format!(
                 "From Type {} not supported",
                 super::node_tag(other).0
             ))),
@@ -74,7 +74,7 @@ impl<'a> Transformer<'a> {
         let mut result = build::table_ref(TableRefKind::BaseTable(Box::new(BaseTableRef {
             schema_name: root.schemaname.clone().unwrap_or_default(),
             table_name: root.relname.clone().unwrap_or_default(),
-            column_name_alias,
+            column_name_alias: column_name_alias.into_iter().collect(),
             catalog_name: root.catalogname.clone().unwrap_or_default(),
             at_clause,
         })));
@@ -99,7 +99,7 @@ impl<'a> Transformer<'a> {
                 JoinType::Inner
             }
             other => {
-                return Err(Error::not_implemented(format!(
+                return Err(Error::not_implemented(rustdb_common::byte_format!(
                     "Join type {} not supported\n",
                     other as i32
                 )));
@@ -124,7 +124,7 @@ impl<'a> Transformer<'a> {
             is_implicit: false,
         };
         if !root.using_clause.is_empty() {
-            join.using_columns = string_list(&root.using_clause)?;
+            join.using_columns = string_list(&root.using_clause)?.into_iter().collect();
             let mut result = build::table_ref(TableRefKind::Join(Box::new(join)));
             set_ref_location(&mut result, root.location);
             return Ok(result);
@@ -145,7 +145,7 @@ impl<'a> Transformer<'a> {
             let (alias, column_name_alias) = transform_alias(Some(alias))?;
             let mut subquery = build::table_ref(TableRefKind::Subquery(SubqueryRef {
                 subquery: Box::new(statement),
-                column_name_alias,
+                column_name_alias: column_name_alias.into_iter().collect(),
             }));
             set_ref_location(&mut subquery, root.location);
             subquery.alias = alias;
@@ -161,7 +161,7 @@ impl<'a> Transformer<'a> {
         let (alias, column_name_alias) = transform_alias(root.alias.as_deref())?;
         let mut result = build::table_ref(TableRefKind::Subquery(SubqueryRef {
             subquery: Box::new(subquery),
-            column_name_alias,
+            column_name_alias: column_name_alias.into_iter().collect(),
         }));
         result.alias = alias;
         result.sample = self.transform_sample_options(root.sample.as_ref())?;
@@ -200,7 +200,7 @@ impl<'a> Transformer<'a> {
         let (alias, column_name_alias) = transform_alias(root.alias.as_deref())?;
         let mut result = build::table_ref(TableRefKind::TableFunction(TableFunctionRef {
             function: Box::new(function),
-            column_name_alias,
+            column_name_alias: column_name_alias.into_iter().collect(),
             with_ordinality,
         }));
         set_ref_location(&mut result, location);
@@ -215,7 +215,7 @@ impl<'a> Transformer<'a> {
             pivot_expressions: Vec::new(),
             unpivot_names: Vec::new(),
             entries: Vec::new(),
-            pivot_enum: String::new(),
+            pivot_enum: rustdb_common::ByteString::new(),
             subquery: None,
         };
         if !pivot.pivot_columns.is_empty() {
@@ -224,18 +224,18 @@ impl<'a> Transformer<'a> {
                 if is_scalar(expr) {
                     return Err(parser_error_at(
                         expr.query_location,
-                        format!("Cannot pivot on constant value \"{expr}\""),
+                        rustdb_common::byte_format!("Cannot pivot on constant value \"{expr}\""),
                     ));
                 }
                 if has_subquery(expr) {
                     return Err(parser_error_at(
                         expr.query_location,
-                        format!("Cannot pivot on subquery \"{expr}\""),
+                        rustdb_common::byte_format!("Cannot pivot on subquery \"{expr}\""),
                     ));
                 }
             }
         } else if !pivot.unpivot_columns.is_empty() {
-            column.unpivot_names = string_list(&pivot.unpivot_columns)?;
+            column.unpivot_names = string_list(&pivot.unpivot_columns)?.into_iter().collect();
         } else {
             return Err(Error::internal(
                 "Either pivot_columns or unpivot_columns must be defined",
@@ -286,10 +286,10 @@ impl<'a> Transformer<'a> {
         let mut result = build::table_ref(TableRefKind::Pivot(Box::new(PivotRef {
             source: Box::new(source),
             aggregates,
-            unpivot_names,
+            unpivot_names: unpivot_names.into_iter().collect(),
             pivots,
-            groups,
-            column_name_alias,
+            groups: groups.into_iter().collect(),
+            column_name_alias: column_name_alias.into_iter().collect(),
             include_nulls: root.include_nulls,
             bound: None,
         })));

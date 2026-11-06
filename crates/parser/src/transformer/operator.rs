@@ -13,7 +13,7 @@ use super::{Transformer, node_string, required};
 
 impl<'a> Transformer<'a> {
     /// `TransformUnaryOperator`: a prefix (or `__postfix`) operator function.
-    fn transform_unary_operator(op: &str, child: ParsedExpression) -> ParsedExpression {
+    fn transform_unary_operator(op: &[u8], child: ParsedExpression) -> ParsedExpression {
         let mut result = build::function(op, vec![child]);
         if let ParsedExpressionKind::Function(function) = &mut result.kind {
             function.is_operator = true;
@@ -24,18 +24,18 @@ impl<'a> Transformer<'a> {
     /// `TransformBinaryOperator`.
     fn transform_binary_operator(
         &self,
-        op: &str,
+        op: &[u8],
         left: ParsedExpression,
         right: ParsedExpression,
     ) -> ParsedExpression {
-        let op = if self.options.integer_division && op == "/" {
-            "//"
+        let op = if self.options.integer_division && op == b"/" {
+            b"//".as_slice()
         } else {
             op
         };
-        if op == "~" || op == "!~" {
+        if op == b"~" || op == b"!~" {
             let result = build::function("regexp_full_match", vec![left, right]);
-            return if op == "!~" {
+            return if op == b"!~" {
                 build::operator(ExpressionType::OperatorNot, vec![result])
             } else {
                 result
@@ -54,9 +54,9 @@ impl<'a> Transformer<'a> {
 
     /// `TransformInExpression`: `x IN (a, b)` or `x IN list_expression`.
     #[inline(never)]
-    fn transform_in_expression(&mut self, name: &str, root: &'a AExpr) -> Result<ParsedExpression> {
+    fn transform_in_expression(&mut self, name: &[u8], root: &'a AExpr) -> Result<ParsedExpression> {
         let left = self.transform_opt_expression(root.lexpr.as_ref())?;
-        let operator_type = if name == "<>" {
+        let operator_type = if name == b"<>" {
             ExpressionType::CompareNotIn
         } else {
             ExpressionType::CompareIn
@@ -102,9 +102,10 @@ impl<'a> Transformer<'a> {
                 let right = self.transform_opt_expression(root.rexpr.as_ref())?;
                 match (left, right) {
                     (None, Some(right)) => Ok(Self::transform_unary_operator(name, right)),
-                    (Some(left), None) => {
-                        Ok(Self::transform_unary_operator(&format!("{name}__postfix"), left))
-                    }
+                    (Some(left), None) => Ok(Self::transform_unary_operator(
+                        &rustdb_common::byte_format!("{name}__postfix"),
+                        left,
+                    )),
                     (Some(left), Some(right)) => Ok(self.transform_binary_operator(name, left, right)),
                     (None, None) => Err(Error::internal("Operator without arguments")),
                 }
@@ -114,7 +115,7 @@ impl<'a> Transformer<'a> {
 
     /// `x op ANY (list)` / `x op ALL (list)`: a comparison with an `UNNEST` subquery.
     #[inline(never)]
-    fn transform_any_all(&mut self, name: &str, root: &'a AExpr) -> Result<ParsedExpression> {
+    fn transform_any_all(&mut self, name: &[u8], root: &'a AExpr) -> Result<ParsedExpression> {
         let left = self.transform_opt_boxed(root.lexpr.as_ref())?;
         let right = self.transform_opt_expression(root.rexpr.as_ref())?;
         let mut select = build::select_node();
@@ -128,7 +129,7 @@ impl<'a> Transformer<'a> {
             location = Some(loc);
         }
         if comparison_type == ExpressionType::Invalid {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(rustdb_common::byte_format!(
                 "Unsupported comparison \"{name}\" for ANY/ALL subquery"
             )));
         }
@@ -185,7 +186,7 @@ impl<'a> Transformer<'a> {
     }
 
     #[inline(never)]
-    fn transform_similar(&mut self, name: &str, root: &'a AExpr) -> Result<ParsedExpression> {
+    fn transform_similar(&mut self, name: &[u8], root: &'a AExpr) -> Result<ParsedExpression> {
         let left = self.transform_required(root.lexpr.as_ref(), "SIMILAR TO input")?;
         let right = self.transform_required(root.rexpr.as_ref(), "SIMILAR TO pattern")?;
         let ParsedExpressionKind::Function(similar) = right.kind else {
@@ -202,7 +203,7 @@ impl<'a> Transformer<'a> {
             return Err(Error::not_implemented("Custom escape in SIMILAR TO"));
         }
         let result = build::function("regexp_full_match", vec![left, pattern]);
-        Ok(if name == "!~" {
+        Ok(if name == b"!~" {
             build::operator(ExpressionType::OperatorNot, vec![result])
         } else {
             result

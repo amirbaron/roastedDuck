@@ -20,7 +20,10 @@ pub struct ColumnAliasBinder {
 
 impl ColumnAliasBinder {
     /// Whether `names` refers to a select-list alias (DuckDB's `DoesColumnAliasExist`).
-    pub fn does_column_alias_exist(bind_state: &SelectBindState, names: &[String]) -> bool {
+    pub fn does_column_alias_exist(
+        bind_state: &SelectBindState,
+        names: &[rustdb_common::ByteString],
+    ) -> bool {
         is_potential_alias(names)
             && names
                 .first()

@@ -242,7 +242,7 @@ fn bind(generate_series: bool) -> impl Fn(&TableFunctionBindInput<'_>) -> Result
                 } else {
                     "range"
                 }
-                .to_owned(),
+                .to_owned().into(),
             ],
             bind_data: Some(Arc::new(result)),
         })

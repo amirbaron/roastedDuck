@@ -42,6 +42,18 @@ fn invalid_data() -> Error {
     )
 }
 
+/// `TCompactProtocol::getTType` validates the compact nibble even when a
+/// generated reader would otherwise ignore the field or an empty collection.
+fn validate_type(field_type: u8) -> Result<()> {
+    if field_type > compact_type::STRUCT {
+        return Err(Error::new(
+            rustdb_common::ErrorKind::Invalid,
+            format!("don't know what type: {}", char::from(field_type)),
+        ));
+    }
+    Ok(())
+}
+
 /// Reading past the end of the input (`TTransportException::END_OF_FILE`).
 fn end_of_input() -> Error {
     Error::new(
@@ -163,6 +175,7 @@ impl<'a> CompactReader<'a> {
             size = self.read_varint()?;
         }
         let size = usize::try_from(size).map_err(|_| invalid_data())?;
+        validate_type(element_type)?;
         // Every element takes at least one byte (except booleans packed in nothing).
         if size > self.data.len() - self.position && element_type != compact_type::BOOLEAN_TRUE {
             return Err(end_of_input());
@@ -200,6 +213,7 @@ impl<'a> CompactReader<'a> {
         } else {
             last.wrapping_add(modifier)
         };
+        validate_type(field_type)?;
         if let Some(last) = self.last_field_ids.last_mut() {
             *last = id;
         }
@@ -266,6 +280,8 @@ impl<'a> CompactReader<'a> {
                 let size = usize::try_from(self.read_varint()?).map_err(|_| invalid_data())?;
                 if size > 0 {
                     let types = self.read_u8()?;
+                    validate_type(types >> 4)?;
+                    validate_type(types & 0x0f)?;
                     for _ in 0..size {
                         self.skip_depth(types >> 4, depth + 1)?;
                         self.skip_depth(types & 0x0f, depth + 1)?;
@@ -457,6 +473,17 @@ impl ThriftValue for String {
         reader.read_string()
     }
 
+    fn write(&self, writer: &mut CompactWriter) {
+        writer.write_binary(self.as_bytes());
+    }
+}
+
+// Thrift string fields are length-prefixed bytes in C++ TCompactProtocol.
+impl ThriftValue for rustdb_common::ByteString {
+    const TYPE: u8 = compact_type::BINARY;
+    fn read(reader: &mut CompactReader<'_>) -> Result<Self> {
+        reader.read_binary().map(Into::into)
+    }
     fn write(&self, writer: &mut CompactWriter) {
         writer.write_binary(self.as_bytes());
     }
@@ -689,7 +716,7 @@ mod tests {
     fn round_trips_metadata() {
         let element = SchemaElement {
             type_: Some(Type::INT64),
-            name: "a".to_owned(),
+            name: "a".to_owned().into(),
             repetition_type: Some(FieldRepetitionType::OPTIONAL),
             field_id: Some(300),
             logical_type: Some(LogicalType {
@@ -726,5 +753,26 @@ mod tests {
         let (value, _): (KeyValue, usize) = read_from(&writer.into_bytes()).unwrap();
         assert_eq!(&value.key[..], b"k");
         assert!(read_from::<KeyValue>(&[0]).is_err());
+    }
+
+    #[test]
+    fn invalid_compact_type_keeps_reference_message() {
+        for field_type in 13..=15 {
+            let bytes = [0x10 | field_type];
+            let mut reader = CompactReader::new(&bytes);
+            let error = reader.read_struct(|reader, _, ty| reader.skip(ty)).unwrap_err();
+            assert_eq!(
+                error.raw_message(),
+                format!("don't know what type: {}", char::from(field_type))
+            );
+            // Empty collections still validate their type tag in C++.
+            let bytes = [field_type];
+            let mut reader = CompactReader::new(&bytes);
+            let error = reader.read_list_begin().unwrap_err();
+            assert_eq!(
+                error.raw_message(),
+                format!("don't know what type: {}", char::from(field_type))
+            );
+        }
     }
 }

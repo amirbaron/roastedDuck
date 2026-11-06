@@ -14,7 +14,7 @@ use crate::expression::Expression;
 /// A column of the table a CHECK constraint belongs to.
 #[derive(Clone, Debug)]
 pub struct CheckColumn {
-    pub name: String,
+    pub name: rustdb_common::ByteString,
     pub logical_type: LogicalType,
     /// The physical index; `None` for generated columns.
     pub physical: Option<usize>,
@@ -27,7 +27,7 @@ pub struct CheckColumn {
 #[derive(Debug)]
 pub struct CheckBinder<'a> {
     base: BinderBase<'a>,
-    table: String,
+    table: rustdb_common::ByteString,
     columns: &'a [CheckColumn],
     /// The physical columns the constraint reads.
     pub bound_columns: Vec<usize>,
@@ -39,7 +39,7 @@ impl<'a> CheckBinder<'a> {
     pub fn new(
         binder: &'a mut Binder,
         outer: Option<&'a mut dyn Scope>,
-        table: impl Into<String>,
+        table: impl Into<rustdb_common::ByteString>,
         columns: &'a [CheckColumn],
     ) -> Self {
         Self {
@@ -57,7 +57,7 @@ impl<'a> CheckBinder<'a> {
     pub fn generated(
         binder: &'a mut Binder,
         outer: Option<&'a mut dyn Scope>,
-        table: impl Into<String>,
+        table: impl Into<rustdb_common::ByteString>,
         columns: &'a [CheckColumn],
     ) -> Self {
         Self {
@@ -92,7 +92,7 @@ impl<'a> CheckBinder<'a> {
             let start = usize::from(names[0] == self.table);
             let mut result = ParsedExpression::column_ref(vec![names[names.len() - 1].clone()]);
             for field in &names[start..names.len() - 1] {
-                result = super::create_struct_extract(result, field);
+                result = super::create_struct_extract(result, field)?;
             }
             return self.bind_expression(&mut result, depth, false);
         }
@@ -102,7 +102,7 @@ impl<'a> CheckBinder<'a> {
             .iter()
             .find(|column| column.name.eq_ignore_ascii_case(name))
         else {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Table does not contain column {name} referenced in check constraint!"
             )));
         };
@@ -146,8 +146,8 @@ impl ExpressionBinder for CheckBinder<'_> {
         }
     }
 
-    fn unsupported_aggregate_message(&self) -> String {
-        "aggregate functions are not allowed in check constraints".to_owned()
+    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+        "aggregate functions are not allowed in check constraints".into()
     }
 }
 
@@ -185,8 +185,8 @@ impl ExpressionBinder for UpdateBinder<'_> {
         }
     }
 
-    fn unsupported_aggregate_message(&self) -> String {
-        "aggregate functions are not allowed in UPDATE".to_owned()
+    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+        "aggregate functions are not allowed in UPDATE".into()
     }
 }
 
@@ -265,11 +265,11 @@ impl ExpressionBinder for ProjectionBinder<'_> {
     ) -> Result<BindResult> {
         match &expr.kind {
             ParsedExpressionKind::Default => {
-                let message = format!("{} cannot contain DEFAULT clause", self.clause);
+                let message = rustdb_common::byte_format!("{} cannot contain DEFAULT clause", self.clause);
                 crate::binder::expression::bind_unsupported_expression(self, expr, depth, &message)
             }
             ParsedExpressionKind::Window(_) => {
-                let message = format!("{} cannot contain window functions!", self.clause);
+                let message = rustdb_common::byte_format!("{} cannot contain window functions!", self.clause);
                 crate::binder::expression::bind_unsupported_expression(self, expr, depth, &message)
             }
             ParsedExpressionKind::ColumnRef(_) | ParsedExpressionKind::Subquery(_) => {
@@ -279,8 +279,8 @@ impl ExpressionBinder for ProjectionBinder<'_> {
         }
     }
 
-    fn unsupported_aggregate_message(&self) -> String {
-        format!("{} cannot contain aggregate functions", self.clause)
+    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+        rustdb_common::byte_format!("{} cannot contain aggregate functions", self.clause)
     }
 }
 
@@ -290,7 +290,7 @@ impl ExpressionBinder for ProjectionBinder<'_> {
 #[derive(Debug)]
 pub struct AlterBinder<'a> {
     base: BinderBase<'a>,
-    table: String,
+    table: rustdb_common::ByteString,
     columns: &'a [CheckColumn],
     /// The physical columns read, one per reference.
     pub bound_columns: Vec<usize>,
@@ -299,7 +299,7 @@ pub struct AlterBinder<'a> {
 impl<'a> AlterBinder<'a> {
     pub fn new(
         binder: &'a mut Binder,
-        table: impl Into<String>,
+        table: impl Into<rustdb_common::ByteString>,
         columns: &'a [CheckColumn],
         target: Option<LogicalType>,
     ) -> Self {
@@ -339,7 +339,7 @@ impl<'a> AlterBinder<'a> {
             let start = usize::from(names[0] == self.table);
             let mut result = ParsedExpression::column_ref(vec![names[names.len() - 1].clone()]);
             for field in &names[start..names.len() - 1] {
-                result = super::create_struct_extract(result, field);
+                result = super::create_struct_extract(result, field)?;
             }
             return self.bind_expression(&mut result, depth, false);
         }
@@ -349,7 +349,7 @@ impl<'a> AlterBinder<'a> {
             .iter()
             .find(|column| column.name.eq_ignore_ascii_case(name))
         else {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Table does not contain column {name} referenced in alter statement!"
             )));
         };
@@ -398,8 +398,8 @@ impl ExpressionBinder for AlterBinder<'_> {
         }
     }
 
-    fn unsupported_aggregate_message(&self) -> String {
-        "aggregate functions are not allowed in alter statement".to_owned()
+    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+        "aggregate functions are not allowed in alter statement".into()
     }
 }
 
@@ -442,8 +442,8 @@ impl ExpressionBinder for IndexBinder<'_> {
         }
     }
 
-    fn unsupported_aggregate_message(&self) -> String {
-        "aggregate functions are not allowed in index expressions".to_owned()
+    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+        "aggregate functions are not allowed in index expressions".into()
     }
 }
 
@@ -484,14 +484,17 @@ impl ExpressionBinder for ReturningBinder<'_> {
 
 /// The innermost lambda whose parameters include `name` (DuckDB's
 /// `LambdaRefExpression::FindMatchingBinding`).
-fn matching_lambda_binding(lambda_bindings: &[crate::binder::Binding], name: &str) -> Option<u64> {
+fn matching_lambda_binding(
+    lambda_bindings: &[crate::binder::Binding],
+    name: impl AsRef<[u8]>,
+) -> Option<u64> {
     lambda_bindings
         .iter()
         .rposition(|binding| {
             binding
                 .names
                 .iter()
-                .any(|parameter| parameter.eq_ignore_ascii_case(name))
+                .any(|parameter| parameter.eq_ignore_ascii_case(name.as_ref()))
         })
         .map(|index| index as u64)
 }

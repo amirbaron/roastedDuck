@@ -244,6 +244,10 @@ impl QueryExecution {
             shared.is_complete()
                 || shared.is_cancelled()
                 || shared.wake_generation.load(Ordering::Acquire) != generation
+                // A sink may have filled the stream buffer and descheduled
+                // between the caller's poll and this generation snapshot. No
+                // producer can wake us again until the client consumes a chunk.
+                || !lock(&shared.blocked).tasks.is_empty()
         });
     }
 
@@ -278,9 +282,19 @@ impl QueryExecution {
     /// cannot tell (`Executor::GetPipelinesProgress` with `Pipeline::GetProgress`): a
     /// pipeline counts as many rows as its source is estimated to produce.
     pub fn progress(&self) -> Option<ProgressData> {
+        if self.done {
+            // C++ clears its active pipeline vector when ExecuteTask finishes.
+            return Some(ProgressData {
+                done: 0.0,
+                total: 0.0,
+            });
+        }
         let mut progress = ProgressData {
             done: 0.0,
-            total: 0.0,
+            // C++ also counts the root pull pipeline whose source is the result
+            // collector. It stays uninitialized until the push pipelines finish.
+            // Rust fetches that sink directly, so account for it without a task.
+            total: self.shared.client.estimates.get(&self.root).clamp(1, 1 << 48) as f64,
         };
         for pipeline in &self.shared.pipelines {
             let cardinality = self
@@ -310,7 +324,7 @@ impl QueryExecution {
         self.done = true;
         *self.current() = None;
         self.shared.cancel_tasks();
-        drop(std::mem::take(&mut *lock(&self.shared.states)));
+        self.shared.release_runtime_states();
         error
     }
 }
@@ -330,6 +344,7 @@ impl Drop for QueryExecution {
         // The task this thread held is dropped first: it may hold operator states.
         *self.current() = None;
         self.shared.cancel_tasks();
+        self.shared.release_runtime_states();
     }
 }
 
@@ -606,6 +621,16 @@ impl ExecutorShared {
         self.producer
             .wait(|| self.executor_tasks.load(Ordering::Acquire) == 0);
         lock(&self.events).clear();
+    }
+
+    /// Match the executor's reset lifetime even if the last worker still owns
+    /// shared task metadata after decrementing `executor_tasks` in its destructor.
+    fn release_runtime_states(&self) {
+        let states = std::mem::take(&mut *lock(&self.states));
+        drop(states);
+        for pipeline in &self.pipelines {
+            pipeline.clear_source();
+        }
     }
 
     /// Creates the event graph (`ScheduleEventsInternal` + `SchedulePipeline`) and
@@ -1136,5 +1161,106 @@ impl Drop for ExecutorTask {
         if self.executor.executor_tasks.fetch_sub(1, Ordering::AcqRel) == 1 {
             self.executor.producer.notify();
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod streaming_wait_tests {
+    use super::*;
+    use crate::operators::PhysicalResultCollector;
+    use rustdb_buffer::{BufferManager, BufferManagerConfig};
+    use rustdb_planner::{LogicalKind, LogicalOperator};
+    use rustdb_types::{DataChunk, LogicalType, Vector};
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn query_drop_releases_execution_data_before_last_task_metadata() -> Result<()> {
+        struct Released(Arc<AtomicUsize>);
+        impl Drop for Released {
+            fn drop(&mut self) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let mut logical = LogicalOperator::new(LogicalKind::ChunkGet {
+            table_index: 0,
+            chunk_types: vec![LogicalType::INTEGER],
+            collection: Arc::from(vec![DataChunk::with_types(&[LogicalType::INTEGER], 0)]),
+        });
+        logical.resolve_operator_types()?;
+        let physical = crate::create_physical_plan(logical)?;
+        let root: PhysicalRef = Arc::new(PhysicalResultCollector::streaming(physical, 1, false, 1));
+        let env = Arc::new(ClientEnv {
+            buffer_manager: BufferManager::new(BufferManagerConfig::default())?,
+            scheduler: super::super::TaskScheduler::new(1),
+        });
+        let execution = QueryExecution::new(root, env, &QueryOptions::default())?;
+        // Model a completed worker's remaining Arc field, without relying on a
+        // scheduler race or sleeping for a spill-file destructor to catch up.
+        let metadata = Arc::clone(&execution.shared);
+        let released = Arc::new(AtomicUsize::new(0));
+        lock(&metadata.states)
+            .operators
+            .insert(usize::MAX, Arc::new(Released(Arc::clone(&released))));
+        let state = metadata.pipelines[0].reset_source(|| Ok(Arc::new(Released(Arc::clone(&released)))))?;
+        drop(state);
+        drop(execution);
+        assert_eq!(released.load(Ordering::SeqCst), 2);
+        assert!(lock(&metadata.states).operators.is_empty());
+        assert!(metadata.pipelines[0].source_state().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn already_ready_stream_does_not_wait_for_another_notification() -> Result<()> {
+        let mut vector = Vector::flat(LogicalType::INTEGER, 2048);
+        vector.values_mut::<i32>().fill(7);
+        let chunk = DataChunk::new(vec![vector], 2048);
+        let mut logical = LogicalOperator::new(LogicalKind::ChunkGet {
+            table_index: 0,
+            chunk_types: vec![LogicalType::INTEGER],
+            collection: Arc::from(vec![chunk; 32]),
+        });
+        logical.resolve_operator_types()?;
+        let physical = crate::create_physical_plan(logical)?;
+        // One chunk fills the buffer, so no consumer can finish the producer yet.
+        let root: PhysicalRef = Arc::new(PhysicalResultCollector::streaming(physical, 2, false, 1));
+        let env = Arc::new(ClientEnv {
+            buffer_manager: BufferManager::new(BufferManagerConfig::default())?,
+            scheduler: super::super::TaskScheduler::new(2),
+        });
+        let options = QueryOptions {
+            streaming_result: true,
+            preserve_insertion_order: false,
+            ..QueryOptions::default()
+        };
+        let mut execution = QueryExecution::new(root, env, &options)?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if execution.execute_task()? == ExecutionStep::ResultReady {
+                break;
+            }
+            assert!(Instant::now() < deadline, "stream did not become ready");
+            std::thread::yield_now();
+        }
+        let shared = Arc::clone(&execution.shared);
+        let (sender, receiver) = mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            execution.wait_for_task();
+            sender.send(()).unwrap();
+        });
+        let returned_without_notification = receiver.recv_timeout(Duration::from_secs(1)).is_ok();
+        // Release the old implementation on failure, then join and cancel its
+        // blocked producer normally. A regression must not hang the test suite.
+        if !returned_without_notification {
+            shared.wake_query_thread();
+        }
+        waiter.join().unwrap();
+        assert!(
+            returned_without_notification,
+            "an already-ready streaming result waited for a later notification"
+        );
+        Ok(())
     }
 }

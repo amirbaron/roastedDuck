@@ -5,7 +5,7 @@
 //! every database knows. Serialization uses it too: when targeting versions before
 //! v1.5, DuckDB writes an unbound builtin type as the bound type.
 
-use rustdb_common::{CaseInsensitiveSet, Error, Result};
+use rustdb_common::{ByteString, Error, Result};
 
 use super::{TypeParameter, TypeParameterValue, UnboundTypeInfo};
 use crate::{EnumTypeInfo, LogicalType, LogicalTypeId, TypeInfo, Value};
@@ -20,7 +20,7 @@ const MAX_UNION_MEMBERS: usize = 255;
 /// A type modifier with nested types bound (DuckDB's `TypeArgument`).
 struct TypeArgument {
     /// The parameter's name: its alias (`ParsedExpression::GetAlias`), empty without one.
-    name: String,
+    name: ByteString,
     value: Value,
 }
 
@@ -123,10 +123,10 @@ const BUILTIN_TYPES: &[(&str, LogicalTypeId, Option<BindFunction>)] = &[
 
 /// The id of the builtin type called `name`, compared case-insensitively (DuckDB's
 /// `DefaultTypeGenerator::GetDefaultType`); `None` for user-defined names.
-pub fn builtin_type_id(name: &str) -> Option<LogicalTypeId> {
+pub fn builtin_type_id(name: impl AsRef<[u8]>) -> Option<LogicalTypeId> {
     BUILTIN_TYPES
         .iter()
-        .find(|(builtin, _, _)| builtin.eq_ignore_ascii_case(name))
+        .find(|(builtin, _, _)| builtin.as_bytes().eq_ignore_ascii_case(name.as_ref()))
         .map(|&(_, id, _)| id)
 }
 
@@ -137,10 +137,10 @@ pub fn builtin_type_names() -> impl Iterator<Item = &'static str> {
 
 /// Whether the default type catalog entry has a modifier-binding callback.
 /// A known type without one rejects modifiers before their expressions are bound.
-pub fn builtin_type_has_bind_function(name: &str) -> Option<bool> {
+pub fn builtin_type_has_bind_function(name: impl AsRef<[u8]>) -> Option<bool> {
     BUILTIN_TYPES
         .iter()
-        .find(|(builtin, _, _)| builtin.eq_ignore_ascii_case(name))
+        .find(|(builtin, _, _)| builtin.as_bytes().eq_ignore_ascii_case(name.as_ref()))
         .map(|&(_, _, bind)| bind.is_some())
 }
 
@@ -149,14 +149,24 @@ impl UnboundTypeInfo {
     /// (DuckDB's `TryDefaultBindTypeExpression`). A name that is not builtin stays an
     /// UNBOUND type; invalid modifiers are DuckDB's binder errors.
     pub fn default_bind(&self) -> Result<LogicalType> {
+        self.bind_parameters(true)
+    }
+
+    /// Binds parameters with their explicit aliases, as catalog type binding and
+    /// `make_type` do. Default binding instead derives unaliased expression names.
+    pub fn bind_with_parameter_aliases(&self) -> Result<LogicalType> {
+        self.bind_parameters(false)
+    }
+
+    fn bind_parameters(&self, expression_names: bool) -> Result<LogicalType> {
         let arguments = self
             .parameters
             .iter()
-            .map(TypeParameter::bind_argument)
+            .map(|parameter| parameter.bind_argument(expression_names))
             .collect::<Result<Vec<_>>>()?;
         let Some(&(_, id, bind)) = BUILTIN_TYPES
             .iter()
-            .find(|(name, _, _)| name.eq_ignore_ascii_case(&self.name))
+            .find(|(name, _, _)| name.as_bytes().eq_ignore_ascii_case(&self.name))
         else {
             return Ok(LogicalType::with_info(
                 LogicalTypeId::Unbound,
@@ -166,7 +176,7 @@ impl UnboundTypeInfo {
         match bind {
             Some(bind) => bind(&arguments),
             None if arguments.is_empty() => Ok(LogicalType::simple(id)),
-            None => Err(Error::binder(format!(
+            None => Err(Error::binder(rustdb_common::byte_format!(
                 "Type '{}' does not take any type parameters",
                 self.name
             ))),
@@ -175,15 +185,20 @@ impl UnboundTypeInfo {
 }
 
 impl TypeParameter {
-    fn bind_argument(&self) -> Result<TypeArgument> {
+    fn bind_argument(&self, expression_names: bool) -> Result<TypeArgument> {
         let value = match &self.value {
-            TypeParameterValue::Type(ty) => Value::type_value(ty.default_bind()?),
+            TypeParameterValue::Type(ty) => Value::type_value(ty.bind_parameters(expression_names)?),
             TypeParameterValue::Constant(value) => value.clone(),
         };
-        Ok(TypeArgument {
-            name: self.name.clone(),
-            value,
-        })
+        let name = if expression_names && self.name.is_empty() {
+            match &self.value {
+                TypeParameterValue::Type(ty) => ty.to_sql_bytes()?,
+                TypeParameterValue::Constant(value) => value.try_to_sql_string()?,
+            }
+        } else {
+            self.name.clone()
+        };
+        Ok(TypeArgument { name, value })
     }
 }
 
@@ -305,7 +320,7 @@ fn bind_enum(arguments: &[TypeArgument]) -> Result<LogicalType> {
     let mut values = Vec::with_capacity(arguments.len());
     for (index, argument) in arguments.iter().enumerate() {
         if !argument.name.is_empty() {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "ENUM type arguments cannot have names (argument {} has name \"{}\")",
                 index + 1,
                 argument.name
@@ -320,7 +335,7 @@ fn bind_enum(arguments: &[TypeArgument]) -> Result<LogicalType> {
                 index + 1
             )));
         };
-        values.push(String::from_utf8_lossy(bytes).into_owned());
+        values.push(bytes.into());
     }
     Ok(LogicalType::with_info(
         LogicalTypeId::Enum,
@@ -385,12 +400,15 @@ fn named_children(
     arguments: &[TypeArgument],
     duplicate: &str,
     anonymous: bool,
-) -> Result<Vec<(String, LogicalType)>> {
-    let mut names = CaseInsensitiveSet::new();
+) -> Result<Vec<(rustdb_common::ByteString, LogicalType)>> {
+    let mut names = std::collections::HashSet::new();
     let mut children = Vec::with_capacity(arguments.len());
     for argument in arguments {
-        if !anonymous && !names.insert(argument.name.as_str()) {
-            return Err(Error::binder(format!("{duplicate} \"{}\"", argument.name)));
+        if !anonymous && !names.insert(argument.name.to_ascii_lowercase()) {
+            return Err(Error::binder(rustdb_common::byte_format!(
+                "{duplicate} \"{}\"",
+                argument.name
+            )));
         }
         let ty = argument
             .type_value()
@@ -503,9 +521,9 @@ mod tests {
 
     fn unbound(name: &str, parameters: Vec<TypeParameter>) -> UnboundTypeInfo {
         UnboundTypeInfo {
-            catalog: String::new(),
-            schema: String::new(),
-            name: name.to_owned(),
+            catalog: ByteString::new(),
+            schema: ByteString::new(),
+            name: name.into(),
             parameters,
             query_location: None,
         }
@@ -513,7 +531,7 @@ mod tests {
 
     fn constant(value: Value) -> TypeParameter {
         TypeParameter {
-            name: String::new(),
+            name: ByteString::new(),
             value: TypeParameterValue::Constant(value),
             query_location: None,
         }
@@ -521,7 +539,7 @@ mod tests {
 
     fn named_type(name: &str, ty: UnboundTypeInfo) -> TypeParameter {
         TypeParameter {
-            name: name.to_owned(),
+            name: name.into(),
             value: TypeParameterValue::Type(ty),
             query_location: None,
         }
@@ -584,16 +602,49 @@ mod tests {
             error(unbound("INTEGER", vec![constant(Value::integer(1))])),
             "Binder Error: Type 'INTEGER' does not take any type parameters"
         );
-        // A STRUCT mixes named and anonymous children only by mistake.
+    }
+    #[test]
+    fn default_binding_uses_expression_names_for_unaliased_types() {
+        // C++ TryDefaultBind uses ParsedExpression::GetName, not GetAlias.
+        let bound = unbound(
+            "STRUCT",
+            vec![
+                named_type("", unbound("INTEGER", vec![])),
+                named_type("b", unbound("VARCHAR", vec![])),
+            ],
+        )
+        .default_bind()
+        .unwrap();
         assert_eq!(
-            error(unbound(
-                "STRUCT",
-                vec![
-                    named_type("", unbound("INTEGER", vec![])),
-                    named_type("b", unbound("VARCHAR", vec![])),
-                ]
-            )),
-            "Binder Error: STRUCT type arguments must either all have names or all be anonymous"
+            bound,
+            LogicalType::struct_type(vec![
+                ("INTEGER".into(), LogicalType::INTEGER),
+                ("b".into(), LogicalType::VARCHAR),
+            ])
+        );
+    }
+
+    #[test]
+    fn catalog_binding_preserves_anonymous_and_native_parameter_aliases() {
+        let mixed = unbound(
+            "STRUCT",
+            vec![
+                named_type("", unbound("INTEGER", vec![])),
+                named_type("b", unbound("VARCHAR", vec![])),
+            ],
+        );
+        assert_eq!(
+            mixed.bind_with_parameter_aliases().unwrap_err().raw_message(),
+            "STRUCT type arguments must either all have names or all be anonymous"
+        );
+        let mut named = mixed;
+        named.parameters[0].name = b"field\xff".as_slice().into();
+        assert_eq!(
+            named.bind_with_parameter_aliases().unwrap(),
+            LogicalType::struct_type(vec![
+                (b"field\xff".as_slice().into(), LogicalType::INTEGER),
+                ("b".into(), LogicalType::VARCHAR),
+            ])
         );
     }
 }

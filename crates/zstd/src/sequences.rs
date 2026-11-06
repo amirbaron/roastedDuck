@@ -132,7 +132,7 @@ fn entropy_cost(count: &[u32], max: u32, total: usize) -> usize {
 }
 
 /// `ZSTD_fseBitCost`: in bits; `None` when the table cannot encode every symbol present.
-fn fse_bit_cost(table: &CTable, count: &[u32], max: u32) -> Option<usize> {
+pub(crate) fn fse_bit_cost(table: &CTable, count: &[u32], max: u32) -> Option<usize> {
     const ACCURACY_LOG: u32 = 8;
     if table.max_symbol < max {
         return None;
@@ -153,7 +153,7 @@ fn fse_bit_cost(table: &CTable, count: &[u32], max: u32) -> Option<usize> {
 }
 
 /// `ZSTD_crossEntropyCost`: in bits.
-fn cross_entropy_cost(norm: &[i16], accuracy_log: u32, count: &[u32], max: u32) -> usize {
+pub(crate) fn cross_entropy_cost(norm: &[i16], accuracy_log: u32, count: &[u32], max: u32) -> usize {
     let shift = 8 - accuracy_log;
     let mut cost = 0usize;
     for s in 0..=max as usize {

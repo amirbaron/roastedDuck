@@ -13,8 +13,10 @@ use super::string::could_not_convert;
 /// under `TRY_CAST`, like DuckDB.
 fn bit_to_numeric<T: BitNumeric + NativeType>() -> BoundCastInfo {
     BoundCastInfo::new(|source, result, count, params| {
+        let location = params.query_location;
         try_map_strings::<T>(source, result, count, params, |bits| {
-            bit::to_numeric::<T>(bits).map_err(|message| RowError::Fatal(Error::conversion(message)))
+            bit::to_numeric::<T>(bits)
+                .map_err(|message| RowError::Fatal(Error::conversion(message).with_position(location)))
         })
     })
 }

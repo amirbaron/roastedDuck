@@ -6,6 +6,7 @@ use rustdb_ast::{
     CatalogEntryInfo, CatalogType as AstCatalogType, LogicalDependency, ParsedExpression,
     ParsedExpressionKind,
 };
+use rustdb_common::ByteString;
 use rustdb_types::{LogicalType, LogicalTypeId};
 
 use crate::TableEntry;
@@ -14,22 +15,32 @@ use crate::TableEntry;
 /// functions an expression calls.
 #[derive(Default)]
 struct References {
-    sequences: Vec<(String, String)>,
-    functions: Vec<String>,
+    sequences: Vec<(ByteString, ByteString)>,
+    functions: Vec<ByteString>,
+}
+
+fn unquote(mut name: &[u8]) -> ByteString {
+    while name.first() == Some(&b'"') {
+        name = &name[1..];
+    }
+    while name.last() == Some(&b'"') {
+        name = &name[..name.len() - 1];
+    }
+    name.into()
 }
 
 impl VisitorMut for References {
     fn visit_expression(&mut self, expression: &mut ParsedExpression) {
         if let ParsedExpressionKind::Function(function) = &expression.kind {
-            let name = function.function_name.to_lowercase();
+            let name = function.function_name.to_ascii_lowercase();
             if (name == "nextval" || name == "currval")
                 && let Some(ParsedExpressionKind::Constant(constant)) =
                     function.children.first().map(|c| &c.kind)
-                && let Some(text) = constant.value.as_str()
+                && let Some(text) = constant.value.as_bytes()
             {
-                let mut parts: Vec<&str> = text.split('.').collect();
-                let sequence = parts.pop().unwrap_or_default().trim_matches('"').to_owned();
-                let schema = parts.pop().unwrap_or_default().trim_matches('"').to_owned();
+                let mut parts: Vec<&[u8]> = text.split(|byte| *byte == b'.').collect();
+                let sequence = unquote(parts.pop().unwrap_or_default());
+                let schema = unquote(parts.pop().unwrap_or_default());
                 self.sequences.push((schema, sequence));
             }
             self.functions.push(name);
@@ -39,7 +50,7 @@ impl VisitorMut for References {
 }
 
 /// Whether `ty` (or a type nested in it) is the user type `name`.
-fn uses_type(ty: &LogicalType, name: &str) -> bool {
+fn uses_type(ty: &LogicalType, name: &[u8]) -> bool {
     if ty.alias().is_some_and(|alias| alias.eq_ignore_ascii_case(name)) {
         return true;
     }
@@ -64,8 +75,9 @@ fn uses_type(ty: &LogicalType, name: &str) -> bool {
 pub fn altered_table_dependencies(
     table: &TableEntry,
     previous: &[LogicalDependency],
-    default_schema: &str,
+    default_schema: impl AsRef<[u8]>,
 ) -> Vec<LogicalDependency> {
+    let default_schema = default_schema.as_ref();
     let mut references = References::default();
     for column in &table.columns {
         for expression in [&column.default_value, &column.generated].into_iter().flatten() {
@@ -91,7 +103,7 @@ pub fn altered_table_dependencies(
                 AstCatalogType::TypeEntry => table
                     .columns
                     .iter()
-                    .any(|column| uses_type(&column.logical_type, name)),
+                    .any(|column| uses_type(&column.logical_type, name.as_bytes())),
                 _ => true,
             }
         })
@@ -107,13 +119,13 @@ pub fn altered_table_dependencies(
                 entry: CatalogEntryInfo {
                     catalog_type: AstCatalogType::SequenceEntry,
                     schema: if schema.is_empty() {
-                        default_schema.to_owned()
+                        ByteString::from(default_schema)
                     } else {
                         schema
                     },
                     name: sequence,
                 },
-                catalog: String::new(),
+                catalog: ByteString::new(),
             });
         }
     }

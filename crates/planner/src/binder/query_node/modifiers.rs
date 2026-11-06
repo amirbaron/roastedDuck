@@ -262,7 +262,7 @@ fn bind_limit_value(
 /// A reference to result column `index` (DuckDB's `CreateOrderExpression`).
 fn create_order_expression(
     expr: &Expression,
-    names: &[String],
+    names: &[rustdb_common::ByteString],
     types: &[LogicalType],
     table_index: u64,
     index: usize,
@@ -291,7 +291,7 @@ fn create_order_expression(
 fn finalize_order_expression(
     expr: &Expression,
     table_index: u64,
-    names: &[String],
+    names: &[rustdb_common::ByteString],
     types: &[LogicalType],
     bind_state: &SelectBindState,
 ) -> Result<Option<Expression>> {
@@ -309,7 +309,7 @@ fn finalize_order_expression(
             let index = children.first().and_then(Value::as_i128).unwrap_or_default() as usize;
             let mut result = create_order_expression(expr, names, types, table_index, index)?;
             if let Some(collation) = children.get(1) {
-                let collation = collation.to_varchar()?;
+                let collation = collation.to_varchar_bytes()?;
                 if !collation.is_empty() {
                     if types[index].id() != LogicalTypeId::Varchar {
                         return Err(Error::binder("COLLATE can only be applied to varchar columns")
@@ -332,7 +332,7 @@ pub fn bind_modifiers(
     context: &ClientContext,
     modifiers: &mut [BoundResultModifier],
     table_index: u64,
-    names: &[String],
+    names: &[rustdb_common::ByteString],
     types: &[LogicalType],
     bind_state: &SelectBindState,
 ) -> Result<()> {

@@ -1549,21 +1549,21 @@ pub const AUTOLOADABLE_EXTENSIONS: &[&str] = &[
 
 /// `ExtensionHelper::FindExtensionInFunctionEntries`: the extensions and types of the
 /// functions named `name`.
-pub fn find_extension_functions(name: &str) -> Vec<(&'static str, ExtensionFunctionType)> {
-    let lower = name.to_lowercase();
+pub fn find_extension_functions(name: impl AsRef<[u8]>) -> Vec<(&'static str, ExtensionFunctionType)> {
+    let lower = name.as_ref().to_ascii_lowercase();
     EXTENSION_FUNCTIONS
         .iter()
-        .filter(|(entry, _, _)| *entry == lower)
+        .filter(|(entry, _, _)| entry.as_bytes() == lower)
         .map(|&(_, extension, ty)| (extension, ty))
         .collect()
 }
 
 /// `ExtensionHelper::FindExtensionInEntries`: the extension of `name` in `entries`.
-pub fn find_extension(name: &str, entries: &[(&str, &'static str)]) -> Option<&'static str> {
-    let lower = name.to_lowercase();
+pub fn find_extension(name: impl AsRef<[u8]>, entries: &[(&str, &'static str)]) -> Option<&'static str> {
+    let lower = name.as_ref().to_ascii_lowercase();
     entries
         .iter()
-        .find(|(entry, _)| *entry == lower)
+        .find(|(entry, _)| entry.as_bytes() == lower)
         .map(|&(_, extension)| extension)
 }
 
@@ -1597,6 +1597,18 @@ pub fn add_install_hint(base: &str, extension: &str, autoload: bool, autoinstall
     format!("{base}\n\n{hint}")
 }
 
+/// Native base message with the same static extension install hint.
+pub fn add_install_hint_bytes(
+    base: &[u8],
+    extension: &str,
+    autoload: bool,
+    autoinstall: bool,
+) -> rustdb_common::ByteString {
+    let mut message = rustdb_common::ByteString::from(base);
+    message.push_bytes(add_install_hint("", extension, autoload, autoinstall));
+    message
+}
+
 /// [`add_install_hint`] under the connection's settings.
 pub fn add_client_install_hint(client: &crate::FunctionClient, base: &str, extension: &str) -> String {
     let setting = |name: &str| {
@@ -1612,6 +1624,17 @@ pub fn add_client_install_hint(client: &crate::FunctionClient, base: &str, exten
         setting("autoload_known_extensions"),
         setting("autoinstall_known_extensions"),
     )
+}
+
+/// Native error prefix with the same extension-install suffix and settings.
+pub fn add_client_install_hint_bytes(
+    client: &crate::FunctionClient,
+    base: impl AsRef<[u8]>,
+    extension: &str,
+) -> rustdb_common::ByteString {
+    let mut out = rustdb_common::ByteString::from(base.as_ref());
+    out.push_bytes(add_client_install_hint(client, "", extension));
+    out
 }
 
 #[cfg(test)]

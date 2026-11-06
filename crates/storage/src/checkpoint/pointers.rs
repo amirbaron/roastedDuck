@@ -729,7 +729,7 @@ pub fn deserialize_index_storage_info(
     deserializer: &mut dyn Deserializer,
 ) -> Result<crate::index::art::ArtStorageInfo> {
     use crate::index::fixed_size_allocator::{BufferPointer, FixedSizeAllocatorInfo};
-    let name: String = deserializer.read_optional(100, "name")?.unwrap_or_default();
+    let name: rustdb_common::ByteString = deserializer.read_optional(100, "name")?.unwrap_or_default();
     let root: u64 = deserializer.read_optional(101, "root")?.unwrap_or(0);
     let mut allocator_infos = Vec::new();
     if deserializer.on_optional_property_begin(102, "allocator_infos")? {
@@ -807,7 +807,7 @@ pub fn serialize_index_storage_info(
     info: &crate::index::art::ArtStorageInfo,
 ) -> Result<()> {
     if !info.name.is_empty() {
-        serializer.write_property(100, "name", info.name.as_str())?;
+        serializer.write_property(100, "name", &info.name)?;
     }
     if info.root != 0 {
         serializer.write_property(101, "root", &info.root)?;

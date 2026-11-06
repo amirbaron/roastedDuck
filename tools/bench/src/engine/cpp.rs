@@ -523,7 +523,12 @@ impl QueryResult for CppResult {
         let columns: Vec<ResultColumn> = (0..column_count)
             .map(|c| {
                 // SAFETY: `c` is in range; the name is owned by the result.
-                let name = unsafe { copy_c_string((api.column_name)(raw, c)) };
+                let pointer = unsafe { (api.column_name)(raw, c) };
+                let name = if pointer.is_null() {
+                    Vec::new()
+                } else {
+                    unsafe { CStr::from_ptr(pointer) }.to_bytes().to_vec()
+                };
                 // SAFETY: `c` is in range of a live, successful result.
                 let (type_name, kind) = unsafe { api.column_type(raw, c) };
                 ResultColumn {

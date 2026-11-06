@@ -3,7 +3,7 @@
 //! `box`, `latex`), row renderers that print rows as they stream (`line`, `list`, `csv`,
 //! `json`, `insert`, ...), the duckbox renderer, the `DESCRIBE` renderer and `trash`.
 
-use std::fmt::Write as _;
+use rustdb_common::ByteString;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -21,7 +21,7 @@ use crate::output::{Output, PrintOutput};
 use crate::render_context::RenderContext;
 use crate::state::{
     LargeNumberRendering, PagerMode, RenderMode, ShellColumnInfo, ShellFlag, ShellState, ShellTableInfo,
-    SuccessState, sql_identifier,
+    SuccessState,
 };
 
 /// A materialized result with the position of its scan (`MaterializedQueryResult` and
@@ -65,7 +65,7 @@ pub enum ResultSource {
 }
 
 impl ResultSource {
-    fn names(&self) -> &[String] {
+    fn names(&self) -> &[ByteString] {
         match self {
             Self::Materialized(scanned) => scanned.result.names(),
             Self::Stream(stream) => stream.names(),
@@ -133,7 +133,7 @@ fn is_temporal(ty: &LogicalType) -> bool {
 /// The names and types of a result's columns (`ResultMetadata`).
 #[derive(Clone, Debug)]
 pub struct ResultMetadata {
-    pub column_names: Vec<String>,
+    pub column_names: Vec<ByteString>,
     pub types: Vec<LogicalType>,
     pub type_names: Vec<&'static str>,
 }
@@ -155,7 +155,7 @@ impl ResultMetadata {
 /// A row as text (`RowData`): NULLs are the renderer's NULL text.
 #[derive(Clone, Debug, Default)]
 pub struct RowData {
-    pub data: Vec<String>,
+    pub data: Vec<ByteString>,
     pub is_null: Vec<bool>,
     pub row_index: usize,
 }
@@ -258,10 +258,10 @@ impl RenderingQueryResult {
         };
         for column in &chunk.columns {
             if let Some(value) = &column[cursor.row_in_chunk] {
-                row.data.push(value.clone());
+                row.data.push(value.clone().into());
                 row.is_null.push(false);
             } else {
-                row.data.push(renderer.null_value().to_owned());
+                row.data.push(renderer.null_value().into());
                 row.is_null.push(true);
             }
         }
@@ -290,6 +290,7 @@ pub enum TextAlignment {
 /// Where rendered text goes (`PrintStream`).
 pub trait PrintStream {
     fn print(&mut self, text: &str);
+    fn print_bytes(&mut self, text: &[u8]);
     /// Whether the stream can take terminal color codes.
     fn supports_highlight(&self) -> bool {
         true
@@ -297,7 +298,7 @@ pub trait PrintStream {
 }
 
 /// `RenderAlignedValue`: `text` padded to `width` columns.
-fn render_aligned_value(out: &mut dyn PrintStream, text: &str, width: usize, alignment: TextAlignment) {
+fn render_aligned_bytes(out: &mut dyn PrintStream, text: &[u8], width: usize, alignment: TextAlignment) {
     let n = ShellState::render_length(text);
     let space_count = width.saturating_sub(n);
     let (lspace, rspace) = match alignment {
@@ -308,10 +309,22 @@ fn render_aligned_value(out: &mut dyn PrintStream, text: &str, width: usize, ali
     if lspace > 0 {
         out.print(&" ".repeat(lspace));
     }
-    out.print(text);
+    out.print_bytes(text);
     if rspace > 0 {
         out.print(&" ".repeat(rspace));
     }
+}
+
+fn replace_name_byte(name: &[u8], target: u8, replacement: &[u8]) -> ByteString {
+    let mut out = ByteString::new();
+    for &byte in name {
+        if byte == target {
+            out.push_bytes(replacement);
+        } else {
+            out.push(byte);
+        }
+    }
+    out
 }
 
 /// `PrintDashes`.
@@ -320,8 +333,18 @@ fn print_dashes(out: &mut dyn PrintStream, count: usize) {
 }
 
 /// `OutputQuotedString`: a SQL string literal.
-fn output_quoted_string(out: &mut dyn PrintStream, text: &str) {
-    out.print(&crate::state::sql_string(text));
+fn output_quoted_string(out: &mut dyn PrintStream, text: impl AsRef<[u8]>) {
+    let text = text.as_ref();
+    let mut quoted = Vec::with_capacity(text.len() + 2);
+    quoted.push(b'\'');
+    for &byte in text {
+        quoted.push(byte);
+        if byte == b'\'' {
+            quoted.push(byte);
+        }
+    }
+    quoted.push(b'\'');
+    out.print_bytes(&quoted);
 }
 
 /// The shell's output as a [`PrintStream`] (`PrintStream`).
@@ -337,6 +360,9 @@ impl StatePrintStream {
 }
 
 impl PrintStream for StatePrintStream {
+    fn print_bytes(&mut self, text: &[u8]) {
+        self.out.print(PrintOutput::Stdout, text);
+    }
     fn print(&mut self, text: &str) {
         self.out.print(PrintOutput::Stdout, text);
     }
@@ -346,20 +372,23 @@ impl PrintStream for StatePrintStream {
 /// (`WidthMeasuringStream`).
 #[derive(Debug, Default)]
 struct WidthMeasuringStream {
-    output: String,
+    output: ByteString,
     max_width: usize,
 }
 
 impl PrintStream for WidthMeasuringStream {
     fn print(&mut self, text: &str) {
-        for c in text.chars() {
-            match c {
-                '\r' => {}
-                '\n' => {
+        self.print_bytes(text.as_bytes());
+    }
+    fn print_bytes(&mut self, text: &[u8]) {
+        for &byte in text {
+            match byte {
+                b'\r' => {}
+                b'\n' => {
                     self.max_width = self.max_width.max(ShellState::render_length(&self.output));
                     self.output.clear();
                 }
-                _ => self.output.push(c),
+                _ => self.output.push(byte),
             }
         }
     }
@@ -374,10 +403,10 @@ impl PrintStream for WidthMeasuringStream {
 #[derive(Clone, Debug)]
 pub struct RendererSettings {
     pub show_header: bool,
-    pub col_sep: String,
-    pub row_sep: String,
-    pub null_value: String,
-    pub dest_table: String,
+    pub col_sep: ByteString,
+    pub row_sep: ByteString,
+    pub null_value: ByteString,
+    pub dest_table: ByteString,
     pub newlines: bool,
     pub col_width: Vec<i32>,
     pub pager_min_rows: usize,
@@ -444,7 +473,7 @@ pub trait ShellRenderer {
     }
 
     /// `NullValue`: how NULL renders.
-    fn null_value(&self) -> &str {
+    fn null_value(&self) -> &[u8] {
         &self.settings().null_value
     }
 
@@ -475,6 +504,9 @@ pub trait ShellRenderer {
 
     fn convert_value(&self, value: &str) -> String {
         value.to_owned()
+    }
+    fn convert_name(&self, name: &[u8]) -> ByteString {
+        name.into()
     }
 }
 
@@ -556,11 +588,11 @@ fn analyze_columns<R: ShellRenderer + ColumnLayout>(
     result: &mut RenderingQueryResult,
     conn: &mut Connection,
 ) -> Result<()> {
-    let names: Vec<String> = result
+    let names: Vec<ByteString> = result
         .metadata
         .column_names
         .iter()
-        .map(|name| renderer.convert_value(name))
+        .map(|name| renderer.convert_name(name))
         .collect();
     result.metadata.column_names = names;
     while result.try_convert_chunk(&*renderer, conn)? {
@@ -569,13 +601,13 @@ fn analyze_columns<R: ShellRenderer + ColumnLayout>(
             return Ok(());
         }
     }
-    let null_width = ShellState::render_length(&renderer.column_state().settings.null_value);
+    let null_width = crate::utf8::native_terminal_render_width(&renderer.column_state().settings.null_value)?;
     let column_state = renderer.column_state_mut();
     for c in 0..result.column_count() {
         let mut width = column_state.settings.col_width.get(c).copied().unwrap_or(0);
         column_state.right_align.push(width < 0);
         width = width.saturating_abs();
-        let name_width = ShellState::render_length(&result.metadata.column_names[c]);
+        let name_width = crate::utf8::native_terminal_render_width(&result.metadata.column_names[c])?;
         column_state.column_width.push((width as usize).max(name_width));
     }
     for c in 0..result.column_count() {
@@ -614,7 +646,7 @@ fn render_column_row<R: ColumnLayout>(renderer: &R, out: &mut dyn PrintStream, r
         if c > 0 {
             out.print(renderer.column_separator());
         }
-        render_aligned_value(
+        render_aligned_bytes(
             out,
             value,
             column_state.column_width[c],
@@ -730,7 +762,7 @@ column_renderer!(ModeColumnRenderer, {
         }
         let column_count = metadata.column_count();
         for (c, name) in metadata.column_names.iter().enumerate() {
-            render_aligned_value(out, name, self.0.column_width[c], self.0.alignment(c));
+            render_aligned_bytes(out, name, self.0.column_width[c], self.0.alignment(c));
             out.print(if c == column_count - 1 { "\n" } else { "  " });
         }
         for c in 0..column_count {
@@ -770,7 +802,7 @@ column_renderer!(ModeTableRenderer, {
         print_table_separator(out, &self.0.column_width);
         out.print("| ");
         for (c, name) in metadata.column_names.iter().enumerate() {
-            render_aligned_value(out, name, self.0.column_width[c], TextAlignment::Center);
+            render_aligned_bytes(out, name, self.0.column_width[c], TextAlignment::Center);
             out.print(if c == column_count - 1 { " |\n" } else { " | " });
         }
         print_table_separator(out, &self.0.column_width);
@@ -805,6 +837,9 @@ column_renderer!(ModeMarkdownRenderer, {
     fn convert_value(&self, value: &str) -> String {
         value.replace('|', "\\|")
     }
+    fn convert_name(&self, name: &[u8]) -> ByteString {
+        replace_name_byte(name, b'|', b"\\|")
+    }
 
     fn render_header(&mut self, out: &mut dyn PrintStream, metadata: &ResultMetadata) {
         out.print("| ");
@@ -812,7 +847,7 @@ column_renderer!(ModeMarkdownRenderer, {
             if c > 0 {
                 out.print(" | ");
             }
-            render_aligned_value(out, name, self.0.column_width[c], TextAlignment::Center);
+            render_aligned_bytes(out, name, self.0.column_width[c], TextAlignment::Center);
         }
         out.print(" |\n");
         // The separator, right-aligning numbers.
@@ -882,13 +917,16 @@ column_renderer!(ModeBoxRenderer, {
     fn convert_value(&self, value: &str) -> String {
         value.replace('\n', "\\n")
     }
+    fn convert_name(&self, name: &[u8]) -> ByteString {
+        replace_name_byte(name, b'\n', b"\\n")
+    }
 
     fn render_header(&mut self, out: &mut dyn PrintStream, metadata: &ResultMetadata) {
         let column_count = metadata.column_count();
         print_box_row_separator(out, &self.0.column_width, BOX_23, BOX_234, BOX_34);
         out.print(&format!("{BOX_13} "));
         for (c, name) in metadata.column_names.iter().enumerate() {
-            render_aligned_value(out, name, self.0.column_width[c], TextAlignment::Center);
+            render_aligned_bytes(out, name, self.0.column_width[c], TextAlignment::Center);
             out.print(if c == column_count - 1 { " │\n" } else { " │ " });
         }
         print_box_row_separator(out, &self.0.column_width, BOX_123, BOX_1234, BOX_134);
@@ -925,7 +963,7 @@ column_renderer!(ModeLatexRenderer, {
         out.print("|}\n");
         out.print("\\hline\n");
         for (c, name) in metadata.column_names.iter().enumerate() {
-            render_aligned_value(out, name, self.0.column_width[c], TextAlignment::Center);
+            render_aligned_bytes(out, name, self.0.column_width[c], TextAlignment::Center);
             out.print(if c == column_count - 1 {
                 Self::ROW_SEPARATOR
             } else {
@@ -1006,22 +1044,26 @@ impl ShellRenderer for ModeLineRenderer {
     row_pager!();
 
     fn render_header(&mut self, _out: &mut dyn PrintStream, metadata: &ResultMetadata) {
-        self.header_width = metadata.column_names.iter().map(String::len).fold(5, usize::max);
+        self.header_width = metadata
+            .column_names
+            .iter()
+            .map(|name| name.len())
+            .fold(5, usize::max);
     }
 
     fn render_row(&mut self, out: &mut dyn PrintStream, metadata: &ResultMetadata, row: &RowData) {
         if row.row_index > 0 {
-            out.print(&self.settings.row_sep);
+            out.print_bytes(&self.settings.row_sep);
         }
         for (name, value) in metadata.column_names.iter().zip(&row.data) {
             let space_count = self.header_width - name.len();
             if space_count > 0 {
                 out.print(&" ".repeat(space_count));
             }
-            out.print(name);
+            out.print_bytes(name);
             out.print(" = ");
-            out.print(value);
-            out.print(&self.settings.row_sep);
+            out.print_bytes(value);
+            out.print_bytes(&self.settings.row_sep);
         }
     }
 }
@@ -1045,10 +1087,10 @@ impl ShellRenderer for ModeExplainRenderer {
         let [kind, plan] = row.data.as_slice() else {
             return;
         };
-        let title = match kind.as_str() {
-            "logical_plan" => Some("││ Unoptimized Logical Plan  ││\n"),
-            "logical_opt" => Some("││  Optimized Logical Plan   ││\n"),
-            "physical_plan" => Some("││       Physical Plan       ││\n"),
+        let title = match kind.as_bytes() {
+            b"logical_plan" => Some("││ Unoptimized Logical Plan  ││\n"),
+            b"logical_opt" => Some("││  Optimized Logical Plan   ││\n"),
+            b"physical_plan" => Some("││       Physical Plan       ││\n"),
             _ => None,
         };
         if let Some(title) = title {
@@ -1058,7 +1100,7 @@ impl ShellRenderer for ModeExplainRenderer {
             out.print("│└───────────────────────────┘│\n");
             out.print("└─────────────────────────────┘\n");
         }
-        out.print(plan);
+        out.print_bytes(plan);
     }
 
     fn require_materialized_result(&self) -> bool {
@@ -1099,37 +1141,56 @@ impl ShellRenderer for ModeListRenderer {
         if !self.settings.show_header {
             return;
         }
-        out.print(&metadata.column_names.join(&self.settings.col_sep));
-        out.print(&self.settings.row_sep);
+        out.print_bytes(&ByteString::join(
+            &metadata.column_names,
+            self.settings.col_sep.as_bytes(),
+        ));
+        out.print_bytes(&self.settings.row_sep);
     }
 
     fn render_row(&mut self, out: &mut dyn PrintStream, _metadata: &ResultMetadata, row: &RowData) {
         for (i, value) in row.data.iter().enumerate() {
             if i > 0 {
-                out.print(&self.settings.col_sep);
+                out.print_bytes(&self.settings.col_sep);
             }
-            out.print(value);
+            out.print_bytes(value);
         }
-        out.print(&self.settings.row_sep);
+        out.print_bytes(&self.settings.row_sep);
     }
+}
+
+fn html_escape_bytes(text: &[u8]) -> ByteString {
+    let mut out = ByteString::new();
+    for &byte in text {
+        match byte {
+            b'<' => out.push_bytes(b"&lt;"),
+            b'&' => out.push_bytes(b"&amp;"),
+            b'>' => out.push_bytes(b"&gt;"),
+            b'"' => out.push_bytes(b"&quot;"),
+            b'\'' => out.push_bytes(b"&#39;"),
+            _ => out.push(byte),
+        }
+    }
+    out
+}
+fn escape_c_bytes(text: &[u8]) -> ByteString {
+    let mut out = ByteString::from("\"");
+    for &byte in text {
+        match byte {
+            b'\\' => out.push_bytes(b"\\\\"),
+            b'"' => out.push_bytes(b"\\\""),
+            b'\t' => out.push_bytes(b"\\t"),
+            b'\n' => out.push_bytes(b"\\n"),
+            b'\r' => out.push_bytes(b"\\r"),
+            0x20..=0x7e => out.push(byte),
+            _ => out.push_bytes(format!("\\{byte:03o}")),
+        }
+    }
+    out.push(b'"');
+    out
 }
 
 /// `OutputHTMLString`: text with the characters special to HTML escaped.
-fn html_escape(text: &str) -> String {
-    let mut escaped = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '<' => escaped.push_str("&lt;"),
-            '&' => escaped.push_str("&amp;"),
-            '>' => escaped.push_str("&gt;"),
-            '"' => escaped.push_str("&quot;"),
-            '\'' => escaped.push_str("&#39;"),
-            _ => escaped.push(c),
-        }
-    }
-    escaped
-}
-
 /// `.mode html` (`ModeHtmlRenderer`).
 #[derive(Debug)]
 struct ModeHtmlRenderer {
@@ -1147,7 +1208,7 @@ impl ShellRenderer for ModeHtmlRenderer {
         out.print("<tr>");
         for name in &metadata.column_names {
             out.print("<th>");
-            out.print(&html_escape(name));
+            out.print_bytes(&html_escape_bytes(name));
             out.print("</th>\n");
         }
         out.print("</tr>\n");
@@ -1157,7 +1218,7 @@ impl ShellRenderer for ModeHtmlRenderer {
         out.print("<tr>");
         for value in &row.data {
             out.print("<td>");
-            out.print(&html_escape(value));
+            out.print_bytes(&html_escape_bytes(value));
             out.print("</td>\n");
         }
         out.print("</tr>\n");
@@ -1180,21 +1241,21 @@ impl ShellRenderer for ModeTclRenderer {
         }
         for (i, name) in metadata.column_names.iter().enumerate() {
             if i > 0 {
-                out.print(&self.settings.col_sep);
+                out.print_bytes(&self.settings.col_sep);
             }
-            out.print(&ShellState::escape_c_string(name));
+            out.print_bytes(&escape_c_bytes(name));
         }
-        out.print(&self.settings.row_sep);
+        out.print_bytes(&self.settings.row_sep);
     }
 
     fn render_row(&mut self, out: &mut dyn PrintStream, _metadata: &ResultMetadata, row: &RowData) {
         for (i, value) in row.data.iter().enumerate() {
             if i > 0 {
-                out.print(&self.settings.col_sep);
+                out.print_bytes(&self.settings.col_sep);
             }
             out.print(&ShellState::escape_c_string(value));
         }
-        out.print(&self.settings.row_sep);
+        out.print_bytes(&self.settings.row_sep);
     }
 }
 
@@ -1207,18 +1268,17 @@ struct ModeCsvRenderer {
 impl ModeCsvRenderer {
     /// `PrintEscapedCSV`: a value holding a control or quote character, a byte above 127
     /// or the separator is written as an identifier.
-    fn print_escaped_csv(&self, out: &mut dyn PrintStream, text: &str) {
+    fn print_escaped_csv_bytes(&self, out: &mut dyn PrintStream, bytes: &[u8]) {
         let separator = self.settings.col_sep.as_bytes();
-        let bytes = text.as_bytes();
         let needs_quote = (0..bytes.len()).any(|idx| {
             let c = bytes[idx];
             c <= 31 || c == b'"' || c == b'\'' || c >= 127 || bytes[idx..].starts_with(separator)
         });
         if needs_quote {
             // `SQLIdentifier`: quoted only if it is not a plain identifier.
-            out.print(&sql_identifier(text));
+            out.print_bytes(&rustdb_ast::keyword::write_optionally_quoted_bytes(bytes));
         } else {
-            out.print(text);
+            out.print_bytes(bytes);
         }
     }
 }
@@ -1233,21 +1293,21 @@ impl ShellRenderer for ModeCsvRenderer {
         }
         for (i, name) in metadata.column_names.iter().enumerate() {
             if i > 0 {
-                out.print(&self.settings.col_sep);
+                out.print_bytes(&self.settings.col_sep);
             }
-            self.print_escaped_csv(out, name);
+            self.print_escaped_csv_bytes(out, name);
         }
-        out.print(&self.settings.row_sep);
+        out.print_bytes(&self.settings.row_sep);
     }
 
     fn render_row(&mut self, out: &mut dyn PrintStream, _metadata: &ResultMetadata, row: &RowData) {
         for (i, value) in row.data.iter().enumerate() {
             if i > 0 {
-                out.print(&self.settings.col_sep);
+                out.print_bytes(&self.settings.col_sep);
             }
-            self.print_escaped_csv(out, value);
+            self.print_escaped_csv_bytes(out, value);
         }
-        out.print(&self.settings.row_sep);
+        out.print_bytes(&self.settings.row_sep);
     }
 }
 
@@ -1265,13 +1325,16 @@ impl ShellRenderer for ModeAsciiRenderer {
         if !self.settings.show_header {
             return;
         }
-        out.print(&metadata.column_names.join(&self.settings.col_sep));
-        out.print(&self.settings.row_sep);
+        out.print_bytes(&ByteString::join(
+            &metadata.column_names,
+            self.settings.col_sep.as_bytes(),
+        ));
+        out.print_bytes(&self.settings.row_sep);
     }
 
     fn render_row(&mut self, out: &mut dyn PrintStream, _metadata: &ResultMetadata, row: &RowData) {
-        out.print(&row.data.join(&self.settings.col_sep));
-        out.print(&self.settings.row_sep);
+        out.print_bytes(&ByteString::join(&row.data, &self.settings.col_sep));
+        out.print_bytes(&self.settings.row_sep);
     }
 }
 
@@ -1291,30 +1354,30 @@ impl ShellRenderer for ModeQuoteRenderer {
         }
         for (i, name) in metadata.column_names.iter().enumerate() {
             if i > 0 {
-                out.print(&self.settings.col_sep);
+                out.print_bytes(&self.settings.col_sep);
             }
-            output_quoted_string(out, name);
+            out.print_bytes(&rustdb_ast::keyword::sql_string_bytes(name));
         }
-        out.print(&self.settings.row_sep);
+        out.print_bytes(&self.settings.row_sep);
     }
 
     fn render_row(&mut self, out: &mut dyn PrintStream, metadata: &ResultMetadata, row: &RowData) {
         for (i, value) in row.data.iter().enumerate() {
             if i > 0 {
-                out.print(&self.settings.col_sep);
+                out.print_bytes(&self.settings.col_sep);
             }
             let ty = &metadata.types[i];
             if ty.is_numeric() || row.is_null[i] || ty.id() == LogicalTypeId::Boolean {
-                out.print(value);
+                out.print_bytes(value);
             } else {
                 output_quoted_string(out, value);
             }
         }
-        out.print(&self.settings.row_sep);
+        out.print_bytes(&self.settings.row_sep);
     }
 
-    fn null_value(&self) -> &'static str {
-        "NULL"
+    fn null_value(&self) -> &'static [u8] {
+        b"NULL"
     }
 }
 
@@ -1326,26 +1389,24 @@ struct ModeJsonRenderer {
 }
 
 /// `EscapeJSONString`.
-fn escape_json_string(text: &str) -> String {
-    let mut result = String::from("\"");
-    for c in text.chars() {
-        match c {
-            '\\' | '"' => {
-                result.push('\\');
-                result.push(c);
+fn escape_json_string(text: &[u8]) -> ByteString {
+    let mut result = ByteString::from("\"");
+    for &byte in text {
+        match byte {
+            b'\\' | b'"' => {
+                result.push(b'\\');
+                result.push(byte);
             }
-            '\u{8}' => result.push_str("\\b"),
-            '\u{c}' => result.push_str("\\f"),
-            '\n' => result.push_str("\\n"),
-            '\r' => result.push_str("\\r"),
-            '\t' => result.push_str("\\t"),
-            '\u{0}'..='\u{1f}' => {
-                let _ = write!(result, "\\u{:04x}", c as u32);
-            }
-            _ => result.push(c),
+            8 => result.push_bytes("\\b"),
+            12 => result.push_bytes("\\f"),
+            b'\n' => result.push_bytes("\\n"),
+            b'\r' => result.push_bytes("\\r"),
+            b'\t' => result.push_bytes("\\t"),
+            0..=31 => result.push_bytes(format!("\\u{byte:04x}")),
+            _ => result.push(byte),
         }
     }
-    result.push('"');
+    result.push(b'"');
     result
 }
 
@@ -1395,16 +1456,16 @@ impl ShellRenderer for ModeJsonRenderer {
             if i > 0 {
                 out.print(",");
             }
-            out.print(&escape_json_string(name));
+            out.print_bytes(&rustdb_common::string_util::json_quote_bytes(name));
             out.print(":");
             let ty = &metadata.types[i];
             if row.is_null[i] {
                 out.print("null");
             } else if is_nested(ty) || is_json_type(ty) || !Self::requires_quotes(ty) {
                 // Nested values are JSON already; numbers print as they are.
-                out.print(&row.data[i]);
+                out.print_bytes(&row.data[i]);
             } else {
-                out.print(&escape_json_string(&row.data[i]));
+                out.print_bytes(&escape_json_string(&row.data[i]));
             }
         }
         out.print("}");
@@ -1433,8 +1494,8 @@ impl ShellRenderer for ModeJsonRenderer {
         out.print(if self.json_array { "]\n" } else { "\n" });
     }
 
-    fn null_value(&self) -> &'static str {
-        "null"
+    fn null_value(&self) -> &'static [u8] {
+        b"null"
     }
 }
 
@@ -1446,21 +1507,21 @@ struct ModeInsertRenderer {
 
 /// `EscapeNewlines`: a string literal whose newlines, carriage returns and NULs are
 /// `chr()` calls in a `concat`.
-fn escape_newlines(text: &str) -> String {
-    let needs_concat = text.contains(['\n', '\r', '\0']);
-    let mut result = String::from(if needs_concat { "concat('" } else { "'" });
-    for c in text.chars() {
-        match c {
-            '\n' => result.push_str("', chr(10), '"),
-            '\r' => result.push_str("', chr(13), '"),
-            '\0' => result.push_str("', chr(0), '"),
-            '\'' => result.push_str("''"),
-            _ => result.push(c),
+fn escape_newlines(text: &[u8]) -> ByteString {
+    let needs_concat = text.iter().any(|c| matches!(c, b'\n' | b'\r' | 0));
+    let mut result = ByteString::from(if needs_concat { "concat('" } else { "'" });
+    for &byte in text {
+        match byte {
+            b'\n' => result.push_bytes("', chr(10), '"),
+            b'\r' => result.push_bytes("', chr(13), '"),
+            0 => result.push_bytes("', chr(0), '"),
+            b'\'' => result.push_bytes("''"),
+            _ => result.push(byte),
         }
     }
-    result.push('\'');
+    result.push(b'\'');
     if needs_concat {
-        result.push(')');
+        result.push(b')');
     }
     result
 }
@@ -1471,14 +1532,14 @@ impl ShellRenderer for ModeInsertRenderer {
 
     fn render_row(&mut self, out: &mut dyn PrintStream, metadata: &ResultMetadata, row: &RowData) {
         out.print("INSERT INTO ");
-        out.print(&self.settings.dest_table);
+        out.print_bytes(&self.settings.dest_table);
         if self.settings.show_header {
             out.print("(");
             for (i, name) in metadata.column_names.iter().enumerate() {
                 if i > 0 {
                     out.print(",");
                 }
-                out.print(&sql_identifier(name));
+                out.print_bytes(&rustdb_ast::keyword::write_optionally_quoted_bytes(name));
             }
             out.print(")");
         }
@@ -1487,11 +1548,11 @@ impl ShellRenderer for ModeInsertRenderer {
             if row.is_null[i] {
                 out.print("NULL");
             } else if metadata.types[i].is_numeric() {
-                out.print(value);
+                out.print_bytes(value);
             } else if self.settings.newlines {
                 output_quoted_string(out, value);
             } else {
-                out.print(&escape_newlines(value));
+                out.print_bytes(&escape_newlines(value));
             }
         }
         out.print(");\n");
@@ -1509,7 +1570,8 @@ impl ShellRenderer for ModeSemiRenderer {
     row_pager!();
 
     fn render_row(&mut self, out: &mut dyn PrintStream, _metadata: &ResultMetadata, row: &RowData) {
-        out.print(&ShellState::schema_line(&row.data[0], "\n"));
+        out.print_bytes(&row.data[0]);
+        out.print("\n");
     }
 }
 
@@ -1546,8 +1608,8 @@ impl ShellRenderer for ModePrettyRenderer {
         let [statement] = row.data.as_slice() else {
             return;
         };
-        if statement.starts_with("CREATE VIEW") || statement.starts_with("CREATE TRIG") {
-            out.print(statement);
+        if statement.starts_with(b"CREATE VIEW") || statement.starts_with(b"CREATE TRIG") {
+            out.print_bytes(statement);
             out.print(";\n");
             return;
         }
@@ -1628,28 +1690,28 @@ struct DuckBoxRenderer<'a> {
 }
 
 impl DuckBoxRenderer<'_> {
-    fn print_text(&mut self, text: &str, element_type: HighlightElementType) {
+    fn print_bytes(&mut self, text: &[u8], element_type: HighlightElementType) {
         match &self.highlight {
-            Some(highlight) => highlight.print_text(text, PrintOutput::Stdout, element_type),
-            None => self.out.print(text),
+            Some(highlight) => highlight.print_bytes(text, PrintOutput::Stdout, element_type),
+            None => self.out.print_bytes(text),
         }
     }
 }
 
 impl BaseResultRenderer for DuckBoxRenderer<'_> {
-    fn render_layout(&mut self, text: &str) {
-        self.print_text(text, HighlightElementType::Layout);
+    fn render_layout(&mut self, text: &[u8]) {
+        self.print_bytes(text, HighlightElementType::Layout);
     }
 
-    fn render_column_name(&mut self, text: &str) {
-        self.print_text(text, HighlightElementType::ColumnName);
+    fn render_column_name(&mut self, text: &[u8]) {
+        self.print_bytes(text, HighlightElementType::ColumnName);
     }
 
-    fn render_type(&mut self, text: &str) {
-        self.print_text(text, HighlightElementType::ColumnType);
+    fn render_type(&mut self, text: &[u8]) {
+        self.print_bytes(text, HighlightElementType::ColumnType);
     }
 
-    fn render_value(&mut self, text: &str, ty: &LogicalType) {
+    fn render_value(&mut self, text: &[u8], ty: &LogicalType) {
         let element = if ty.is_numeric() {
             HighlightElementType::NumericValue
         } else if is_temporal(ty) {
@@ -1657,19 +1719,19 @@ impl BaseResultRenderer for DuckBoxRenderer<'_> {
         } else {
             HighlightElementType::StringValue
         };
-        self.print_text(text, element);
+        self.print_bytes(text, element);
     }
 
-    fn render_string_literal(&mut self, text: &str, _ty: &LogicalType) {
-        self.print_text(text, HighlightElementType::StringConstant);
+    fn render_string_literal(&mut self, text: &[u8], _ty: &LogicalType) {
+        self.print_bytes(text, HighlightElementType::StringConstant);
     }
 
-    fn render_null(&mut self, text: &str, _ty: &LogicalType) {
-        self.print_text(text, HighlightElementType::NullValue);
+    fn render_null(&mut self, text: &[u8], _ty: &LogicalType) {
+        self.print_bytes(text, HighlightElementType::NullValue);
     }
 
-    fn render_footer(&mut self, text: &str) {
-        self.print_text(text, HighlightElementType::Footer);
+    fn render_footer(&mut self, text: &[u8]) {
+        self.print_bytes(text, HighlightElementType::Footer);
     }
 }
 
@@ -1699,7 +1761,7 @@ impl ModeDuckBoxRenderer {
         }
         if config.max_width == 0 {
             // Automatic: unlimited in files.
-            if !state.outfile.is_empty() && !state.outfile.starts_with('|') {
+            if !state.outfile.is_empty() && !state.outfile.starts_with(b"|") {
                 config.max_rows = usize::MAX;
                 config.max_width = usize::MAX;
             }
@@ -1825,7 +1887,7 @@ impl ShellRenderer for ModeDuckBoxRenderer {
         match rendered {
             Ok(()) => Ok(SuccessState::Success),
             Err(error) => {
-                renderer.render_layout(&format!("{error}\n"));
+                renderer.render_layout(&rustdb_common::byte_format!("{}\n", error.as_bytes()));
                 Ok(SuccessState::Failure)
             }
         }
@@ -1875,7 +1937,7 @@ impl ShellRenderer for ModeDescribeRenderer {
             };
             for row in 0..chunk.len() {
                 let mut column = ShellColumnInfo {
-                    column_name: value(0, row).unwrap_or_default(),
+                    column_name: value(0, row).unwrap_or_default().into(),
                     column_type: value(1, row).unwrap_or_default(),
                     ..ShellColumnInfo::default()
                 };
@@ -1967,8 +2029,8 @@ pub fn renderer_for(state: &ShellState, mode: RenderMode) -> Box<dyn ShellRender
         RenderMode::Csv => Box::new(ModeCsvRenderer { settings: settings() }),
         RenderMode::Ascii => {
             let mut settings = settings();
-            "\n".clone_into(&mut settings.col_sep);
-            "\n".clone_into(&mut settings.row_sep);
+            settings.col_sep = "\n".into();
+            settings.row_sep = "\n".into();
             Box::new(ModeAsciiRenderer { settings })
         }
         RenderMode::Quote => Box::new(ModeQuoteRenderer { settings: settings() }),

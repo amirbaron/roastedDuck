@@ -447,7 +447,7 @@ pub(crate) fn count_map_entries(input: &[u8]) -> usize {
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum StructFields<'a> {
     /// A struct with named fields: `{name: value}` keys are matched case-sensitively.
-    Named(&'a [&'a str]),
+    Named(&'a [&'a [u8]]),
     /// An unnamed struct (`ROW(...)`) with this many fields: only `(v1, v2)` matches.
     Unnamed(usize),
 }
@@ -462,7 +462,7 @@ impl StructFields<'_> {
 
     fn index_of(self, key: &[u8]) -> Option<usize> {
         match self {
-            Self::Named(names) => names.iter().position(|name| name.as_bytes() == key),
+            Self::Named(names) => names.iter().position(|name| *name == key),
             Self::Unnamed(_) => None,
         }
     }
@@ -614,7 +614,8 @@ mod tests {
                 }
                 values
             });
-            assert_eq!(strukt(input, StructFields::Named(fields)), expected, "{input:?}");
+            let names: Vec<_> = fields.iter().map(|name| name.as_bytes()).collect();
+            assert_eq!(strukt(input, StructFields::Named(&names)), expected, "{input:?}");
         }
     }
 

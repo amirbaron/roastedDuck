@@ -4,14 +4,12 @@
 //! The binder names result columns after the text of their expressions, so this output
 //! must match DuckDB's character for character.
 
-use std::borrow::Cow;
-use std::fmt::{self, Write as _};
+use rustdb_common::{ByteString, byte_format as format, byte_write as write};
+use std::fmt;
 
 use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo, TypeParameterValue, UnboundTypeInfo, Value};
 
-use crate::keyword::{
-    KeywordCategory, sql_identifier, write_optionally_quoted, write_optionally_quoted_with,
-};
+use crate::keyword::{KeywordCategory, write_optionally_quoted_with_bytes};
 use crate::{
     AggregateHandling, BaseTableRef, CaseExpression, CommonTableExpressionMap, CteMaterialize,
     ExpressionClass, ExpressionListRef, ExpressionType, FunctionExpression, JoinRef, JoinRefType,
@@ -120,7 +118,7 @@ pub const fn expression_type_to_string(ty: ExpressionType) -> &'static str {
 }
 
 /// A value as SQL text (DuckDB's `Value::ToSQLString`).
-pub fn value_to_sql_string(value: &Value) -> String {
+pub fn value_to_sql_string(value: &Value) -> ByteString {
     value.to_sql_string()
 }
 
@@ -129,13 +127,40 @@ fn join_type_name(join: crate::JoinType) -> &'static str {
     join.name()
 }
 
-fn join_list<T>(items: &[T], separator: &str, render: impl Fn(&T) -> String) -> String {
-    items.iter().map(render).collect::<Vec<_>>().join(separator)
+fn join_list<T, R: AsRef<[u8]>>(
+    items: &[T],
+    separator: impl AsRef<[u8]>,
+    render: impl Fn(&T) -> R,
+) -> ByteString {
+    let mut out = ByteString::new();
+    for (index, item) in items.iter().enumerate() {
+        if index > 0 {
+            out.push_bytes(separator.as_ref());
+        }
+        out.push_bytes(render(item));
+    }
+    out
+}
+
+fn write_optionally_quoted(text: impl AsRef<[u8]>) -> ByteString {
+    crate::keyword::write_optionally_quoted_bytes(text.as_ref())
+}
+fn sql_identifier(text: impl AsRef<[u8]>) -> ByteString {
+    crate::keyword::sql_identifier_bytes(text.as_ref())
+}
+trait SqlWriter {
+    fn write_bytes(&mut self, bytes: impl AsRef<[u8]>) -> fmt::Result;
+}
+impl SqlWriter for ByteString {
+    fn write_bytes(&mut self, bytes: impl AsRef<[u8]>) -> fmt::Result {
+        self.push_bytes(bytes);
+        Ok(())
+    }
 }
 
 impl ParsedExpression {
     /// The alias, or else the expression's text (DuckDB's `GetName`).
-    pub fn name(&self) -> String {
+    pub fn name(&self) -> ByteString {
         if !self.alias.is_empty() {
             return self.alias.clone();
         }
@@ -144,14 +169,14 @@ impl ParsedExpression {
                 column.column_names.last().cloned().unwrap_or_default()
             }
             ParsedExpressionKind::LambdaRef(lambda) => lambda.column_name.clone(),
-            _ => self.to_string(),
+            _ => self.to_sql_bytes(),
         }
     }
 }
 
-impl fmt::Display for ParsedExpression {
+impl ParsedExpression {
     /// DuckDB's `ParsedExpression::ToString`.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn write_sql_bytes(&self, f: &mut ByteString) -> fmt::Result {
         let ty = self.expression_type;
         match &self.kind {
             ParsedExpressionKind::Between(between) => write!(
@@ -176,11 +201,11 @@ impl fmt::Display for ParsedExpression {
                 )
             }
             ParsedExpressionKind::ColumnRef(column) => {
-                f.write_str(&join_list(&column.column_names, ".", |name| {
+                f.write_bytes(join_list(&column.column_names, ".", |name| {
                     write_optionally_quoted(name)
                 }))
             }
-            ParsedExpressionKind::LambdaRef(lambda) => f.write_str(&lambda.column_name),
+            ParsedExpressionKind::LambdaRef(lambda) => f.write_bytes(&lambda.column_name),
             ParsedExpressionKind::Comparison(comparison) => write!(
                 f,
                 "({} {} {})",
@@ -193,17 +218,17 @@ impl fmt::Display for ParsedExpression {
                 write!(
                     f,
                     "({})",
-                    join_list(&conjunction.children, &operator, ToString::to_string)
+                    join_list(&conjunction.children, &operator, |value| format!("{value}"))
                 )
             }
-            ParsedExpressionKind::Constant(constant) => f.write_str(&value_to_sql_string(&constant.value)),
-            ParsedExpressionKind::Default => f.write_str("DEFAULT"),
-            ParsedExpressionKind::Function(function) => f.write_str(&function_to_string(function)),
+            ParsedExpressionKind::Constant(constant) => f.write_bytes(value_to_sql_string(&constant.value)),
+            ParsedExpressionKind::Default => f.write_bytes("DEFAULT"),
+            ParsedExpressionKind::Function(function) => f.write_bytes(function_to_string(function)),
             ParsedExpressionKind::Lambda(lambda) => write_lambda(f, lambda),
-            ParsedExpressionKind::Operator(operator) => f.write_str(&operator_to_string(ty, operator)),
+            ParsedExpressionKind::Operator(operator) => f.write_bytes(operator_to_string(ty, operator)),
             ParsedExpressionKind::Parameter(parameter) => write!(f, "${}", parameter.identifier),
             ParsedExpressionKind::PositionalReference(reference) => write!(f, "#{}", reference.index),
-            ParsedExpressionKind::Star(star) => fmt::Display::fmt(star, f),
+            ParsedExpressionKind::Star(star) => star.write_sql_bytes(f),
             ParsedExpressionKind::Subquery(subquery) => match subquery.subquery_type {
                 SubqueryType::Any => write!(
                     f,
@@ -211,7 +236,7 @@ impl fmt::Display for ParsedExpression {
                     subquery
                         .child
                         .as_deref()
-                        .map(ToString::to_string)
+                        .map(|value| format!("{value}"))
                         .unwrap_or_default(),
                     expression_type_to_operator(subquery.comparison_type),
                     subquery.subquery
@@ -220,17 +245,17 @@ impl fmt::Display for ParsedExpression {
                 SubqueryType::NotExists => write!(f, "NOT EXISTS({})", subquery.subquery),
                 SubqueryType::Scalar | SubqueryType::Invalid => write!(f, "({})", subquery.subquery),
             },
-            ParsedExpressionKind::Window(window) => f.write_str(&window_to_string(window)),
+            ParsedExpressionKind::Window(window) => f.write_bytes(window_to_string(window)),
             ParsedExpressionKind::Type(type_expression) => {
-                f.write_str(&type_expression_to_string(type_expression))
+                f.write_bytes(type_expression_to_string(type_expression))
             }
-            ParsedExpressionKind::Bound(bound) => f.write_str(&bound.text),
+            ParsedExpressionKind::Bound(bound) => f.write_bytes(&bound.text),
         }
     }
 }
 
-fn write_case(f: &mut fmt::Formatter<'_>, case: &CaseExpression) -> fmt::Result {
-    f.write_str("CASE ")?;
+fn write_case(f: &mut ByteString, case: &CaseExpression) -> fmt::Result {
+    f.write_bytes("CASE ")?;
     for check in &case.case_checks {
         write!(f, " WHEN ({}) THEN ({})", check.when_expr, check.then_expr)?;
     }
@@ -253,7 +278,7 @@ pub fn lambda_parameters(lambda: &LambdaExpression) -> Option<Vec<&ParsedExpress
     }
 }
 
-fn write_lambda(f: &mut fmt::Formatter<'_>, lambda: &LambdaExpression) -> fmt::Result {
+fn write_lambda(f: &mut ByteString, lambda: &LambdaExpression) -> fmt::Result {
     if lambda.syntax_type != LambdaSyntaxType::LambdaKeyword {
         return write!(f, "({} -> {})", lambda.lhs, lambda.expr);
     }
@@ -261,20 +286,31 @@ fn write_lambda(f: &mut fmt::Formatter<'_>, lambda: &LambdaExpression) -> fmt::R
     write!(
         f,
         "(lambda {}: {})",
-        join_list(&parameters, ", ", ToString::to_string),
+        join_list(&parameters, ", ", |value| format!("{value}")),
         lambda.expr
     )
 }
 
+fn remove_postfix_marker(mut name: &[u8]) -> ByteString {
+    let marker = b"__postfix";
+    let mut output = ByteString::new();
+    while let Some(offset) = name.windows(marker.len()).position(|part| part == marker) {
+        output.push_bytes(&name[..offset]);
+        name = &name[offset + marker.len()..];
+    }
+    output.push_bytes(name);
+    output
+}
+
 /// DuckDB's `FunctionExpression::ToString` (template shared with bound functions).
-fn function_to_string(function: &FunctionExpression) -> String {
+fn function_to_string(function: &FunctionExpression) -> ByteString {
     let name = &function.function_name;
     let children = &function.children;
     if function.is_operator {
         match children.as_slice() {
             [child] => {
-                return if name.contains("__postfix") {
-                    format!("(({child}){})", name.replace("__postfix", ""))
+                return if name.windows(b"__postfix".len()).any(|part| part == b"__postfix") {
+                    format!("(({child}){})", remove_postfix_marker(name))
                 } else {
                     format!("{name}({child})")
                 };
@@ -283,21 +319,21 @@ fn function_to_string(function: &FunctionExpression) -> String {
             _ => {}
         }
     }
-    let mut result = String::new();
+    let mut result = ByteString::new();
     if !function.catalog.is_empty() {
         let _ = write!(result, "{}.", write_optionally_quoted(&function.catalog));
     }
     if !function.schema.is_empty() {
         let _ = write!(result, "{}.", write_optionally_quoted(&function.schema));
     }
-    result.push_str(&write_optionally_quoted(name));
-    result.push('(');
+    result.push_bytes(write_optionally_quoted(name));
+    result.push(b'(');
     if function.distinct {
-        result.push_str("DISTINCT ");
+        result.push_bytes("DISTINCT ");
     }
-    result.push_str(&join_list(children, ", ", |child| {
+    result.push_bytes(join_list(children, ", ", |child| {
         if child.alias.is_empty() {
-            child.to_string()
+            child.to_sql_bytes()
         } else {
             format!("{} := {child}", sql_identifier(&child.alias))
         }
@@ -305,30 +341,35 @@ fn function_to_string(function: &FunctionExpression) -> String {
     let orders = &function.order_bys.orders;
     if !orders.is_empty() {
         if children.is_empty() {
-            result.push_str(") WITHIN GROUP (");
+            result.push_bytes(") WITHIN GROUP (");
         }
-        result.push_str(" ORDER BY ");
-        result.push_str(&join_list(orders, ", ", ToString::to_string));
+        result.push_bytes(" ORDER BY ");
+        result.push_bytes(join_list(orders, ", ", |value| format!("{value}")));
     }
-    result.push(')');
+    result.push(b')');
     if let Some(filter) = &function.filter {
         let _ = write!(result, " FILTER (WHERE {filter})");
     }
     if function.export_state {
-        result.push_str(" EXPORT_STATE");
+        result.push_bytes(" EXPORT_STATE");
     }
     result
 }
 
 /// DuckDB's `OperatorExpression::ToString`.
-fn operator_to_string(ty: ExpressionType, operator: &OperatorExpression) -> String {
+fn operator_to_string(ty: ExpressionType, operator: &OperatorExpression) -> ByteString {
     let children = &operator.children;
-    let child = |i: usize| children.get(i).map(ToString::to_string).unwrap_or_default();
+    let child = |i: usize| {
+        children
+            .get(i)
+            .map(|value| format!("{value}"))
+            .unwrap_or_default()
+    };
     let infix = expression_type_to_operator(ty);
     if !infix.is_empty() {
         return format!("{} {infix} {}", child(0), child(1));
     }
-    let all = || join_list(children, ", ", ToString::to_string);
+    let all = || join_list(children, ", ", |value| format!("{value}"));
     match ty {
         ExpressionType::CompareIn | ExpressionType::CompareNotIn => {
             let keyword = if ty == ExpressionType::CompareIn {
@@ -336,7 +377,9 @@ fn operator_to_string(ty: ExpressionType, operator: &OperatorExpression) -> Stri
             } else {
                 " NOT IN "
             };
-            let list = join_list(children.get(1..).unwrap_or_default(), ", ", ToString::to_string);
+            let list = join_list(children.get(1..).unwrap_or_default(), ", ", |value| {
+                format!("{value}")
+            });
             format!("({}{keyword}({list}))", child(0))
         }
         ExpressionType::OperatorUnpack => format!("UNPACK({})", child(0)),
@@ -356,9 +399,9 @@ fn operator_to_string(ty: ExpressionType, operator: &OperatorExpression) -> Stri
             let mut end = child(2);
             if end == "[]" {
                 end = if children.len() == 4 {
-                    "-".to_owned()
+                    ByteString::from("-")
                 } else {
-                    String::new()
+                    ByteString::new()
                 };
             }
             if children.len() == 4 {
@@ -372,14 +415,14 @@ fn operator_to_string(ty: ExpressionType, operator: &OperatorExpression) -> Stri
                 .get(1)
                 .is_some_and(|field| field.expression_type == ExpressionType::ValueConstant);
             if !is_constant {
-                return String::new();
+                return ByteString::new();
             }
             let field = child(1);
             let inner = field.get(1..field.len().saturating_sub(1)).unwrap_or_default();
             format!("({}).{}", child(0), sql_identifier(inner))
         }
         ExpressionType::ArrayConstructor => format!("(ARRAY[{}])", all()),
-        _ => String::new(),
+        _ => ByteString::new(),
     }
 }
 
@@ -394,21 +437,21 @@ fn units(boundary: WindowBoundary, rows: WindowBoundary, range: WindowBoundary) 
 }
 
 /// DuckDB's `WindowExpression::ToString`.
-fn window_to_string(window: &WindowExpression) -> String {
+fn window_to_string(window: &WindowExpression) -> ByteString {
     use WindowBoundary as B;
     let mut result = if window.schema.is_empty() {
         window.function_name.clone()
     } else {
         format!("{}.{}", window.schema, window.function_name)
     };
-    result.push('(');
+    result.push(b'(');
     let mut first = true;
     for child in &window.children {
         if !first {
-            result.push_str(", ");
+            result.push_bytes(", ");
         }
         if window.distinct && first {
-            result.push_str("DISTINCT ");
+            result.push_bytes("DISTINCT ");
         }
         let _ = write!(result, "{child}");
         first = false;
@@ -417,88 +460,91 @@ fn window_to_string(window: &WindowExpression) -> String {
         let _ = write!(result, ", {extra}");
     }
     if !window.arg_orders.is_empty() {
-        result.push_str(" ORDER BY ");
-        result.push_str(&join_list(&window.arg_orders, ", ", ToString::to_string));
+        result.push_bytes(" ORDER BY ");
+        result.push_bytes(join_list(&window.arg_orders, ", ", |value| format!("{value}")));
     }
     if window.ignore_nulls {
-        result.push_str(" IGNORE NULLS");
+        result.push_bytes(" IGNORE NULLS");
     }
     if let Some(filter) = &window.filter_expr {
         let _ = write!(result, ") FILTER (WHERE {filter}");
     }
-    result.push_str(") OVER (");
+    result.push_bytes(") OVER (");
     let mut separator = "";
     if !window.partitions.is_empty() {
-        result.push_str("PARTITION BY ");
-        result.push_str(&join_list(&window.partitions, ", ", ToString::to_string));
+        result.push_bytes("PARTITION BY ");
+        result.push_bytes(join_list(&window.partitions, ", ", |value| format!("{value}")));
         separator = " ";
     }
     if !window.orders.is_empty() {
-        result.push_str(separator);
-        result.push_str("ORDER BY ");
-        result.push_str(&join_list(&window.orders, ", ", ToString::to_string));
+        result.push_bytes(separator);
+        result.push_bytes("ORDER BY ");
+        result.push_bytes(join_list(&window.orders, ", ", |value| format!("{value}")));
         separator = " ";
     }
-    let expr_text =
-        |expr: &Option<Box<ParsedExpression>>| expr.as_deref().map(ToString::to_string).unwrap_or_default();
+    let expr_text = |expr: &Option<Box<ParsedExpression>>| {
+        expr.as_deref()
+            .map(|value| format!("{value}"))
+            .unwrap_or_default()
+    };
     let mut unit = "ROWS";
-    let mut from: Cow<'static, str> = Cow::Borrowed("");
+    let mut from: ByteString = ByteString::from("");
     match window.start {
         B::CurrentRowRange | B::CurrentRowRows | B::CurrentRowGroups => {
-            from = Cow::Borrowed("CURRENT ROW");
+            from = ByteString::from("CURRENT ROW");
             unit = units(window.start, B::CurrentRowRows, B::CurrentRowRange);
         }
         B::UnboundedPreceding => {
             if window.end != B::CurrentRowRange {
-                from = Cow::Borrowed("UNBOUNDED PRECEDING");
+                from = ByteString::from("UNBOUNDED PRECEDING");
             }
         }
         B::ExprPrecedingRows | B::ExprPrecedingRange | B::ExprPrecedingGroups => {
-            from = Cow::Owned(format!("{} PRECEDING", expr_text(&window.start_expr)));
+            from = format!("{} PRECEDING", expr_text(&window.start_expr));
             unit = units(window.start, B::ExprPrecedingRows, B::ExprPrecedingRange);
         }
         B::ExprFollowingRows | B::ExprFollowingRange | B::ExprFollowingGroups => {
-            from = Cow::Owned(format!("{} FOLLOWING", expr_text(&window.start_expr)));
+            from = format!("{} FOLLOWING", expr_text(&window.start_expr));
             unit = units(window.start, B::ExprFollowingRows, B::ExprFollowingRange);
         }
         B::UnboundedFollowing | B::Invalid => {}
     }
-    let mut to: Cow<'static, str> = Cow::Borrowed("");
+    let mut to: ByteString = ByteString::from("");
     match window.end {
         B::CurrentRowRange => {
             if window.start != B::UnboundedPreceding {
-                to = Cow::Borrowed("CURRENT ROW");
+                to = ByteString::from("CURRENT ROW");
                 unit = "RANGE";
             }
         }
         B::CurrentRowRows | B::CurrentRowGroups => {
-            to = Cow::Borrowed("CURRENT ROW");
+            to = ByteString::from("CURRENT ROW");
             unit = units(window.end, B::CurrentRowRows, B::CurrentRowRange);
         }
-        B::UnboundedPreceding => to = Cow::Borrowed("UNBOUNDED PRECEDING"),
-        B::UnboundedFollowing => to = Cow::Borrowed("UNBOUNDED FOLLOWING"),
+        B::UnboundedPreceding => to = ByteString::from("UNBOUNDED PRECEDING"),
+        B::UnboundedFollowing => to = ByteString::from("UNBOUNDED FOLLOWING"),
         B::ExprPrecedingRows | B::ExprPrecedingRange | B::ExprPrecedingGroups => {
-            to = Cow::Owned(format!("{} PRECEDING", expr_text(&window.end_expr)));
+            to = format!("{} PRECEDING", expr_text(&window.end_expr));
             unit = units(window.end, B::ExprPrecedingRows, B::ExprPrecedingRange);
         }
         B::ExprFollowingRows | B::ExprFollowingRange | B::ExprFollowingGroups => {
-            to = Cow::Owned(format!("{} FOLLOWING", expr_text(&window.end_expr)));
+            to = format!("{} FOLLOWING", expr_text(&window.end_expr));
             unit = units(window.end, B::ExprFollowingRows, B::ExprFollowingRange);
         }
         B::Invalid => {}
     }
     if window.exclude_clause != WindowExcludeMode::NoOther {
         if from.is_empty() {
-            from = Cow::Borrowed("UNBOUNDED PRECEDING");
+            from = ByteString::from("UNBOUNDED PRECEDING");
         }
         if to.is_empty() {
-            to = Cow::Borrowed("CURRENT ROW");
+            to = ByteString::from("CURRENT ROW");
             unit = "RANGE";
         }
     }
     if !from.is_empty() || !to.is_empty() {
-        result.push_str(separator);
-        result.push_str(unit);
+        result.push_bytes(separator);
+        result.push_bytes(unit);
     }
     match (from.is_empty(), to.is_empty()) {
         (false, false) => {
@@ -514,26 +560,26 @@ fn window_to_string(window: &WindowExpression) -> String {
     }
     match window.exclude_clause {
         WindowExcludeMode::NoOther => {}
-        WindowExcludeMode::CurrentRow => result.push_str(" EXCLUDE CURRENT ROW"),
-        WindowExcludeMode::Group => result.push_str(" EXCLUDE GROUP"),
-        WindowExcludeMode::Ties => result.push_str(" EXCLUDE TIES"),
+        WindowExcludeMode::CurrentRow => result.push_bytes(" EXCLUDE CURRENT ROW"),
+        WindowExcludeMode::Group => result.push_bytes(" EXCLUDE GROUP"),
+        WindowExcludeMode::Ties => result.push_bytes(" EXCLUDE TIES"),
     }
-    result.push(')');
+    result.push(b')');
     result
 }
 
 /// DuckDB's `LogicalType::ToString` for types in parse trees: unbound types print as
 /// the type expression they were parsed from.
-pub fn logical_type_to_string(ty: &LogicalType) -> String {
+pub fn logical_type_to_string(ty: &LogicalType) -> ByteString {
     match ty.info() {
         Some(TypeInfo::Unbound(info)) if ty.id() == LogicalTypeId::Unbound => unbound_type_to_string(info),
-        _ => ty.to_string(),
+        _ => ty.to_bytes(),
     }
 }
 
 /// [`type_expression_to_string`] for the unbound type form of a type expression.
-fn unbound_type_to_string(info: &UnboundTypeInfo) -> String {
-    let mut result = String::new();
+fn unbound_type_to_string(info: &UnboundTypeInfo) -> ByteString {
+    let mut result = ByteString::new();
     if !info.catalog.is_empty() {
         let _ = write!(result, "{}.", write_optionally_quoted(&info.catalog));
     }
@@ -546,47 +592,47 @@ fn unbound_type_to_string(info: &UnboundTypeInfo) -> String {
     };
     let params = &info.parameters;
     let named = |kind: &str| {
-        let fields: Vec<String> = params
+        let fields: Vec<ByteString> = params
             .iter()
             .map(|p| format!("{} {}", write_optionally_quoted(&p.name), param(&p.value)))
             .collect();
-        format!("{kind}({})", fields.join(", "))
+        format!("{kind}({})", ByteString::join(&fields, ", "))
     };
     if result.is_empty() {
-        match (info.name.to_ascii_uppercase().as_str(), params.as_slice()) {
-            ("LIST", [child]) => return format!("{}[]", param(&child.value)),
-            ("ARRAY", [child, size]) => return format!("{}[{}]", param(&child.value), param(&size.value)),
-            ("STRUCT", []) => return "STRUCT".to_owned(),
-            ("STRUCT", _) => return named("STRUCT"),
-            ("UNION", []) => return "UNION".to_owned(),
-            ("UNION", _) => return named("UNION"),
-            ("MAP", [key, value]) => return format!("MAP({}, {})", param(&key.value), param(&value.value)),
-            ("VARCHAR", [.., last]) if last.name.eq_ignore_ascii_case("collation") => {
+        match (info.name.to_ascii_uppercase().as_slice(), params.as_slice()) {
+            (b"LIST", [child]) => return format!("{}[]", param(&child.value)),
+            (b"ARRAY", [child, size]) => return format!("{}[{}]", param(&child.value), param(&size.value)),
+            (b"STRUCT", []) => return "STRUCT".into(),
+            (b"STRUCT", _) => return named("STRUCT"),
+            (b"UNION", []) => return "UNION".into(),
+            (b"UNION", _) => return named("UNION"),
+            (b"MAP", [key, value]) => return format!("MAP({}, {})", param(&key.value), param(&value.value)),
+            (b"VARCHAR", [.., last]) if last.name.eq_ignore_ascii_case("collation") => {
                 if let TypeParameterValue::Constant(value) = &last.value {
                     let collation = value.to_varchar().unwrap_or_default();
                     return format!("VARCHAR COLLATE {}", sql_identifier(&collation));
                 }
             }
-            ("INTERVAL", [_, ..]) => return "INTERVAL".to_owned(),
+            (b"INTERVAL", [_, ..]) => return "INTERVAL".into(),
             _ => {}
         }
     }
-    result.push_str(&write_optionally_quoted_with(
+    result.push_bytes(write_optionally_quoted_with_bytes(
         &info.name,
-        '"',
+        b'"',
         true,
         KeywordCategory::ColName,
     ));
     if !params.is_empty() {
-        let rendered: Vec<String> = params.iter().map(|p| param(&p.value)).collect();
-        let _ = write!(result, "({})", rendered.join(", "));
+        let rendered: Vec<ByteString> = params.iter().map(|p| param(&p.value)).collect();
+        let _ = write!(result, "({})", ByteString::join(&rendered, ", "));
     }
     result
 }
 
 /// DuckDB's `TypeExpression::ToString`.
-fn type_expression_to_string(ty: &TypeExpression) -> String {
-    let mut result = String::new();
+fn type_expression_to_string(ty: &TypeExpression) -> ByteString {
+    let mut result = ByteString::new();
     if !ty.catalog.is_empty() {
         let _ = write!(result, "{}.", write_optionally_quoted(&ty.catalog));
     }
@@ -594,7 +640,7 @@ fn type_expression_to_string(ty: &TypeExpression) -> String {
         let _ = write!(result, "{}.", write_optionally_quoted(&ty.schema));
     }
     let params = &ty.children;
-    let name = ty.type_name.as_str();
+    let name = ty.type_name.as_bytes();
     let unqualified = result.is_empty();
     let named = |kind: &str| {
         let fields = join_list(params, ", ", |param| {
@@ -603,47 +649,51 @@ fn type_expression_to_string(ty: &TypeExpression) -> String {
         format!("{kind}({fields})")
     };
     if unqualified {
-        match (name.to_ascii_uppercase().as_str(), params.as_slice()) {
-            ("LIST", [child]) => return format!("{child}[]"),
-            ("ARRAY", [child, size]) => return format!("{child}[{size}]"),
-            ("STRUCT", []) => return "STRUCT".to_owned(),
-            ("STRUCT", _) => return named("STRUCT"),
-            ("UNION", []) => return "UNION".to_owned(),
-            ("UNION", _) => return named("UNION"),
-            ("MAP", [key, value]) => return format!("MAP({key}, {value})"),
-            ("VARCHAR", [.., last]) if last.alias.eq_ignore_ascii_case("collation") => {
+        match (name.to_ascii_uppercase().as_slice(), params.as_slice()) {
+            (b"LIST", [child]) => return format!("{child}[]"),
+            (b"ARRAY", [child, size]) => return format!("{child}[{size}]"),
+            (b"STRUCT", []) => return "STRUCT".into(),
+            (b"STRUCT", _) => return named("STRUCT"),
+            (b"UNION", []) => return "UNION".into(),
+            (b"UNION", _) => return named("UNION"),
+            (b"MAP", [key, value]) => return format!("MAP({key}, {value})"),
+            (b"VARCHAR", [.., last]) if last.alias.eq_ignore_ascii_case("collation") => {
                 if let ParsedExpressionKind::Constant(constant) = &last.kind {
                     let collation = constant.value.to_varchar().unwrap_or_default();
                     return format!("VARCHAR COLLATE {}", sql_identifier(&collation));
                 }
             }
-            ("INTERVAL", [_, ..]) => return "INTERVAL".to_owned(),
+            (b"INTERVAL", [_, ..]) => return "INTERVAL".into(),
             _ => {}
         }
     }
-    result.push_str(&write_optionally_quoted_with(
+    result.push_bytes(write_optionally_quoted_with_bytes(
         name,
-        '"',
+        b'"',
         true,
         KeywordCategory::ColName,
     ));
     if !params.is_empty() {
-        let _ = write!(result, "({})", join_list(params, ", ", ToString::to_string));
+        let _ = write!(
+            result,
+            "({})",
+            join_list(params, ", ", |value| format!("{value}"))
+        );
     }
     result
 }
 
-impl fmt::Display for StarExpression {
+impl StarExpression {
     /// DuckDB's `StarExpression::ToString`.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn write_sql_bytes(&self, f: &mut ByteString) -> fmt::Result {
         if let Some(expr) = &self.expr {
             return write!(f, "COLUMNS({expr})");
         }
         if self.columns {
-            f.write_str("COLUMNS(")?;
+            f.write_bytes("COLUMNS(")?;
         }
         if self.relation_name.is_empty() {
-            f.write_str("*")?;
+            f.write_bytes("*")?;
         } else {
             write!(f, "{}.*", self.relation_name)?;
         }
@@ -651,88 +701,88 @@ impl fmt::Display for StarExpression {
             write!(
                 f,
                 " EXCLUDE ({})",
-                join_list(&self.exclude_list, ", ", ToString::to_string)
+                join_list(&self.exclude_list, ", ", |value| format!("{value}"))
             )?;
         }
         if !self.replace_list.is_empty() {
-            let entries: Vec<String> = self
+            let entries: Vec<ByteString> = self
                 .replace_list
                 .iter()
                 .map(|(name, expr)| format!("{expr} AS {}", write_optionally_quoted(name)))
                 .collect();
-            write!(f, " REPLACE ({})", entries.join(", "))?;
+            write!(f, " REPLACE ({})", ByteString::join(&entries, ", "))?;
         }
         if !self.rename_list.is_empty() {
-            let entries: Vec<String> = self
+            let entries: Vec<ByteString> = self
                 .rename_list
                 .iter()
                 .map(|(name, alias)| format!("{name} AS {}", write_optionally_quoted(alias)))
                 .collect();
-            write!(f, " RENAME ({})", entries.join(", "))?;
+            write!(f, " RENAME ({})", ByteString::join(&entries, ", "))?;
         }
         if self.columns {
-            f.write_str(")")?;
+            f.write_bytes(")")?;
         }
         Ok(())
     }
 }
 
-impl fmt::Display for QualifiedColumnName {
+impl QualifiedColumnName {
     /// DuckDB's `QualifiedColumnName::ToString`.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn write_sql_bytes(&self, f: &mut ByteString) -> fmt::Result {
         for part in [&self.catalog, &self.schema, &self.table] {
             if !part.is_empty() {
                 write!(f, "{}.", write_optionally_quoted(part))?;
             }
         }
-        f.write_str(&write_optionally_quoted(&self.column))
+        f.write_bytes(write_optionally_quoted(&self.column))
     }
 }
 
-impl fmt::Display for OrderByNode {
+impl OrderByNode {
     /// DuckDB's `OrderByNode::ToString`.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn write_sql_bytes(&self, f: &mut ByteString) -> fmt::Result {
         write!(f, "{}", self.expression)?;
         match self.order_type {
-            OrderType::Ascending => f.write_str(" ASC")?,
-            OrderType::Descending => f.write_str(" DESC")?,
+            OrderType::Ascending => f.write_bytes(" ASC")?,
+            OrderType::Descending => f.write_bytes(" DESC")?,
             OrderType::Invalid | OrderType::OrderDefault => {}
         }
         match self.null_order {
-            OrderByNullType::NullsFirst => f.write_str(" NULLS FIRST"),
-            OrderByNullType::NullsLast => f.write_str(" NULLS LAST"),
+            OrderByNullType::NullsFirst => f.write_bytes(" NULLS FIRST"),
+            OrderByNullType::NullsLast => f.write_bytes(" NULLS LAST"),
             OrderByNullType::Invalid | OrderByNullType::OrderDefault => Ok(()),
         }
     }
 }
 
-impl fmt::Display for SelectStatement {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.node, f)
+impl SelectStatement {
+    fn write_sql_bytes(&self, f: &mut ByteString) -> fmt::Result {
+        self.node.write_sql_bytes(f)
     }
 }
 
 impl CommonTableExpressionMap {
     /// The `WITH ...` clause, or `""` without CTEs (DuckDB's `CommonTableExpressionMap::ToString`).
-    pub fn to_sql(&self) -> String {
+    pub fn to_sql(&self) -> ByteString {
         if self.map.is_empty() {
-            return String::new();
+            return ByteString::new();
         }
         let recursive = self
             .map
             .iter()
             .any(|(_, cte)| matches!(cte.query.node.kind, QueryNodeKind::RecursiveCte(_)));
-        let mut result = String::from("WITH ");
+        let mut result = ByteString::from("WITH ");
         if recursive {
-            result.push_str("RECURSIVE ");
+            result.push_bytes("RECURSIVE ");
         }
         let mut first = true;
         for (name, cte) in self.map.iter() {
             if !first {
-                result.push_str(", ");
+                result.push_bytes(", ");
             }
             first = false;
-            result.push_str(&write_optionally_quoted(name));
+            result.push_bytes(write_optionally_quoted(name));
             if !cte.aliases.is_empty() {
                 let _ = write!(
                     result,
@@ -744,10 +794,10 @@ impl CommonTableExpressionMap {
                 let _ = write!(
                     result,
                     " USING KEY ({}) ",
-                    join_list(&cte.key_targets, ", ", ToString::to_string)
+                    join_list(&cte.key_targets, ", ", |value| format!("{value}"))
                 );
             }
-            result.push_str(match cte.materialized {
+            result.push_bytes(match cte.materialized {
                 CteMaterialize::CteMaterializeAlways => " AS MATERIALIZED (",
                 CteMaterialize::CteMaterializeNever => " AS NOT MATERIALIZED (",
                 CteMaterialize::CteMaterializeDefault => " AS (",
@@ -760,15 +810,15 @@ impl CommonTableExpressionMap {
 
 impl QueryNode {
     /// `ORDER BY` / `LIMIT` / `OFFSET` of this node (DuckDB's `ResultModifiersToString`).
-    fn modifiers_to_sql(&self) -> String {
-        let mut result = String::new();
+    fn modifiers_to_sql(&self) -> ByteString {
+        let mut result = ByteString::new();
         for modifier in &self.modifiers {
             match modifier {
                 ResultModifier::Order(order) => {
                     let _ = write!(
                         result,
                         " ORDER BY {}",
-                        join_list(&order.orders, ", ", ToString::to_string)
+                        join_list(&order.orders, ", ", |value| format!("{value}"))
                     );
                 }
                 ResultModifier::Limit(limit) => {
@@ -794,55 +844,55 @@ impl QueryNode {
     }
 }
 
-impl fmt::Display for QueryNode {
+impl QueryNode {
     /// DuckDB's `QueryNode::ToString`.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn write_sql_bytes(&self, f: &mut ByteString) -> fmt::Result {
         match &self.kind {
-            QueryNodeKind::Select(select) => f.write_str(&select_to_sql(self, select)),
-            QueryNodeKind::SetOperation(setop) => f.write_str(&setop_to_sql(self, setop)),
-            QueryNodeKind::RecursiveCte(cte) => f.write_str(&recursive_cte_to_sql(self, cte)),
+            QueryNodeKind::Select(select) => f.write_bytes(select_to_sql(self, select)),
+            QueryNodeKind::SetOperation(setop) => f.write_bytes(setop_to_sql(self, setop)),
+            QueryNodeKind::RecursiveCte(cte) => f.write_bytes(recursive_cte_to_sql(self, cte)),
         }
     }
 }
 
-fn sample_to_sql(sample: &SampleOptions) -> String {
+fn sample_to_sql(sample: &SampleOptions) -> ByteString {
     let mut result = format!(
         " USING SAMPLE {}",
         sample.sample_size.to_varchar().unwrap_or_default()
     );
     if sample.is_percentage {
-        result.push('%');
+        result.push(b'%');
     }
     let _ = write!(result, " ({}", sample.method.name());
     if let Some(seed) = sample.seed {
         let _ = write!(result, ", {seed}");
     }
-    result.push(')');
+    result.push(b')');
     result
 }
 
 /// DuckDB's `SelectNode::ToString`.
-fn select_to_sql(node: &QueryNode, select: &SelectNode) -> String {
+fn select_to_sql(node: &QueryNode, select: &SelectNode) -> ByteString {
     if let TableRefKind::Show(_) = &select.from_table.kind {
-        return select.from_table.to_string();
+        return select.from_table.to_sql_bytes();
     }
     let mut result = node.cte_map.to_sql();
-    result.push_str("SELECT ");
+    result.push_bytes("SELECT ");
     for modifier in &node.modifiers {
         if let ResultModifier::Distinct(distinct) = modifier {
-            result.push_str("DISTINCT ");
+            result.push_bytes("DISTINCT ");
             if !distinct.distinct_on_targets.is_empty() {
                 let _ = write!(
                     result,
                     "ON ({}) ",
-                    join_list(&distinct.distinct_on_targets, ", ", ToString::to_string)
+                    join_list(&distinct.distinct_on_targets, ", ", |value| format!("{value}"))
                 );
             }
         }
     }
-    result.push_str(&join_list(&select.select_list, ", ", |expr| {
+    result.push_bytes(join_list(&select.select_list, ", ", |expr| {
         if expr.alias.is_empty() {
-            expr.to_string()
+            expr.to_sql_bytes()
         } else {
             format!("{expr} AS {}", sql_identifier(&expr.alias))
         }
@@ -854,38 +904,38 @@ fn select_to_sql(node: &QueryNode, select: &SelectNode) -> String {
         let _ = write!(result, " WHERE {condition}");
     }
     if !select.group_sets.is_empty() {
-        result.push_str(" GROUP BY ");
+        result.push_bytes(" GROUP BY ");
         let multiple = select.group_sets.len() > 1;
         if multiple {
-            result.push_str("GROUPING SETS (");
+            result.push_bytes("GROUPING SETS (");
         }
         for (i, set) in select.group_sets.iter().enumerate() {
             if i > 0 {
-                result.push(',');
+                result.push(b',');
             }
             if set.is_empty() {
-                result.push_str("()");
+                result.push_bytes("()");
                 continue;
             }
             if multiple {
-                result.push('(');
+                result.push(b'(');
             }
-            let groups: Vec<String> = set
+            let groups: Vec<ByteString> = set
                 .iter()
                 .filter_map(|&index| usize::try_from(index).ok())
                 .filter_map(|index| select.group_expressions.get(index))
-                .map(ToString::to_string)
+                .map(|value| format!("{value}"))
                 .collect();
-            result.push_str(&groups.join(", "));
+            result.push_bytes(ByteString::join(&groups, ", "));
             if multiple {
-                result.push(')');
+                result.push(b')');
             }
         }
         if multiple {
-            result.push(')');
+            result.push(b')');
         }
     } else if select.aggregate_handling == AggregateHandling::ForceAggregates {
-        result.push_str(" GROUP BY ALL");
+        result.push_bytes(" GROUP BY ALL");
     }
     if let Some(having) = &select.having {
         let _ = write!(result, " HAVING {having}");
@@ -894,13 +944,13 @@ fn select_to_sql(node: &QueryNode, select: &SelectNode) -> String {
         let _ = write!(result, " QUALIFY {qualify}");
     }
     if let Some(sample) = &select.sample {
-        result.push_str(&sample_to_sql(sample));
+        result.push_bytes(sample_to_sql(sample));
     }
-    result + &node.modifiers_to_sql()
+    format!("{}{}", result, node.modifiers_to_sql())
 }
 
 /// DuckDB's `SetOperationNode::ToString`.
-fn setop_to_sql(node: &QueryNode, setop: &SetOperationNode) -> String {
+fn setop_to_sql(node: &QueryNode, setop: &SetOperationNode) -> ByteString {
     let mut result = node.cte_map.to_sql();
     let Some((first, rest)) = setop.children.split_first() else {
         return result;
@@ -920,15 +970,15 @@ fn setop_to_sql(node: &QueryNode, setop: &SetOperationNode) -> String {
     for child in rest {
         let _ = write!(result, "{keyword} ({child})");
     }
-    result + &node.modifiers_to_sql()
+    format!("{}{}", result, node.modifiers_to_sql())
 }
 
 /// DuckDB's `RecursiveCTENode::ToString`.
-fn recursive_cte_to_sql(node: &QueryNode, cte: &RecursiveCteNode) -> String {
+fn recursive_cte_to_sql(node: &QueryNode, cte: &RecursiveCteNode) -> ByteString {
     let mut result = node.cte_map.to_sql();
     let _ = write!(result, "({}) UNION ", cte.left);
     if cte.union_all {
-        result.push_str(" ALL ");
+        result.push_bytes(" ALL ");
     }
     let _ = write!(result, "({})", cte.right);
     result
@@ -936,8 +986,8 @@ fn recursive_cte_to_sql(node: &QueryNode, cte: &RecursiveCteNode) -> String {
 
 impl TableRef {
     /// ` AS alias(col, ...)` (DuckDB's `TableRef::AliasToString`).
-    fn alias_to_sql(&self, column_name_alias: &[String]) -> String {
-        let mut result = String::new();
+    fn alias_to_sql(&self, column_name_alias: &[ByteString]) -> ByteString {
+        let mut result = ByteString::new();
         if !self.alias.is_empty() {
             let _ = write!(result, " AS {}", sql_identifier(&self.alias));
         }
@@ -952,9 +1002,9 @@ impl TableRef {
     }
 
     /// ` TABLESAMPLE ...` (DuckDB's `TableRef::SampleToString`).
-    fn sample_to_sql(&self) -> String {
+    fn sample_to_sql(&self) -> ByteString {
         let Some(sample) = &self.sample else {
-            return String::new();
+            return ByteString::new();
         };
         let mut result = format!(
             " TABLESAMPLE {}({} {})",
@@ -968,14 +1018,16 @@ impl TableRef {
         result
     }
 
-    fn base_to_sql(&self, text: String, column_name_alias: &[String]) -> String {
-        text + &self.alias_to_sql(column_name_alias) + &self.sample_to_sql()
+    fn base_to_sql(&self, mut text: ByteString, column_name_alias: &[ByteString]) -> ByteString {
+        text.push_bytes(self.alias_to_sql(column_name_alias));
+        text.push_bytes(self.sample_to_sql());
+        text
     }
 }
 
-impl fmt::Display for TableRef {
+impl TableRef {
     /// DuckDB's `TableRef::ToString`.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn write_sql_bytes(&self, f: &mut ByteString) -> fmt::Result {
         let text = match &self.kind {
             TableRefKind::BaseTable(base) => base_table_to_sql(self, base),
             TableRefKind::Join(join) => join_to_sql(join),
@@ -983,13 +1035,13 @@ impl fmt::Display for TableRef {
                 self.base_to_sql(format!("({})", subquery.subquery), &subquery.column_name_alias)
             }
             TableRefKind::TableFunction(function) => {
-                let mut text = function.function.to_string();
+                let mut text = function.function.to_sql_bytes();
                 if function.with_ordinality == OrdinalityType::WithOrdinality {
-                    text.push_str(" WITH ORDINALITY");
+                    text.push_bytes(" WITH ORDINALITY");
                 }
                 self.base_to_sql(text, &function.column_name_alias)
             }
-            TableRefKind::Empty => String::new(),
+            TableRefKind::Empty => ByteString::new(),
             TableRefKind::ExpressionList(list) => self.base_to_sql(values_to_sql(list), &list.expected_names),
             TableRefKind::Pivot(pivot) => pivot_to_sql(self, pivot),
             TableRefKind::Show(show) => show_to_sql(show),
@@ -997,31 +1049,31 @@ impl fmt::Display for TableRef {
                 let text = column_data
                     .collection
                     .as_ref()
-                    .map(ToString::to_string)
+                    .map(|value| format!("{value}"))
                     .unwrap_or_default();
                 self.base_to_sql(text, &column_data.expected_names)
             }
         };
-        f.write_str(&text)
+        f.write_bytes(&text)
     }
 }
 
-fn base_table_to_sql(table_ref: &TableRef, base: &BaseTableRef) -> String {
-    let mut result = String::new();
+fn base_table_to_sql(table_ref: &TableRef, base: &BaseTableRef) -> ByteString {
+    let mut result = ByteString::new();
     for part in [&base.catalog_name, &base.schema_name] {
         if !part.is_empty() {
             let _ = write!(result, "{}.", write_optionally_quoted(part));
         }
     }
-    result.push_str(&write_optionally_quoted(&base.table_name));
-    result.push_str(&table_ref.alias_to_sql(&base.column_name_alias));
+    result.push_bytes(write_optionally_quoted(&base.table_name));
+    result.push_bytes(table_ref.alias_to_sql(&base.column_name_alias));
     if let Some(at) = &base.at_clause {
         let _ = write!(result, " AT ({} => {})", at.unit, at.expr);
     }
-    result + &table_ref.sample_to_sql()
+    format!("{}{}", result, table_ref.sample_to_sql())
 }
 
-fn join_to_sql(join: &JoinRef) -> String {
+fn join_to_sql(join: &JoinRef) -> ByteString {
     let mut result = format!("{} ", join.left);
     let join_type = join_type_name(join.join_type);
     match join.ref_type {
@@ -1034,9 +1086,9 @@ fn join_to_sql(join: &JoinRef) -> String {
         JoinRefType::Asof => {
             let _ = write!(result, "ASOF {join_type} JOIN ");
         }
-        JoinRefType::Cross => result.push_str(if join.is_implicit { ", " } else { "CROSS JOIN " }),
-        JoinRefType::Positional => result.push_str("POSITIONAL JOIN "),
-        JoinRefType::Dependent => result.push_str("DEPENDENT JOIN "),
+        JoinRefType::Cross => result.push_bytes(if join.is_implicit { ", " } else { "CROSS JOIN " }),
+        JoinRefType::Positional => result.push_bytes("POSITIONAL JOIN "),
+        JoinRefType::Dependent => result.push_bytes("DEPENDENT JOIN "),
     }
     let _ = write!(result, "{}", join.right);
     if let Some(condition) = &join.condition {
@@ -1051,18 +1103,18 @@ fn join_to_sql(join: &JoinRef) -> String {
     result
 }
 
-fn values_to_sql(list: &ExpressionListRef) -> String {
+fn values_to_sql(list: &ExpressionListRef) -> ByteString {
     let rows = join_list(&list.values, ", ", |row| {
-        format!("({})", join_list(row, ", ", ToString::to_string))
+        format!("({})", join_list(row, ", ", |value| format!("{value}")))
     });
     format!("(VALUES {rows})")
 }
 
-fn pivot_column_to_sql(pivot: &PivotColumn) -> String {
-    let mut result = String::new();
+fn pivot_column_to_sql(pivot: &PivotColumn) -> ByteString {
+    let mut result = ByteString::new();
     if !pivot.unpivot_names.is_empty() {
         if let [name] = pivot.unpivot_names.as_slice() {
-            result.push_str(&write_optionally_quoted(name));
+            result.push_bytes(write_optionally_quoted(name));
         } else {
             let _ = write!(
                 result,
@@ -1074,14 +1126,14 @@ fn pivot_column_to_sql(pivot: &PivotColumn) -> String {
         let _ = write!(
             result,
             "({})",
-            join_list(&pivot.pivot_expressions, ", ", ToString::to_string)
+            join_list(&pivot.pivot_expressions, ", ", |value| format!("{value}"))
         );
     }
-    result.push_str(" IN ");
+    result.push_bytes(" IN ");
     if pivot.pivot_enum.is_empty() {
         let entries = join_list(&pivot.entries, ", ", |entry| {
             let mut text = if let Some(expr) = &entry.star_expr {
-                expr.to_string()
+                expr.to_sql_bytes()
             } else if let [value] = entry.values.as_slice() {
                 value_to_sql_string(value)
             } else {
@@ -1094,21 +1146,21 @@ fn pivot_column_to_sql(pivot: &PivotColumn) -> String {
         });
         let _ = write!(result, "({entries})");
     } else {
-        result.push_str(&write_optionally_quoted(&pivot.pivot_enum));
+        result.push_bytes(write_optionally_quoted(&pivot.pivot_enum));
     }
     result
 }
 
-fn pivot_to_sql(table_ref: &TableRef, pivot: &PivotRef) -> String {
-    let mut result = pivot.source.to_string();
+fn pivot_to_sql(table_ref: &TableRef, pivot: &PivotRef) -> ByteString {
+    let mut result = pivot.source.to_sql_bytes();
     if pivot.aggregates.is_empty() {
-        result.push_str(" UNPIVOT ");
+        result.push_bytes(" UNPIVOT ");
         if pivot.include_nulls {
-            result.push_str("INCLUDE NULLS ");
+            result.push_bytes("INCLUDE NULLS ");
         }
-        result.push('(');
+        result.push(b'(');
         if let [name] = pivot.unpivot_names.as_slice() {
-            result.push_str(&write_optionally_quoted(name));
+            result.push_bytes(write_optionally_quoted(name));
         } else {
             let _ = write!(
                 result,
@@ -1117,16 +1169,16 @@ fn pivot_to_sql(table_ref: &TableRef, pivot: &PivotRef) -> String {
             );
         }
     } else {
-        result.push_str(" PIVOT (");
-        result.push_str(&join_list(&pivot.aggregates, ", ", |aggregate| {
+        result.push_bytes(" PIVOT (");
+        result.push_bytes(join_list(&pivot.aggregates, ", ", |aggregate| {
             if aggregate.alias.is_empty() {
-                aggregate.to_string()
+                aggregate.to_sql_bytes()
             } else {
                 format!("{aggregate} AS {}", write_optionally_quoted(&aggregate.alias))
             }
         }));
     }
-    result.push_str(" FOR");
+    result.push_bytes(" FOR");
     for column in &pivot.pivots {
         let _ = write!(result, " {}", pivot_column_to_sql(column));
     }
@@ -1137,7 +1189,7 @@ fn pivot_to_sql(table_ref: &TableRef, pivot: &PivotRef) -> String {
             join_list(&pivot.groups, ", ", |name| write_optionally_quoted(name))
         );
     }
-    result.push(')');
+    result.push(b')');
     if !table_ref.alias.is_empty() {
         let _ = write!(result, " AS {}", write_optionally_quoted(&table_ref.alias));
         if !pivot.column_name_alias.is_empty() {
@@ -1153,112 +1205,112 @@ fn pivot_to_sql(table_ref: &TableRef, pivot: &PivotRef) -> String {
     result
 }
 
-fn show_to_sql(show: &ShowRef) -> String {
-    let mut result = String::new();
+fn show_to_sql(show: &ShowRef) -> ByteString {
+    let mut result = ByteString::new();
     match show.show_type {
-        ShowType::Summary => result.push_str("SUMMARIZE "),
+        ShowType::Summary => result.push_bytes("SUMMARIZE "),
         ShowType::ShowFrom => {
-            result.push_str("SHOW TABLES FROM ");
+            result.push_bytes("SHOW TABLES FROM ");
             if !show.catalog_name.is_empty() {
-                result.push_str(&write_optionally_quoted(&show.catalog_name));
+                result.push_bytes(write_optionally_quoted(&show.catalog_name));
                 if !show.schema_name.is_empty() {
-                    result.push('.');
+                    result.push(b'.');
                 }
             }
-            result.push_str(&write_optionally_quoted(&show.schema_name));
+            result.push_bytes(write_optionally_quoted(&show.schema_name));
         }
-        ShowType::Describe | ShowType::ShowUnqualified => result.push_str("DESCRIBE "),
+        ShowType::Describe | ShowType::ShowUnqualified => result.push_bytes("DESCRIBE "),
     }
     if let Some(query) = &show.query {
         let _ = write!(result, "({query})");
     } else if show.table_name != "__show_tables_expanded" {
-        result.push_str(&show.table_name);
+        result.push_bytes(&show.table_name);
     }
     result
 }
 
-impl fmt::Display for crate::InsertStatement {
+impl crate::InsertStatement {
     /// DuckDB's `InsertStatement::ToString`.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn write_sql_bytes(&self, f: &mut ByteString) -> fmt::Result {
         use crate::OnConflictAction;
         let mut result = self.cte_map.to_sql();
-        result.push_str("INSERT");
+        result.push_bytes("INSERT");
         let or_replace = self
             .on_conflict_info
             .as_ref()
             .is_some_and(|info| info.action_type == OnConflictAction::Replace);
         if or_replace {
-            result.push_str(" OR REPLACE");
+            result.push_bytes(" OR REPLACE");
         }
-        result.push_str(" INTO ");
+        result.push_bytes(" INTO ");
         for qualifier in [&self.catalog, &self.schema] {
             if !qualifier.is_empty() {
-                result.push_str(&write_optionally_quoted(qualifier));
-                result.push('.');
+                result.push_bytes(write_optionally_quoted(qualifier));
+                result.push(b'.');
             }
         }
-        result.push_str(&write_optionally_quoted(&self.table));
+        result.push_bytes(write_optionally_quoted(&self.table));
         if let Some(table_ref) = &self.table_ref
             && !table_ref.alias.is_empty()
         {
             let _ = write!(result, " AS {}", write_optionally_quoted(&table_ref.alias));
         }
         if self.column_order == crate::InsertColumnOrder::InsertByName {
-            result.push_str(" BY NAME");
+            result.push_bytes(" BY NAME");
         }
         if !self.columns.is_empty() {
             let columns = join_list(&self.columns, ", ", |column| write_optionally_quoted(column));
             let _ = write!(result, " ({columns} )");
         }
-        result.push(' ');
+        result.push(b' ');
         if let Some(values) = self.values_list() {
-            result.push_str(&values_to_sql(values));
+            result.push_bytes(values_to_sql(values));
         } else if let Some(select) = &self.select_statement {
-            result.push_str(&select.to_string());
+            result.push_bytes(select.to_sql_bytes());
         } else {
-            result.push_str("DEFAULT VALUES");
+            result.push_bytes("DEFAULT VALUES");
         }
         if !or_replace && let Some(info) = &self.on_conflict_info {
-            result.push_str(" ON CONFLICT ");
+            result.push_bytes(" ON CONFLICT ");
             if !info.indexed_columns.is_empty() {
-                let columns = join_list(&info.indexed_columns, ", ", |column| column.to_lowercase());
+                let columns = join_list(&info.indexed_columns, ", ", ByteString::to_ascii_lowercase);
                 let _ = write!(result, "({columns} )");
             }
             if let Some(condition) = &info.condition {
                 let _ = write!(result, " WHERE {condition}");
             }
-            result.push(' ');
-            result.push_str(match info.action_type {
+            result.push(b' ');
+            result.push_bytes(match info.action_type {
                 OnConflictAction::Nothing => "DO NOTHING",
                 OnConflictAction::Update | OnConflictAction::Replace => "DO UPDATE",
                 OnConflictAction::Throw => "",
             });
             if let Some(set_info) = &info.set_info {
-                result.push_str(" SET ");
-                let assignments: Vec<String> = set_info
+                result.push_bytes(" SET ");
+                let assignments: Vec<ByteString> = set_info
                     .columns
                     .iter()
                     .zip(&set_info.expressions)
-                    .map(|(column, expression)| format!("{} = {expression}", column.to_lowercase()))
+                    .map(|(column, expression)| format!("{} = {expression}", column.to_ascii_lowercase()))
                     .collect();
-                result.push_str(&assignments.join(", "));
+                result.push_bytes(ByteString::join(&assignments, ", "));
                 if let Some(condition) = &set_info.condition {
                     let _ = write!(result, " WHERE {condition}");
                 }
             }
         }
         if !self.returning_list.is_empty() {
-            result.push_str(" RETURNING ");
+            result.push_bytes(" RETURNING ");
             let columns = join_list(&self.returning_list, ", ", |expression| {
                 if expression.alias.is_empty() {
-                    expression.to_string()
+                    expression.to_sql_bytes()
                 } else {
                     format!("{expression} AS {}", write_optionally_quoted(&expression.alias))
                 }
             });
-            result.push_str(&columns);
+            result.push_bytes(&columns);
         }
-        f.write_str(&result)
+        f.write_bytes(&result)
     }
 }
 
@@ -1288,3 +1340,35 @@ impl crate::InsertStatement {
         }
     }
 }
+
+macro_rules! native_sql {
+    ($($ty:ty),* $(,)?) => {$ (
+        impl $ty {
+            pub fn to_sql_bytes(&self) -> ByteString {
+                let mut output = ByteString::new();
+                // Native byte writers only append bytes and cannot reject UTF-8.
+                let _ = self.write_sql_bytes(&mut output);
+                output
+            }
+        }
+        impl rustdb_common::byte_format::NativeByteFormat for $ty {
+            fn append_native_bytes(&self, output: &mut ByteString) { let _ = self.write_sql_bytes(output); }
+        }
+        impl fmt::Display for $ty {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                let bytes = self.to_sql_bytes();
+                f.write_str(bytes.to_str().map_err(|_| fmt::Error)?)
+            }
+        }
+    )*};
+}
+native_sql!(
+    ParsedExpression,
+    StarExpression,
+    QualifiedColumnName,
+    OrderByNode,
+    SelectStatement,
+    QueryNode,
+    TableRef,
+    crate::InsertStatement
+);

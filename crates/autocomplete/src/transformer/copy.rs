@@ -9,13 +9,13 @@ use super::prelude::*;
 /// `CopyInfo()`: the defaults of a COPY.
 fn copy_info() -> CopyInfo {
     CopyInfo {
-        catalog: String::new(),
-        schema: "main".to_owned(),
-        table: String::new(),
+        catalog: String::new().into(),
+        schema: "main".to_owned().into(),
+        table: String::new().into(),
         select_list: Vec::new(),
         is_from: false,
-        format: String::new(),
-        file_path: String::new(),
+        format: String::new().into(),
+        file_path: String::new().into(),
         options: CaseInsensitiveMap::default(),
         select_statement: None,
         is_format_auto_detected: true,
@@ -53,7 +53,7 @@ fn set_copy_options(info: &mut CopyInfo, options: Vec<GenericCopyOption>) -> Res
                 let func_children = option
                     .children
                     .iter()
-                    .map(|partition| Ok(ParsedExpression::column_ref([partition.to_varchar()?])))
+                    .map(|partition| Ok(ParsedExpression::column_ref([partition.to_varchar_bytes()?])))
                     .collect::<Result<Vec<_>>>()?;
                 let row_func = rustdb_parser::build::function_full(
                     String::new(),
@@ -98,7 +98,7 @@ fn set_copy_options(info: &mut CopyInfo, options: Vec<GenericCopyOption>) -> Res
                 "Unsupported parameter type for FORMAT: expected e.g. FORMAT 'csv', 'parquet'",
             ));
         };
-        info.format = format.to_varchar()?;
+        info.format = format.to_varchar_bytes()?;
         info.is_format_auto_detected = false;
     }
     info.options = copy_options.into_iter().collect();
@@ -108,22 +108,22 @@ fn set_copy_options(info: &mut CopyInfo, options: Vec<GenericCopyOption>) -> Res
 
 /// `PEGTransformerFactory::ExtractFormat`: the extension of the file, without a `.gz` /
 /// `.zst` compression suffix; empty if there is none.
-fn extract_format(file_path: &str) -> String {
+fn extract_format(file_path: &[u8]) -> ByteString {
     let lower = file_path.to_ascii_lowercase();
     let format = lower
-        .strip_suffix(".gz")
-        .or_else(|| lower.strip_suffix(".zst"))
+        .strip_suffix(b".gz")
+        .or_else(|| lower.strip_suffix(b".zst"))
         .unwrap_or(&lower);
-    match format.rfind('.') {
-        Some(dot_pos) if dot_pos != format.len() - 1 => format[dot_pos + 1..].to_owned(),
-        _ => String::new(),
+    match format.iter().rposition(|byte| *byte == b'.') {
+        Some(dot) if dot != format.len() - 1 => format[dot + 1..].into(),
+        _ => ByteString::new(),
     }
 }
 
 /// Sets the file of a COPY: a constant is the path, anything else an expression.
 fn set_file_name(info: &mut CopyInfo, file_name: ParsedExpression) -> Result<()> {
     if let ParsedExpressionKind::Constant(const_expr) = &file_name.kind {
-        info.file_path = const_expr.value.to_varchar()?;
+        info.file_path = const_expr.value.to_varchar_bytes()?;
     } else {
         info.file_path_expression = Some(Box::new(file_name));
     }
@@ -165,15 +165,15 @@ impl PegTransformer {
             let copy_type: CopyDatabaseType = self.transform(copy_database_flag)?;
             return Ok(SqlStatement::new(SqlStatementKind::CopyDatabase(
                 CopyDatabaseStatement {
-                    from_database,
-                    to_database,
+                    from_database: from_database.into(),
+                    to_database: to_database.into(),
                     copy_type,
                 },
             )));
         }
         Ok(SqlStatement::new(SqlStatementKind::Pragma(Box::new(
             PragmaInfo {
-                name: "copy_database".to_owned(),
+                name: "copy_database".to_owned().into(),
                 parameters: vec![
                     ParsedExpression::constant(Value::varchar(from_database)),
                     ParsedExpression::constant(Value::varchar(to_database)),

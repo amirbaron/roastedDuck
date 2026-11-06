@@ -20,7 +20,7 @@ use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
 const DEFAULT_THRESHOLD: usize = 262_144;
 
 /// One `ORDER BY` of a sorted aggregate.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SortedOrder {
     /// The type of the ordering expression.
     pub ty: LogicalType,
@@ -36,12 +36,27 @@ struct SortedAggregateData {
     bind_info: Option<Arc<dyn FunctionData>>,
     /// Input columns that are buffered: the arguments, then the unmatched orderings.
     buffered: Vec<usize>,
+    orders: Vec<SortedOrder>,
     arguments: usize,
     sort: Sort,
     threshold: usize,
 }
 
 impl FunctionData for SortedAggregateData {
+    fn equals(&self, other: &dyn FunctionData) -> bool {
+        let Some(other) = other.as_any().downcast_ref::<Self>() else {
+            return false;
+        };
+        let bind_equal = match (&self.bind_info, &other.bind_info) {
+            (Some(left), Some(right)) => Arc::ptr_eq(left, right) || left.equals(right.as_ref()),
+            (None, None) => true,
+            _ => false,
+        };
+        bind_equal
+            && self.function.ops.callback_identity() == other.function.ops.callback_identity()
+            && self.orders == other.orders
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -286,6 +301,7 @@ pub fn bind_sorted_aggregate(
         function,
         bind_info,
         buffered,
+        orders: orders.to_vec(),
         arguments,
         sort,
         threshold: DEFAULT_THRESHOLD,

@@ -13,7 +13,9 @@ use crate::scalar::nested::ListInput;
 type BindResult = Result<Option<std::sync::Arc<dyn FunctionData>>>;
 
 fn null_argument(name: &str, side: &str) -> Error {
-    Error::invalid_input(format!("{name}: {side} argument can not contain NULL values"))
+    Error::invalid_input(rustdb_common::byte_format!(
+        "{name}: {side} argument can not contain NULL values"
+    ))
 }
 
 /// The values of a flat child vector.
@@ -85,22 +87,22 @@ fn bind_array_binary(function: &mut ScalarFunction, input: &BindInput<'_>) -> Bi
     let (Some((left_child, left_size)), Some((right_child, right_size))) =
         (left.array_child(), right.array_child())
     else {
-        return Err(Error::invalid_input(format!(
+        return Err(Error::invalid_input(rustdb_common::byte_format!(
             "{name}: Arguments must be arrays of FLOAT or DOUBLE"
         )));
     };
     if left_size != right_size {
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "{name}: Array arguments must be of the same size"
         )));
     }
     let common = LogicalType::try_max_logical_type(left_child, right_child).ok_or_else(|| {
-        Error::binder(format!(
+        Error::binder(rustdb_common::byte_format!(
             "{name}: Cannot infer common element type (left = '{left_child}', right = '{right_child}')"
         ))
     })?;
     if !matches!(common.id(), LogicalTypeId::Float | LogicalTypeId::Double) {
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "{name}: Arguments must be arrays of FLOAT or DOUBLE"
         )));
     }
@@ -221,9 +223,10 @@ fn list_fold<T: Float>(args: &DataChunk, result: &mut Vector, name: &str, fold: 
             continue;
         };
         if l.length != r.length {
-            return Err(Error::invalid_input(format!(
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "{name}: list dimensions must be equal, got left length '{}' and right length '{}'",
-                l.length, r.length
+                l.length,
+                r.length
             )));
         }
         if !fold.allows_empty() && l.length == 0 {

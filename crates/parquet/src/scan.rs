@@ -14,8 +14,9 @@ use rustdb_csv::multi_file::{
 };
 use rustdb_function::cast::{CastFunctionSet, CastParameters};
 use rustdb_function::{
-    FunctionData, ParallelScanGlobal, ParallelScanLocal, ParallelTableScan, TableFunction,
-    TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet, TablePartitionInfo, TableScanState,
+    BindInput, FunctionClient, FunctionData, FunctionState, ParallelScanGlobal, ParallelScanLocal,
+    ParallelTableScan, ScalarFunction, TableFunction, TableFunctionBindInput, TableFunctionBindOutput,
+    TableFunctionSet, TablePartitionInfo, TableScanState,
 };
 use rustdb_planner::ClientContext;
 use rustdb_storage::{TableFilter, TableFilterSet};
@@ -37,12 +38,15 @@ pub(crate) fn client_context<'a>(input: &TableFunctionBindInput<'a>) -> Result<&
 /// (`CachingFileSystem::Get(context)`), validated per `validate_external_file_cache`,
 /// prefetching per `ShouldAndCanPrefetch` (local files only with
 /// `prefetch_all_parquet_files`).
-pub(crate) fn set_file_cache_options(context: &ClientContext, options: &mut ParquetOptions) {
-    options.prefetch = setting_bool(context, "prefetch_all_parquet_files")
-        && !setting_bool(context, "disable_parquet_prefetching");
+pub(crate) fn set_file_cache_options(context: &ClientContext, options: &mut ParquetOptions) -> Result<()> {
+    let prefetch_all = setting_bool_checked(context, "prefetch_all_parquet_files")?;
+    let disable_prefetch = setting_bool_checked(context, "disable_parquet_prefetching")?;
+    options.prefetch = prefetch_all && !disable_prefetch;
+    options.disable_prefetch = disable_prefetch;
     options.file_cache = context.function_client.external_file_cache();
     options.cache_validation =
         rustdb_function::external_file_cache::CacheValidationMode::of_client(Some(&context.function_client));
+    Ok(())
 }
 
 /// The current value of a boolean setting (`ClientContext::TryGetCurrentSetting`).
@@ -53,6 +57,21 @@ pub(crate) fn setting_bool(context: &ClientContext, name: &str) -> bool {
         .and_then(|settings| settings.current_setting(name).ok())
         .and_then(|value| value.as_bool())
         .unwrap_or(false)
+}
+
+/// Parquet's option consumers use `Value::GetValue<bool>`, rejecting configured
+/// NULL rather than silently interpreting it as false.
+pub(crate) fn setting_bool_checked(context: &ClientContext, name: &str) -> Result<bool> {
+    let Some(settings) = context.function_client.settings() else {
+        return Ok(false);
+    };
+    let value = settings.current_setting(name)?;
+    if value.is_null() {
+        return Err(Error::internal_with_stack_trace(
+            "Calling GetValueInternal on a value that is NULL",
+        ));
+    }
+    Ok(value.as_bool().unwrap_or(false))
 }
 
 pub use rustdb_csv::multi_file::{
@@ -214,14 +233,16 @@ fn read_parquet_partition_stats(
 
 /// `MultiFileGetVirtualColumns`: `filename` (unless the `filename` option names a real
 /// column), `file_index` and Parquet's `file_row_number`.
-fn read_parquet_virtual_columns(bind_data: Option<&dyn FunctionData>) -> Vec<(u64, String, LogicalType)> {
+fn read_parquet_virtual_columns(
+    bind_data: Option<&dyn FunctionData>,
+) -> Vec<(u64, rustdb_common::ByteString, LogicalType)> {
     let filename_option = bind_data
         .and_then(|data| data.as_any().downcast_ref::<ParquetBindData>())
         .is_some_and(|data| data.reader_bind.filename_idx.is_some());
     let mut result = rustdb_csv::multi_file::multi_file_virtual_columns(filename_option);
     result.push((
         COLUMN_IDENTIFIER_FILE_ROW_NUMBER,
-        "file_row_number".to_owned(),
+        "file_row_number".into(),
         LogicalType::BIGINT,
     ));
     result
@@ -233,8 +254,8 @@ pub struct ParquetBindData {
     pub files: FileList,
     /// The file list `EXPLAIN ANALYZE` shows: the patterns given, until filters prune
     /// the expanded files (`GetDisplayFileList`).
-    display_paths: Option<Vec<String>>,
-    pub names: Vec<String>,
+    display_paths: Option<Vec<rustdb_common::ByteString>>,
+    pub names: Vec<rustdb_common::ByteString>,
     pub types: Vec<LogicalType>,
     pub file_options: MultiFileOptions,
     reader_bind: MultiFileBindData,
@@ -247,8 +268,9 @@ pub struct ParquetBindData {
     /// (`union_readers`).
     union_readers: Vec<Arc<ParquetReader>>,
     casts: Arc<CastFunctionSet>,
+    client: Arc<FunctionClient>,
     /// The columns of the table a `COPY ... FROM` loads (`table_columns`).
-    pub(crate) table_columns: Vec<String>,
+    pub(crate) table_columns: Vec<rustdb_common::ByteString>,
     /// The filters pushed into the scan, keyed by position in the scanned column ids.
     filters: Option<Arc<TableFilterSet>>,
     /// The number of rows of the first file (`initial_file_cardinality`).
@@ -264,21 +286,21 @@ impl FunctionData for ParquetBindData {
 impl ParquetBindData {
     /// A copy that scans only the files at positions `keep` (`PruneReaders`).
     fn with_files(&self, keep: &[usize]) -> Self {
-        let files: Vec<String> = keep
+        let files: Vec<rustdb_common::ByteString> = keep
             .iter()
             .filter_map(|&index| self.files.files.get(index).cloned())
             .collect();
         let mut result = self.with_filters_opt(self.filters.clone());
         result
             .union_readers
-            .retain(|reader| files.iter().any(|file| file == reader.file_name()));
+            .retain(|reader| files.iter().any(|file| file.as_bytes() == reader.file_name()));
         let initial = result
             .initial_reader
             .get_mut()
             .unwrap_or_else(PoisonError::into_inner);
         if initial
             .as_ref()
-            .is_some_and(|reader| !files.iter().any(|file| file == reader.file_name()))
+            .is_some_and(|reader| !files.iter().any(|file| file.as_bytes() == reader.file_name()))
         {
             *initial = None;
         }
@@ -312,6 +334,7 @@ impl ParquetBindData {
             union_readers: self.union_readers.clone(),
             table_columns: self.table_columns.clone(),
             casts: Arc::clone(&self.casts),
+            client: Arc::clone(&self.client),
             filters,
             initial_file_cardinality: self.initial_file_cardinality,
         }
@@ -339,7 +362,7 @@ impl ParquetBindData {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .as_ref()
-            && reader.file_name() == path
+            && reader.file_name() == path.as_bytes()
         {
             return Ok(Arc::clone(reader));
         }
@@ -359,22 +382,24 @@ fn parse_options(
         if file_options.parse_option(key, value, &parse_type)? {
             continue;
         }
-        let lower = key.to_lowercase();
+        let lower = key.to_ascii_lowercase();
         if value.is_null() {
-            return Err(Error::binder(format!("Cannot use NULL as argument to {key}")));
+            return Err(Error::binder(rustdb_common::byte_format!(
+                "Cannot use NULL as argument to {key}"
+            )));
         }
-        match lower.as_str() {
-            "binary_as_string" => options.binary_as_string = value.as_bool().unwrap_or(false),
-            "file_row_number" => options.file_row_number = value.as_bool().unwrap_or(false),
-            "can_have_nan" => options.can_have_nan = value.as_bool().unwrap_or(false),
-            "explicit_cardinality" => {
+        match lower.as_bytes() {
+            b"binary_as_string" => options.binary_as_string = value.as_bool().unwrap_or(false),
+            b"file_row_number" => options.file_row_number = value.as_bool().unwrap_or(false),
+            b"can_have_nan" => options.can_have_nan = value.as_bool().unwrap_or(false),
+            b"explicit_cardinality" => {
                 options.explicit_cardinality = value.as_u64().unwrap_or(0);
             }
-            "schema" => {
+            b"schema" => {
                 options.schema = parse_schema_parameter(value, context)?;
                 file_options.auto_detect_hive_partitioning = false;
             }
-            "encryption_config" => {
+            b"encryption_config" => {
                 let cache = context.function_client.object_cache();
                 options.encryption = Some(crate::crypto::parse_encryption_config(value, cache.as_deref())?);
             }
@@ -392,7 +417,7 @@ fn parse_schema_parameter(value: &Value, context: &ClientContext) -> Result<Vec<
     use rustdb_function::cast::ValueCast as _;
     let map_type = value.logical_type();
     if map_type.id() != LogicalTypeId::Map {
-        return Err(Error::invalid_input(format!(
+        return Err(Error::invalid_input(rustdb_common::byte_format!(
             "'schema' expects a value of type MAP, not {}",
             crate::copy::type_id_name(map_type)
         )));
@@ -417,7 +442,7 @@ fn parse_schema_parameter(value: &Value, context: &ClientContext) -> Result<Vec<
         ));
     }
     if children[0].1.id() != LogicalTypeId::Varchar {
-        return Err(Error::invalid_input(format!(
+        return Err(Error::invalid_input(rustdb_common::byte_format!(
             "'schema' expects the 'name' field to be of type VARCHAR, not {}",
             crate::copy::type_id_name(&children[0].1)
         )));
@@ -428,7 +453,7 @@ fn parse_schema_parameter(value: &Value, context: &ClientContext) -> Result<Vec<
         ));
     }
     if children[1].1.id() != LogicalTypeId::Varchar {
-        return Err(Error::invalid_input(format!(
+        return Err(Error::invalid_input(rustdb_common::byte_format!(
             "'schema' expects the 'type' field to be of type VARCHAR, not {}",
             crate::copy::type_id_name(&children[1].1)
         )));
@@ -439,7 +464,7 @@ fn parse_schema_parameter(value: &Value, context: &ClientContext) -> Result<Vec<
         ));
     }
     if !matches!(key_type.id(), LogicalTypeId::Integer | LogicalTypeId::Varchar) {
-        return Err(Error::invalid_input(format!(
+        return Err(Error::invalid_input(rustdb_common::byte_format!(
             "'schema' expects the value type of the map to be either INTEGER or VARCHAR, not {}",
             crate::copy::type_id_name(key_type)
         )));
@@ -462,13 +487,17 @@ fn parse_schema_parameter(value: &Value, context: &ClientContext) -> Result<Vec<
                 .map(str::to_owned)
                 .unwrap_or_default()
         };
-        let name = text(0);
+        let name = fields
+            .first()
+            .map(Value::to_varchar_bytes)
+            .transpose()?
+            .unwrap_or_default();
         let logical_type = rustdb_csv::read_csv::transform_string_to_logical_type(context, &text(1))?;
         let default = fields.get(2).cloned().unwrap_or_default();
         let default_value = default
             .try_cast_as(&context.casts, &logical_type, false)
             .map_err(|_| {
-                Error::binder(format!(
+                Error::binder(rustdb_common::byte_format!(
                     "Unable to cast Parquet schema default_value \"{}\" to {logical_type}",
                     default.to_varchar().unwrap_or_else(|_| "NULL".to_owned())
                 ))
@@ -497,19 +526,25 @@ fn read_parquet_bind(
     let files = create_file_list(function_name, &paths, "parquet")?;
     let mut file_options = MultiFileOptions::default();
     let mut options = ParquetOptions {
-        binary_as_string: setting_bool(context, "binary_as_string"),
-        geoparquet_conversion: setting_bool(context, "enable_geoparquet_conversion"),
+        binary_as_string: setting_bool_checked(context, "binary_as_string")?,
+        geoparquet_conversion: setting_bool_checked(context, "enable_geoparquet_conversion")?,
         // `ParquetReader::MetadataCacheEnabled`.
-        metadata_cache: if setting_bool(context, "parquet_metadata_cache") {
+        metadata_cache: if setting_bool_checked(context, "parquet_metadata_cache")? {
             context.function_client.object_cache()
         } else {
             None
         },
         ..ParquetOptions::default()
     };
-    set_file_cache_options(context, &mut options);
+    set_file_cache_options(context, &mut options)?;
     parse_options(input, &mut file_options, &mut options, context)?;
-    let mut data = bind_files(&context.casts, files, file_options, &options)?;
+    let mut data = bind_files_with_client(
+        &context.casts,
+        &context.function_client,
+        files,
+        file_options,
+        &options,
+    )?;
     data.display_paths = Some(paths);
     Ok(TableFunctionBindOutput {
         return_types: data.types.clone(),
@@ -521,6 +556,19 @@ fn read_parquet_bind(
 /// `MultiFileBindInternal` / `BindReader` for a list of Parquet files.
 pub fn bind_files(
     casts: &Arc<CastFunctionSet>,
+    files: FileList,
+    file_options: MultiFileOptions,
+    options: &ParquetOptions,
+) -> Result<ParquetBindData> {
+    // Standalone readers have their own function client. Database scans below use
+    // the real connection client, including its registered functions and settings.
+    let client = Arc::new(FunctionClient::default());
+    bind_files_with_client(casts, &client, files, file_options, options)
+}
+
+pub(crate) fn bind_files_with_client(
+    casts: &Arc<CastFunctionSet>,
+    client: &Arc<FunctionClient>,
     files: FileList,
     mut file_options: MultiFileOptions,
     options: &ParquetOptions,
@@ -549,7 +597,8 @@ pub fn bind_files(
         let mut union_names_map = HashMap::new();
         for (index, path) in files.files.iter().enumerate() {
             let reader = Arc::new(ParquetReader::open(path, file_options_reader.clone())?);
-            let file_names: Vec<String> = reader.columns.iter().map(|column| column.name.clone()).collect();
+            let file_names: Vec<rustdb_common::ByteString> =
+                reader.columns.iter().map(|column| column.name.clone()).collect();
             let file_types: Vec<LogicalType> = reader
                 .columns
                 .iter()
@@ -591,7 +640,7 @@ pub fn bind_files(
             ));
         }
         file_row_number_idx = Some(names.len());
-        names.push("file_row_number".to_owned());
+        names.push("file_row_number".to_owned().into());
         types.push(LogicalType::BIGINT);
     }
     let reader_bind = bind_options(&file_options, &files, &mut types, &mut names)?;
@@ -608,6 +657,7 @@ pub fn bind_files(
         union_readers,
         table_columns: Vec::new(),
         casts: Arc::clone(casts),
+        client: Arc::clone(client),
         filters: None,
         initial_file_cardinality,
     })
@@ -632,9 +682,164 @@ enum ColumnSource {
 #[derive(Debug)]
 struct ColumnCast {
     cast: Result<rustdb_function::cast::BoundCastInfo>,
+    remap: Option<ColumnRemap>,
     /// The column's name and type in the file.
-    local_name: String,
+    local_name: rustdb_common::ByteString,
     local_type: LogicalType,
+}
+
+/// C++'s non-trivial nested mapping uses `remap_struct`, not a whole-STRUCT cast.
+#[derive(Debug)]
+struct ColumnRemap {
+    function: ScalarFunction,
+    bind_data: Option<Arc<dyn FunctionData>>,
+    constants: [Value; 3],
+}
+
+fn remappable(ty: &LogicalType) -> bool {
+    matches!(
+        ty.id(),
+        LogicalTypeId::Struct | LogicalTypeId::List | LogicalTypeId::Map
+    )
+}
+
+fn mapping_fields(ty: &LogicalType) -> Vec<(rustdb_common::ByteString, LogicalType)> {
+    match ty.id() {
+        LogicalTypeId::Struct => ty.struct_children().unwrap_or_default().to_vec(),
+        LogicalTypeId::List => ty
+            .child_type()
+            .map(|child| vec![("list".into(), child.clone())])
+            .unwrap_or_default(),
+        LogicalTypeId::Map => ty
+            .map_key_value()
+            .map(|(key, value)| vec![("key".into(), key.clone()), ("value".into(), value.clone())])
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// `MapColumnStruct/List/Map`: constants describe only requested fields. Missing
+/// members and unrequested siblings become typed NULL defaults. A nested mapping
+/// is an unnamed `(local_name, child_mapping)` row for `remap_struct`.
+fn nested_mapping(
+    local: &LogicalType,
+    target: &LogicalType,
+    requested: &[ChildProjection],
+) -> Result<(Value, Value)> {
+    let local_fields = mapping_fields(local);
+    let mut mapping = Vec::new();
+    let mut defaults = Vec::new();
+    for (index, (name, ty)) in mapping_fields(target).into_iter().enumerate() {
+        let selected = requested.iter().find(|child| child.index == index);
+        let source = local_fields
+            .iter()
+            .find(|(local_name, _)| local_name.eq_ignore_ascii_case(&name));
+        if (!requested.is_empty() && selected.is_none()) || source.is_none() {
+            defaults.push((name, Value::null(ty)));
+            continue;
+        }
+        let (local_name, local_type) = source.ok_or_else(|| Error::internal("mapped field vanished"))?;
+        if remappable(&ty) {
+            let (child_mapping, child_defaults) = nested_mapping(
+                local_type,
+                &ty,
+                selected.map_or(&[], |child| child.children.as_slice()),
+            )?;
+            if !child_mapping.is_null() {
+                mapping.push((
+                    name.clone(),
+                    Value::struct_value(vec![
+                        ("".into(), Value::try_varchar(local_name)?),
+                        ("".into(), child_mapping),
+                    ]),
+                ));
+            }
+            if !child_defaults.is_null() {
+                defaults.push((name, child_defaults));
+            }
+        } else {
+            mapping.push((name, Value::try_varchar(local_name)?));
+        }
+    }
+    Ok((
+        if mapping.is_empty() {
+            Value::default()
+        } else {
+            Value::struct_value(mapping)
+        },
+        if defaults.is_empty() {
+            Value::default()
+        } else {
+            Value::struct_value(defaults)
+        },
+    ))
+}
+
+impl ColumnRemap {
+    fn bind(
+        data: &ParquetBindData,
+        local: &LogicalType,
+        target: &LogicalType,
+        requested: &[ChildProjection],
+    ) -> Result<Self> {
+        let (mapping, defaults) = nested_mapping(local, target, requested)?;
+        let constants = [Value::null(target.clone()), mapping, defaults];
+        let argument_types = [
+            local.clone(),
+            target.clone(),
+            constants[1].logical_type().clone(),
+            constants[2].logical_type().clone(),
+        ];
+        let values = [
+            None,
+            Some(constants[0].clone()),
+            Some(constants[1].clone()),
+            Some(constants[2].clone()),
+        ];
+        let mut function = rustdb_functions::scalar::structs::remap_struct::remap_struct_functions()
+            .functions
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::internal("missing builtin remap_struct"))?;
+        let bind = function
+            .bind
+            .clone()
+            .ok_or_else(|| Error::internal("remap_struct without bind"))?;
+        let bind_data = bind(
+            &mut function,
+            &BindInput {
+                argument_types: &argument_types,
+                constants: &values,
+                aliases: &[],
+                names: &[],
+                client: &data.client,
+                binder: None,
+                arguments: None,
+                aggregates: None,
+                lambda: None,
+            },
+        )?;
+        Ok(Self {
+            function,
+            bind_data,
+            constants,
+        })
+    }
+
+    fn execute(&self, input: Vector, count: usize) -> Result<Vector> {
+        let mut columns = vec![input];
+        for value in &self.constants {
+            columns.push(Vector::constant(value)?);
+        }
+        let arguments = DataChunk::new(columns, count);
+        let mut state = FunctionState {
+            bind_data: self.bind_data.clone(),
+            ..FunctionState::default()
+        };
+        let mut result = Vector::flat(self.function.return_type.clone(), count);
+        (self.function.kernel)(&arguments, &mut state, &mut result)?;
+        Ok(result)
+    }
 }
 
 impl ColumnCast {
@@ -643,39 +848,50 @@ impl ColumnCast {
     fn execute(
         &self,
         data: &ParquetBindData,
-        file_name: &str,
+        file_name: &[u8],
         position: usize,
         vector: &Vector,
         target: &LogicalType,
         count: usize,
     ) -> Result<Vector> {
-        let result = self.cast.as_ref().map_err(Clone::clone).and_then(|cast| {
-            let mut result = Vector::flat(target.clone(), count);
+        // Binding a cast can itself fail (for example, disjoint STRUCT members).
+        // C++ preserves that error; only failures while converting values receive
+        // the extended multi-file Conversion error.
+        let cast = self.cast.as_ref().map_err(Clone::clone)?;
+        let result: Result<Vector> = (|| {
+            let cast_target = self
+                .remap
+                .as_ref()
+                .map_or(target, |remap| &remap.function.arguments[0]);
+            let mut result = Vector::flat(cast_target.clone(), count);
             cast.execute(vector, &mut result, count, &mut CastParameters::new())?;
-            Ok(result)
-        });
+            match &self.remap {
+                Some(remap) => remap.execute(result, count),
+                None => Ok(result),
+            }
+        })();
         result.map_err(|error| {
             if error.kind() == rustdb_common::ErrorKind::Internal {
                 return error;
             }
             let (local_name, local_type) = (&self.local_name, &self.local_type);
             let extended = if data.table_columns.is_empty() {
-                format!(
+                rustdb_common::byte_format!(
                     "In file \"{file_name}\" the column \"{local_name}\" has type {local_type}, but we are trying to read it as type {target}.\nThis can happen when reading multiple Parquet files. The schema information is taken from the first Parquet file by default. Possible solutions:\n* Enable the union_by_name=True option to combine the schema of all Parquet files (https://duckdb.org/docs/stable/data/multiple_files/combining_schemas)\n* Use a COPY statement to automatically derive types from an existing table."
                 )
             } else {
                 let target_column = data
                     .table_columns
                     .get(position)
-                    .map(|name| format!("\"{name}\" "))
+                    .map(|name| rustdb_common::byte_format!("\"{name}\" "))
                     .unwrap_or_default();
-                format!(
+                rustdb_common::byte_format!(
                     "In file \"{file_name}\" the column \"{local_name}\" has type {local_type}, but we are trying to load it into column {target_column}with type {target}.\nThis means the Parquet schema does not match the schema of the table.\nPossible solutions:\n* Insert by name instead of by position using \"INSERT INTO tbl BY NAME SELECT * FROM read_parquet(...)\"\n* Manually specify which columns to insert using \"INSERT INTO tbl SELECT ... FROM read_parquet(...)\""
                 )
             };
-            Error::conversion(format!(
+            Error::conversion(rustdb_common::byte_format!(
                 "Error while reading file \"{file_name}\": failed to cast column \"{local_name}\" from type {local_type} to {target}: : {}\n\n{extended}",
-                error.raw_message()
+                error.raw_message_bytes()
             ))
         })
     }
@@ -707,14 +923,15 @@ struct ScanState {
 }
 
 /// `MultiFileColumnMapper::ThrowColumnNotFoundError`.
-fn column_not_found(data: &ParquetBindData, reader: &ParquetReader, name: &str) -> Error {
-    let candidates: Vec<&str> = reader.columns.iter().map(|column| column.name.as_str()).collect();
-    Error::invalid_input(format!(
+fn column_not_found(data: &ParquetBindData, reader: &ParquetReader, name: &[u8]) -> Error {
+    let candidates: Vec<&rustdb_common::ByteString> =
+        reader.columns.iter().map(|column| &column.name).collect();
+    Error::invalid_input(rustdb_common::byte_format!(
         "Failed to read file \"{}\": schema mismatch in glob: column \"{name}\" was read from the original file \"{}\", but could not be found in file \"{}\".\nCandidate names: {}\nIf you are trying to read files with different schemas, try setting union_by_name=True",
         reader.file_name(),
         data.files.first_file().unwrap_or_default(),
         reader.file_name(),
-        candidates.join(", ")
+        rustdb_common::ByteString::join(&candidates, b", ")
     ))
 }
 
@@ -737,13 +954,48 @@ struct PreparedFile {
     skipped: bool,
 }
 
-/// File column `local`, reading only the struct fields `children` names when the file's
-/// column has the requested type (`MultiFileColumnMapper` maps the child indexes; a
-/// column that is cast is read whole).
-fn scan_column(local: usize, same_type: bool, children: Option<&Vec<ChildProjection>>) -> ScanColumn {
+/// Map global struct-field indexes to a file's schema before creating its readers.
+/// The cast still reconstructs the requested type, including unread NULL fields.
+fn mapped_children(
+    local_type: &LogicalType,
+    target_type: &LogicalType,
+    children: &[ChildProjection],
+) -> Vec<ChildProjection> {
+    if local_type == target_type {
+        return children.to_vec();
+    }
+    let (Some(local_fields), Some(target_fields)) =
+        (local_type.struct_children(), target_type.struct_children())
+    else {
+        // A non-struct conversion needs its original input layout.
+        return Vec::new();
+    };
+    children
+        .iter()
+        .filter_map(|child| {
+            let (name, target_child) = target_fields.get(child.index)?;
+            let (index, (_, local_child)) = local_fields
+                .iter()
+                .enumerate()
+                .find(|(_, (local_name, _))| local_name.eq_ignore_ascii_case(name))?;
+            Some(ChildProjection {
+                index,
+                children: mapped_children(local_child, target_child, &child.children),
+            })
+        })
+        .collect()
+}
+
+/// File column `local`, with requested fields mapped through schema evolution.
+fn scan_column(
+    local: usize,
+    local_type: &LogicalType,
+    target_type: &LogicalType,
+    children: Option<&Vec<ChildProjection>>,
+) -> ScanColumn {
     let mut column = ScanColumn::column(local);
-    if same_type && let Some(children) = children {
-        column.children.clone_from(children);
+    if let Some(children) = children {
+        column.children = mapped_children(local_type, target_type, children);
     }
     column
 }
@@ -807,7 +1059,7 @@ fn prepare_file(
     for (position, &global_id) in column_ids.iter().enumerate() {
         let is_row_number = match global_id {
             COLUMN_IDENTIFIER_FILENAME => {
-                sources.push(ColumnSource::Constant(Value::varchar(&path)));
+                sources.push(ColumnSource::Constant(Value::try_varchar(&path)?));
                 continue;
             }
             COLUMN_IDENTIFIER_FILE_INDEX => {
@@ -840,7 +1092,7 @@ fn prepare_file(
             continue;
         };
         if data.reader_bind.filename_idx == Some(global) {
-            sources.push(ColumnSource::Constant(Value::varchar(&path)));
+            sources.push(ColumnSource::Constant(Value::try_varchar(&path)?));
             continue;
         }
         if let Some((key, _)) = data
@@ -863,7 +1115,7 @@ fn prepare_file(
                     .iter()
                     .position(|local| local.identifier.as_ref() == Some(&column.identifier))
             } else {
-                let name = column.identifier.as_str().unwrap_or_default();
+                let name = column.identifier.as_bytes().unwrap_or_default();
                 reader
                     .columns
                     .iter()
@@ -877,11 +1129,14 @@ fn prepare_file(
             let cast = (&local_type != global_type).then(|| {
                 Box::new(ColumnCast {
                     cast: data.casts.get_cast_function(&local_type, global_type),
+                    remap: None,
                     local_name: reader.columns[local].name.clone(),
                     local_type: local_type.clone(),
                 })
             });
-            scan_columns.push(scan_column(local, cast.is_none(), children.get(position)));
+            // Explicit `schema` definitions have no nested column definitions in
+            // C++: this is a whole-column cast, including unselected members.
+            scan_columns.push(ScanColumn::column(local));
             sources.push(ColumnSource::Reader {
                 index: scan_columns.len() - 1,
                 cast,
@@ -902,14 +1157,35 @@ fn prepare_file(
             return Err(column_not_found(data, &reader, name));
         };
         let local_type = reader.columns[local].logical_type.clone();
-        let cast = (&local_type != global_type).then(|| {
-            Box::new(ColumnCast {
-                cast: data.casts.get_cast_function(&local_type, global_type),
+        let cast = if &local_type == global_type {
+            None
+        } else {
+            let remap = if remappable(&local_type) && remappable(global_type) {
+                Some(ColumnRemap::bind(
+                    data,
+                    &local_type,
+                    global_type,
+                    children.get(position).map_or(&[], Vec::as_slice),
+                )?)
+            } else {
+                None
+            };
+            let cast_target = remap
+                .as_ref()
+                .map_or(global_type, |remap| &remap.function.arguments[0]);
+            Some(Box::new(ColumnCast {
+                cast: data.casts.get_cast_function(&local_type, cast_target),
+                remap,
                 local_name: reader.columns[local].name.clone(),
                 local_type: local_type.clone(),
-            })
-        });
-        scan_columns.push(scan_column(local, cast.is_none(), children.get(position)));
+            }))
+        };
+        scan_columns.push(scan_column(
+            local,
+            &local_type,
+            global_type,
+            children.get(position),
+        ));
         sources.push(ColumnSource::Reader {
             index: scan_columns.len() - 1,
             cast,
@@ -1053,12 +1329,18 @@ impl Cursor {
     /// Logs the row groups of `file` handed out up to `end` that were not logged yet, as
     /// `ParquetReader::Scan` does when it starts each: `read` (all of them with
     /// `all_read`) is read, the others are skipped by their statistics.
-    fn log_row_groups(&self, file: &PreparedFile, end: usize, read: Option<usize>, all_read: bool) {
+    fn log_row_groups(
+        &self,
+        file: &PreparedFile,
+        end: usize,
+        read: Option<usize>,
+        all_read: bool,
+    ) -> Result<()> {
         let Some(logger) = &self.logger else {
-            return;
+            return Ok(());
         };
         if file.skipped {
-            return;
+            return Ok(());
         }
         for group in self.claimed_groups..end {
             let event = if all_read || read == Some(group) {
@@ -1066,15 +1348,16 @@ impl Cursor {
             } else {
                 "SkipRowGroup"
             };
-            logger.log(
+            logger.log_bytes(
                 "ParquetReader",
                 event,
                 &[
-                    ("file", file.reader.file_name().to_owned()),
-                    ("row_group_id", group.to_string()),
+                    ("file", file.reader.file_name().into()),
+                    ("row_group_id", group.to_string().into()),
                 ],
-            );
+            )?;
         }
+        Ok(())
     }
 
     /// The next morsel, opening files as needed; `None` once all are handed out.
@@ -1092,7 +1375,7 @@ impl Cursor {
                         (Some(group), _) => group + 1,
                         (None, _) => file.reader.num_row_groups(),
                     };
-                    self.log_row_groups(file, claimed, group, group.is_none());
+                    self.log_row_groups(file, claimed, group, group.is_none())?;
                     self.total_row_groups += claimed.saturating_sub(self.claimed_groups) as u64;
                     self.claimed_groups = self.claimed_groups.max(claimed);
                     let batch = self.batch_index;
@@ -1100,7 +1383,7 @@ impl Cursor {
                     return Ok(Some((Arc::clone(file), self.file_index, group, batch)));
                 }
                 let groups = file.reader.num_row_groups();
-                self.log_row_groups(file, groups, None, false);
+                self.log_row_groups(file, groups, None, false)?;
                 self.total_row_groups += groups.saturating_sub(self.claimed_groups) as u64;
                 self.claimed_groups = 0;
                 self.file = None;
@@ -1314,7 +1597,7 @@ pub(crate) fn read_parquet_file_filter_pushdown() -> rustdb_function::FileFilter
 fn read_parquet_dynamic_to_string(
     bind_data: Option<&dyn FunctionData>,
     global: &ParallelScanGlobal,
-) -> Vec<(String, String)> {
+) -> Vec<(rustdb_common::ByteString, rustdb_common::ByteString)> {
     let (Ok(data), Ok(global)) = (parquet_bind_data(bind_data), parallel_global(global)) else {
         return Vec::new();
     };
@@ -1542,7 +1825,7 @@ fn serialize_parquet_options(
             // `ParquetColumnDefinition::Serialize`; DuckDB leaves the deprecated
             // `field_id` uninitialized.
             serializer.write_property_with_default(100, "field_id", &0_i32)?;
-            serializer.write_property_with_default(101, "name", column.name.as_str())?;
+            serializer.write_property_with_default(101, "name", &column.name)?;
             serializer.write_property(103, "type", &column.logical_type)?;
             serializer.write_property(104, "default_value", &column.default_value)?;
             serializer.write_optional(
@@ -1561,15 +1844,7 @@ fn serialize_parquet_options(
         104,
         "encryption_config",
         options.encryption.is_none(),
-        |serializer| match &options.encryption {
-            None => {
-                serializer.write_null();
-                Ok(())
-            }
-            Some(_) => Err(Error::not_implemented(
-                "Serializing a scan of encrypted Parquet files is not supported",
-            )),
-        },
+        |serializer| crate::crypto::serialize_encryption_config(serializer, options.encryption.as_ref()),
     )?;
     serializer.write_optional(
         106,
@@ -1615,7 +1890,7 @@ fn serialize_multi_file_options(
         106,
         "filename_column",
         options.filename_column == "filename",
-        options.filename_column.as_str(),
+        &options.filename_column,
     )
 }
 

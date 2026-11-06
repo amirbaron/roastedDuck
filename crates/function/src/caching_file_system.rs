@@ -16,14 +16,40 @@ use crate::external_file_cache::{
     CacheValidationMode, CachedFile, CachedFileRange, ExternalFileCache, Overlap,
 };
 
-fn io_error(message: String) -> Error {
-    Error::new(ErrorKind::Io, message)
+fn io_error(message: impl Into<rustdb_common::ByteString>) -> Error {
+    Error::new_bytes(ErrorKind::Io, message.into())
+}
+
+#[cfg(unix)]
+fn native_io_reason(error: &std::io::Error) -> rustdb_common::ByteString {
+    unsafe extern "C" {
+        #[cfg_attr(target_env = "gnu", link_name = "__xpg_strerror_r")]
+        fn strerror_r(
+            error: std::ffi::c_int,
+            buffer: *mut std::ffi::c_char,
+            length: usize,
+        ) -> std::ffi::c_int;
+    }
+    if let Some(errno) = error.raw_os_error() {
+        let mut buffer = [0u8; 1024];
+        // SAFETY: the POSIX function writes at most buffer.len() bytes to this
+        // caller-owned allocation, including its terminating NUL.
+        if unsafe { strerror_r(errno, buffer.as_mut_ptr().cast(), buffer.len()) } == 0 {
+            let length = buffer.iter().position(|byte| *byte == 0).unwrap_or(buffer.len());
+            return buffer[..length].into();
+        }
+    }
+    error.to_string().into()
+}
+#[cfg(not(unix))]
+fn native_io_reason(error: &std::io::Error) -> rustdb_common::ByteString {
+    error.to_string().into()
 }
 
 /// An open local file with what the cache validates it by.
 #[derive(Debug)]
 struct OpenFile {
-    file: File,
+    file: ReadFile,
     size: u64,
     /// Microseconds since the epoch, at a resolution of seconds (`Timestamp::FromEpochSeconds`
     /// of `st_mtime`).
@@ -32,27 +58,57 @@ struct OpenFile {
     version_tag: String,
 }
 
+#[derive(Debug)]
+enum ReadFile {
+    Local(File),
+    Memory(Arc<[u8]>),
+    Registered(Arc<dyn crate::registered_files::FileHandle>),
+}
+
 impl OpenFile {
     /// `LocalFileSystem::OpenFile` for reading, with its errors.
-    fn open(path: &str) -> Result<Self> {
+    fn open(path: &[u8]) -> Result<Self> {
         crate::file_system::verify_can_access_file(path)?;
-        let file = File::open(path).map_err(|error| {
-            let reason = match error.kind() {
-                std::io::ErrorKind::NotFound => "No such file or directory".to_owned(),
-                std::io::ErrorKind::PermissionDenied => "Permission denied".to_owned(),
-                _ => error.to_string(),
-            };
-            io_error(format!("Cannot open file \"{path}\": {reason}"))
-        })?;
-        let metadata = file
-            .metadata()
-            .map_err(|error| io_error(format!("Could not get file size of \"{path}\": {error}")))?;
-        if metadata.is_dir() {
-            return Err(io_error(format!("Cannot open file \"{path}\": Is a directory")));
+        if let Some(fs) = crate::registered_files::lookup(path) {
+            let handle = fs.open(path, false)?;
+            let size = handle.size()?;
+            let last_modified = handle.modified()?;
+            let version_tag = handle.version_tag()?;
+            return Ok(Self {
+                file: ReadFile::Registered(handle),
+                size,
+                last_modified,
+                version_tag,
+            });
         }
+        if let Some(file) = crate::object_store::lookup(path) {
+            return Ok(Self {
+                size: file.bytes.len() as u64,
+                file: ReadFile::Memory(Arc::clone(&file.bytes)),
+                last_modified: 0,
+                version_tag: String::new(),
+            });
+        }
+        // POSIX open receives path.c_str(); retain the full native path in diagnostics.
+        let local = path.split(|byte| *byte == 0).next().unwrap_or_default();
+        let file = File::open(crate::file_system::native_path(local)?).map_err(|error| {
+            let reason = native_io_reason(&error);
+            let result = io_error(rustdb_common::byte_format!(
+                "Cannot open file \"{path}\": {reason}"
+            ));
+            match error.raw_os_error() {
+                Some(errno) => result.with_extra_info("errno", errno.to_string()),
+                None => result,
+            }
+        })?;
+        let metadata = file.metadata().map_err(|error| {
+            io_error(rustdb_common::byte_format!(
+                "Could not get file size of \"{path}\": {error}"
+            ))
+        })?;
         let (last_modified, version_tag) = file_version(&metadata);
         Ok(Self {
-            file,
+            file: ReadFile::Local(file),
             size: metadata.len(),
             last_modified,
             version_tag,
@@ -60,16 +116,35 @@ impl OpenFile {
     }
 
     /// `LocalFileSystem::Read` of `buffer.len()` bytes at `location`.
-    fn read_exact_at(&self, path: &str, buffer: &mut [u8], location: u64) -> Result<()> {
+    fn read_exact_at(&self, path: &[u8], buffer: &mut [u8], location: u64) -> Result<()> {
         let end = location.checked_add(buffer.len() as u64);
         if end.is_none_or(|end| end > self.size) {
-            return Err(io_error(format!(
+            return Err(io_error(rustdb_common::byte_format!(
                 "Could not read enough bytes from file \"{path}\": attempted to read {} bytes from location {location}",
                 buffer.len()
             )));
         }
-        read_exact_at(&self.file, buffer, location)
-            .map_err(|error| io_error(format!("Could not read from file \"{path}\": {error}")))
+        if let ReadFile::Registered(handle) = &self.file {
+            let n = handle.read_at(location, buffer)?;
+            if n != buffer.len() {
+                return Err(io_error("Registered filesystem returned a short read"));
+            }
+            return Ok(());
+        }
+        if let ReadFile::Memory(bytes) = &self.file {
+            let start =
+                usize::try_from(location).map_err(|_| io_error("File offset exceeds addressable memory"))?;
+            buffer.copy_from_slice(&bytes[start..start + buffer.len()]);
+            return Ok(());
+        }
+        let ReadFile::Local(file) = &self.file else {
+            return Err(Error::internal("Missing local file handle"));
+        };
+        read_exact_at(file, buffer, location).map_err(|error| {
+            io_error(rustdb_common::byte_format!(
+                "Could not read from file \"{path}\": {error}"
+            ))
+        })
     }
 }
 
@@ -166,7 +241,7 @@ impl CachedRead {
 pub struct CachingFileHandle {
     /// The database's cache; `None` outside a database, where reads go to the file.
     cache: Option<Arc<ExternalFileCache>>,
-    path: String,
+    path: rustdb_common::ByteString,
     /// Whether cached data is checked against the file (`Validate()`).
     validate: bool,
     /// The file's entry in the cache (`cached_file`).
@@ -197,13 +272,14 @@ impl CachingFileHandle {
     /// file itself is opened now unless validation is off and the cache holds some of it.
     pub fn open(
         cache: Option<Arc<ExternalFileCache>>,
-        path: &str,
+        path: impl AsRef<[u8]>,
         validation: CacheValidationMode,
     ) -> Result<Self> {
+        let path = path.as_ref();
         let cached_file = cache.as_ref().map(|cache| cache.get_or_create_cached_file(path));
         let handle = Self {
             validate: validation.should_validate(path),
-            path: path.to_owned(),
+            path: path.into(),
             cached_file: Mutex::new(cached_file.clone()),
             file: Mutex::new(None),
             cache,
@@ -215,7 +291,7 @@ impl CachingFileHandle {
         Ok(handle)
     }
 
-    pub fn path(&self) -> &str {
+    pub fn path(&self) -> &[u8] {
         &self.path
     }
 
@@ -250,7 +326,7 @@ impl CachingFileHandle {
             state.last_modified = open.last_modified;
             state.version_tag.clone_from(&open.version_tag);
             state.can_seek = true;
-            state.on_disk_file = true;
+            state.on_disk_file = matches!(open.file, ReadFile::Local(_));
         }
         *file = Some(Arc::clone(&open));
         Ok(open)
@@ -583,7 +659,11 @@ mod tests {
         Arc::new(ExternalFileCache::new(buffer_manager, true))
     }
 
-    fn open(cache: &Arc<ExternalFileCache>, path: &str, mode: CacheValidationMode) -> CachingFileHandle {
+    fn open(
+        cache: &Arc<ExternalFileCache>,
+        path: impl AsRef<[u8]>,
+        mode: CacheValidationMode,
+    ) -> CachingFileHandle {
         CachingFileHandle::open(Some(Arc::clone(cache)), path, mode).unwrap()
     }
 

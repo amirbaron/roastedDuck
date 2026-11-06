@@ -5,7 +5,6 @@
 use std::collections::HashMap;
 
 use rustdb_ast::{OrderType, SetScope};
-use rustdb_common::string_util::candidates_error_message;
 use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_execution::{ExplainOutput, JoinPlanSettings};
 use rustdb_function::cast::ValueCast;
@@ -188,19 +187,29 @@ const OPTION_NAMES: &[&str] = &[
 ];
 
 /// The canonical name of an option (`null_order` is an alias of `default_null_order`).
-fn canonical_name(name: &str) -> Option<&'static str> {
+fn canonical_name(name: impl AsRef<[u8]>) -> Option<&'static str> {
+    let name = name.as_ref();
     let lower = name.to_ascii_lowercase();
-    let lower = if lower == "null_order" {
-        "default_null_order".to_owned()
+    if PARQUET_OPTION_NAMES
+        .iter()
+        .any(|option| option.as_bytes() == lower)
+    {
+        return None;
+    }
+    let lower = if lower == b"null_order" {
+        b"default_null_order".to_vec()
     } else {
         lower
     };
-    OPTION_NAMES.iter().copied().find(|option| *option == lower)
+    OPTION_NAMES
+        .iter()
+        .copied()
+        .find(|option| option.as_bytes() == lower)
 }
 
 /// The options of the parquet extension, in the order it adds them; DuckDB lists them
 /// with the other extensions' options.
-const PARQUET_OPTION_NAMES: [&str; 5] = [
+pub(crate) const PARQUET_OPTION_NAMES: [&str; 5] = [
     "binary_as_string",
     "disable_parquet_prefetching",
     "prefetch_all_parquet_files",
@@ -208,24 +217,34 @@ const PARQUET_OPTION_NAMES: [&str; 5] = [
     "enable_geoparquet_conversion",
 ];
 
+/// The generated metadata includes loaded Parquet options, which are registered
+/// dynamically by the extension rather than being core configuration options.
+fn builtin_settings() -> impl Iterator<Item = &'static SettingDefinition> {
+    SETTINGS
+        .iter()
+        .filter(|definition| !PARQUET_OPTION_NAMES.contains(&definition.name))
+}
+
 /// DuckDB's `Catalog::UnrecognizedConfigurationError`; `enabled` reads the boolean
 /// options `autoload_known_extensions` and `autoinstall_known_extensions`.
-fn unrecognized(name: &str, enabled: impl Fn(&str) -> bool) -> Error {
+fn unrecognized(name: impl AsRef<[u8]>, enabled: impl Fn(&str) -> bool) -> Error {
+    let name = name.as_ref();
     unrecognized_with(name, &[], enabled)
 }
 
 /// [`unrecognized`] with the options extensions added as candidates too.
 pub(crate) fn unrecognized_with(
-    name: &str,
+    name: impl AsRef<[u8]>,
     extension_options: &[String],
     enabled: impl Fn(&str) -> bool,
 ) -> Error {
-    use rustdb_function::extension_entries::{EXTENSION_SETTINGS, add_install_hint, find_extension};
+    use rustdb_function::extension_entries::{EXTENSION_SETTINGS, add_install_hint_bytes, find_extension};
+    let name = name.as_ref();
     if let Some(extension) = find_extension(name, EXTENSION_SETTINGS) {
-        let message = format!(
+        let message = rustdb_common::byte_format!(
             "Setting with name \"{name}\" is not in the catalog, but it exists in the {extension} extension."
         );
-        return Error::catalog(add_install_hint(
+        return Error::catalog(add_install_hint_bytes(
             &message,
             extension,
             enabled("autoload_known_extensions"),
@@ -239,8 +258,12 @@ pub(crate) fn unrecognized_with(
         .collect();
     // `GetExtensionSettings`: the extensions' options follow, in the iteration order of
     // their `case_insensitive_map_t` (ICU's are added before parquet's).
-    let mut extension_settings = rustdb_common::libcxx::UnorderedOrder::default();
-    for option in extension_options.iter().map(String::as_str).chain(PARQUET_OPTION_NAMES) {
+    let mut extension_settings = rustdb_common::platform_order::UnorderedOrder::default();
+    for option in extension_options
+        .iter()
+        .map(String::as_str)
+        .chain(PARQUET_OPTION_NAMES)
+    {
         extension_settings.insert(rustdb_common::libcxx::ci_hash(option), option, |a, b| {
             a.eq_ignore_ascii_case(b)
         });
@@ -253,9 +276,9 @@ pub(crate) fn unrecognized_with(
     );
     // `CatalogException::MissingEntry("configuration parameter", ...)`, thrown while the
     // SET executes (so caught and thrown again), with every option as a candidate.
-    Error::catalog(format!(
+    Error::catalog(rustdb_common::byte_format!(
         "unrecognized configuration parameter \"{name}\"\n{}",
-        candidates_error_message(&names, name, "Did you mean")
+        rustdb_common::string_util::candidates_error_message_bytes(&names, name, b"Did you mean")
     ))
     .with_subtype("MISSING_ENTRY")
     .with_extra_info("name", name)
@@ -291,7 +314,7 @@ pub(crate) struct Settings {
     allowed_extension_configs: Vec<String>,
     /// The collations extensions registered, with whether they are combinable (what
     /// `SET default_collation` may name besides the builtin ones).
-    pub(crate) extension_collations: Vec<(String, bool)>,
+    pub(crate) extension_collations: Vec<(rustdb_common::ByteString, bool)>,
     /// `PRAGMA disable_optimizer` (DuckDB's `ClientConfig::enable_optimizer`, negated).
     pub optimizer_disabled: bool,
     /// The profiling options (`enable_profiling`, `profiling_output`, `profiling_mode`,
@@ -300,31 +323,31 @@ pub(crate) struct Settings {
 }
 
 /// The canonical option `name` stands for, resolving aliases (`DBConfig::GetOptionByName`).
-fn option_by_name(name: &str) -> Option<&'static str> {
-    SETTINGS
-        .iter()
+fn option_by_name(name: impl AsRef<[u8]>) -> Option<&'static str> {
+    let name = name.as_ref();
+    builtin_settings()
         .find(|definition| {
             definition
                 .aliases
                 .iter()
-                .any(|alias| alias.eq_ignore_ascii_case(name))
+                .any(|alias| alias.as_bytes().eq_ignore_ascii_case(name))
         })
         .or_else(|| {
-            SETTINGS
-                .iter()
-                .find(|definition| definition.name.eq_ignore_ascii_case(name))
+            builtin_settings().find(|definition| definition.name.as_bytes().eq_ignore_ascii_case(name))
         })
         .map(|definition| definition.name)
 }
 
 /// The canonical name of option `name` (resolving aliases), if it is one.
-pub(crate) fn canonical_option(name: &str) -> Option<&'static str> {
+pub(crate) fn canonical_option(name: impl AsRef<[u8]>) -> Option<&'static str> {
+    let name = name.as_ref();
     option_by_name(name).or_else(|| canonical_name(name))
 }
 
 /// Whether a `SET` of option `name` without a scope sets it for the whole database
 /// (DuckDB's `GetSettingScope`: the option's scope is global).
-pub(crate) fn is_global_option(name: &str) -> bool {
+pub(crate) fn is_global_option(name: impl AsRef<[u8]>) -> bool {
+    let name = name.as_ref();
     option_by_name(name)
         .and_then(|canonical| SETTINGS.iter().find(|definition| definition.name == canonical))
         .is_some_and(|definition| definition.global)
@@ -510,6 +533,11 @@ pub(crate) fn check_value(option: &str, value: &Value) -> Result<()> {
         return check_enum_value(value, enum_name, values);
     }
     match option {
+        "external_threads" => {
+            // PhysicalSet casts to the option's UBIGINT input type before
+            // invoking ExternalThreadsSetting::OnSet or storing the value.
+            value.default_cast_as(&LogicalType::UBIGINT)?;
+        }
         "threads" => {
             let threads = value.default_cast_as(&LogicalType::BIGINT)?;
             if threads.as_i128().is_some_and(|threads| threads < 1) {
@@ -573,14 +601,15 @@ pub(crate) fn check_value(option: &str, value: &Value) -> Result<()> {
 impl Settings {
     /// `DBConfig::CheckLock`: with `lock_configuration` set only `schema`, `search_path`
     /// and the `allowed_configs` options can change.
-    pub(crate) fn check_lock(&self, name: &str) -> Result<()> {
+    pub(crate) fn check_lock(&self, name: impl AsRef<[u8]>) -> Result<()> {
+        let name = name.as_ref();
         let locked = self
             .other
             .get("lock_configuration")
             .and_then(|value| value.default_cast_as(&LogicalType::BOOLEAN).ok())
             .and_then(|value| value.as_bool())
             .unwrap_or(false);
-        if !locked || name.eq_ignore_ascii_case("schema") || name.eq_ignore_ascii_case("search_path") {
+        if !locked || name.eq_ignore_ascii_case(b"schema") || name.eq_ignore_ascii_case(b"search_path") {
             return Ok(());
         }
         if !self.allowed_configs.is_empty() {
@@ -592,18 +621,18 @@ impl Settings {
         if self
             .allowed_extension_configs
             .iter()
-            .any(|allowed| allowed.eq_ignore_ascii_case(name))
+            .any(|allowed| allowed.as_bytes().eq_ignore_ascii_case(name))
         {
             return Ok(());
         }
-        Err(Error::invalid_input(format!(
+        Err(Error::invalid_input(rustdb_common::byte_format!(
             "Cannot change configuration option \"{name}\" - the configuration has been locked"
         )))
     }
 
     /// `PhysicalSet::GetSettingScope`: options that only exist globally cannot be set (or
     /// reset) for a session.
-    pub(crate) fn check_session_scope(name: &str, scope: rustdb_ast::SetScope) -> Result<()> {
+    pub(crate) fn check_session_scope(name: impl AsRef<[u8]>, scope: rustdb_ast::SetScope) -> Result<()> {
         /// The options whose `Scope` is `SettingScopeTarget::GLOBAL_ONLY`.
         const GLOBAL_ONLY: &[&str] = &[
             "allow_community_extensions",
@@ -641,6 +670,7 @@ impl Settings {
             "warnings_as_errors",
             "zstd_min_string_length",
         ];
+        let name = name.as_ref();
         if scope == rustdb_ast::SetScope::Session
             && let Some(option) = canonical_name(name)
             && GLOBAL_ONLY.contains(&option)
@@ -654,7 +684,8 @@ impl Settings {
 
     /// The `OnSet` / `SetGlobal` checks of options that cannot change while the database
     /// is running.
-    pub(crate) fn check_running_set(name: &str, value: &Value) -> Result<()> {
+    pub(crate) fn check_running_set(name: impl AsRef<[u8]>, value: &Value) -> Result<()> {
+        let name = name.as_ref();
         let enabled = || {
             value
                 .default_cast_as(&LogicalType::BOOLEAN)
@@ -712,7 +743,7 @@ impl Settings {
 
     /// `PhysicalSet` / `PhysicalReset` for options with only a session (`set_local`) or
     /// only a global (`set_global`) callback: the other explicit scope is an error.
-    pub(crate) fn check_scope(name: &str, scope: SetScope, reset: bool) -> Result<()> {
+    pub(crate) fn check_scope(name: impl AsRef<[u8]>, scope: SetScope, reset: bool) -> Result<()> {
         /// The options DuckDB can only set per session.
         const LOCAL_ONLY: [&str; 15] = [
             "custom_profiling_settings",
@@ -766,23 +797,25 @@ impl Settings {
             "threads",
             "write_buffer_row_group_memory_limit",
         ];
+        let name = name.as_ref();
         let Some(option) = option_by_name(name) else {
             return Ok(());
         };
         let verb = if reset { "reset" } else { "set" };
         match scope {
-            SetScope::Global if LOCAL_ONLY.contains(&option) => Err(Error::catalog(format!(
-                "option \"{name}\" cannot be {verb} globally"
-            ))),
+            SetScope::Global if LOCAL_ONLY.contains(&option) => Err(Error::catalog(
+                rustdb_common::byte_format!("option \"{name}\" cannot be {verb} globally"),
+            )),
             SetScope::Session | SetScope::Local if GLOBAL_ONLY.contains(&option) => Err(Error::catalog(
-                format!("option \"{name}\" cannot be {verb} locally"),
+                rustdb_common::byte_format!("option \"{name}\" cannot be {verb} locally"),
             )),
             _ => Ok(()),
         }
     }
 
     /// The `ResetGlobal` / `ResetLocal` checks of options that cannot be reset.
-    pub(crate) fn check_running_reset(name: &str) -> Result<()> {
+    pub(crate) fn check_running_reset(name: impl AsRef<[u8]>) -> Result<()> {
+        let name = name.as_ref();
         match option_by_name(name).unwrap_or_default() {
             option @ ("allowed_directories" | "allowed_paths")
                 if !rustdb_function::file_system::external_access_enabled() =>
@@ -934,14 +967,24 @@ impl Settings {
         })
     }
 
+    /// Resolve a native built-in name, preserving the original unknown-name diagnostic.
+    pub(crate) fn resolve_option(&self, name: impl AsRef<[u8]>) -> Result<&'static str> {
+        let name = name.as_ref();
+        canonical_option(name).ok_or_else(|| unrecognized(name, |option| self.enabled(option)))
+    }
+
     /// `SET name = value`.
-    pub fn set(&mut self, name: &str, value: &Value) -> Result<()> {
+    pub fn set(&mut self, name: impl AsRef<[u8]>, value: &Value) -> Result<()> {
+        let name = name.as_ref();
         let option = canonical_name(name).ok_or_else(|| unrecognized(name, |option| self.enabled(option)))?;
         check_user_adjustable(option)?;
         self.apply(option, value)?;
         match self.assigned.iter_mut().find(|(name, _)| *name == option) {
             Some((_, assigned)) => *assigned = value.clone(),
             None => self.assigned.push((option, value.clone())),
+        }
+        if option == "progress_bar_time" {
+            self.set("enable_progress_bar", &Value::boolean(true))?;
         }
         Ok(())
     }
@@ -1189,10 +1232,14 @@ impl Settings {
     }
 
     /// `RESET name`.
-    pub fn reset(&mut self, name: &str) -> Result<()> {
+    pub fn reset(&mut self, name: impl AsRef<[u8]>) -> Result<()> {
+        let name = name.as_ref();
         let option = canonical_name(name).ok_or_else(|| unrecognized(name, |option| self.enabled(option)))?;
         check_user_adjustable(option)?;
         self.assigned.retain(|(name, _)| *name != option);
+        if option == "progress_bar_time" {
+            self.set("enable_progress_bar", &Value::boolean(false))?;
+        }
         let defaults = PlannerConfig::default();
         match option_by_name(option).unwrap_or(option) {
             "enable_profiling" => self.profiler.reset_enable_profiling(),
@@ -1246,15 +1293,20 @@ impl Settings {
 /// database's limits.
 #[derive(Debug)]
 pub(crate) struct SettingsSnapshot {
+    /// Providers loaded during binding can add options after this snapshot was
+    /// captured. A weak reference exposes those new defaults without retaining
+    /// the database or replacing any captured session/global values.
+    pub extension_registry: std::sync::Weak<crate::database::DatabaseInstance>,
+    pub access_mode: crate::config::AccessMode,
     pub settings: Settings,
     /// The log manager's configuration, which the logging options read.
     pub logging: crate::logging::LogConfig,
     /// `search_path`, rendered like `CatalogSearchPath::SetPathsToString`.
-    pub search_path: String,
+    pub search_path: rustdb_common::ByteString,
     /// The schema unqualified names resolve in (`schema`).
-    pub schema: String,
+    pub schema: rustdb_common::ByteString,
     pub memory_limit: u64,
-    pub temp_directory: String,
+    pub temp_directory: rustdb_common::ByteString,
     pub max_swap: Option<u64>,
     /// The memory set aside for blocks (`block_allocator_memory`).
     pub block_allocator_memory: u64,
@@ -1303,6 +1355,21 @@ fn normalized_bytes(value: &Value) -> Result<Value> {
 }
 
 impl SettingsSnapshot {
+    fn extension_values(&self) -> Vec<(rustdb_function::ExtensionOption, Value, bool)> {
+        let mut extensions = self.extensions.clone();
+        if let Some(instance) = self.extension_registry.upgrade() {
+            for (option, value) in instance.extension_option_values() {
+                if !extensions
+                    .iter()
+                    .any(|(existing, _, _)| existing.name.eq_ignore_ascii_case(&option.name))
+                {
+                    extensions.push((option, value, false));
+                }
+            }
+        }
+        extensions
+    }
+
     /// The value assigned to `name` (or an alias of it) by `SET`, if any.
     fn assigned(&self, names: &[&str]) -> Option<&Value> {
         self.settings
@@ -1330,6 +1397,13 @@ impl SettingsSnapshot {
         }
         let profiler = &self.settings.profiler;
         let value = match definition.name {
+            // This setting changes the filesystem registry; its getter is write-only.
+            "disabled_filesystems" => Value::varchar(""),
+            "access_mode" => Value::varchar(match self.access_mode {
+                crate::config::AccessMode::Automatic => "automatic",
+                crate::config::AccessMode::ReadOnly => "read_only",
+                crate::config::AccessMode::ReadWrite => "read_write",
+            }),
             "enable_profiling" => profiler.enable_profiling_value(),
             "profile_output" | "profiling_output" => Value::varchar(&profiler.save_location),
             "profiling_mode" => profiler.mode_value(),
@@ -1352,8 +1426,8 @@ impl SettingsSnapshot {
                     (_, false) => "ASCENDING",
                 })
             }
-            "search_path" => Value::varchar(&self.search_path),
-            "schema" => Value::varchar(&self.schema),
+            "search_path" => Value::try_varchar(&self.search_path)?,
+            "schema" => Value::try_varchar(&self.schema)?,
             "threads" | "worker_threads" => match assigned {
                 Some(value) => value.default_cast_as(&ty)?,
                 None => Value::bigint(i64::try_from(self.threads).unwrap_or(i64::MAX)),
@@ -1370,10 +1444,9 @@ impl SettingsSnapshot {
                 (None, Some(limit)) => Value::varchar(rustdb_buffer::format_bytes(limit)),
                 (None, None) => Value::varchar("90% of available disk space"),
             },
-            "temp_directory" => match assigned {
-                Some(value) => value.default_cast_as(&ty)?,
-                None => Value::varchar(&self.temp_directory),
-            },
+            // The getter exposes the buffer manager's path; a NULL assignment
+            // disables temporary storage and therefore reads back as an empty path.
+            "temp_directory" => Value::try_varchar(&self.temp_directory)?,
             _ => match (assigned, definition.default_value) {
                 (Some(value), _) => value.default_cast_as(&ty)?,
                 (None, Some(default)) => Value::varchar(default).default_cast_as(&ty)?,
@@ -1386,20 +1459,21 @@ impl SettingsSnapshot {
 
 impl rustdb_function::SettingsSource for SettingsSnapshot {
     fn current_setting(&self, name: &str) -> Result<Value> {
-        let definition = SETTINGS
-            .iter()
-            .find(|definition| definition.name.eq_ignore_ascii_case(name));
+        let definition = builtin_settings().find(|definition| definition.name.eq_ignore_ascii_case(name));
+        let extensions = if definition.is_none() {
+            self.extension_values()
+        } else {
+            Vec::new()
+        };
         if definition.is_none()
-            && let Some((_, value, _)) = self
-                .extensions
+            && let Some((_, value, _)) = extensions
                 .iter()
                 .find(|(option, _, _)| option.name.eq_ignore_ascii_case(name))
         {
             return Ok(value.clone());
         }
         let definition = definition.ok_or_else(|| {
-            let extension_names: Vec<String> = self
-                .extensions
+            let extension_names: Vec<String> = extensions
                 .iter()
                 .map(|(option, _, _)| option.name.clone())
                 .collect();
@@ -1417,9 +1491,8 @@ impl rustdb_function::SettingsSource for SettingsSnapshot {
     /// the scope `duckdb_settings()` shows.
     fn current_setting_scope(&self, name: &str) -> Option<(Value, rustdb_function::SettingScope)> {
         use rustdb_function::SettingScope;
-        if let Some(definition) = SETTINGS
-            .iter()
-            .find(|definition| definition.name.eq_ignore_ascii_case(name))
+        if let Some(definition) =
+            builtin_settings().find(|definition| definition.name.eq_ignore_ascii_case(name))
         {
             let scope = if definition.global {
                 SettingScope::Global
@@ -1428,7 +1501,7 @@ impl rustdb_function::SettingsSource for SettingsSnapshot {
             };
             return self.value(definition).ok().map(|value| (value, scope));
         }
-        self.extensions
+        self.extension_values()
             .iter()
             .find(|(option, _, _)| option.name.eq_ignore_ascii_case(name))
             .map(|(_, value, local)| {
@@ -1442,20 +1515,19 @@ impl rustdb_function::SettingsSource for SettingsSnapshot {
     }
 
     fn settings(&self) -> Vec<rustdb_function::SettingInfo> {
-        SETTINGS
-            .iter()
+        builtin_settings()
             .map(|definition| rustdb_function::SettingInfo {
                 name: definition.name.to_owned(),
                 value: self
                     .value(definition)
                     .and_then(|value| {
                         if value.is_null() {
-                            Ok(String::new())
+                            Ok(None)
                         } else {
-                            value.to_varchar()
+                            value.to_varchar().map(Some)
                         }
                     })
-                    .unwrap_or_default(),
+                    .unwrap_or_else(|_| Some(String::new())),
                 description: definition.description.to_owned(),
                 input_type: definition.input_type.to_owned(),
                 global: definition.global,
@@ -1465,22 +1537,20 @@ impl rustdb_function::SettingsSource for SettingsSnapshot {
                     .map(|alias| (*alias).to_owned())
                     .collect(),
             })
-            .chain(
-                self.extensions
-                    .iter()
-                    .map(|(option, value, local)| rustdb_function::SettingInfo {
-                        name: option.name.clone(),
-                        value: if value.is_null() {
-                            String::new()
-                        } else {
-                            value.to_varchar().unwrap_or_default()
-                        },
-                        description: option.description.clone(),
-                        input_type: option.input_type.to_string(),
-                        global: !local,
-                        aliases: Vec::new(),
-                    }),
-            )
+            .chain(self.extension_values().into_iter().map(|(option, value, local)| {
+                rustdb_function::SettingInfo {
+                    name: option.name,
+                    value: if value.is_null() {
+                        None
+                    } else {
+                        Some(value.to_varchar().unwrap_or_default())
+                    },
+                    description: option.description,
+                    input_type: option.input_type.to_string(),
+                    global: !local,
+                    aliases: Vec::new(),
+                }
+            }))
             .collect()
     }
 }

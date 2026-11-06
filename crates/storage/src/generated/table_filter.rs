@@ -67,7 +67,7 @@ pub struct StructFilter<'a> {
     /// `child_idx` (property 200).
     pub child_idx: u64,
     /// `child_name` (property 201).
-    pub child_name: &'a str,
+    pub child_name: &'a rustdb_common::ByteString,
     /// `child_filter` (property 202).
     pub child_filter: Option<&'a crate::TableFilter>,
 }

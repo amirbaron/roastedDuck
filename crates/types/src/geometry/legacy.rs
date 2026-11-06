@@ -18,7 +18,7 @@ pub fn spatial_type() -> LogicalType {
 
 /// `Geometry::IsSpatialGeometryType`.
 pub fn is_spatial_type(ty: &LogicalType) -> bool {
-    ty.id() == LogicalTypeId::Blob && ty.alias() == Some("GEOMETRY")
+    ty.id() == LogicalTypeId::Blob && ty.alias().is_some_and(|alias| alias == "GEOMETRY")
 }
 
 fn unsupported_type() -> Error {

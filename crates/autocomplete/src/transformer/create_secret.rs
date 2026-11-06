@@ -11,10 +11,10 @@ const DEFAULT_SCHEMA: &str = "main";
 
 /// `PEGTransformerFactory::GetConstantExpressionValue`: a constant's value, a column's
 /// name, or NULL.
-fn constant_expression_value(expr: &ParsedExpression) -> Value {
+fn constant_expression_value(expr: &ParsedExpression) -> Result<Value> {
     match &expr.kind {
         ParsedExpressionKind::Constant(constant) if expr.expression_type == ExpressionType::ValueConstant => {
-            constant.value.clone()
+            Ok(constant.value.clone())
         }
         ParsedExpressionKind::ColumnRef(column_ref) if expr.expression_type == ExpressionType::ColumnRef => {
             // `ColumnRefExpression::GetName`.
@@ -23,9 +23,9 @@ fn constant_expression_value(expr: &ParsedExpression) -> Value {
             } else {
                 expr.alias.clone()
             };
-            Value::varchar(name)
+            Value::try_varchar(&name)
         }
-        _ => Value::default(),
+        _ => Ok(Value::default()),
     }
 }
 
@@ -38,8 +38,8 @@ impl PegTransformer {
         let if_not_exists = list.has(1)?;
         let mut info = CreateSecretInfo {
             persist_type: SecretPersistType::Default,
-            storage_type: String::new(),
-            name: String::new(),
+            storage_type: String::new().into(),
+            name: String::new().into(),
             scope: None,
             secret_type: None,
             provider: None,
@@ -50,7 +50,7 @@ impl PegTransformer {
         }
         if let Some(secret_storage_specifier) = list.optional(3)? {
             let storage_type: String = self.transform(secret_storage_specifier)?;
-            info.storage_type = storage_type.to_ascii_lowercase();
+            info.storage_type = storage_type.to_ascii_lowercase().into();
         }
         let option_list: Vec<GenericCopyOption> = self.transform_child(list, 4)?;
         let mut options: CiHashMap<ParsedExpression> = CiHashMap::new();
@@ -78,14 +78,14 @@ impl PegTransformer {
                 .secret_type
                 .as_deref()
                 .ok_or_else(|| Error::internal("CREATE SECRET without a name or a TYPE"))?;
-            let value = constant_expression_value(secret_type);
+            let value = constant_expression_value(secret_type)?;
             if value.is_null() {
                 return Err(Error::invalid_input(
                     "Can not combine a non-constant expression for the secret type with a default-named secret. \
                      Either provide an explicit secret name or use a constant expression for the secret type.",
                 ));
             }
-            info.name = format!("__default_{}", value.to_varchar()?.to_ascii_lowercase());
+            info.name = format!("__default_{}", value.to_varchar()?.to_ascii_lowercase()).into();
         }
         let mut result = create_info(DEFAULT_SCHEMA, CreateInfoKind::Secret(Box::new(info)));
         result.on_conflict = on_create_conflict(if_not_exists);

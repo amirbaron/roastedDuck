@@ -37,8 +37,8 @@ fn ints(values: &[i32]) -> Value {
 
 fn ab_struct() -> LogicalType {
     LogicalType::struct_type(vec![
-        ("a".to_owned(), LogicalType::INTEGER),
-        ("b".to_owned(), LogicalType::VARCHAR),
+        ("a".into(), LogicalType::INTEGER),
+        ("b".into(), LogicalType::VARCHAR),
     ])
 }
 
@@ -157,45 +157,42 @@ fn list_and_array_casts() {
 
 #[test]
 fn struct_and_map_casts() {
-    let row = Value::struct_value(vec![
-        ("a".to_owned(), Value::integer(1)),
-        ("b".to_owned(), text("x")),
-    ]);
+    let row = Value::struct_value(vec![("a".into(), Value::integer(1)), ("b".into(), text("x"))]);
     let swapped = LogicalType::struct_type(vec![
-        ("b".to_owned(), LogicalType::VARCHAR),
-        ("a".to_owned(), LogicalType::BIGINT),
+        ("b".into(), LogicalType::VARCHAR),
+        ("a".into(), LogicalType::BIGINT),
     ]);
     assert_eq!(cast(&row, &swapped, false), "{'b': x, 'a': 1}");
     let partial = LogicalType::struct_type(vec![
-        ("a".to_owned(), LogicalType::BIGINT),
-        ("c".to_owned(), LogicalType::VARCHAR),
+        ("a".into(), LogicalType::BIGINT),
+        ("c".into(), LogicalType::VARCHAR),
     ]);
     assert_eq!(cast(&row, &partial, false), "{'a': 1, 'c': NULL}");
-    let unrelated = LogicalType::struct_type(vec![("c".to_owned(), LogicalType::BIGINT)]);
+    let unrelated = LogicalType::struct_type(vec![("c".into(), LogicalType::BIGINT)]);
     assert_eq!(
         cast(&row, &unrelated, false),
         "Binder Error: STRUCT to STRUCT cast must have at least one matching member"
     );
     let unnamed_type = LogicalType::struct_type(vec![
-        (String::new(), LogicalType::INTEGER),
-        (String::new(), LogicalType::VARCHAR),
+        (rustdb_common::ByteString::new(), LogicalType::INTEGER),
+        (rustdb_common::ByteString::new(), LogicalType::VARCHAR),
     ]);
     let unnamed = Value::from_children(unnamed_type, vec![Value::integer(1), text("x")]);
     let named = LogicalType::struct_type(vec![
-        ("a".to_owned(), LogicalType::BIGINT),
-        ("b".to_owned(), LogicalType::VARCHAR),
+        ("a".into(), LogicalType::BIGINT),
+        ("b".into(), LogicalType::VARCHAR),
     ]);
     assert_eq!(cast(&unnamed, &named, false), "{'a': 1, 'b': x}");
     let numbers = Value::struct_value(vec![
-        ("a".to_owned(), Value::integer(1)),
-        ("b".to_owned(), Value::integer(2)),
+        ("a".into(), Value::integer(1)),
+        ("b".into(), Value::integer(2)),
     ]);
     let map = LogicalType::map(LogicalType::VARCHAR, LogicalType::BIGINT);
     assert_eq!(cast(&numbers, &map, false), "{a=1, b=2}");
     let unnamed_numbers = Value::from_children(
         LogicalType::struct_type(vec![
-            (String::new(), LogicalType::INTEGER),
-            (String::new(), LogicalType::INTEGER),
+            (rustdb_common::ByteString::new(), LogicalType::INTEGER),
+            (rustdb_common::ByteString::new(), LogicalType::INTEGER),
         ]),
         vec![Value::integer(1), Value::integer(2)],
     );
@@ -216,15 +213,15 @@ fn struct_and_map_casts() {
         ),
         "{a=1}"
     );
-    let nested = Value::struct_value(vec![("k".to_owned(), ints(&[1, 2]))]);
+    let nested = Value::struct_value(vec![("k".into(), ints(&[1, 2]))]);
     assert_eq!(cast(&nested, &LogicalType::VARCHAR, false), "{'k': [1, 2]}");
 }
 
 #[test]
 fn union_casts() {
     let union = LogicalType::union_type(vec![
-        ("i".to_owned(), LogicalType::INTEGER),
-        ("s".to_owned(), LogicalType::VARCHAR),
+        ("i".into(), LogicalType::INTEGER),
+        ("s".into(), LogicalType::VARCHAR),
     ]);
     assert_eq!(cast(&Value::integer(1), &union, false), "1");
     assert_eq!(cast(&text("x"), &union, false), "x");
@@ -234,8 +231,8 @@ fn union_casts() {
         "Conversion Error: Type DECIMAL(2,1) can't be cast as UNION(i INTEGER, s VARCHAR). DECIMAL(2,1) can't be implicitly cast to any of the union member types: INTEGER, VARCHAR"
     );
     let ambiguous = LogicalType::union_type(vec![
-        ("a".to_owned(), LogicalType::BIGINT),
-        ("b".to_owned(), LogicalType::BIGINT),
+        ("a".into(), LogicalType::BIGINT),
+        ("b".into(), LogicalType::BIGINT),
     ]);
     assert_eq!(
         cast(&Value::integer(1), &ambiguous, false),
@@ -243,11 +240,11 @@ fn union_casts() {
     );
     let value = Value::union_value(union.clone(), 0, Value::integer(5));
     let reordered = LogicalType::union_type(vec![
-        ("s".to_owned(), LogicalType::VARCHAR),
-        ("i".to_owned(), LogicalType::BIGINT),
+        ("s".into(), LogicalType::VARCHAR),
+        ("i".into(), LogicalType::BIGINT),
     ]);
     assert_eq!(cast(&value, &reordered, false), "5");
-    let narrower = LogicalType::union_type(vec![("i".to_owned(), LogicalType::BIGINT)]);
+    let narrower = LogicalType::union_type(vec![("i".into(), LogicalType::BIGINT)]);
     assert_eq!(
         cast(&value, &narrower, false),
         "Conversion Error: Type UNION(i INTEGER, s VARCHAR) can't be cast as UNION(i BIGINT). The member 's' is not present in target union"

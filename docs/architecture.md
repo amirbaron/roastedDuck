@@ -55,7 +55,9 @@ land, following the same table.
 - `unsafe` only where the data layout requires it (vector buffers, `StringT`, the C API).
   Every block has a `// SAFETY:` comment. Wrap it in safe APIs inside the owning module.
 - Public items have doc comments. Comments explain *why*; they don't narrate the code.
-- No dependency that compiles C/C++ (no `cc`, `cmake`, `*-sys` crates).
+- The DuckDB engine is implemented in Rust. The owner explicitly permits
+  third-party native crypto, including OpenSSL and ring (2026-11-01). Their native
+  build dependencies are allowed; this does not permit linking the C++ DuckDB engine.
 
 ## Vectors and kernels
 

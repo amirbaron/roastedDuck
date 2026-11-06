@@ -6,7 +6,7 @@ use crate::params::{CParams, Strategy};
 use crate::seq::{REP_START, SeqStore};
 use crate::sequences::{FseTables, build_statistics, encode_sequences};
 use crate::window::{MatchState, Mem};
-use crate::{dfast, fast};
+use crate::{dfast, fast, lazy, opt};
 
 /// The repeat offsets and entropy tables a block leaves for the next
 /// (`ZSTD_compressedBlockState_t`).
@@ -42,7 +42,7 @@ fn literals_compression_disabled(params: &CParams) -> bool {
 
 /// `ZSTD_entropyCompressSeqStore`: appends the compressed block body; returns its size, or 0
 /// when the block is not compressible (nothing is appended then).
-fn entropy_compress(
+pub(crate) fn entropy_compress(
     out: &mut Vec<u8>,
     seq: &mut SeqStore,
     prev: &BlockState,
@@ -103,7 +103,7 @@ fn entropy_compress(
 }
 
 /// `ZSTD_isRLE`: compared 32 bytes at a time, as zstd unrolls it.
-fn is_rle(src: &[u8]) -> bool {
+pub(crate) fn is_rle(src: &[u8]) -> bool {
     let value = src[0];
     let pattern = u64::from_ne_bytes([value; 8]);
     let (chunks, rest) = src.as_chunks::<32>();
@@ -125,6 +125,7 @@ pub(crate) struct BlockCompressor {
     pub prev: BlockState,
     pub next: BlockState,
     pub is_first_block: bool,
+    pub ldm: Option<Box<crate::ldm::LdmState>>,
 }
 
 impl BlockCompressor {
@@ -135,11 +136,23 @@ impl BlockCompressor {
             prev: BlockState::new(),
             next: BlockState::new(),
             is_first_block: true,
+            ldm: None,
         }
     }
 
     /// Prepares a new frame with `params` (`ZSTD_resetCCtx_internal`).
     pub(crate) fn reset(&mut self, params: CParams) {
+        if params.strategy >= Strategy::BtOpt && params.window_log >= 27 {
+            if let Some(ldm) = &mut self.ldm {
+                ldm.reset(params.window_log);
+            } else {
+                self.ldm = Some(Box::new(crate::ldm::LdmState::new(params.window_log)));
+            }
+            self.ms.ldm_sequences.reserve(crate::params::BLOCK_SIZE_MAX / 64);
+        } else {
+            self.ldm = None;
+        }
+        self.ms.ldm_sequences.clear();
         let chain_table = params.strategy != Strategy::Fast;
         self.ms.reset(params, chain_table);
         self.prev = BlockState::new();
@@ -185,9 +198,14 @@ impl BlockCompressor {
     }
 
     /// `ZSTD_buildSeqStore`: runs the match finder over the block.
-    fn build_seq_store(&mut self, mem: Mem<'_>, istart: usize, src_size: usize) {
+    pub(crate) fn build_seq_store(&mut self, mem: Mem<'_>, istart: usize, src_size: usize) {
         self.seq.reset();
         self.seq.reserve(src_size);
+        if let Some(ldm) = &mut self.ldm {
+            ldm.generate(mem, istart, src_size, &mut self.ms.ldm_sequences);
+        } else {
+            self.ms.ldm_sequences.clear();
+        }
         let current = (istart as i64 + self.ms.window.base) as u32;
         if current > self.ms.next_to_update + 384 {
             self.ms.next_to_update = current - 192.min(current - self.ms.next_to_update - 384);
@@ -202,7 +220,23 @@ impl BlockCompressor {
                 istart,
                 src_size,
             ),
-            _ => dfast::compress_block(
+            Strategy::Greedy | Strategy::Lazy | Strategy::Lazy2 | Strategy::BtLazy2 => lazy::compress_block(
+                &mut self.ms,
+                &mut self.seq,
+                &mut self.next.rep,
+                mem,
+                istart,
+                src_size,
+            ),
+            Strategy::BtOpt | Strategy::BtUltra | Strategy::BtUltra2 => opt::compress_block(
+                &mut self.ms,
+                &mut self.seq,
+                &mut self.next.rep,
+                mem,
+                istart,
+                src_size,
+            ),
+            Strategy::DFast => dfast::compress_block(
                 &mut self.ms,
                 &mut self.seq,
                 &mut self.next.rep,

@@ -23,7 +23,7 @@ fn push_le(out: &mut Vec<u8>, value: u64, bytes: usize) {
 }
 
 /// `CreateMetadata`: the dictionary of a row's keys (unsorted).
-pub fn metadata_blob(keys: &[String]) -> Result<Vec<u8>> {
+pub fn metadata_blob(keys: &[rustdb_common::ByteString]) -> Result<Vec<u8>> {
     let dictionary_size: u64 = keys.iter().map(|key| key.len() as u64).sum();
     if dictionary_size >= u64::from(u32::MAX) {
         return Err(Error::invalid_input(
@@ -225,7 +225,7 @@ fn encode_nested(
 pub fn encode_value(
     data: Option<&VariantData>,
     index: u32,
-    excluded: Option<&HashSet<String>>,
+    excluded: Option<&HashSet<rustdb_common::ByteString>>,
 ) -> Result<Option<Vec<u8>>> {
     let mut out = Vec::new();
     let Some(data) = data else {
@@ -241,7 +241,7 @@ pub fn encode_value(
             for position in 0..nested.child_count {
                 let child = data.child(nested, position)?;
                 if let Some(excluded) = excluded
-                    && excluded.contains(&data.child_key(child)?.to_lowercase())
+                    && excluded.contains(&data.child_key(child)?.to_ascii_lowercase())
                 {
                     continue;
                 }
@@ -283,9 +283,9 @@ pub fn encode_value(
 /// `TransformTypedValueRecursive`: the `typed_value` column type of a shredding type.
 pub fn transform_typed_value(ty: &LogicalType) -> Result<LogicalType> {
     let group = |child: &LogicalType| -> Result<LogicalType> {
-        let mut fields = vec![("value".to_owned(), LogicalType::BLOB)];
+        let mut fields = vec![("value".into(), LogicalType::BLOB)];
         if child.id() != LogicalTypeId::Variant {
-            fields.push(("typed_value".to_owned(), transform_typed_value(child)?));
+            fields.push(("typed_value".into(), transform_typed_value(child)?));
         }
         Ok(LogicalType::struct_type(fields))
     };
@@ -393,11 +393,11 @@ fn write_group(item: Item<'_>, shredding: &LogicalType, group_type: &LogicalType
             }
         },
     };
-    let mut values = vec![("value".to_owned(), value)];
+    let mut values = vec![value];
     if let Some(typed) = typed {
-        values.push(("typed_value".to_owned(), typed));
+        values.push(typed);
     }
-    Ok(Value::struct_value(values))
+    Ok(Value::from_children(group_type.clone(), values))
 }
 
 fn blob(bytes: Option<Vec<u8>>) -> Value {
@@ -416,9 +416,9 @@ fn write_shredded(
         LogicalTypeId::Struct => {
             // Shredded fields leave the `value`; the rest stays there.
             let shredded_fields = shredding.struct_children().unwrap_or_default();
-            let excluded: HashSet<String> = shredded_fields
+            let excluded: HashSet<rustdb_common::ByteString> = shredded_fields
                 .iter()
-                .map(|(name, _)| name.to_lowercase())
+                .map(|(name, _)| name.to_ascii_lowercase())
                 .collect();
             let value = blob(encode_value(Some(data), index, Some(&excluded))?);
             let nested = data.nested(index)?;
@@ -439,9 +439,12 @@ fn write_shredded(
                 } else {
                     field_shredding.clone()
                 };
-                typed_fields.push((name.clone(), write_group(item, &field_shredding, field_group)?));
+                typed_fields.push(write_group(item, &field_shredding, field_group)?);
             }
-            Ok((value, Some(Value::struct_value(typed_fields))))
+            Ok((
+                value,
+                Some(Value::from_children(typed_type.clone(), typed_fields)),
+            ))
         }
         LogicalTypeId::List => {
             let element_shredding = shredding.child_type().cloned().unwrap_or(LogicalType::ANY);
@@ -463,7 +466,7 @@ fn write_shredded(
             }
             Ok((
                 Value::null(LogicalType::BLOB),
-                Some(Value::list(element_group, items)),
+                Some(Value::from_children(typed_type.clone(), items)),
             ))
         }
         _ => {
@@ -495,22 +498,19 @@ pub fn to_parquet_variant(
     let fields = struct_type.struct_children().unwrap_or_default();
     // The group type of `value` and `typed_value` (without `metadata`).
     let group_type = LogicalType::struct_type(fields.iter().skip(1).cloned().collect());
+    // Reuse the batch schema; values carry no per-row field names. The public
+    // conversion has historically returned an unaliased outer struct.
+    let output_type = LogicalType::struct_type(fields.to_vec());
     rows.iter()
         .map(|row| {
-            let keys: &[String] = row.as_ref().map_or(&[], |data| &data.keys);
+            let keys: &[rustdb_common::ByteString] = row.as_ref().map_or(&[], |data| &data.keys);
             let metadata = Value::blob(&metadata_blob(keys)?);
             let item = row.as_ref().map_or(Item::Null, |data| Item::Value(data, 0));
             let group = write_group(item, &shredding, &group_type)?;
-            let mut values = vec![("metadata".to_owned(), metadata)];
-            values.extend(
-                group_type
-                    .struct_children()
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|(name, _)| name.clone())
-                    .zip(group.children().unwrap_or_default().iter().cloned()),
-            );
-            Ok(Value::struct_value(values))
+            let mut values = Vec::with_capacity(fields.len());
+            values.push(metadata);
+            values.extend_from_slice(group.children().unwrap_or_default());
+            Ok(Value::from_children(output_type.clone(), values))
         })
         .collect()
 }
@@ -522,14 +522,14 @@ pub fn to_parquet_variant(
 #[derive(Debug, Default)]
 struct ObjectFields {
     /// The fields in insertion order, with their hashes.
-    entries: Vec<(String, u64, AnalyzeData)>,
+    entries: Vec<(rustdb_common::ByteString, u64, AnalyzeData)>,
     /// The position in `entries` of each lowercased key.
-    positions: std::collections::HashMap<String, usize>,
+    positions: std::collections::HashMap<rustdb_common::ByteString, usize>,
 }
 
 impl ObjectFields {
     /// `operator[]`: the field of `key`, inserted if new.
-    fn entry(&mut self, key: &str) -> &mut AnalyzeData {
+    fn entry(&mut self, key: &rustdb_common::ByteString) -> &mut AnalyzeData {
         let lower = key.to_ascii_lowercase();
         let position = if let Some(&position) = self.positions.get(&lower) {
             position
@@ -545,7 +545,7 @@ impl ObjectFields {
 
     /// The fields in the iteration order of libc++'s `unordered_map` after inserting
     /// them in this order.
-    fn iter_in_map_order(&self) -> impl Iterator<Item = (&str, &AnalyzeData)> {
+    fn iter_in_map_order(&self) -> impl Iterator<Item = (&rustdb_common::ByteString, &AnalyzeData)> {
         let mut table = UnorderedOrder::default();
         for (position, (_, hash, _)) in self.entries.iter().enumerate() {
             table.insert(*hash, position, |a, b| a == b);
@@ -553,7 +553,7 @@ impl ObjectFields {
         table
             .order()
             .into_iter()
-            .map(|position| (self.entries[position].0.as_str(), &self.entries[position].2))
+            .map(|position| (&self.entries[position].0, &self.entries[position].2))
     }
 }
 
@@ -684,7 +684,7 @@ impl AnalyzeData {
                 return Some(LogicalType::list(element));
             }
         } else if objects > highest {
-            let fields: Vec<(String, LogicalType)> = self
+            let fields: Vec<(rustdb_common::ByteString, LogicalType)> = self
                 .object
                 .as_ref()?
                 .iter_in_map_order()
@@ -722,4 +722,95 @@ pub fn is_decimal_physical(physical: PhysicalType) -> bool {
         physical,
         PhysicalType::Int16 | PhysicalType::Int32 | PhysicalType::Int64 | PhysicalType::Int128
     )
+}
+
+#[cfg(test)]
+mod schema_reuse_tests {
+    use super::*;
+    use rustdb_types::variant_value::{VariantValue as VV, to_variant_data};
+
+    #[test]
+    fn vector_input_matches_value_input_for_nested_selections_and_constants() {
+        use rustdb_types::{SelectionVector, Vector};
+        let rows = to_variant_data(&[
+            VV::Missing,
+            VV::Primitive(Value::integer(7)),
+            VV::Object(
+                [(
+                    "raw".into(),
+                    VV::Array(vec![VV::null(), VV::Primitive(Value::blob(&[0, 255]))]),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            VV::Array(vec![
+                VV::Primitive(Value::varchar("text")),
+                VV::Primitive(Value::boolean(false)),
+            ]),
+        ])
+        .unwrap();
+        let ty = LogicalType::variant();
+        let flat = VariantData::write_vector(&rows, &ty).unwrap();
+        let first = flat.slice(&SelectionVector::new(vec![3, 0, 2, 1, 2, 0]));
+        let second = first.slice(&SelectionVector::new(vec![5, 4, 0, 2, 3, 1]));
+        let constant = Vector::constant(&flat.get_value(2)).unwrap();
+        let repeated = flat.reference_row(2, 6).unwrap();
+        for (vector, count) in [
+            (&flat, 4),
+            (&first, 6),
+            (&second, 6),
+            (&constant, 6),
+            (&repeated, 6),
+        ] {
+            for row in 0..count {
+                assert_eq!(
+                    VariantData::from_vector(vector, row).unwrap(),
+                    VariantData::from_value(&vector.get_value(row)).unwrap()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parquet_variant_preserves_null_encoding_and_outer_alias_behavior() {
+        let ty = LogicalType::struct_type(vec![
+            ("metadata".into(), LogicalType::BLOB),
+            ("value".into(), LogicalType::BLOB),
+        ])
+        .with_alias("PARQUET_VARIANT");
+        let rows = to_variant_data(&[VV::null(), VV::Primitive(Value::boolean(true))]).unwrap();
+        let output = to_parquet_variant(&rows, None, &ty).unwrap();
+        let expected = vec![
+            Value::struct_value(vec![
+                ("metadata".into(), Value::blob(&[1, 0, 0])),
+                ("value".into(), Value::blob(&[0])),
+            ]),
+            Value::struct_value(vec![
+                ("metadata".into(), Value::blob(&[1, 0, 0])),
+                ("value".into(), Value::blob(&[4])),
+            ]),
+        ];
+        assert_eq!(output, expected);
+        let shredded = LogicalType::struct_type(vec![
+            ("metadata".into(), LogicalType::BLOB),
+            ("value".into(), LogicalType::BLOB),
+            ("typed_value".into(), LogicalType::BOOLEAN),
+        ]);
+        let output = to_parquet_variant(&rows, Some(&LogicalType::BOOLEAN), &shredded).unwrap();
+        assert_eq!(
+            output,
+            vec![
+                Value::struct_value(vec![
+                    ("metadata".into(), Value::blob(&[1, 0, 0])),
+                    ("value".into(), Value::blob(&[0])),
+                    ("typed_value".into(), Value::null(LogicalType::BOOLEAN))
+                ]),
+                Value::struct_value(vec![
+                    ("metadata".into(), Value::blob(&[1, 0, 0])),
+                    ("value".into(), Value::null(LogicalType::BLOB)),
+                    ("typed_value".into(), Value::boolean(true))
+                ]),
+            ]
+        );
+    }
 }

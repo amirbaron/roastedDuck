@@ -9,7 +9,7 @@ use rustdb::{ClientHandle, Config, Connection, Database, LogicalType, Value};
 use rustdb_function::FunctionClient;
 
 use crate::config::{DuckdbConfig, capi_config};
-use crate::helper::{c_string, catch, opt_str};
+use crate::helper::{c_string, catch};
 use crate::result::translate_result;
 use crate::types::*;
 use crate::value::{DuckdbValue, wrap_value};
@@ -109,7 +109,7 @@ pub type DuckdbClientContext = *mut ClientContextWrapper;
 /// `DBInstanceCache`).
 #[derive(Debug, Default)]
 pub struct InstanceCacheWrapper {
-    instances: Mutex<HashMap<String, (Weak<Database>, Config)>>,
+    instances: Mutex<HashMap<rustdb_common::ByteString, (Weak<Database>, Config)>>,
 }
 
 /// `duckdb_instance_cache`
@@ -119,7 +119,7 @@ impl InstanceCacheWrapper {
     /// The database at `path`, opened before with the same configuration and still open,
     /// or opened now (`DBInstanceCache::GetOrCreateInstance`). Unnamed in-memory databases
     /// are never shared.
-    fn get_or_create(&self, path: &str, config: &Config) -> rustdb::Result<Arc<Database>> {
+    fn get_or_create(&self, path: &[u8], config: &Config) -> rustdb::Result<Arc<Database>> {
         let key = cache_key(path);
         let mut instances = self.instances.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(key) = &key
@@ -137,8 +137,8 @@ impl InstanceCacheWrapper {
         }
         // A named in-memory database (`:memory:name`) is an in-memory instance the cache
         // shares; opened directly, the path would name a file.
-        let instance_path = if path.starts_with(":memory:") {
-            ":memory:"
+        let instance_path = if path.starts_with(b":memory:") {
+            b":memory:".as_slice()
         } else {
             path
         };
@@ -151,19 +151,25 @@ impl InstanceCacheWrapper {
 }
 
 /// The cache key of a database path (`GetCacheKey`): the canonical absolute path,
-/// lower-cased on macOS and Windows; `None` for an unnamed in-memory database.
-fn cache_key(path: &str) -> Option<String> {
-    if path.is_empty() || path == ":memory:" {
+/// lower-cased on Apple platforms and Windows; `None` for an unnamed in-memory database.
+fn cache_key(path: &[u8]) -> Option<rustdb_common::ByteString> {
+    if path.is_empty() || path == b":memory:" {
         return None;
     }
-    if path.starts_with(":memory:") {
-        return Some(path.to_owned());
+    if path.starts_with(b":memory:") {
+        return Some(if cfg!(any(target_vendor = "apple", windows)) {
+            rustdb_common::ByteString::from(path).to_ascii_lowercase()
+        } else {
+            path.into()
+        });
     }
-    let expanded = match path.strip_prefix("~/") {
-        Some(rest) => {
-            std::env::var_os("HOME").map_or_else(|| PathBuf::from(path), |home| Path::new(&home).join(rest))
+    let expanded = if let Some(rest) = path.strip_prefix(b"~/") {
+        match std::env::var_os("HOME") {
+            Some(home) => Path::new(&home).join(rustdb_common::native_file_path(rest).ok()?),
+            None => rustdb_common::native_file_path(path).ok()?,
         }
-        None => PathBuf::from(path),
+    } else {
+        rustdb_common::native_file_path(path).ok()?
     };
     let absolute = if expanded.is_absolute() {
         expanded
@@ -180,9 +186,9 @@ fn cache_key(path: &str) -> Option<String> {
             other => canonical.push(other),
         }
     }
-    let key = canonical.to_string_lossy().into_owned();
-    Some(if cfg!(any(target_os = "macos", windows)) {
-        key.to_lowercase()
+    let key = rustdb_common::ByteString::from(canonical.as_os_str().as_encoded_bytes());
+    Some(if cfg!(any(target_vendor = "apple", windows)) {
+        key.to_ascii_lowercase()
     } else {
         key
     })
@@ -222,6 +228,7 @@ unsafe fn open_internal(
     config: DuckdbConfig,
     out_error: *mut *mut c_char,
 ) -> DuckdbState {
+    crate::register_extension_loader();
     let default_config;
     // SAFETY: `config` is NULL or a live handle.
     let config = if let Some(wrapper) = unsafe { config.as_ref() } {
@@ -231,7 +238,7 @@ unsafe fn open_internal(
         &default_config
     };
     // SAFETY: `path` is NULL or a C string.
-    let path = unsafe { opt_str(path) }.unwrap_or("");
+    let path = unsafe { crate::helper::opt_bytes(path) }.unwrap_or_default();
     let opened = catch(|| match cache {
         Some(cache) => cache.get_or_create(path, config),
         None => Database::open(path, config).map(Arc::new),
@@ -438,12 +445,16 @@ pub unsafe extern "C" fn duckdb_query(
         return DuckdbState::DuckDBError;
     };
     // SAFETY: `query` is NULL or a C string.
-    let Some(sql) = (unsafe { opt_str(query) }) else {
+    let Some(sql) = (unsafe { crate::helper::opt_bytes(query) }) else {
         return DuckdbState::DuckDBError;
     };
-    let outcome = catch(|| context.lock().query(sql)).map(rustdb::QueryResult::Materialized);
+    let (outcome, properties) = {
+        let mut connection = context.lock();
+        let outcome = catch(|| connection.query(sql)).map(rustdb::QueryResult::Materialized);
+        (outcome, connection.client_properties())
+    };
     // SAFETY: `out_result` is NULL or writable.
-    unsafe { translate_result(context, outcome, out_result) }
+    unsafe { translate_result(context, outcome, properties, out_result) }
 }
 
 /// `duckdb_value duckdb_get_table_names(duckdb_connection connection, const char *query,
@@ -456,14 +467,22 @@ pub unsafe extern "C" fn duckdb_get_table_names(
     qualified: bool,
 ) -> DuckdbValue {
     // SAFETY: `connection` is NULL or a live handle; `query` is NULL or a C string.
-    let (Some(context), Some(sql)) = (unsafe { (connection_ref(connection), opt_str(query)) }) else {
+    let (Some(context), Some(sql)) =
+        (unsafe { (connection_ref(connection), crate::helper::opt_bytes(query)) })
+    else {
         return std::ptr::null_mut();
     };
-    match catch(|| context.lock().table_names(sql, qualified)) {
-        Ok(names) => wrap_value(Value::list(
+    match catch(|| {
+        let names = context.lock().table_names(sql, qualified)?;
+        Ok(Value::list(
             LogicalType::VARCHAR,
-            names.into_iter().map(Value::varchar).collect(),
-        )),
+            names
+                .into_iter()
+                .map(|name| Value::try_varchar(&name))
+                .collect::<rustdb::Result<_>>()?,
+        ))
+    }) {
+        Ok(value) => wrap_value(value),
         Err(_) => std::ptr::null_mut(),
     }
 }

@@ -55,7 +55,7 @@ pub trait FunctionData: Any + Send + Sync + fmt::Debug {
     /// The database a function call writes to, which its statement then modifies
     /// (DuckDB's `StatementProperties::RegisterDBModify` in a table function's bind or a
     /// scalar function's `get_modified_databases`).
-    fn modified_database(&self) -> Option<String> {
+    fn modified_database(&self) -> Option<rustdb_common::ByteString> {
         None
     }
 }
@@ -129,7 +129,7 @@ pub trait LambdaExecutor: Send + fmt::Debug {
 pub struct FunctionState {
     pub bind_data: Option<Arc<dyn FunctionData>>,
     /// The alias of the call (DuckDB's `state.expr.GetAlias()`), empty if none.
-    pub alias: String,
+    pub alias: rustdb_common::ByteString,
     /// Thread-local state created on first use by the kernel.
     pub local: Option<Box<dyn Any + Send>>,
     /// The lambda of a lambda function call (`list_transform(l, x -> ...)`).
@@ -209,10 +209,10 @@ pub struct BindInput<'a> {
     pub constants: &'a [Option<Value>],
     /// The alias of each argument expression (`a := x` names, or the column name of a
     /// column reference).
-    pub aliases: &'a [String],
+    pub aliases: &'a [rustdb_common::ByteString],
     /// The name of each argument expression (DuckDB's `Expression::GetName`): its alias, or
     /// its SQL text when it has none.
-    pub names: &'a [String],
+    pub names: &'a [rustdb_common::ByteString],
     /// The calling connection's state (DuckDB's `ClientContext`).
     pub client: &'a Arc<FunctionClient>,
     /// The binder's client context (`ScalarFunctionBindInput::binder`), for functions
@@ -238,7 +238,7 @@ pub type ScalarBind =
 /// One overload of a scalar function.
 #[derive(Clone)]
 pub struct ScalarFunction {
-    pub name: Arc<str>,
+    pub name: rustdb_common::ByteString,
     pub arguments: Vec<LogicalType>,
     /// Type of any additional trailing arguments, for variadic functions.
     pub varargs: Option<LogicalType>,
@@ -280,8 +280,8 @@ pub struct ScalarFunction {
     /// The catalog and schema of the function's catalog entry (DuckDB's `catalog_name`
     /// and `schema_name`, set by the function catalog entries); empty for a function not
     /// taken from a catalog.
-    pub catalog_name: Arc<str>,
-    pub schema_name: Arc<str>,
+    pub catalog_name: Arc<[u8]>,
+    pub schema_name: Arc<[u8]>,
     /// Writes the bind data, so that a serialized plan can bind the function again
     /// (DuckDB's `serialize` callback).
     pub serialize: Option<ScalarSerialize>,
@@ -293,11 +293,11 @@ pub type ScalarSerialize =
 
 /// See [`ScalarFunction::bind_expression`].
 pub type BindExpression =
-    Arc<dyn Fn(Option<&dyn FunctionData>, &[LogicalType]) -> Option<Value> + Send + Sync>;
+    Arc<dyn Fn(Option<&dyn FunctionData>, &[LogicalType]) -> Result<Option<Value>> + Send + Sync>;
 
 impl ScalarFunction {
     pub fn new(
-        name: impl Into<Arc<str>>,
+        name: impl Into<rustdb_common::ByteString>,
         arguments: Vec<LogicalType>,
         return_type: LogicalType,
         kernel: impl Fn(&DataChunk, &mut FunctionState, &mut Vector) -> Result<()> + Send + Sync + 'static,
@@ -320,8 +320,8 @@ impl ScalarFunction {
             original_arguments: Vec::new(),
             erased_arguments: Vec::new(),
             argument_casts: Vec::new(),
-            catalog_name: Arc::from(""),
-            schema_name: Arc::from(""),
+            catalog_name: Arc::from(b"".as_slice()),
+            schema_name: Arc::from(b"".as_slice()),
             serialize: None,
         }
     }
@@ -329,7 +329,7 @@ impl ScalarFunction {
     /// Sets the catalog and schema of the function's catalog entry (see
     /// [`ScalarFunction::catalog_name`]); empty ones for a function the engine uses
     /// directly rather than through the catalog (DuckDB's `XFun::GetFunction()`).
-    pub fn set_catalog_entry(&mut self, catalog: &Arc<str>, schema: &Arc<str>) {
+    pub fn set_catalog_entry(&mut self, catalog: &Arc<[u8]>, schema: &Arc<[u8]>) {
         self.catalog_name = Arc::clone(catalog);
         self.schema_name = Arc::clone(schema);
     }
@@ -337,7 +337,7 @@ impl ScalarFunction {
     /// Forgets the catalog entry: the bind made a new function object (DuckDB's
     /// `function = GetX(...)` binds and `XFun::GetFunction()` callers).
     pub fn clear_catalog_entry(&mut self) {
-        let empty: Arc<str> = Arc::from("");
+        let empty: Arc<[u8]> = Arc::from(b"".as_slice());
         self.set_catalog_entry(&empty, &empty);
     }
 
@@ -372,6 +372,19 @@ impl ScalarFunction {
     pub fn with_bind_expression(
         mut self,
         bind_expression: impl Fn(Option<&dyn FunctionData>, &[LogicalType]) -> Option<Value>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.bind_expression = Some(Arc::new(move |data, types| Ok(bind_expression(data, types))));
+        self
+    }
+
+    /// Sets a bind-time expression callback that can raise a native binding error.
+    #[must_use]
+    pub fn with_fallible_bind_expression(
+        mut self,
+        bind_expression: impl Fn(Option<&dyn FunctionData>, &[LogicalType]) -> Result<Option<Value>>
         + Send
         + Sync
         + 'static,
@@ -424,12 +437,12 @@ impl fmt::Debug for ScalarFunction {
 /// All overloads registered under one name.
 #[derive(Clone, Debug)]
 pub struct ScalarFunctionSet {
-    pub name: Arc<str>,
+    pub name: rustdb_common::ByteString,
     pub functions: Vec<ScalarFunction>,
 }
 
 impl ScalarFunctionSet {
-    pub fn new(name: impl Into<Arc<str>>) -> Self {
+    pub fn new(name: impl Into<rustdb_common::ByteString>) -> Self {
         Self {
             name: name.into(),
             functions: Vec::new(),

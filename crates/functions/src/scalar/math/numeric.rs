@@ -463,9 +463,9 @@ fn bind_decimal_precision(
             return Err(crate::parameter_not_resolved());
         }
         let unsupported = || {
-            Error::not_implemented(format!(
+            Error::not_implemented(rustdb_common::byte_format!(
                 "{}(DECIMAL, INTEGER) with non-constant precision is not supported",
-                function.name.to_uppercase()
+                function.name.to_ascii_uppercase()
             ))
         };
         let Some(value) = input.constants.get(1).cloned().flatten() else {

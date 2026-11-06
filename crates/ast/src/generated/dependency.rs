@@ -9,9 +9,9 @@ pub struct CatalogEntryInfo {
     /// `type` (property 100).
     pub catalog_type: CatalogType,
     /// `schema` (property 101).
-    pub schema: String,
+    pub schema: rustdb_common::ByteString,
     /// `name` (property 102).
-    pub name: String,
+    pub name: rustdb_common::ByteString,
 }
 
 impl SerializeObject for CatalogEntryInfo {
@@ -26,8 +26,8 @@ impl SerializeObject for CatalogEntryInfo {
 impl DeserializeObject for CatalogEntryInfo {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
         let catalog_type: CatalogType = deserializer.read_property(100, "type")?;
-        let schema: String = deserializer.read_property_with_default(101, "schema")?;
-        let name: String = deserializer.read_property_with_default(102, "name")?;
+        let schema: rustdb_common::ByteString = deserializer.read_property_with_default(101, "schema")?;
+        let name: rustdb_common::ByteString = deserializer.read_property_with_default(102, "name")?;
         Ok(Self {
             catalog_type,
             schema,
@@ -44,7 +44,7 @@ pub struct LogicalDependency {
     /// `entry` (property 100).
     pub entry: CatalogEntryInfo,
     /// `catalog` (property 101).
-    pub catalog: String,
+    pub catalog: rustdb_common::ByteString,
 }
 
 impl SerializeObject for LogicalDependency {
@@ -58,7 +58,7 @@ impl SerializeObject for LogicalDependency {
 impl DeserializeObject for LogicalDependency {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
         let entry: CatalogEntryInfo = deserializer.read_property(100, "entry")?;
-        let catalog: String = deserializer.read_property_with_default(101, "catalog")?;
+        let catalog: rustdb_common::ByteString = deserializer.read_property_with_default(101, "catalog")?;
         Ok(Self { entry, catalog })
     }
 }

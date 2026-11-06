@@ -1,5 +1,6 @@
 //! Semantic values (bison's `%union`) and the context a rule's action runs in.
 
+use rustdb_common::ByteString;
 use rustdb_common::{Error, Result};
 
 use crate::error::internal;
@@ -53,7 +54,7 @@ macro_rules! semantic_value {
             #[default]
             None,
             /// A keyword's text as written in the query.
-            Keyword(&'a str),
+            Keyword(&'a [u8]),
             $( $(#[$doc])* $variant($ty), )*
         }
 
@@ -78,7 +79,7 @@ semantic_value! {
     /// `list`.
     List(List) => list,
     /// `str`: an owned (possibly absent) string.
-    Str(Option<String>) => str,
+    Str(Option<ByteString>) => str,
     /// `conststr`.
     ConstStr(Option<&'static str>) => const_str,
     /// `ival`.
@@ -231,7 +232,7 @@ impl<'s, 'a> Reduction<'s, 'a> {
     }
 
     /// `$k` as a keyword's text.
-    pub(crate) fn keyword(&mut self, k: usize) -> Result<&'a str> {
+    pub(crate) fn keyword(&mut self, k: usize) -> Result<&'a [u8]> {
         match self.take_value(k) {
             SemValue::Keyword(text) => Ok(text),
             other => Err(self.type_error(k, "Keyword", &other)),
@@ -239,10 +240,10 @@ impl<'s, 'a> Reduction<'s, 'a> {
     }
 
     /// `$k` as a string that must be present.
-    pub(crate) fn string(&mut self, k: usize) -> Result<String> {
+    pub(crate) fn string(&mut self, k: usize) -> Result<rustdb_common::ByteString> {
         match self.take_value(k) {
             SemValue::Str(Some(s)) => Ok(s),
-            SemValue::Keyword(text) => Ok(text.to_owned()),
+            SemValue::Keyword(text) => Ok(text.into()),
             other => Err(self.type_error(k, "Str", &other)),
         }
     }
@@ -307,7 +308,7 @@ impl<'s, 'a> Reduction<'s, 'a> {
     }
 
     /// `ereport(ERROR, errmsg(...), parser_errposition(location))`.
-    pub(crate) fn error_at(&self, message: impl Into<String>, location: i32) -> Error {
+    pub(crate) fn error_at(&self, message: impl Into<ByteString>, location: i32) -> Error {
         self.scanner.error_at(message.into(), location)
     }
 }

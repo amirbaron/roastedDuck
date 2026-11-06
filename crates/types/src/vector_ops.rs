@@ -147,13 +147,13 @@ mod tests {
     #[test]
     fn copies_nested_rows() {
         let ty = LogicalType::list(LogicalType::struct_type(vec![(
-            "a".to_owned(),
+            "a".into(),
             LogicalType::VARCHAR,
         )]));
         let value = |text: &str| {
             Value::list(
-                LogicalType::struct_type(vec![("a".to_owned(), LogicalType::VARCHAR)]),
-                vec![Value::struct_value(vec![("a".to_owned(), Value::varchar(text))])],
+                LogicalType::struct_type(vec![("a".into(), LogicalType::VARCHAR)]),
+                vec![Value::struct_value(vec![("a".into(), Value::varchar(text))])],
             )
         };
         let mut src = Vector::flat(ty.clone(), 3);

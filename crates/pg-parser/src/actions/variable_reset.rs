@@ -86,7 +86,7 @@ pub(super) fn reset_rest<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<
         1 => {
             let n = VariableSetStmt {
                 kind: VariableSetKind::Reset,
-                name: Some("timezone".to_owned()),
+                name: Some("timezone".into()),
                 ..Default::default()
             };
             Ok(SemValue::node(n))
@@ -95,7 +95,7 @@ pub(super) fn reset_rest<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<
         2 => {
             let n = VariableSetStmt {
                 kind: VariableSetKind::Reset,
-                name: Some("transaction_isolation".to_owned()),
+                name: Some("transaction_isolation".into()),
                 ..Default::default()
             };
             Ok(SemValue::node(n))

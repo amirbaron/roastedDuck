@@ -243,11 +243,11 @@ fn pattern_compare(
 }
 
 /// `ShellState::StringGlob`: whether `string` matches the GLOB `pattern`.
-pub fn string_glob(pattern: &str, string: &str) -> bool {
+pub fn string_glob(pattern: impl AsRef<[u8]>, string: impl AsRef<[u8]>) -> bool {
     pattern_compare(
-        pattern.as_bytes(),
+        pattern.as_ref(),
         0,
-        string.as_bytes(),
+        string.as_ref(),
         0,
         &GLOB_INFO,
         u32::from(b'['),

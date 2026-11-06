@@ -355,8 +355,10 @@ impl MetadataManager {
                 );
             }
             let new_handle = if handle.block_id() >= MAXIMUM_BLOCK {
+                // Readers can still pin this metadata snapshot during a checkpoint.
+                // Match C++'s THREAD_SAFE conversion instead of moving their buffer.
                 self.buffer_manager
-                    .convert_to_persistent(&self.dyn_manager(), id, handle, pin)?
+                    .convert_to_persistent_thread_safe(&self.dyn_manager(), id, handle, pin)?
             } else {
                 self.write_pinned(id, &pin)?;
                 handle
@@ -812,6 +814,63 @@ impl<'a> MetadataWriter<'a> {
         self.block = None;
         self.capacity = 0;
         self.offset = 0;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::single_file_block_manager::BlockManagerOptions;
+    use rustdb_buffer::{BufferManagerConfig, DEFAULT_BLOCK_ALLOC_SIZE};
+    use rustdb_crypto::EncryptionKeyManager;
+
+    #[test]
+    fn flush_preserves_pinned_metadata_readers() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let path = std::env::temp_dir().join(format!(
+            "rustdb-metadata-reader-{}-{}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        let buffers = BufferManager::new(BufferManagerConfig {
+            memory_limit: Some((8 * DEFAULT_BLOCK_ALLOC_SIZE) as u64),
+            ..BufferManagerConfig::default()
+        })?;
+        let blocks = Arc::new(SingleFileBlockManager::create_new(
+            path.as_os_str().as_encoded_bytes(),
+            BlockManagerOptions {
+                read_only: false,
+                block_alloc_size: DEFAULT_BLOCK_ALLOC_SIZE,
+                storage_version: None,
+            },
+            None,
+            &EncryptionKeyManager::default(),
+        )?);
+        let metadata = MetadataManager::new(blocks, buffers.clone());
+        let mut writer = MetadataWriter::new(&metadata);
+        let pointer = writer.meta_block_pointer()?;
+        writer.write_u64(11)?;
+        writer.write_u64(22)?;
+        writer.flush()?;
+        drop(writer);
+
+        let mut reader = MetadataReader::new(&metadata, pointer, false)?;
+        assert_eq!(reader.read_u64()?, 11);
+        metadata.flush()?;
+        // The reader keeps its original transient buffer across publication.
+        assert_eq!(reader.read_u64()?, 22);
+        let mut persisted = MetadataReader::new(&metadata, pointer, false)?;
+        assert_eq!(persisted.read_u64()?, 11);
+        assert_eq!(persisted.read_u64()?, 22);
+        assert!(buffers.used_memory() <= (2 * DEFAULT_BLOCK_ALLOC_SIZE) as u64);
+        drop(reader);
+        assert!(buffers.used_memory() <= DEFAULT_BLOCK_ALLOC_SIZE as u64);
+        drop(persisted);
+        drop(metadata);
+        drop(buffers);
+        std::fs::remove_file(path)?;
         Ok(())
     }
 }

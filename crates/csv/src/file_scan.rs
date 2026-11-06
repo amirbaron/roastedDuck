@@ -74,14 +74,14 @@ impl CsvValidator {
 /// (DuckDB's `CSVFileScan`).
 #[derive(Debug)]
 pub struct CsvFileScan {
-    pub file_path: String,
+    pub file_path: rustdb_common::ByteString,
     pub file_idx: u64,
     pub options: CsvReaderOptions,
     pub buffer_manager: Arc<CsvBufferManager>,
     pub state_machine: Arc<CsvStateMachine>,
     pub error_handler: Arc<CsvErrorHandler>,
     /// The names and types of the file's columns.
-    pub names: Vec<String>,
+    pub names: Vec<rustdb_common::ByteString>,
     pub types: Vec<LogicalType>,
     /// The types the projected columns are read as, in file column order.
     pub file_types: Vec<LogicalType>,
@@ -108,11 +108,11 @@ impl CsvFileScan {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         casts: Arc<CastFunctionSet>,
-        file_path: &str,
+        file_path: &[u8],
         file_idx: u64,
         mut options: CsvReaderOptions,
         file_options: &MultiFileOptionsView,
-        names: &[String],
+        names: &[rustdb_common::ByteString],
         types: &[LogicalType],
         file_schema: &CsvSchema,
         buffer_manager: Option<Arc<CsvBufferManager>>,
@@ -140,7 +140,7 @@ impl CsvFileScan {
                     "CSV File Scanner cannot be created without a schema",
                 ));
             } else if buffer_manager.file_size() > 0 {
-                file_path.clone_into(&mut options.file_path);
+                options.file_path = file_path.into();
                 let mut sniffer = CsvSniffer::new(
                     &mut options,
                     file_options,
@@ -169,7 +169,7 @@ impl CsvFileScan {
     /// (for `union_by_name` and `sniff_csv`).
     pub fn sniffed(
         casts: Arc<CastFunctionSet>,
-        file_path: &str,
+        file_path: &[u8],
         file_idx: u64,
         mut options: CsvReaderOptions,
         file_options: &MultiFileOptionsView,
@@ -207,10 +207,10 @@ impl CsvFileScan {
     #[allow(clippy::too_many_arguments)]
     fn finish(
         casts: Arc<CastFunctionSet>,
-        file_path: &str,
+        file_path: &[u8],
         file_idx: u64,
         mut options: CsvReaderOptions,
-        names: Vec<String>,
+        names: Vec<rustdb_common::ByteString>,
         types: Vec<LogicalType>,
         buffer_manager: Arc<CsvBufferManager>,
         error_handler: Arc<CsvErrorHandler>,
@@ -227,7 +227,7 @@ impl CsvFileScan {
             &options,
         ));
         Ok(Self {
-            file_path: file_path.to_owned(),
+            file_path: file_path.into(),
             file_idx,
             options,
             buffer_manager,

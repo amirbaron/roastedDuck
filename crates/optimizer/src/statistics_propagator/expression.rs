@@ -517,7 +517,7 @@ pub(crate) fn pushdown_extract_statistics(
             // first one up repeatedly.
             let current = index;
             loop {
-                let component = VariantPathComponent::Key(current.field_name().to_owned());
+                let component = VariantPathComponent::Key(current.field_name().into());
                 result = find_child_stats(result, &component)?;
                 if !is_fully_shredded(result) {
                     return None;

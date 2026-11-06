@@ -52,7 +52,7 @@ pub fn date_part_simplification(
     let ExpressionKind::Function(function) = &mut expression.kind else {
         return Ok(RuleOutcome::Unchanged);
     };
-    if &*function.function.name != "date_part" || function.children.len() != 2 {
+    if &*function.function.name != b"date_part" || function.children.len() != 2 {
         return Ok(RuleOutcome::Unchanged);
     }
     let Some(constant) = function.children[0].as_constant() else {

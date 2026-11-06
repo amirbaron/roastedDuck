@@ -3,6 +3,7 @@
 //! modification time, plus any hive partition columns.
 
 use std::any::Any;
+use std::io::Read;
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
@@ -29,7 +30,7 @@ const FILE_LAST_MODIFIED_COLUMN: usize = 3;
 struct ReadFileData {
     name: &'static str,
     content_type: LogicalType,
-    files: Vec<String>,
+    files: Vec<rustdb_common::ByteString>,
     types: Vec<LogicalType>,
     file_options: MultiFileOptions,
     reader_bind: MultiFileBindData,
@@ -70,9 +71,9 @@ fn read_file_bind(
         LogicalType::BIGINT,
         LogicalType::TIMESTAMP_TZ,
     ];
-    let mut names: Vec<String> = ["filename", "content", "size", "last_modified"]
+    let mut names: Vec<rustdb_common::ByteString> = ["filename", "content", "size", "last_modified"]
         .into_iter()
-        .map(str::to_owned)
+        .map(Into::into)
         .collect();
     let reader_bind = bind_options(&file_options, &file_list, &mut types, &mut names)?;
     Ok(TableFunctionBindOutput {
@@ -90,15 +91,15 @@ fn read_file_bind(
     })
 }
 
-fn io_error(message: String) -> Error {
-    Error::new(ErrorKind::Io, message)
+fn io_error(message: rustdb_common::ByteString) -> Error {
+    Error::new_bytes(ErrorKind::Io, message)
 }
 
 /// `AssertMaxFileSize`.
-fn assert_max_file_size(path: &str, size: u64) -> Result<()> {
+fn assert_max_file_size(path: &[u8], size: u64) -> Result<()> {
     let max = u64::from(u32::MAX);
     if size > max {
-        return Err(Error::invalid_input(format!(
+        return Err(Error::invalid_input(rustdb_common::byte_format!(
             "File '{path}' size ({}) exceeds maximum allowed file ({})",
             rustdb_buffer::format_bytes(size),
             rustdb_buffer::format_bytes(max)
@@ -108,12 +109,44 @@ fn assert_max_file_size(path: &str, size: u64) -> Result<()> {
 }
 
 /// The value of file column `column` of `path` (`DirectFileReader::Scan`).
-fn file_column(data: &ReadFileData, path: &str, column: usize) -> Result<Value> {
+fn file_column(data: &ReadFileData, path: &[u8], column: usize) -> Result<Value> {
     if column == FILE_NAME_COLUMN {
-        return Ok(Value::varchar(path));
+        return Value::try_varchar(path);
     }
-    let metadata = std::fs::metadata(path).map_err(|error| {
-        io_error(format!(
+    if let Some(filesystem) = rustdb_function::registered_files::lookup(path) {
+        rustdb_function::file_system::verify_can_access_file(path)?;
+        let handle = filesystem.open(path, false)?;
+        return match column {
+            FILE_CONTENT_COLUMN => {
+                let size = handle.size()?;
+                assert_max_file_size(path, size)?;
+                let mut bytes = Vec::new();
+                rustdb_function::registered_files::Cursor::new(handle)
+                    .take(size)
+                    .read_to_end(&mut bytes)
+                    .map_err(|error| {
+                        rustdb_storage::file_system::callback_error(&error).unwrap_or_else(|| {
+                            io_error(rustdb_common::byte_format!(
+                                "Could not read file \"{path}\": {error}"
+                            ))
+                        })
+                    })?;
+                if bytes.len() as u64 != size {
+                    return Err(io_error(rustdb_common::byte_format!(
+                        "Could not read file \"{path}\": short read"
+                    )));
+                }
+                file_content(data, path, &bytes)
+            }
+            FILE_SIZE_COLUMN => Ok(Value::bigint(i64::try_from(handle.size()?).unwrap_or(i64::MAX))),
+            FILE_LAST_MODIFIED_COLUMN => Ok(Value::timestamp_tz(Timestamp(handle.modified()?))),
+            _ => Ok(Value::null(
+                data.types.get(column).cloned().unwrap_or(LogicalType::SQLNULL),
+            )),
+        };
+    }
+    let metadata = std::fs::metadata(rustdb_function::file_system::native_path(path)?).map_err(|error| {
+        io_error(rustdb_common::byte_format!(
             "Cannot open file \"{path}\": {}",
             rustdb_common::os_error_text(&error)
         ))
@@ -121,21 +154,13 @@ fn file_column(data: &ReadFileData, path: &str, column: usize) -> Result<Value> 
     Ok(match column {
         FILE_CONTENT_COLUMN => {
             assert_max_file_size(path, metadata.len())?;
-            let bytes = std::fs::read(path)
-                .map_err(|error| io_error(format!("Could not read file \"{path}\": {error}")))?;
+            let bytes = std::fs::read(rustdb_function::file_system::native_path(path)?).map_err(|error| {
+                io_error(rustdb_common::byte_format!(
+                    "Could not read file \"{path}\": {error}"
+                ))
+            })?;
             assert_max_file_size(path, bytes.len() as u64)?;
-            if data.content_type == LogicalType::VARCHAR {
-                let text = std::str::from_utf8(&bytes).map_err(|_| {
-                    Error::invalid_input(format!(
-                        "{}: could not read content of file '{path}' as valid UTF-8 encoded text. You may want to \
-                         use read_blob instead.",
-                        data.name
-                    ))
-                })?;
-                Value::varchar(text)
-            } else {
-                Value::blob(&bytes)
-            }
+            file_content(data, path, &bytes)?
         }
         FILE_SIZE_COLUMN => Value::bigint(i64::try_from(metadata.len()).unwrap_or(i64::MAX)),
         FILE_LAST_MODIFIED_COLUMN => match metadata
@@ -151,8 +176,23 @@ fn file_column(data: &ReadFileData, path: &str, column: usize) -> Result<Value> 
     })
 }
 
+fn file_content(data: &ReadFileData, path: &[u8], bytes: &[u8]) -> Result<Value> {
+    if data.content_type == LogicalType::VARCHAR {
+        let text = std::str::from_utf8(bytes).map_err(|_| {
+            Error::invalid_input(rustdb_common::byte_format!(
+                "{}: could not read content of file '{path}' as valid UTF-8 encoded text. You may want to \
+                 use read_blob instead.",
+                data.name
+            ))
+        })?;
+        Ok(Value::varchar(text))
+    } else {
+        Ok(Value::blob(bytes))
+    }
+}
+
 /// The value of column `column` for `path`: a file column or a hive partition value.
-fn column_value(data: &ReadFileData, path: &str, column: usize) -> Result<Value> {
+fn column_value(data: &ReadFileData, path: &[u8], column: usize) -> Result<Value> {
     if let Some((key, _)) = data
         .reader_bind
         .hive_partitioning_indexes
@@ -160,7 +200,9 @@ fn column_value(data: &ReadFileData, path: &str, column: usize) -> Result<Value>
         .find(|(_, index)| *index == column)
     {
         let partitions = hive_parse(path);
-        let value = partitions.get(key).map_or("", String::as_str);
+        let value = partitions
+            .get(key)
+            .map_or(b"".as_slice(), rustdb_common::ByteString::as_bytes);
         return data.file_options.hive_partition_value(value, key, &data.casts);
     }
     file_column(data, path, column)
@@ -180,7 +222,23 @@ fn read_file_scan(
         .unwrap_or(usize::MAX)
         .min(data.files.len());
     let end = (start + STANDARD_VECTOR_SIZE).min(data.files.len());
-    let rows = end - start;
+    // DirectFileReader verifies remote existence even for a filename-only scan.
+    // Content/metadata projections still open normally and propagate open errors.
+    let requires_open = column_ids.iter().any(|column| matches!(*column, 1..=3));
+    let mut paths = Vec::new();
+    for path in &data.files[start..end] {
+        if !requires_open
+            && let Some(filesystem) = rustdb_function::registered_files::lookup(path)
+            && filesystem.is_remote()
+        {
+            rustdb_function::file_system::verify_can_access_file(path)?;
+            if !filesystem.is_file(path).unwrap_or(false) {
+                continue;
+            }
+        }
+        paths.push(path);
+    }
+    let rows = paths.len();
     let mut columns: Vec<Vector> = data
         .types
         .iter()
@@ -195,7 +253,7 @@ fn read_file_scan(
             continue;
         }
         let mut vector = Vector::flat(data.types[column].clone(), rows.max(1));
-        for (row, path) in data.files[start..end].iter().enumerate() {
+        for (row, path) in paths.iter().enumerate() {
             let value = column_value(data, path, column)?;
             if value.is_null() {
                 vector.set_null(row);

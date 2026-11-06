@@ -23,8 +23,8 @@ use crate::single_file_block_manager::SingleFileBlockManager;
 use crate::statistics::BaseStatistics;
 use crate::table::variant_column_data::VariantShreddingConfig;
 use crate::table::{
-    CollectionScanState, FetchType, ParallelTableScanState, RowGroupCollection, RowGroupOrderOptions, ScanOptions,
-    StorageIndex, TableAppendState, TableScanState,
+    CollectionScanState, FetchType, ParallelTableScanState, RowGroupCollection, RowGroupOrderOptions,
+    ScanOptions, StorageIndex, TableAppendState, TableScanState,
 };
 use crate::table_filter::TableFilterSet;
 use crate::transaction::{LocalStorage, LocalTableStorage, Transaction, TransactionData};
@@ -190,13 +190,13 @@ impl TableIoManager {
 #[derive(Debug)]
 pub struct DataTableInfo {
     io: Arc<TableIoManager>,
-    schema: RwLock<String>,
-    table: RwLock<String>,
+    schema: RwLock<rustdb_common::ByteString>,
+    table: RwLock<rustdb_common::ByteString>,
     /// The indexes, shared by every version of the table.
     indexes: TableIndexList,
     /// The storage versions recorded with the indexes read from the database file, until
     /// the indexes are built (`IndexStorageInfo::options`).
-    stored_index_versions: Mutex<HashMap<String, Option<u64>>>,
+    stored_index_versions: Mutex<HashMap<rustdb_common::ByteString, Option<u64>>>,
     /// Held shared by commits that append to the table or remove rows from its indexes,
     /// exclusively by a checkpoint while it writes the table (`checkpoint_lock`).
     checkpoint_lock: Arc<CheckpointLock>,
@@ -207,7 +207,11 @@ pub struct DataTableInfo {
 }
 
 impl DataTableInfo {
-    pub fn new(io: Arc<TableIoManager>, schema: impl Into<String>, table: impl Into<String>) -> Self {
+    pub fn new(
+        io: Arc<TableIoManager>,
+        schema: impl Into<rustdb_common::ByteString>,
+        table: impl Into<rustdb_common::ByteString>,
+    ) -> Self {
         Self {
             io,
             schema: RwLock::new(schema.into()),
@@ -260,7 +264,7 @@ impl DataTableInfo {
     }
 
     /// Records the storage versions of the indexes read with the table.
-    pub fn set_stored_index_versions(&self, versions: HashMap<String, Option<u64>>) {
+    pub fn set_stored_index_versions(&self, versions: HashMap<rustdb_common::ByteString, Option<u64>>) {
         *self
             .stored_index_versions
             .lock()
@@ -270,12 +274,16 @@ impl DataTableInfo {
     /// The storage version of index `name` (`ART::ART`): the one it was stored with
     /// (possibly none) when it is read from the file, else `new_index_version`. A stored
     /// version is used once.
-    pub(crate) fn index_storage_version(&self, name: &str, new_index_version: u64) -> Option<u64> {
+    pub(crate) fn index_storage_version(
+        &self,
+        name: impl AsRef<[u8]>,
+        new_index_version: u64,
+    ) -> Option<u64> {
         match self
             .stored_index_versions
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .remove(name)
+            .remove(name.as_ref())
         {
             Some(stored) => stored,
             None => Some(new_index_version),
@@ -291,15 +299,15 @@ impl DataTableInfo {
         &self.io
     }
 
-    pub fn schema_name(&self) -> String {
+    pub fn schema_name(&self) -> rustdb_common::ByteString {
         self.schema.read().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
-    pub fn table_name(&self) -> String {
+    pub fn table_name(&self) -> rustdb_common::ByteString {
         self.table.read().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
-    pub fn set_table_name(&self, name: impl Into<String>) {
+    pub fn set_table_name(&self, name: impl Into<rustdb_common::ByteString>) {
         *self.table.write().unwrap_or_else(PoisonError::into_inner) = name.into();
     }
 }
@@ -307,14 +315,14 @@ impl DataTableInfo {
 /// A stored column of a table (the storage part of DuckDB's `ColumnDefinition`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ColumnDefinition {
-    pub name: String,
+    pub name: rustdb_common::ByteString,
     pub ty: LogicalType,
     /// `USING COMPRESSION` (`ColumnDefinition::CompressionType`); `Auto` by default.
     pub compression: crate::compression::CompressionType,
 }
 
 impl ColumnDefinition {
-    pub fn new(name: impl Into<String>, ty: LogicalType) -> Self {
+    pub fn new(name: impl Into<rustdb_common::ByteString>, ty: LogicalType) -> Self {
         Self {
             name: name.into(),
             ty,
@@ -359,7 +367,7 @@ pub struct TableConstraints {
     pub foreign_keys: Vec<BoundForeignKey>,
     /// The catalog names of the physical columns, for error messages (empty: the names
     /// the storage was created with; columns can be renamed since).
-    pub column_names: Vec<String>,
+    pub column_names: Vec<rustdb_common::ByteString>,
 }
 
 /// Whether a table is still the current version (DuckDB's `DataTableVersion`).
@@ -400,16 +408,16 @@ pub struct DataTable {
     version: AtomicU8,
 }
 
-pub(crate) fn constraint_error(message: String) -> Error {
-    Error::new(ErrorKind::Constraint, message)
+pub(crate) fn constraint_error(message: impl Into<rustdb_common::ByteString>) -> Error {
+    Error::new_bytes(ErrorKind::Constraint, message.into().into_bytes())
 }
 
 impl DataTable {
     /// An empty table.
     pub fn new(
         io: Arc<TableIoManager>,
-        schema: impl Into<String>,
-        table: impl Into<String>,
+        schema: impl Into<rustdb_common::ByteString>,
+        table: impl Into<rustdb_common::ByteString>,
         columns: Vec<ColumnDefinition>,
     ) -> Arc<Self> {
         let types: Vec<LogicalType> = columns.iter().map(|column| column.ty.clone()).collect();
@@ -426,8 +434,8 @@ impl DataTable {
     /// A table over existing row groups (read from a checkpoint).
     pub fn from_collection(
         io: Arc<TableIoManager>,
-        schema: impl Into<String>,
-        table: impl Into<String>,
+        schema: impl Into<rustdb_common::ByteString>,
+        table: impl Into<rustdb_common::ByteString>,
         columns: Vec<ColumnDefinition>,
         row_groups: RowGroupCollection,
     ) -> Arc<Self> {
@@ -456,7 +464,7 @@ impl DataTable {
         self.columns.iter().map(|column| column.ty.clone()).collect()
     }
 
-    pub fn name(&self) -> String {
+    pub fn name(&self) -> rustdb_common::ByteString {
         self.info.table_name()
     }
 
@@ -526,9 +534,9 @@ impl DataTable {
         if version == TableVersion::MainTable {
             return Ok(());
         }
-        Err(Error::new(
+        Err(Error::new_bytes(
             ErrorKind::Transaction,
-            format!(
+            rustdb_common::byte_format!(
                 "Transaction conflict: attempting to {action} table \"{}\" but it has been {} by a different transaction",
                 self.name(),
                 version.describe()
@@ -541,9 +549,9 @@ impl DataTable {
         if version == TableVersion::MainTable {
             return Ok(());
         }
-        Err(Error::new(
+        Err(Error::new_bytes(
             ErrorKind::Transaction,
-            format!(
+            rustdb_common::byte_format!(
                 "Attempting to modify table {} but another transaction has {} this table",
                 self.name(),
                 version.describe()
@@ -647,7 +655,9 @@ impl DataTable {
         let order = order.map(|options| (options, transaction.data()));
         self.row_groups.initialize_parallel_scan(&state.scan_state, order);
         if let Some(local) = transaction.local_storage().storage(self) {
-            local.collection().initialize_parallel_scan(&state.local_state, order);
+            local
+                .collection()
+                .initialize_parallel_scan(&state.local_state, order);
         }
         state
     }
@@ -660,7 +670,9 @@ impl DataTable {
     ) -> ParallelTableScanState {
         let state = ParallelTableScanState::default();
         if let Some(local) = transaction.local_storage().storage(self) {
-            local.collection().initialize_parallel_scan(&state.local_state, None);
+            local
+                .collection()
+                .initialize_parallel_scan(&state.local_state, None);
         }
         state
     }
@@ -866,35 +878,54 @@ impl DataTable {
     }
 
     /// "NOT NULL constraint failed: t.c", naming the column by `names` if given.
-    fn not_null_error(&self, column: usize, names: &[String]) -> Error {
+    fn not_null_error(&self, column: usize, names: &[rustdb_common::ByteString]) -> Error {
         let name = names.get(column).map_or_else(
             || {
                 self.columns
                     .get(column)
-                    .map_or("", |definition| definition.name.as_str())
+                    .map_or(b"".as_slice(), |definition| definition.name.as_bytes())
             },
-            String::as_str,
+            |name| name.as_bytes(),
         );
-        constraint_error(format!("NOT NULL constraint failed: {}.{name}", self.name()))
+        constraint_error(
+            [
+                b"NOT NULL constraint failed: ".as_slice(),
+                self.name().as_bytes(),
+                b".",
+                name,
+            ]
+            .concat(),
+        )
     }
 
     /// Appends `chunk` to the transaction-local storage after verifying the constraints
     /// (`LocalAppend`).
     pub fn local_append(&self, state: &mut LocalAppendState, chunk: &DataChunk) -> Result<()> {
+        self.local_append_internal(state, chunk, true)
+    }
+
+    fn local_append_internal(
+        &self,
+        state: &mut LocalAppendState,
+        chunk: &DataChunk,
+        verify_constraints: bool,
+    ) -> Result<()> {
         if chunk.is_empty() {
             return Ok(());
         }
         self.check_main_table("insert into")?;
-        if self.has_unique_indexes() {
-            self.verify_unique_indexes(Some(&state.storage), chunk)?;
+        if verify_constraints {
+            if self.has_unique_indexes() {
+                self.verify_unique_indexes(Some(&state.storage), chunk)?;
+            }
+            self.verify_append_constraints(&state.constraints, chunk)?;
+            Self::verify_append_foreign_keys(
+                &state.local_storage,
+                Some(&state.storage),
+                &state.constraints,
+                chunk,
+            )?;
         }
-        self.verify_append_constraints(&state.constraints, chunk)?;
-        Self::verify_append_foreign_keys(
-            &state.local_storage,
-            Some(&state.storage),
-            &state.constraints,
-            chunk,
-        )?;
         if !state.storage.append_indexes.is_empty() {
             Self::append_to_indexes(
                 &state.storage.append_indexes,
@@ -929,6 +960,18 @@ impl DataTable {
     ) -> Result<()> {
         let mut state = self.initialize_local_append(transaction, constraints)?;
         let result = self.local_append(&mut state, chunk);
+        self.finalize_local_append(state);
+        result
+    }
+
+    /// Replays committed rows without rechecking global constraints. An index
+    /// created in the same WAL transaction may already contain their keys.
+    pub fn append_wal_chunk(self: &Arc<Self>, transaction: &Transaction, chunk: &DataChunk) -> Result<()> {
+        let mut state = self.initialize_local_append(transaction, TableConstraints::default())?;
+        let result = self.local_append_internal(&mut state, chunk, false);
+        state
+            .storage
+            .set_index_append_mode(crate::index::IndexAppendMode::InsertDuplicates);
         self.finalize_local_append(state);
         result
     }
@@ -1306,7 +1349,7 @@ impl DataTable {
         self: &Arc<Self>,
         transaction: &Transaction,
         column: usize,
-        names: &[String],
+        names: &[rustdb_common::ByteString],
     ) -> Result<Arc<Self>> {
         let _lock = self.append_lock();
         let local = transaction.local_storage().storage(self);

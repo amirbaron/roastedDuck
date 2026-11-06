@@ -20,7 +20,7 @@ use rustdb_ast::{
 };
 use std::collections::HashSet;
 
-use rustdb_common::{CaseInsensitiveMap, CaseInsensitiveSet, Error, LogicalIndex, Result};
+use rustdb_common::{ByteString, CaseInsensitiveMap, CaseInsensitiveSet, Error, LogicalIndex, Result};
 use rustdb_function::cast::{CastFunctionSet, ValueCast};
 use rustdb_pg_parser::nodes::{
     AConst, AlterDatabaseStmt, AlterDatabaseType, AlterSeqStmt, AlterTableCmd, AlterTableStmt,
@@ -47,14 +47,14 @@ const DEFAULT_SCHEMA: &str = "main";
 const TEMP_CATALOG: &str = "temp";
 
 /// A `CreateInfo` with the base-class defaults (`CreateInfo(type, schema)`).
-fn create_info(schema: &str, kind: CreateInfoKind) -> CreateInfo {
+fn create_info(schema: impl Into<ByteString>, kind: CreateInfoKind) -> CreateInfo {
     CreateInfo {
-        catalog: String::new(),
-        schema: schema.to_owned(),
+        catalog: String::new().into(),
+        schema: schema.into(),
         temporary: false,
         internal: false,
         on_conflict: OnCreateConflict::ErrorOnConflict,
-        sql: String::new(),
+        sql: ByteString::new(),
         comment: Value::default(),
         tags: CaseInsensitiveMap::default(),
         dependencies: LogicalDependencyList::default(),
@@ -63,7 +63,7 @@ fn create_info(schema: &str, kind: CreateInfoKind) -> CreateInfo {
 }
 
 /// `ColumnDefinition(name, type)`.
-fn column_definition(name: String, logical_type: LogicalType) -> ColumnDefinition {
+fn column_definition(name: ByteString, logical_type: LogicalType) -> ColumnDefinition {
     ColumnDefinition {
         name,
         logical_type,
@@ -116,10 +116,15 @@ fn verify_column_refs(expr: &ParsedExpression) -> Result<()> {
 fn set_generated_expression(column: &mut ColumnDefinition, expr: ParsedExpression) -> Result<()> {
     column.category = TableColumnType::Generated;
     if has_subquery(&expr) {
-        return Err(Error::parser(format!(
-            "Expression of generated column \"{}\" contains a subquery, which isn't allowed",
-            column.name
-        )));
+        return Err(Error::new_bytes(
+            rustdb_common::ErrorKind::Parser,
+            [
+                b"Expression of generated column \"".as_slice(),
+                column.name.as_bytes(),
+                b"\" contains a subquery, which isn't allowed",
+            ]
+            .concat(),
+        ));
     }
     verify_column_refs(&expr)?;
     let expression = if column.logical_type.id() == LogicalTypeId::Any {
@@ -135,7 +140,7 @@ fn set_generated_expression(column: &mut ColumnDefinition, expr: ParsedExpressio
 #[derive(Default)]
 struct ColumnListBuilder {
     list: ColumnList,
-    names: HashSet<String>,
+    names: HashSet<rustdb_common::ByteString>,
 }
 
 impl ColumnListBuilder {
@@ -147,10 +152,15 @@ impl ColumnListBuilder {
     /// `ColumnList::AddColumn` (with `AddToNameMap`): names must be unique.
     fn add(&mut self, column: ColumnDefinition) -> Result<()> {
         if !self.names.insert(column.name.to_ascii_lowercase()) {
-            return Err(Error::catalog(format!(
-                "Column with name {} already exists!",
-                column.name
-            )));
+            return Err(Error::new_bytes(
+                rustdb_common::ErrorKind::Catalog,
+                [
+                    b"Column with name ".as_slice(),
+                    column.name.as_bytes(),
+                    b" already exists!",
+                ]
+                .concat(),
+            ));
         }
         self.list.columns.push(column);
         Ok(())
@@ -168,7 +178,7 @@ fn foreign_key_action_supported(action: u8) -> bool {
 /// `TransformForeignKeyConstraint`.
 fn transform_foreign_key_constraint(
     constraint: &PgConstraint,
-    override_fk_column: Option<&str>,
+    override_fk_column: Option<&[u8]>,
 ) -> Result<Constraint> {
     if !foreign_key_action_supported(constraint.fk_upd_action)
         || !foreign_key_action_supported(constraint.fk_del_action)
@@ -186,7 +196,7 @@ fn transform_foreign_key_constraint(
     let schema = pktable.schemaname.clone().unwrap_or_default();
     let table = pktable.relname.clone().unwrap_or_default();
     let fk_columns = match override_fk_column {
-        Some(column) => vec![column.to_owned()],
+        Some(column) => vec![column.into()],
         None => string_list(&constraint.fk_attrs)?,
     };
     let pk_columns = string_list(&constraint.pk_attrs)?;
@@ -201,8 +211,8 @@ fn transform_foreign_key_constraint(
         ));
     }
     Ok(Constraint::ForeignKey(Box::new(ForeignKeyConstraint {
-        pk_columns,
-        fk_columns,
+        pk_columns: pk_columns.into_iter().collect(),
+        fk_columns: fk_columns.into_iter().collect(),
         fk_type: ForeignKeyType::FkTypeForeignKeyTable,
         schema,
         table,
@@ -214,7 +224,7 @@ fn transform_foreign_key_constraint(
 /// `TransformTypeName` for the parsed element values of `CREATE TYPE ... AS ENUM (...)`:
 /// string constants, unique.
 fn transform_enum_values(values: &List) -> Result<LogicalType> {
-    let mut names: Vec<String> = Vec::with_capacity(values.len());
+    let mut names: Vec<rustdb_common::ByteString> = Vec::with_capacity(values.len());
     for node in values {
         let constant: &AConst = cast_node(node)?;
         let PgValue::String(text) = &constant.val else {
@@ -224,17 +234,17 @@ fn transform_enum_values(values: &List) -> Result<LogicalType> {
     }
     let mut seen = std::collections::HashSet::with_capacity(names.len());
     for name in &names {
-        if !seen.insert(name.as_str()) {
-            return Err(Error::invalid_input(format!(
+        if !seen.insert(name.as_bytes()) {
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "Attempted to create ENUM type with duplicate value {name}"
             )));
         }
     }
-    Ok(LogicalType::enum_type(names))
+    Ok(LogicalType::enum_type_bytes(names))
 }
 
 /// `GenerateCreateEnumStmt`'s `CREATE TEMPORARY TYPE name AS ENUM (query)`.
-pub(crate) fn create_enum_type_from_query(name: String, query: SelectStatement) -> SqlStatementKind {
+pub(crate) fn create_enum_type_from_query(name: ByteString, query: SelectStatement) -> SqlStatementKind {
     let mut info = create_info(
         "",
         CreateInfoKind::Type(CreateTypeInfo {
@@ -249,16 +259,23 @@ pub(crate) fn create_enum_type_from_query(name: String, query: SelectStatement) 
 }
 
 /// `EnumUtil::FromString<SecretPersistType>`.
-fn secret_persist_type(text: &str) -> Result<SecretPersistType> {
-    SecretPersistType::from_name(text).ok_or_else(|| {
+fn secret_persist_type(text: &[u8]) -> Result<SecretPersistType> {
+    [
+        SecretPersistType::Default,
+        SecretPersistType::Temporary,
+        SecretPersistType::Persistent,
+    ]
+    .into_iter()
+    .find(|mode| mode.name().as_bytes().eq_ignore_ascii_case(text))
+    .ok_or_else(|| {
         crate::candidates::enum_error(text, "SecretPersistType", &["DEFAULT", "TEMPORARY", "PERSISTENT"])
     })
 }
 
 /// `GetConstantExpressionValue` of CREATE SECRET: a constant's value, a column's name,
 /// or NULL.
-fn constant_expression_value(expr: &ParsedExpression) -> Value {
-    match &expr.kind {
+fn constant_expression_value(expr: &ParsedExpression) -> Result<Value> {
+    Ok(match &expr.kind {
         ParsedExpressionKind::Constant(constant) if expr.expression_type == ExpressionType::ValueConstant => {
             constant.value.clone()
         }
@@ -268,10 +285,10 @@ fn constant_expression_value(expr: &ParsedExpression) -> Value {
             } else {
                 expr.alias.clone()
             };
-            Value::varchar(name)
+            Value::try_varchar(name.as_bytes())?
         }
         _ => Value::default(),
-    }
+    })
 }
 
 /// An `AlterInfo` on the entry named by `data`.
@@ -289,9 +306,9 @@ fn alter_info(data: &AlterEntryData, kind: AlterInfoKind) -> AlterInfo {
 /// DuckDB's `AlterEntryData`.
 #[derive(Clone, Debug)]
 struct AlterEntryData {
-    catalog: String,
-    schema: String,
-    name: String,
+    catalog: ByteString,
+    schema: ByteString,
+    name: ByteString,
     if_not_found: OnEntryNotFound,
 }
 
@@ -308,7 +325,7 @@ impl<'a> Transformer<'a> {
     /// are rejected (RESET).
     fn transform_table_options(
         &mut self,
-        options: &mut CiHashMap<ParsedExpression>,
+        options: &mut CiHashMap<ParsedExpression, rustdb_common::ByteString>,
         list: &'a List,
         throw_if_value: bool,
     ) -> Result<()> {
@@ -320,7 +337,7 @@ impl<'a> Transformer<'a> {
                 .unwrap_or_default()
                 .to_ascii_lowercase();
             if options.contains_key(&lower_name) {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "Duplicate table property \"{lower_name}\""
                 )));
             }
@@ -330,7 +347,7 @@ impl<'a> Transformer<'a> {
             };
             let expr = self.transform_expression(arg)?;
             if throw_if_value {
-                return Err(Error::parser(format!("\"{expr}\"")));
+                return Err(Error::parser(rustdb_common::byte_format!("\"{expr}\"")));
             }
             options.insert(lower_name, expr);
         }
@@ -354,8 +371,8 @@ impl<'a> Transformer<'a> {
                 }
                 let collation = Self::transform_collation(Some(collate))?;
                 type_expr.parameters.push(TypeParameter {
-                    name: "collation".to_owned(),
-                    value: TypeParameterValue::Constant(Value::varchar(collation)),
+                    name: "collation".to_owned().into(),
+                    value: TypeParameterValue::Constant(Value::try_varchar(&collation)?),
                     query_location: None,
                 });
                 unbound_type(type_expr)
@@ -375,7 +392,7 @@ impl<'a> Transformer<'a> {
                 Ok(Constraint::Unique(UniqueConstraint {
                     is_primary_key: constraint.contype == ConstrType::Primary,
                     index: LogicalIndex(u64::MAX),
-                    columns: string_list(&constraint.keys)?,
+                    columns: string_list(&constraint.keys)?.into_iter().collect(),
                 }))
             }
             ConstrType::Check => {
@@ -407,15 +424,20 @@ impl<'a> Transformer<'a> {
             ConstrType::Primary | ConstrType::Unique => Some(Constraint::Unique(UniqueConstraint {
                 is_primary_key: constraint.contype == ConstrType::Primary,
                 index,
-                columns: vec![column.name.clone()],
+                columns: vec![column.name.as_bytes().to_owned().into()],
             })),
             ConstrType::Null => None,
             ConstrType::GeneratedVirtual => {
                 if has_default_value(column) {
-                    return Err(Error::invalid_input(format!(
-                        "\"{}\" has a DEFAULT value set, it can not become a GENERATED column",
-                        column.name
-                    )));
+                    return Err(Error::new_bytes(
+                        rustdb_common::ErrorKind::InvalidInput,
+                        [
+                            b"\"".as_slice(),
+                            column.name.as_bytes(),
+                            b"\" has a DEFAULT value set, it can not become a GENERATED column",
+                        ]
+                        .concat(),
+                    ));
                 }
                 let expr = self.transform_required(constraint.raw_expr.as_ref(), "generated expression")?;
                 set_generated_expression(column, expr)?;
@@ -431,24 +453,32 @@ impl<'a> Transformer<'a> {
             }
             ConstrType::Compression => {
                 let name = constraint.compression_name.as_deref().unwrap_or_default();
-                let compression_type = CompressionType::from_name(name).ok_or_else(|| {
-                    let names: Vec<&str> = CompressionType::ALL.iter().map(|value| value.name()).collect();
-                    crate::candidates::enum_error(name, "CompressionType", &names)
-                })?;
+                let compression_type = CompressionType::ALL
+                    .iter()
+                    .copied()
+                    .find(|kind| kind.name().as_bytes().eq_ignore_ascii_case(name))
+                    .ok_or_else(|| {
+                        let names: Vec<&str> =
+                            CompressionType::ALL.iter().map(|value| value.name()).collect();
+                        crate::candidates::enum_error(name, "CompressionType", &names)
+                    })?;
                 if matches!(
                     compression_type,
                     CompressionType::CompressionAuto
                         | CompressionType::CompressionConstant
                         | CompressionType::CompressionEmpty
                 ) {
-                    return Err(Error::invalid_input(format!(
+                    return Err(Error::invalid_input(rustdb_common::byte_format!(
                         "Compression method {name} cannot be forced"
                     )));
                 }
                 column.compression_type = compression_type;
                 None
             }
-            ConstrType::Foreign => Some(transform_foreign_key_constraint(constraint, Some(&column.name))?),
+            ConstrType::Foreign => Some(transform_foreign_key_constraint(
+                constraint,
+                Some(column.name.as_bytes()),
+            )?),
             _ => return Err(Error::not_implemented("Constraint not implemented!")),
         })
     }
@@ -505,7 +535,7 @@ impl<'a> Transformer<'a> {
         }
         table.partition_keys = self.transform_expressions(&stmt.partition_list)?;
         table.sort_keys = self.transform_expressions(&stmt.sort_list)?;
-        let mut options = CiHashMap::new();
+        let mut options = CiHashMap::new_with_keys();
         self.transform_table_options(&mut options, &stmt.options, false)?;
         table.options = options.into_ordered().into_iter().collect();
         if column_count == 0 {
@@ -546,7 +576,7 @@ impl<'a> Transformer<'a> {
         let mut query = self.transform_select_stmt_node(query_node, false)?;
         let partition_keys = self.transform_expressions(&into.partition_list)?;
         let sort_keys = self.transform_expressions(&into.sort_list)?;
-        let mut options = CiHashMap::new();
+        let mut options = CiHashMap::new_with_keys();
         self.transform_table_options(&mut options, &into.options, false)?;
         if into.skip_data {
             // WITH NO DATA: wrap the query in a LIMIT 0.
@@ -600,7 +630,7 @@ impl<'a> Transformer<'a> {
         let temporary = view.relpersistence == RelPersistence::Temp;
         let mut catalog = qname.catalog;
         if temporary && catalog.is_empty() {
-            TEMP_CATALOG.clone_into(&mut catalog);
+            catalog = TEMP_CATALOG.into();
         }
         let on_conflict = transform_on_conflict(stmt.onconflict);
         let query = self.transform_select_stmt_node(required(stmt.query.as_ref(), "view query")?, false)?;
@@ -620,7 +650,7 @@ impl<'a> Transformer<'a> {
         }
         let view_info = CreateViewInfo {
             view_name: qname.name,
-            aliases,
+            aliases: aliases.into_iter().collect(),
             types: Vec::new(),
             query: Box::new(query),
             names: Vec::new(),
@@ -661,37 +691,39 @@ impl<'a> Transformer<'a> {
                     None => {}
                     Some(Node::Value(PgValue::Integer(integer))) => option_value = *integer,
                     Some(Node::Value(PgValue::Float(text))) => {
-                        option_value = Value::varchar(text)
+                        option_value = Value::try_varchar(text)?
                             .try_cast_as(&CastFunctionSet::new(), &LogicalType::BIGINT, true)
                             .ok()
                             .and_then(|value| value.as_i128())
                             .and_then(|value| i64::try_from(value).ok())
                             .ok_or_else(|| {
-                                Error::parser(format!(
+                                Error::parser(rustdb_common::byte_format!(
                                     "Expected an integer argument for option {option_name}"
                                 ))
                             })?;
                     }
                     Some(_) => {
-                        return Err(Error::parser(format!(
+                        return Err(Error::parser(rustdb_common::byte_format!(
                             "Expected an integer argument for option {option_name}"
                         )));
                     }
                 }
                 let (key, label) = match option_name {
-                    "increment" => ("increment", "Increment"),
-                    "minvalue" => ("minvalue", "Minvalue"),
-                    "maxvalue" => ("maxvalue", "Maxvalue"),
-                    "start" => ("start", "Start"),
-                    "cycle" => ("cycle", "Cycle"),
+                    b"increment" => ("increment", "Increment"),
+                    b"minvalue" => ("minvalue", "Minvalue"),
+                    b"maxvalue" => ("maxvalue", "Maxvalue"),
+                    b"start" => ("start", "Start"),
+                    b"cycle" => ("cycle", "Cycle"),
                     _ => {
-                        return Err(Error::parser(format!(
+                        return Err(Error::parser(rustdb_common::byte_format!(
                             "Unrecognized option \"{option_name}\" for CREATE SEQUENCE"
                         )));
                     }
                 };
                 if used.contains(&key) {
-                    return Err(Error::parser(format!("{label} should be passed at most once")));
+                    return Err(Error::parser(rustdb_common::byte_format!(
+                        "{label} should be passed at most once"
+                    )));
                 }
                 used.push(key);
                 if nodef {
@@ -738,21 +770,24 @@ impl<'a> Transformer<'a> {
         }
         let temporary = sequence_var.relpersistence == RelPersistence::Temp;
         if sequence.max_value <= sequence.min_value {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(rustdb_common::byte_format!(
                 "MINVALUE ({}) must be less than MAXVALUE ({})",
-                sequence.min_value, sequence.max_value
+                sequence.min_value,
+                sequence.max_value
             )));
         }
         if sequence.start_value < sequence.min_value {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(rustdb_common::byte_format!(
                 "START value ({}) cannot be less than MINVALUE ({})",
-                sequence.start_value, sequence.min_value
+                sequence.start_value,
+                sequence.min_value
             )));
         }
         if sequence.start_value > sequence.max_value {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(rustdb_common::byte_format!(
                 "START value ({}) cannot be greater than MAXVALUE ({})",
-                sequence.start_value, sequence.max_value
+                sequence.start_value,
+                sequence.max_value
             )));
         }
         let mut info = create_info("", CreateInfoKind::Sequence(Box::new(sequence)));
@@ -767,7 +802,7 @@ impl<'a> Transformer<'a> {
     fn transform_index_parameters(
         &mut self,
         list: &'a List,
-        relation_name: &str,
+        relation_name: &rustdb_common::ByteString,
     ) -> Result<Vec<ParsedExpression>> {
         let mut expressions = Vec::with_capacity(list.len());
         for node in list {
@@ -811,7 +846,7 @@ impl<'a> Transformer<'a> {
                 "Please provide an index name, e.g., CREATE INDEX my_name ...",
             ));
         };
-        let mut options: CiHashMap<Value> = CiHashMap::new();
+        let mut options: CiHashMap<Value, ByteString> = CiHashMap::new_with_keys();
         for node in &stmt.options {
             let def_elem: &'a DefElem = cast_node(node)?;
             let value = match &def_elem.arg {
@@ -849,7 +884,7 @@ impl<'a> Transformer<'a> {
             names: Vec::new(),
             column_ids: Vec::new(),
             options: options.into_ordered().into_iter().collect(),
-            index_type_name,
+            index_type_name: index_type_name.into(),
         };
         let mut info = create_info("", CreateInfoKind::Index(Box::new(index)));
         info.on_conflict = on_conflict;
@@ -877,8 +912,8 @@ impl<'a> Transformer<'a> {
             types: Vec::new(),
             kind,
         };
-        let mut parameter_names = CaseInsensitiveSet::default();
-        let mut defaults: CiHashMap<ParsedExpression> = CiHashMap::new();
+        let mut parameter_names = CaseInsensitiveSet::<ByteString>::default();
+        let mut defaults: CiHashMap<ParsedExpression, rustdb_common::ByteString> = CiHashMap::new_with_keys();
         for node in &def.params {
             let Node::FunctionParameter(param) = node else {
                 return Err(Error::internal("TODO"));
@@ -886,7 +921,7 @@ impl<'a> Transformer<'a> {
             let param: &'a FunctionParameter = param;
             let name = param.name.clone().unwrap_or_default();
             if !parameter_names.insert(name.clone()) {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "Duplicate parameter '{name}' in macro definition"
                 )));
             }
@@ -899,7 +934,7 @@ impl<'a> Transformer<'a> {
             });
             if let Some(default_value) = &param.default_value {
                 let mut default_expr = self.transform_expression(default_value)?;
-                default_expr.alias.clone_from(&name);
+                default_expr.alias = name.clone();
                 defaults.set(name, default_expr);
             } else if !defaults.is_empty() {
                 return Err(Error::parser(
@@ -931,7 +966,7 @@ impl<'a> Transformer<'a> {
         let temporary = match name.relpersistence {
             RelPersistence::Temp => true,
             RelPersistence::Unlogged => {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "Unlogged flag not supported for macros: '{}'",
                     qname.name
                 )));
@@ -995,7 +1030,7 @@ impl<'a> Transformer<'a> {
         info: &mut CreateSecretInfo,
         options: &'a List,
     ) -> Result<()> {
-        let mut generic: CiHashMap<ParsedExpression> = CiHashMap::new();
+        let mut generic: CiHashMap<ParsedExpression, rustdb_common::ByteString> = CiHashMap::new_with_keys();
         for node in options {
             let def_elem: &'a DefElem = cast_node(node)?;
             let lower_name = def_elem
@@ -1004,14 +1039,14 @@ impl<'a> Transformer<'a> {
                 .unwrap_or_default()
                 .to_ascii_lowercase();
             let arg = def_elem.arg.as_ref();
-            match lower_name.as_str() {
-                "scope" => info.scope = self.transform_opt_boxed(arg)?,
-                "type" | "provider" => {
+            match lower_name.as_slice() {
+                b"scope" => info.scope = self.transform_opt_boxed(arg)?,
+                b"type" | b"provider" => {
                     let mut expr = self.transform_required(arg, "secret option")?;
                     if expr.expression_type == ExpressionType::ColumnRef {
-                        expr = build::constant(constant_expression_value(&expr));
+                        expr = build::constant(constant_expression_value(&expr)?);
                     }
-                    if lower_name == "type" {
+                    if lower_name == b"type" {
                         info.secret_type = Some(Box::new(expr));
                     } else {
                         info.provider = Some(Box::new(expr));
@@ -1019,13 +1054,13 @@ impl<'a> Transformer<'a> {
                 }
                 _ => {
                     if generic.contains_key(&lower_name) {
-                        return Err(Error::binder(format!(
+                        return Err(Error::binder(rustdb_common::byte_format!(
                             "Duplicate query param found while parsing create secret: '{lower_name}'"
                         )));
                     }
                     let mut expr = self.transform_required(arg, "secret option")?;
                     if expr.expression_type == ExpressionType::ColumnRef {
-                        expr = build::constant(constant_expression_value(&expr));
+                        expr = build::constant(constant_expression_value(&expr)?);
                     }
                     generic.set(lower_name, expr);
                 }
@@ -1047,8 +1082,8 @@ impl<'a> Transformer<'a> {
         )?;
         let mut secret = CreateSecretInfo {
             persist_type,
-            storage_type: String::new(),
-            name: String::new(),
+            storage_type: ByteString::new(),
+            name: String::new().into(),
             scope: None,
             secret_type: None,
             provider: None,
@@ -1067,14 +1102,15 @@ impl<'a> Transformer<'a> {
             ));
         };
         if secret.name.is_empty() {
-            let value = constant_expression_value(secret_type);
+            let value = constant_expression_value(secret_type)?;
             if value.is_null() {
                 return Err(Error::invalid_input(
                     "Can not combine a non-constant expression for the secret type with a default-named secret. \
                      Either provide an explicit secret name or use a constant expression for the secret type.",
                 ));
             }
-            secret.name = format!("__default_{}", value.to_varchar()?.to_ascii_lowercase());
+            secret.name =
+                rustdb_common::byte_format!("__default_{}", value.to_varchar_bytes()?.to_ascii_lowercase());
         }
         let mut info = create_info(DEFAULT_SCHEMA, CreateInfoKind::Secret(Box::new(secret)));
         info.on_conflict = on_conflict;
@@ -1099,9 +1135,9 @@ impl<'a> Transformer<'a> {
         };
         let mut info = DropInfo {
             catalog_type,
-            catalog: String::new(),
-            schema: String::new(),
-            name: String::new(),
+            catalog: String::new().into(),
+            schema: String::new().into(),
+            name: String::new().into(),
             if_not_found: OnEntryNotFound::ThrowException,
             cascade: false,
             allow_drop_internal: false,
@@ -1114,24 +1150,24 @@ impl<'a> Transformer<'a> {
         if stmt.remove_type == ObjectType::Schema {
             match names.as_slice() {
                 [catalog, name] => {
-                    info.catalog.clone_from(catalog);
-                    info.name.clone_from(name);
+                    info.catalog = catalog.into();
+                    info.name = name.into();
                 }
-                [name] => info.name.clone_from(name),
+                [name] => info.name = name.into(),
                 _ => return Err(Error::parser("Expected \"catalog.schema\" or \"schema\"")),
             }
         } else {
             match names.as_slice() {
                 [catalog, schema, name] => {
-                    info.catalog.clone_from(catalog);
-                    info.schema.clone_from(schema);
-                    info.name.clone_from(name);
+                    info.catalog = catalog.into();
+                    info.schema = schema.into();
+                    info.name = name.into();
                 }
                 [schema, name] => {
-                    info.schema.clone_from(schema);
-                    info.name.clone_from(name);
+                    info.schema = schema.into();
+                    info.name = name.into();
                 }
-                [name] => info.name.clone_from(name),
+                [name] => info.name = name.into(),
                 _ => {
                     return Err(Error::parser(
                         "Expected \"catalog.schema.name\", \"schema.name\"or \"name\"",
@@ -1161,8 +1197,8 @@ impl<'a> Transformer<'a> {
         }
         let info = DropInfo {
             catalog_type: CatalogType::SecretEntry,
-            catalog: String::new(),
-            schema: String::new(),
+            catalog: String::new().into(),
+            schema: String::new().into(),
             name: stmt.secret_name.clone().unwrap_or_default(),
             if_not_found: if stmt.missing_ok {
                 OnEntryNotFound::ReturnNull
@@ -1231,7 +1267,7 @@ impl<'a> Transformer<'a> {
                         AlterTableInfo::AddField(Box::new(AddFieldInfo {
                             new_field: column,
                             if_field_not_exists: command.missing_ok,
-                            column_path: names,
+                            column_path: names.into_iter().collect(),
                         })),
                     )
                 } else if command.missing_ok
@@ -1271,7 +1307,7 @@ impl<'a> Transformer<'a> {
                     _ => alter_table(
                         &data,
                         AlterTableInfo::RemoveField(RemoveFieldInfo {
-                            column_path: names,
+                            column_path: names.into_iter().collect(),
                             if_column_exists: command.missing_ok,
                             cascade,
                         }),
@@ -1362,7 +1398,7 @@ impl<'a> Transformer<'a> {
                 alter_table(&data, AlterTableInfo::SetSortedBy(SetSortedByInfo { orders }))
             }
             AlterTableType::SetRelOptions => {
-                let mut options = CiHashMap::new();
+                let mut options = CiHashMap::new_with_keys();
                 self.transform_table_options(&mut options, &command.options, false)?;
                 alter_table(
                     &data,
@@ -1372,9 +1408,9 @@ impl<'a> Transformer<'a> {
                 )
             }
             AlterTableType::ResetRelOptions => {
-                let mut options = CiHashMap::new();
+                let mut options = CiHashMap::new_with_keys();
                 self.transform_table_options(&mut options, &command.options, true)?;
-                let mut names: CiHashMap<()> = CiHashMap::new();
+                let mut names: CiHashMap<(), ByteString> = CiHashMap::new_with_keys();
                 for (name, _) in options.iter() {
                     names.insert(name.to_owned(), ());
                 }
@@ -1408,8 +1444,8 @@ impl<'a> Transformer<'a> {
                 };
                 let data = AlterEntryData {
                     catalog: database_name,
-                    schema: String::new(),
-                    name: String::new(),
+                    schema: String::new().into(),
+                    name: String::new().into(),
                     if_not_found,
                 };
                 Ok(SqlStatementKind::Alter(Box::new(alter_info(
@@ -1434,7 +1470,7 @@ impl<'a> Transformer<'a> {
         for node in &stmt.options {
             let def_elem: &DefElem = cast_node(node)?;
             let option_name = def_elem.defname.as_deref().unwrap_or_default();
-            if option_name != "owned_by" {
+            if option_name != b"owned_by" {
                 return Err(Error::not_implemented("ALTER SEQUENCE option not supported yet!"));
             }
             if owned_by_seen {
@@ -1442,12 +1478,12 @@ impl<'a> Transformer<'a> {
             }
             owned_by_seen = true;
             let Some(arg) = &def_elem.arg else {
-                return Err(Error::internal(format!(
+                return Err(Error::internal(rustdb_common::byte_format!(
                     "Expected an argument for option {option_name}"
                 )));
             };
             let Node::List(values) = arg else {
-                return Err(Error::internal(format!(
+                return Err(Error::internal(rustdb_common::byte_format!(
                     "Expected a string argument for option {option_name}"
                 )));
             };
@@ -1457,9 +1493,9 @@ impl<'a> Transformer<'a> {
             }
             let (owner_schema, owner_name) = match names.as_slice() {
                 [schema, name] => (schema.clone(), name.clone()),
-                [name] => (DEFAULT_SCHEMA.to_owned(), name.clone()),
+                [name] => (DEFAULT_SCHEMA.into(), name.clone()),
                 _ => {
-                    return Err(Error::internal(format!(
+                    return Err(Error::internal(rustdb_common::byte_format!(
                         "Wrong argument for {option_name}. Expected either <schema>.<name> or <name>"
                     )));
                 }
@@ -1511,7 +1547,7 @@ impl<'a> Transformer<'a> {
                     alter_table(
                         &data,
                         AlterTableInfo::RenameField(RenameFieldInfo {
-                            column_path: names,
+                            column_path: names.into_iter().collect(),
                             new_name,
                         }),
                     )
@@ -1536,24 +1572,24 @@ impl<'a> Transformer<'a> {
 
     /// `TransformCommentOn`.
     pub(crate) fn transform_comment_on(&mut self, stmt: &'a CommentOnStmt) -> Result<SqlStatementKind> {
-        let mut qualified_name = QualifiedName::default();
-        let mut column_name = String::new();
+        let mut qualified_name: QualifiedName<ByteString> = QualifiedName::default();
+        let mut column_name = ByteString::new();
         if stmt.object_type == ObjectType::Column {
             let expr = self.transform_required(stmt.column_expr.as_ref(), "column")?;
             let ParsedExpressionKind::ColumnRef(column_ref) = &expr.kind else {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "Unexpected expression found, expected column reference to comment on (e.g. \
                      'schema.table.column'), found '{expr}'"
                 )));
             };
             let names = &column_ref.column_names;
             if names.len() > 4 {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "Invalid column reference: '{expr}', too many dots"
                 )));
             }
             if names.len() < 2 {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "Invalid column reference: '{expr}', please specify a table"
                 )));
             }
@@ -1566,7 +1602,12 @@ impl<'a> Transformer<'a> {
                 qualified_name.schema.clone_from(&names[0]);
             }
         } else {
-            qualified_name = transform_qualified_name(required(stmt.name.as_deref(), "object name")?)?;
+            let text_name = transform_qualified_name(required(stmt.name.as_deref(), "object name")?)?;
+            qualified_name = QualifiedName {
+                catalog: text_name.catalog,
+                schema: text_name.schema,
+                name: text_name.name,
+            };
         }
         let value = self.transform_required(stmt.value.as_ref(), "comment")?;
         let ParsedExpressionKind::Constant(constant) = value.kind else {
@@ -1629,7 +1670,7 @@ fn transform_and_materialize_alter(
     column: ColumnDefinition,
     missing_ok: bool,
 ) -> SqlStatementKind {
-    let column_name = column.name.clone();
+    let column_name = column.name.as_bytes().to_owned();
     let default = column.expression.clone();
     let mut null_column = column;
     null_column.expression = Some(Box::new(build::constant(Value::default())));
@@ -1652,7 +1693,7 @@ fn transform_and_materialize_alter(
         from_table: None,
         set_info: Box::new(UpdateSetInfo {
             condition: None,
-            columns: vec![column_name.clone()],
+            columns: vec![column_name.clone().into()],
             expressions: default.iter().map(|expr| (**expr).clone()).collect(),
         }),
         returning_list: Vec::new(),
@@ -1662,7 +1703,7 @@ fn transform_and_materialize_alter(
     let set_default = alter_table(
         data,
         AlterTableInfo::SetDefault(SetDefaultInfo {
-            column_name,
+            column_name: column_name.into(),
             expression: default,
         }),
     );

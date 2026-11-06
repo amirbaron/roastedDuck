@@ -698,7 +698,7 @@ impl<'a> RemoveUnusedColumns<'a> {
             let key = if struct_type.is_unnamed_struct() {
                 Value::bigint(child_index as i64 + 1)
             } else {
-                Value::varchar(name)
+                Value::try_varchar(name)?
             };
             target = self
                 .optimizer
@@ -1258,7 +1258,7 @@ fn extract_chain(expression: &Expression) -> Option<(ColumnBinding, Vec<ColumnIn
     };
     if !matches!(
         &*function.function.name,
-        "struct_extract_at" | "struct_extract" | "array_extract" | "variant_extract"
+        b"struct_extract_at" | b"struct_extract" | b"array_extract" | b"variant_extract"
     ) || function.bind_info.is_none()
     {
         return None;
@@ -1277,7 +1277,7 @@ fn extract_chain(expression: &Expression) -> Option<(ColumnBinding, Vec<ColumnIn
             if key.logical_type().id() != LogicalTypeId::Varchar {
                 return None;
             }
-            ColumnIndex::field(key.as_str()?)
+            ColumnIndex::field(key.as_bytes()?)
         }
         _ => return None,
     };
@@ -1291,15 +1291,16 @@ fn extract_chain(expression: &Expression) -> Option<(ColumnBinding, Vec<ColumnIn
 
 /// The field a struct extract reads (its `StructExtractBindData::index`): by name
 /// (case-insensitive) or by 1-based position.
-fn struct_extract_index(name: &str, input: &Expression, key: &Expression) -> Option<u64> {
+fn struct_extract_index(name: impl AsRef<[u8]>, input: &Expression, key: &Expression) -> Option<u64> {
+    let name = name.as_ref();
     let key = key.as_constant()?;
-    if name != "struct_extract_at" && key.logical_type().id() == LogicalTypeId::Varchar {
-        let key = key.as_str()?.to_lowercase();
+    if name != b"struct_extract_at" && key.logical_type().id() == LogicalTypeId::Varchar {
+        let key = key.as_bytes()?;
         let position = input
             .return_type
             .struct_children()?
             .iter()
-            .position(|(field, _)| field.to_lowercase() == key)?;
+            .position(|(field, _)| field.eq_ignore_ascii_case(key))?;
         return Some(position as u64);
     }
     let position = key.as_i128()?;

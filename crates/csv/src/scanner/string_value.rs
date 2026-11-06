@@ -150,6 +150,8 @@ pub struct StringValueResult {
     extra_delimiter_bytes: u64,
     null_str: Vec<Vec<u8>>,
     pub parse_chunk: Vec<Vector>,
+    /// Input buffers already retained by each string vector in the current chunk.
+    string_buffer_references: HashSet<(usize, u64)>,
     parse_types_logical: Vec<LogicalType>,
     pub number_of_rows: i64,
     pub cur_col_id: u64,
@@ -161,7 +163,7 @@ pub struct StringValueResult {
     pub quoted_new_line: bool,
     pub try_row: bool,
     parse_types: Vec<ParseTypeInfo>,
-    pub names: Vec<String>,
+    pub names: Vec<rustdb_common::ByteString>,
     projected_columns: Vec<bool>,
     projecting_columns: bool,
     pub chunk_col_id: u64,
@@ -173,7 +175,7 @@ pub struct StringValueResult {
     timestamp_format: StrpTimeFormat,
     sniffing: bool,
     pub borked_rows: HashSet<u64>,
-    pub path: String,
+    pub path: rustdb_common::ByteString,
     pub first_line_is_comment: bool,
     ignore_empty_values: bool,
     // ScannerResult
@@ -204,6 +206,7 @@ impl StringValueResult {
     }
 
     fn reset_vectors(&mut self) {
+        self.string_buffer_references.clear();
         let capacity = self.result_size as usize;
         self.parse_chunk = self
             .parse_types_logical
@@ -358,6 +361,7 @@ impl StringValueScanner {
             // Set from the file scan's casts below.
             icu_loaded: false,
             buffer_handles: HashMap::new(),
+            string_buffer_references: HashSet::new(),
             requested_size: 0,
             current_errors: LineError::new(scanner_idx, sm.options.ignore_errors_only()),
             date_format: sm
@@ -374,7 +378,7 @@ impl StringValueScanner {
                 .clone(),
             sniffing,
             borked_rows: HashSet::new(),
-            path: base.buffer_manager.file_path().to_owned(),
+            path: base.buffer_manager.file_path().into(),
             first_line_is_comment: false,
             ignore_empty_values: true,
             quoted: false,
@@ -411,7 +415,7 @@ impl StringValueScanner {
                             .parse_types
                             .push(ParseTypeInfo::new(&LogicalType::VARCHAR, true));
                         logical_types.push(LogicalType::VARCHAR);
-                        result.names.push(format!("Column_{i}"));
+                        result.names.push(format!("Column_{i}").into());
                     }
                 }
                 Some(file_scan) => {
@@ -585,7 +589,6 @@ impl StringValueScanner {
     /// `AddValueToVector`.
     #[allow(clippy::too_many_lines)]
     fn add_value_to_vector(&mut self, value: &[u8], allocate: bool) -> Result<()> {
-        let _ = allocate;
         if self.handle_too_many_columns_error(value) {
             return Ok(());
         }
@@ -753,7 +756,34 @@ impl StringValueScanner {
                     self.result.chunk_col_id += 1;
                     return Ok(());
                 }
-                let string = vector.add_string(value);
+                // Unescaped fields contained in an immutable input buffer can
+                // reference that buffer, as in DuckDB's StringValueResult. Some
+                // callers pass temporary decoded bytes even with `allocate=false`,
+                // so verify containment rather than trusting that flag alone.
+                let buffer = self.result.buffer.as_ref().filter(|buffer| {
+                    !allocate
+                        && value.len() > StringT::INLINE_LENGTH
+                        && (value.as_ptr() as usize)
+                            .checked_sub(buffer.data().as_ptr() as usize)
+                            .is_some_and(|offset| {
+                                offset <= buffer.data().len() && value.len() <= buffer.data().len() - offset
+                            })
+                });
+                let string = if let Some(buffer) = buffer {
+                    if self
+                        .result
+                        .string_buffer_references
+                        .insert((chunk_col, buffer.buffer_idx()))
+                    {
+                        vector.add_keep_alive(buffer.clone());
+                    }
+                    // SAFETY: containment above proves the bytes belong to this
+                    // pinned, immutable buffer. The vector retains its owner,
+                    // including across scanner reset and vector clones/slices.
+                    unsafe { StringT::from_raw(value) }
+                } else {
+                    vector.add_string(value)
+                };
                 vector.values_mut::<StringT>()[row] = string;
                 true
             }
@@ -2385,7 +2415,9 @@ impl StringValueScanner {
                             };
                             let error = CsvError::cast_error(
                                 options,
-                                names.get(i).map_or("", String::as_str),
+                                names
+                                    .get(i)
+                                    .map_or(b"".as_slice(), rustdb_common::ByteString::as_bytes),
                                 &error_msg,
                                 i as u64,
                                 borked_line,

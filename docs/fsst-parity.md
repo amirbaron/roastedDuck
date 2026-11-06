@@ -1,5 +1,17 @@
 # FSST encoder and persistent-storage parity
 
+Final-candidate status (2026-11-03): the source-3/native-image results below are
+historical component evidence. They do not accept source 2078 / signed macOS
+2088 or Linux 2080. Refresh 2232 is prepared for macOS arm64, Linux arm64 and
+translated Linux x86_64: all 12 original forced FSST/DICT_FSST checkpoint,
+nonempty-WAL and torn-tail journeys run on each target, retaining the full
+relational, hash, index/filter, mutation and origin-readback assertions. The
+workers' test SQL and assertion ASTs are unchanged; only helper/native/source
+paths and platform identity checks are adapted. The signed helper bundle is
+`platform-matrix-20261029/work/current-native-codec-observers-2231` under the
+external artifact directory. It is queued before current encrypted-storage
+verification; no refreshed runtime result is claimed yet.
+
 Updated2026-10-29. The confirmed embedded-NUL encoder discrepancy is fixed and
 verified on signed native images. The whole port goal remains active; final full
 corpus, shell, selected-client, ADBC, persistence/WAL and performance gates remain.
@@ -28,7 +40,7 @@ libc++ push_heap/Floyd-pop_heap tie handling. Common UnorderedOrder now supports
 erasure, counts live keys for growth, and reuses erased slots. Existing insertion
 and configuration-copy order controls still pass. No table cache was introduced.
 
-## Current-source verification
+## Historical source-3 component verification
 
 Source3 contains946 overlay entries/945 build inputs; all guards pass before and
 after execution. All native executables and libraries are signed before execution.

@@ -117,7 +117,7 @@ fn match_sum_of_addition(expression: &Expression) -> Option<usize> {
     let ExpressionKind::Function(function) = &addition.kind else {
         return None;
     };
-    if &*function.function.name != "+" || !is_integral(addition) || function.children.len() != 2 {
+    if &*function.function.name != b"+" || !is_integral(addition) || function.children.len() != 2 {
         return None;
     }
     let is_constant =

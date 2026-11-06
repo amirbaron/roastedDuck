@@ -46,7 +46,7 @@ unsafe impl Send for CallbackLogStorage {}
 unsafe impl Sync for CallbackLogStorage {}
 
 impl LogStorage for CallbackLogStorage {
-    fn write_log_entry(&self, timestamp: i64, level: LogLevel, log_type: &str, message: &str) {
+    fn write_log_entry(&self, timestamp: i64, level: LogLevel, log_type: &str, message: &[u8]) {
         let mut timestamp = DuckdbTimestamp { micros: timestamp };
         let level = to_cstring(level.name());
         let log_type = to_cstring(log_type);

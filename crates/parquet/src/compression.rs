@@ -17,16 +17,19 @@ const GZIP_FOOTER_SIZE: usize = 8;
 const GZIP_FLAG_UNSUPPORTED: u8 = 0x1 | 0x2 | 0x4 | 0x10 | 0xe0;
 
 /// A `std::runtime_error` of the C++ code, reported as an `Invalid Error`.
-fn runtime_error(message: impl Into<String>) -> Error {
-    Error::new(ErrorKind::Invalid, message.into())
+fn runtime_error(message: impl Into<rustdb_common::ByteString>) -> Error {
+    Error::new_bytes(ErrorKind::Invalid, message.into())
 }
 
-fn read_failure(file_name: &str, what: &str) -> Error {
-    Error::invalid_input(format!("Failed to read file \"{file_name}\": {what}"))
+fn read_failure(file_name: &[u8], what: impl AsRef<[u8]>) -> Error {
+    let what = what.as_ref();
+    Error::invalid_input(rustdb_common::byte_format!(
+        "Failed to read file \"{file_name}\": {what}"
+    ))
 }
 
 /// Decompresses `src` into `dst`, which has exactly the page's uncompressed size.
-pub fn decompress(codec: CompressionCodec, src: &[u8], dst: &mut [u8], file_name: &str) -> Result<()> {
+pub fn decompress(codec: CompressionCodec, src: &[u8], dst: &mut [u8], file_name: &[u8]) -> Result<()> {
     match codec {
         CompressionCodec::UNCOMPRESSED => Err(Error::internal("Parquet data unexpectedly uncompressed")),
         CompressionCodec::GZIP => gzip_decompress(src, dst),
@@ -63,7 +66,7 @@ pub fn decompress(codec: CompressionCodec, src: &[u8], dst: &mut [u8], file_name
             let name = codec.name().map_or_else(|| codec.0.to_string(), str::to_owned);
             Err(read_failure(
                 file_name,
-                &format!(
+                &rustdb_common::byte_format!(
                     "Unsupported compression codec \"{name}\". Supported options are uncompressed, brotli, gzip, lz4_raw, snappy or zstd"
                 ),
             ))
@@ -110,12 +113,12 @@ pub fn compress(codec: CompressionCodec, src: &[u8], level: i64, out: &mut Vec<u
         CompressionCodec::GZIP => {
             // `MiniZStream::Compress`: a minimal gzip member at miniz's default level.
             let mut encoder = flate2::write::GzEncoder::new(std::mem::take(out), flate2::Compression::new(6));
-            encoder
-                .write_all(src)
-                .map_err(|error| Error::internal(format!("gzip compression failed: {error}")))?;
-            *out = encoder
-                .finish()
-                .map_err(|error| Error::internal(format!("gzip compression failed: {error}")))?;
+            encoder.write_all(src).map_err(|error| {
+                Error::internal(rustdb_common::byte_format!("gzip compression failed: {error}"))
+            })?;
+            *out = encoder.finish().map_err(|error| {
+                Error::internal(rustdb_common::byte_format!("gzip compression failed: {error}"))
+            })?;
         }
         CompressionCodec::ZSTD => {
             // `ZSTD_compress` at the writer's level.
@@ -128,7 +131,7 @@ pub fn compress(codec: CompressionCodec, src: &[u8], level: i64, out: &mut Vec<u
         CompressionCodec::LZ4_RAW => crate::lz4::compress(src, out),
         CompressionCodec::BROTLI => brotli_compress(src, out)?,
         _ => {
-            return Err(Error::internal(format!(
+            return Err(Error::internal(rustdb_common::byte_format!(
                 "Unsupported codec for Parquet Writer: {}",
                 codec.0
             )));
@@ -199,7 +202,7 @@ mod tests {
             let mut compressed = Vec::new();
             compress(codec, &data, 3, &mut compressed).unwrap();
             let mut output = vec![0; data.len()];
-            decompress(codec, &compressed, &mut output, "f").unwrap();
+            decompress(codec, &compressed, &mut output, b"f").unwrap();
             assert_eq!(output, data, "{codec:?}");
         }
     }
@@ -212,7 +215,7 @@ mod tests {
         compress(CompressionCodec::GZIP, b"world", 0, &mut second).unwrap();
         compressed.extend(second);
         let mut output = vec![0; 11];
-        decompress(CompressionCodec::GZIP, &compressed, &mut output, "f").unwrap();
+        decompress(CompressionCodec::GZIP, &compressed, &mut output, b"f").unwrap();
         assert_eq!(&output, b"hello world");
     }
 }

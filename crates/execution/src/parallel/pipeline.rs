@@ -67,6 +67,17 @@ impl Pipeline {
             .clone()
     }
 
+    /// Release execution data after the query's tasks have drained. A worker may
+    /// still hold the pipeline's metadata while its task's fields are dropped.
+    pub fn clear_source(&self) {
+        let state = self
+            .source_state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        drop(state);
+    }
+
     /// Creates the source's global state unless it exists (`ResetSource(false)`).
     pub fn reset_source(&self, create: impl FnOnce() -> Result<SharedState>) -> Result<SharedState> {
         let mut state = self.source_state.lock().unwrap_or_else(PoisonError::into_inner);

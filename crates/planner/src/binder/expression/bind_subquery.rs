@@ -41,7 +41,7 @@ fn extract_subquery_children(
     let ExpressionKind::Function(function) = &mut expression.kind else {
         return Vec::new();
     };
-    if &*function.function.name != "row" {
+    if function.function.name.as_bytes() != b"row" {
         return Vec::new();
     }
     if types.len() == 1 && is_unnamed_struct(&types[0]) && function.children.len() != types.len() {

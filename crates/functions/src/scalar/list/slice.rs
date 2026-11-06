@@ -263,7 +263,9 @@ fn slice_lists(
         };
         for _ in 0..length {
             selection.push(Some(child as u32));
-            child += step;
+            // C++ advances an unsigned idx_t, including after the last selection.
+            // Preserve its modular arithmetic for extreme signed steps too.
+            child = child.wrapping_add(step);
         }
         entries.push(ListEntry::new(start, length));
     }
@@ -327,7 +329,7 @@ fn bind_slice(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindResul
                      query as follows:\n SELECT array_to_string((str_split(string, '')[begin:end:step], '');",
                 ));
             }
-            if ty.id() == LogicalTypeId::Varchar && ty.alias() == Some("JSON") {
+            if ty.id() == LogicalTypeId::Varchar && ty.alias().is_some_and(|alias| alias == "JSON") {
                 // A slice of JSON text is not JSON.
                 function.arguments[0] = LogicalType::VARCHAR;
                 function.return_type = LogicalType::VARCHAR;

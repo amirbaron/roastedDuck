@@ -153,12 +153,12 @@ pub(super) fn alter_identity_column_option<'a>(
         // SET SeqOptElem
         2 => {
             let seq_opt_elem = rhs.take::<DefElem>(2)?;
-            if seq_opt_elem.defname.as_deref() == Some("as")
-                || seq_opt_elem.defname.as_deref() == Some("restart")
-                || seq_opt_elem.defname.as_deref() == Some("owned_by")
+            if seq_opt_elem.defname.as_deref() == Some(b"as")
+                || seq_opt_elem.defname.as_deref() == Some(b"restart")
+                || seq_opt_elem.defname.as_deref() == Some(b"owned_by")
             {
                 return Err(rhs.error_at(
-                    format!(
+                    rustdb_common::byte_format!(
                         "sequence option \"{}\" not supported here",
                         c_str(seq_opt_elem.defname.as_deref())
                     ),

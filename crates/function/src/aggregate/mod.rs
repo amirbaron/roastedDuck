@@ -20,6 +20,7 @@ mod typed;
 mod unary;
 
 use std::alloc::Layout;
+use std::any::TypeId;
 use std::fmt;
 use std::ptr::NonNull;
 use std::sync::Arc;
@@ -77,6 +78,35 @@ impl<'a> AggregateInput<'a> {
     }
 }
 
+/// Identity of the six callbacks compared by DuckDB's aggregate equality.
+/// Rust implementations use their monomorphized operation type, independently of
+/// function names, instance addresses and linker function folding. Configuration
+/// carried by callbacks belongs in bind data, whose equality is checked separately.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AggregateCallbackIdentity {
+    pub state_size: TypeId,
+    pub initialize: TypeId,
+    pub update: TypeId,
+    pub combine: TypeId,
+    pub finalize: TypeId,
+    pub window: Option<TypeId>,
+}
+
+impl AggregateCallbackIdentity {
+    /// The callback family of one concrete operations implementation.
+    pub fn for_type<T: ?Sized + 'static>(has_window: bool) -> Self {
+        let identity = TypeId::of::<T>();
+        Self {
+            state_size: identity,
+            initialize: identity,
+            update: identity,
+            combine: identity,
+            finalize: identity,
+            window: has_window.then_some(identity),
+        }
+    }
+}
+
 /// The type-erased operations of an aggregate.
 ///
 /// # Safety (for every method taking `StatePtr`s)
@@ -84,6 +114,20 @@ impl<'a> AggregateInput<'a> {
 /// initialised with [`AggregateOps::initialize`] and not yet destroyed, and no state may
 /// be accessed concurrently.
 pub trait AggregateOps: Send + Sync + 'static {
+    /// Callback identity for aggregate/window sharing. Wrappers that replace or
+    /// forward only some callbacks must preserve the corresponding identities.
+    /// C API operations are one wrapper family; user callbacks/extra data are
+    /// compared by their bind data, just as in C++.
+    fn callback_identity(&self) -> AggregateCallbackIdentity {
+        AggregateCallbackIdentity::for_type::<Self>(self.window().is_some())
+    }
+
+    /// Whether the reference function supplies a simple-update callback. A Rust
+    /// fallback implementation may exist even when C++ chooses hash aggregation.
+    fn has_simple_update(&self) -> bool {
+        true
+    }
+
     /// Size and alignment of one state.
     fn state_layout(&self) -> Layout;
 
@@ -370,8 +414,8 @@ pub struct AggregateFunction {
     pub original_arguments: Vec<LogicalType>,
     /// The catalog and schema of the function's catalog entry (DuckDB's `catalog_name`
     /// and `schema_name`); empty for a function not taken from a catalog.
-    pub catalog_name: Arc<str>,
-    pub schema_name: Arc<str>,
+    pub catalog_name: Arc<[u8]>,
+    pub schema_name: Arc<[u8]>,
     /// Writes the bind data, so that a serialized plan can bind the function again
     /// (DuckDB's `serialize` callback).
     pub serialize: Option<AggregateSerialize>,
@@ -412,8 +456,8 @@ impl AggregateFunction {
             has_state_destructor: false,
             statistics: None,
             original_arguments: Vec::new(),
-            catalog_name: Arc::from(""),
-            schema_name: Arc::from(""),
+            catalog_name: Arc::from(b"".as_slice()),
+            schema_name: Arc::from(b"".as_slice()),
             serialize: None,
         }
         .with_state_destructor_of_ops()
@@ -422,7 +466,7 @@ impl AggregateFunction {
     /// Sets the catalog and schema of the function's catalog entry (see
     /// [`AggregateFunction::catalog_name`]); empty ones for a function the engine uses
     /// directly rather than through the catalog (DuckDB's `XFun::GetFunction()`).
-    pub fn set_catalog_entry(&mut self, catalog: &Arc<str>, schema: &Arc<str>) {
+    pub fn set_catalog_entry(&mut self, catalog: &Arc<[u8]>, schema: &Arc<[u8]>) {
         self.catalog_name = Arc::clone(catalog);
         self.schema_name = Arc::clone(schema);
     }
@@ -430,7 +474,7 @@ impl AggregateFunction {
     /// Forgets the catalog entry: the bind made a new function object (DuckDB's
     /// `function = GetX(...)` binds and `XFun::GetFunction()` callers).
     pub fn clear_catalog_entry(&mut self) {
-        let empty: Arc<str> = Arc::from("");
+        let empty: Arc<[u8]> = Arc::from(b"".as_slice());
         self.set_catalog_entry(&empty, &empty);
     }
 

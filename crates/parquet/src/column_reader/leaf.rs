@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_storage::TableFilter;
-use rustdb_types::{LogicalType, SelectionVector, StringT, Vector, VectorKind};
+use rustdb_types::{DictionaryInfo, LogicalType, SelectionVector, StringT, Vector, VectorKind};
 
 use super::ReaderContext;
 use super::values::{
@@ -79,7 +79,7 @@ impl ChunkBuffer {
             let available = file.size().saturating_sub(offset);
             let fetch = (len.max(MIN_FETCH) as u64).min(available);
             if (fetch as usize) < len {
-                return Err(runtime_error(format!(
+                return Err(runtime_error(rustdb_common::byte_format!(
                     "Could not read enough bytes from file \"{}\": attempted to read {len} bytes from location {offset}",
                     file.path()
                 )));
@@ -241,7 +241,10 @@ pub struct LeafReader {
     repeats: Option<RleBpDecoder>,
     /// The dictionary values, with a NULL slot at `dictionary_size` when the column has
     /// definition levels.
-    dictionary: Option<Vector>,
+    dictionary: Option<Arc<Vector>>,
+    /// Reusable dictionary identity/size, including the optional NULL slot. This
+    /// keeps downstream collections from expanding one long string per row.
+    dictionary_info: Option<Arc<DictionaryInfo>>,
     dictionary_size: usize,
     /// For each filter of the scan, which dictionary entries pass it (computed on first
     /// use; `DictionaryDecoder`'s `filter_result`).
@@ -263,8 +266,10 @@ impl std::fmt::Debug for LeafReader {
     }
 }
 
-fn read_failure(file_name: &str, what: &str) -> Error {
-    Error::invalid_input(format!("Failed to read file \"{file_name}\": {what}"))
+fn read_failure(file_name: &[u8], what: &str) -> Error {
+    Error::invalid_input(rustdb_common::byte_format!(
+        "Failed to read file \"{file_name}\": {what}"
+    ))
 }
 
 impl LeafReader {
@@ -296,6 +301,7 @@ impl LeafReader {
             defines: None,
             repeats: None,
             dictionary: None,
+            dictionary_info: None,
             dictionary_size: 0,
             dictionary_filters: Vec::new(),
             pending_skips: 0,
@@ -309,7 +315,7 @@ impl LeafReader {
         &self.logical_type
     }
 
-    fn file_name(&self) -> &str {
+    fn file_name(&self) -> &[u8] {
         &self.context.file_name
     }
 
@@ -336,7 +342,7 @@ impl LeafReader {
             .get(self.column_index)
             .ok_or_else(|| Error::internal("column chunk index out of range"))?;
         if chunk.file_path.is_some() {
-            return Err(Error::invalid_input(format!(
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "Failed to read file \"{}\": Only inlined data files are supported (no references)",
                 self.file_name()
             )));
@@ -380,6 +386,7 @@ impl LeafReader {
         self.pending_skips = 0;
         self.page_rows_available = 0;
         self.dictionary = None;
+        self.dictionary_info = None;
         self.dictionary_size = 0;
         self.decoding = PageDecoding::Invalid;
         self.decoder.reset_page();
@@ -889,7 +896,8 @@ impl LeafReader {
         self.decoder.reset_page();
         self.decoder
             .plain(&mut source, None, 0, size, 0, &mut dictionary)?;
-        self.dictionary = Some(dictionary);
+        self.dictionary = Some(Arc::new(dictionary));
+        self.dictionary_info = Some(Arc::new(DictionaryInfo::new(capacity)));
         self.dictionary_size = size;
         self.dictionary_filters.clear();
         Ok(())
@@ -1217,7 +1225,15 @@ impl LeafReader {
                 }
             }
         }
-        let sliced = dictionary.slice(&SelectionVector::new(std::mem::take(&mut self.indices)));
+        let info = self
+            .dictionary_info
+            .as_ref()
+            .ok_or_else(|| Error::internal("dictionary read without reusable metadata"))?;
+        let sliced = Vector::storage_dictionary(
+            Arc::clone(dictionary),
+            SelectionVector::new(std::mem::take(&mut self.indices)),
+            Arc::clone(info),
+        );
         if offset == 0 {
             *result = sliced;
         } else {
@@ -1238,9 +1254,9 @@ fn resize_uninitialized(buffer: &mut Vec<u8>, len: usize) {
 }
 
 fn dlba_mismatch(attempted: usize, available: usize) -> Error {
-    Error::new(
+    Error::new_bytes(
         rustdb_common::ErrorKind::Io,
-        format!(
+        rustdb_common::byte_format!(
             "DELTA_LENGTH_BYTE_ARRAY - length mismatch between values and byte array lengths (attempted read of {attempted} from {available} entries) - corrupt file?"
         ),
     )

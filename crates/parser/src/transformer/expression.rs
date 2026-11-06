@@ -33,14 +33,14 @@ pub fn negate_comparison(expression_type: ExpressionType) -> Result<ExpressionTy
 }
 
 /// `OperatorToExpressionType`: the comparison an operator stands for, if any.
-pub fn operator_to_expression_type(op: &str) -> ExpressionType {
-    match op {
-        "=" | "==" => ExpressionType::CompareEqual,
-        "!=" | "<>" => ExpressionType::CompareNotequal,
-        "<" => ExpressionType::CompareLessthan,
-        ">" => ExpressionType::CompareGreaterthan,
-        "<=" => ExpressionType::CompareLessthanorequalto,
-        ">=" => ExpressionType::CompareGreaterthanorequalto,
+pub fn operator_to_expression_type(op: impl AsRef<[u8]>) -> ExpressionType {
+    match op.as_ref() {
+        b"=" | b"==" => ExpressionType::CompareEqual,
+        b"!=" | b"<>" => ExpressionType::CompareNotequal,
+        b"<" => ExpressionType::CompareLessthan,
+        b">" => ExpressionType::CompareGreaterthan,
+        b"<=" => ExpressionType::CompareLessthanorequalto,
+        b">=" => ExpressionType::CompareGreaterthanorequalto,
         _ => ExpressionType::Invalid,
     }
 }
@@ -112,7 +112,9 @@ impl<'a> Transformer<'a> {
             Node::Value(value @ Value::String(_)) => Self::transform_value(value),
             other => {
                 let (tag, name) = node_tag(other);
-                Err(Error::not_implemented(format!("Expression type {name} ({tag})")))
+                Err(Error::not_implemented(rustdb_common::byte_format!(
+                    "Expression type {name} ({tag})"
+                )))
             }
         }
     }
@@ -143,7 +145,7 @@ impl<'a> Transformer<'a> {
     fn transform_res_target(&mut self, root: &'a ResTarget) -> Result<ParsedExpression> {
         let mut expr = self.transform_required(root.val.as_ref(), "target value")?;
         if let Some(name) = &root.name {
-            expr.alias.clone_from(name);
+            expr.alias = name.into();
         }
         Ok(expr)
     }
@@ -153,7 +155,7 @@ impl<'a> Transformer<'a> {
     fn transform_named_arg(&mut self, root: &'a NamedArgExpr) -> Result<ParsedExpression> {
         let mut expr = self.transform_required(root.arg.as_ref(), "named argument")?;
         if let Some(name) = &root.name {
-            expr.alias.clone_from(name);
+            expr.alias = name.into();
         }
         Ok(expr)
     }
@@ -328,11 +330,11 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformCollation`: the dotted collation name.
-    pub(crate) fn transform_collation(collate: Option<&CollateClause>) -> Result<String> {
+    pub(crate) fn transform_collation(collate: Option<&CollateClause>) -> Result<rustdb_common::ByteString> {
         let Some(collate) = collate else {
-            return Ok(String::new());
+            return Ok(rustdb_common::ByteString::new());
         };
-        let mut collation = String::new();
+        let mut collation = rustdb_common::ByteString::new();
         for node in &collate.collname {
             let Node::Value(Value::String(argument)) = node else {
                 return Err(Error::parser("Expected a string as collation type!"));
@@ -340,8 +342,8 @@ impl<'a> Transformer<'a> {
             if collation.is_empty() {
                 collation.clone_from(argument);
             } else {
-                collation.push('.');
-                collation.push_str(argument);
+                collation.push(b'.');
+                collation.push_bytes(argument);
             }
         }
         Ok(collation)
@@ -425,20 +427,20 @@ impl<'a> Transformer<'a> {
             .funcname
             .last()
             .and_then(|name| node_string(name).ok())
-            .is_some_and(|name| name.eq_ignore_ascii_case("row"));
+            .is_some_and(|name| name.eq_ignore_ascii_case(b"row"));
         if !is_row {
             return self.transform_expression(source);
         }
         let value_count = func.args.len() as i64;
         if i64::from(root.ncolumns) < value_count || func.args.is_empty() {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(rustdb_common::byte_format!(
                 "Could not perform assignment, expected {} values, got {value_count}",
                 root.ncolumns
             )));
         }
         let index = usize::try_from(root.colno.max(1) - 1).unwrap_or(0);
         let Some(node) = func.args.get(index) else {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(rustdb_common::byte_format!(
                 "Could not perform assignment, expected {} values, got {}",
                 root.ncolumns,
                 func.args.len()
@@ -461,7 +463,7 @@ impl<'a> Transformer<'a> {
             } else {
                 ParamType::Positional
             };
-            (param_type, node.number.to_string())
+            (param_type, node.number.to_string().into())
         };
         let index = if let Some(index) = self.get_param(&identifier, param_type)? {
             index
@@ -471,7 +473,7 @@ impl<'a> Transformer<'a> {
             let index = if node.number == 0 {
                 let index = self.param_count() + 1;
                 if node.name.is_none() {
-                    identifier = index.to_string();
+                    identifier = index.to_string().into();
                 }
                 index
             } else {
@@ -523,7 +525,7 @@ impl<'a> Transformer<'a> {
                 Node::FuncCall(func) => {
                     let mut function = self.transform_func_call(func)?;
                     if function.expression_type != ExpressionType::Function {
-                        return Err(Error::parser(format!(
+                        return Err(Error::parser(rustdb_common::byte_format!(
                             "{result}.{function}() call must be a function"
                         )));
                     }
@@ -551,7 +553,7 @@ impl<'a> Transformer<'a> {
         const T_PG_A_EXPR: i32 = 355;
         let mut expr = match node.val_type {
             T_PG_A_EXPR => self.transform_required(node.eval.as_ref(), "interval value")?,
-            T_PG_STRING => build::varchar_constant(node.sval.as_deref().unwrap_or_default()),
+            T_PG_STRING => build::try_varchar_constant(node.sval.as_deref().unwrap_or_default())?,
             T_PG_INTEGER => build::constant(DuckValue::integer(node.ival)),
             _ => return Err(Error::internal("Unsupported interval transformation")),
         };
@@ -579,7 +581,9 @@ impl<'a> Transformer<'a> {
         ];
         for (a, b, name) in combined {
             if has(a) && has(b) {
-                return Err(Error::parser(format!("{name} is not supported")));
+                return Err(Error::parser(rustdb_common::byte_format!(
+                    "{name} is not supported"
+                )));
             }
         }
         let single = [
@@ -619,9 +623,9 @@ fn is_blob(ty: &LogicalType) -> bool {
 }
 
 /// `Blob::ToBlob` of a string constant cast to BLOB.
-fn parse_blob(text: &str, location: Option<u64>) -> Result<Vec<u8>> {
+fn parse_blob(text: &[u8], location: Option<u64>) -> Result<Vec<u8>> {
     let mut out = Vec::new();
-    rustdb_types::blob::parse_text(text.as_bytes(), &mut out)
+    rustdb_types::blob::parse_text(text, &mut out)
         .map_err(|message| Error::conversion(message).with_position(location))?;
     Ok(out)
 }

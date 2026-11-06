@@ -44,7 +44,7 @@ pub trait QueryResult: Send {
     fn error(&self) -> Option<&str>;
     fn column_count(&self) -> usize;
     fn row_count(&self) -> usize;
-    fn column_name(&self, column: usize) -> &str;
+    fn column_name(&self, column: usize) -> &[u8];
     /// The column type as DuckDB prints it (e.g. `DECIMAL(18,3)`).
     fn column_type(&self, column: usize) -> String;
     fn column_class(&self, column: usize) -> ColumnClass;

@@ -33,6 +33,9 @@ unsafe impl NativeType for Interval {
 /// than conversion errors, and one of them even under `TRY_CAST`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IntervalParseError {
+    /// Parsing returned false without throwing; the vector cast reports this
+    /// conversion failure with the cast source and query location.
+    Reported(Error),
     /// The cast fails: `CAST` raises the error, `TRY_CAST` yields NULL.
     Cast(Error),
     /// DuckDB raises this error unconditionally, even under `TRY_CAST`
@@ -44,14 +47,14 @@ impl IntervalParseError {
     /// The underlying error (kind and message).
     pub const fn error(&self) -> &Error {
         match self {
-            Self::Cast(error) | Self::Unconditional(error) => error,
+            Self::Reported(error) | Self::Cast(error) | Self::Unconditional(error) => error,
         }
     }
 
     /// Consumes the error, returning the underlying [`Error`].
     pub fn into_error(self) -> Error {
         match self {
-            Self::Cast(error) | Self::Unconditional(error) => error,
+            Self::Reported(error) | Self::Cast(error) | Self::Unconditional(error) => error,
         }
     }
 }
@@ -281,7 +284,7 @@ impl Interval {
     /// everything. A lone number means seconds. ISO 8601 `P...` forms are rejected.
     pub fn parse_detailed(input: &[u8]) -> Result<Self, IntervalParseError> {
         let generic = || {
-            IntervalParseError::Cast(Error::conversion(format!(
+            IntervalParseError::Reported(Error::conversion(format!(
                 "Could not convert string '{}' to INTERVAL",
                 String::from_utf8_lossy(input)
             )))

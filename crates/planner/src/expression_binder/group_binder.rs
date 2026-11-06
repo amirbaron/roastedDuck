@@ -23,7 +23,7 @@ pub struct GroupBinder<'a> {
     select_list: &'a mut Vec<ParsedExpression>,
     bind_state: &'a SelectBindState,
     /// Select-list aliases used as groups, and their group indexes.
-    group_alias_map: &'a mut CaseInsensitiveMap<usize>,
+    group_alias_map: &'a mut CaseInsensitiveMap<usize, rustdb_common::ByteString>,
     /// The index of the group being bound.
     pub bind_index: usize,
     /// The group before binding, for matching it in other clauses.
@@ -37,7 +37,7 @@ impl<'a> GroupBinder<'a> {
         outer: Option<&'a mut dyn Scope>,
         select_list: &'a mut Vec<ParsedExpression>,
         bind_state: &'a SelectBindState,
-        group_alias_map: &'a mut CaseInsensitiveMap<usize>,
+        group_alias_map: &'a mut CaseInsensitiveMap<usize, rustdb_common::ByteString>,
     ) -> Self {
         Self {
             base: BinderBase::new(binder, outer),
@@ -57,7 +57,7 @@ impl<'a> GroupBinder<'a> {
             return Ok(Expression::constant(Value::integer(42)).into());
         }
         if entry >= self.select_list.len() {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "GROUP BY term out of range - should be between 1 and {}",
                 self.select_list.len()
             )));
@@ -121,8 +121,8 @@ impl ExpressionBinder for GroupBinder<'_> {
         }
     }
 
-    fn unsupported_aggregate_message(&self) -> String {
-        "GROUP BY clause cannot contain aggregates!".to_owned()
+    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+        "GROUP BY clause cannot contain aggregates!".into()
     }
 
     fn try_resolve_alias_reference(
@@ -142,7 +142,7 @@ impl ExpressionBinder for GroupBinder<'_> {
         };
         if !root_expression {
             return Ok(Some(BindResult::Unbound(
-                Error::binder(format!(
+                Error::binder(rustdb_common::byte_format!(
                     "Alias with name \"{alias_name}\" exists, but aliases cannot be used as part of an expression in \
                      the GROUP BY"
                 ))

@@ -34,7 +34,7 @@ struct DbgenFunctionData {
     finished: AtomicBool,
     sf: f64,
     target: DbgenTarget,
-    suffix: String,
+    suffix: rustdb_common::ByteString,
     children: usize,
     step: Option<usize>,
     /// The number of threads of the connection (`TaskScheduler::NumberOfThreads`).
@@ -46,8 +46,8 @@ impl FunctionData for DbgenFunctionData {
         self
     }
 
-    fn modified_database(&self) -> Option<String> {
-        Some(self.target.catalog.name().to_string())
+    fn modified_database(&self) -> Option<rustdb_common::ByteString> {
+        Some((&*self.target.catalog.name()).into())
     }
 }
 
@@ -75,22 +75,22 @@ fn dbgen_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOut
     let context = client_context(input)?;
     // The current catalog and schema.
     let mut catalog = context.default_catalog();
-    let mut schema = context.default_schema().to_owned();
+    let mut schema = rustdb_common::ByteString::from(context.default_schema());
     let mut sf = 0.0;
-    let mut suffix = String::new();
+    let mut suffix = rustdb_common::ByteString::new();
     let mut children = 1;
     let mut step = None;
     for (name, value) in input.named_parameters {
         if value.is_null() {
             return Err(Error::binder("Cannot use NULL as function argument"));
         }
-        match name.as_str() {
-            "sf" => sf = value.as_f64().unwrap_or_default(),
-            "catalog" => catalog = value.to_varchar()?,
-            "schema" => schema = value.to_varchar()?,
-            "suffix" => suffix = value.to_varchar()?,
-            "children" => children = value.as_u32().unwrap_or_default() as usize,
-            "step" => step = value.as_u32().map(|step| step as usize),
+        match name.as_bytes() {
+            b"sf" => sf = value.as_f64().unwrap_or_default(),
+            b"catalog" => catalog = value.to_varchar_bytes()?,
+            b"schema" => schema = value.to_varchar_bytes()?,
+            b"suffix" => suffix = value.to_varchar_bytes()?,
+            b"children" => children = value.as_u32().unwrap_or_default() as usize,
+            b"step" => step = value.as_u32().map(|step| step as usize),
             // `overwrite` is accepted and ignored.
             _ => {}
         }
@@ -101,10 +101,11 @@ fn dbgen_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOut
         ));
     }
     // `RegisterDBModify`: the call writes to the catalog (see `modified_database`).
-    let catalog = context
-        .catalog(&catalog)
-        .cloned()
-        .ok_or_else(|| Error::binder(format!("Catalog \"{catalog}\" does not exist!")))?;
+    let catalog = context.catalog(&catalog).cloned().ok_or_else(|| {
+        Error::binder(rustdb_common::byte_format!(
+            "Catalog \"{catalog}\" does not exist!"
+        ))
+    })?;
     let data = DbgenFunctionData {
         finished: AtomicBool::new(false),
         sf,
@@ -120,7 +121,7 @@ fn dbgen_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOut
     };
     Ok(TableFunctionBindOutput {
         return_types: vec![LogicalType::BOOLEAN],
-        names: vec!["Success".to_owned()],
+        names: vec!["Success".into()],
         bind_data: Some(Arc::new(data)),
     })
 }
@@ -177,7 +178,7 @@ fn rows_function(
         .with_bind(move |_| {
             Ok(TableFunctionBindOutput {
                 return_types: columns.iter().map(|(_, ty)| ty.clone()).collect(),
-                names: columns.iter().map(|(name, _)| (*name).to_owned()).collect(),
+                names: columns.iter().map(|(name, _)| (*name).into()).collect(),
                 bind_data: None,
             })
         })

@@ -23,9 +23,11 @@ Target: a 100% Rust engine that is a 1:1 drop-in replacement for DuckDB **1.5.6*
    code assess quality, performance and correctness. The milestone closes only when
    they all sign off (see "Independent review gate").
 
-"100% Rust" means no C/C++ compiled into the shipped artifact: no `cc`/`cmake`
-build scripts, no `*-sys` crates. CI enforces it. The C++ engine is used only as
-a test and benchmark oracle (a dev-dependency), never at runtime.
+The DuckDB engine remains Rust. On 2026-11-01 the owner explicitly allowed
+third-party native crypto, including OpenSSL and ring, superseding the original
+artifact-wide prohibition on C/C++ and their build dependencies. The C++ DuckDB
+engine is used only as a test and benchmark oracle, never as the shipped engine
+or a runtime fallback. See [the handoff clarification](handoff.md).
 
 ## Scale (cloc, code lines only)
 

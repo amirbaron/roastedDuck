@@ -44,7 +44,7 @@ pub fn run_rustdb(sql: &str, json: &str) -> RustOutcome {
         Ok(SqlStatement {
             location: 0,
             length: sql.len() as u64,
-            query: sql.to_owned(),
+            query: sql.into(),
             named_param_map: CaseInsensitiveMap::default(),
             kind: SqlStatementKind::Select(statements.remove(0)),
         })
@@ -85,7 +85,11 @@ fn render_result(result: &MaterializedResult) -> Result<Table, String> {
         rows.push(values);
     }
     Ok(Table {
-        names: result.names().to_vec(),
+        names: result
+            .names()
+            .iter()
+            .map(|name| name.as_bytes().to_vec())
+            .collect(),
         types: result.types().iter().map(ToString::to_string).collect(),
         rows,
     })
@@ -97,7 +101,16 @@ pub fn render(outcome: &Result<Table, String>) -> String {
         Err(error) => format!("ERROR {error}"),
         Ok(table) => {
             let mut text = String::new();
-            let _ = writeln!(text, "{}", table.names.join(" | "));
+            let _ = writeln!(
+                text,
+                "{}",
+                table
+                    .names
+                    .iter()
+                    .map(|name| String::from_utf8_lossy(name))
+                    .collect::<Vec<_>>()
+                    .join(" | ")
+            );
             let _ = writeln!(text, "{}", table.types.join(" | "));
             for row in table.rows.iter().take(20) {
                 let _ = writeln!(text, "{}", row.join(" | "));

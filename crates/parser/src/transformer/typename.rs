@@ -24,11 +24,11 @@ impl<'a> Transformer<'a> {
         &mut self,
         type_name: &'a TypeName,
     ) -> Result<UnboundTypeInfo> {
-        let names: Vec<&str> = type_name.names.iter().map(node_string).collect::<Result<_>>()?;
+        let names: Vec<&[u8]> = type_name.names.iter().map(node_string).collect::<Result<_>>()?;
         let (catalog, schema, name) = match names.as_slice() {
             [] => return Err(Error::parser("Type name cannot be empty")),
-            [name] => ("", "", *name),
-            [schema, name] => ("", *schema, *name),
+            [name] => (b"".as_slice(), b"".as_slice(), *name),
+            [schema, name] => (b"".as_slice(), *schema, *name),
             [catalog, schema, name] => (*catalog, *schema, *name),
             _ => {
                 return Err(Error::parser(
@@ -37,10 +37,11 @@ impl<'a> Transformer<'a> {
             }
         };
         // Normalize builtin type names to DuckDB's names (`int4` becomes `INTEGER`).
-        let name = builtin_type_id(name).map_or_else(|| name.to_owned(), |id| id.name().to_owned());
+        let name = builtin_type_id(name)
+            .map_or_else(|| rustdb_common::ByteString::from(name), |id| id.name().into());
         let mut parameters = Vec::with_capacity(type_name.typmods.len());
         for typemod in &type_name.typmods {
-            let mut parameter_name = String::new();
+            let mut parameter_name = rustdb_common::ByteString::new();
             let mut node = typemod;
             if let Node::List(pair) = typemod {
                 let [name_node, value_node] = pair.as_slice() else {
@@ -79,8 +80,8 @@ impl<'a> Transformer<'a> {
             }
         }
         Ok(UnboundTypeInfo {
-            catalog: catalog.to_owned(),
-            schema: schema.to_owned(),
+            catalog: catalog.to_owned().into(),
+            schema: schema.to_owned().into(),
             name,
             parameters,
             query_location: u64::try_from(type_name.location).ok(),
@@ -97,7 +98,7 @@ impl<'a> Transformer<'a> {
                     return Err(Error::parser("ARRAY bounds must only contain expressions"));
                 };
                 let element = TypeParameter {
-                    name: String::new(),
+                    name: String::new().into(),
                     query_location: result.query_location,
                     value: TypeParameterValue::Type(result),
                 };
@@ -106,16 +107,16 @@ impl<'a> Transformer<'a> {
                     "list"
                 } else {
                     parameters.push(TypeParameter {
-                        name: String::new(),
+                        name: String::new().into(),
                         value: TypeParameterValue::Constant(DuckValue::bigint(*size)),
                         query_location: None,
                     });
                     "array"
                 };
                 result = UnboundTypeInfo {
-                    catalog: String::new(),
-                    schema: String::new(),
-                    name: name.to_owned(),
+                    catalog: String::new().into(),
+                    schema: String::new().into(),
+                    name: name.to_owned().into(),
                     parameters,
                     query_location: None,
                 };

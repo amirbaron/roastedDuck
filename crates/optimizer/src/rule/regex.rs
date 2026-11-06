@@ -125,7 +125,7 @@ pub fn regex_optimization(
     let ExpressionKind::Function(function) = &mut expression.kind else {
         return Ok(RuleOutcome::Unchanged);
     };
-    if &*function.function.name != "regexp_matches" || !(2..=3).contains(&function.children.len()) {
+    if &*function.function.name != b"regexp_matches" || !(2..=3).contains(&function.children.len()) {
         return Ok(RuleOutcome::Unchanged);
     }
     let Some(pattern) = function.children[1].as_constant().cloned() else {

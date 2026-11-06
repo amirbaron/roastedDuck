@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_common::{ByteString, Error, ErrorKind, Result, byte_format as format};
 use rustdb_types::format::{NestedQuoting, write_nested_string};
 use rustdb_types::{ListEntry, LogicalType, LogicalTypeId, ValidityMask, Vector};
 
@@ -13,9 +13,9 @@ use super::{BoundCastInfo, CastFunctionSet, CastParameters};
 
 /// `Type A does not match with B. <message>` (DuckDB's `TypeMismatchException`).
 fn type_mismatch(source: &LogicalType, target: &LogicalType, message: &str) -> Error {
-    Error::new(
+    Error::new_bytes(
         ErrorKind::MismatchType,
-        format!("Type {source} does not match with {target}. {message}"),
+        format!("Type {source} does not match with {target}. {message}").into_bytes(),
     )
 }
 
@@ -52,9 +52,10 @@ impl StructCastPlan {
                     .iter()
                     .any(|(other, _)| other.eq_ignore_ascii_case(name))
                 {
-                    return Err(Error::not_implemented(format!(
-                        "Error while casting - duplicate name \"{name}\" in struct"
-                    )));
+                    return Err(Error::new_bytes(
+                        ErrorKind::NotImplemented,
+                        format!("Error while casting - duplicate name \"{name}\" in struct").into_bytes(),
+                    ));
                 }
             }
         }
@@ -312,9 +313,9 @@ impl UnionCastPlan {
                 .iter()
                 .position(|(target_name, _)| target_name.eq_ignore_ascii_case(name))
             else {
-                return Err(Error::conversion(format!(
+                return Err(Error::new_bytes(ErrorKind::Conversion, format!(
                     "Type {source} can't be cast as {target}. The member '{name}' is not present in target union"
-                )));
+                ).into_bytes()));
             };
             tag_map.push(index);
             member_casts.push(set.get_cast_function(member_type, &target_members[index].1)?);
@@ -566,26 +567,26 @@ pub(super) fn to_union(
         })
         .collect();
     if candidates.is_empty() {
-        let names: Vec<String> = members.iter().map(|(_, ty)| ty.to_string()).collect();
-        return Err(Error::conversion(format!(
+        let names: Vec<ByteString> = members.iter().map(|(_, ty)| ty.to_bytes()).collect();
+        return Err(Error::new_bytes(ErrorKind::Conversion, format!(
             "Type {source} can't be cast as {target}. {source} can't be implicitly cast to any of the union member types: {}",
-            names.join(", ")
-        )));
+            ByteString::join(&names, ", ")
+        ).into_bytes()));
     }
     candidates.sort_by_key(|&(cost, _)| cost);
     let best = candidates[0].0;
     let tied: Vec<&(i64, usize)> = candidates.iter().filter(|(cost, _)| *cost == best).collect();
     if tied.len() > 1 {
-        let options: Vec<String> = tied
+        let options: Vec<ByteString> = tied
             .iter()
             .map(|&&(_, index)| format!("'{} ({})'", members[index].0, members[index].1))
             .collect();
-        return Err(Error::conversion(format!(
+        return Err(Error::new_bytes(ErrorKind::Conversion, format!(
             "Type {source} can't be cast as {target}. The cast is ambiguous, multiple possible members in target: {}. \
              Disambiguate the target type by using the 'union_value(<tag> := <arg>)' function to promote the source \
              value to a single member union before casting.",
-            options.join(", ")
-        )));
+            ByteString::join(&options, ", ")
+        ).into_bytes()));
     }
     let tag = candidates[0].1;
     let member_type = members[tag].1.clone();

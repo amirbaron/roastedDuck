@@ -30,6 +30,18 @@ pub fn render_width(text: &str) -> usize {
         .sum()
 }
 
+/// Native `Utf8Proc` glyph widths, without terminal tab/newline/ANSI interpretation.
+pub fn native_render_width(bytes: &[u8]) -> rustdb::Result<usize> {
+    let mut width = 0;
+    let mut position = 0;
+    while position < bytes.len() {
+        let (next, cluster_width) = rustdb_common::utf8::native_grapheme_cluster(bytes, position)?;
+        width += cluster_width;
+        position = next;
+    }
+    Ok(width)
+}
+
 /// The byte offset of the grapheme cluster after the one at `pos`
 /// (`Utf8Proc::NextGraphemeCluster`).
 pub fn next_grapheme_cluster(text: &str, pos: usize) -> usize {
@@ -108,7 +120,34 @@ pub fn previous_grapheme_cluster_bytes(bytes: &[u8], pos: usize) -> usize {
 /// the shell's `RenderLength`): a newline restarts the count, tabs advance to the next
 /// multiple of 8, ANSI escape sequences take no space and every byte of invalid UTF-8
 /// takes one column.
+pub fn native_terminal_render_width(bytes: &[u8]) -> rustdb::Result<usize> {
+    let mut width = 0;
+    let mut pos = 0;
+    while pos < bytes.len() {
+        match bytes[pos] {
+            b'\n' => {
+                width = 0;
+                pos += 1;
+            }
+            b'\t' => {
+                width += 8 - (width % 8);
+                pos += 1;
+            }
+            _ if skip_ansi_escape(bytes, &mut pos) => {}
+            _ => {
+                let (next, cluster_width) = rustdb_common::utf8::native_grapheme_cluster(bytes, pos)?;
+                width += cluster_width;
+                pos = next;
+            }
+        }
+    }
+    Ok(width)
+}
+
 pub fn terminal_render_width(bytes: &[u8]) -> usize {
+    if let Ok(width) = native_terminal_render_width(bytes) {
+        return width;
+    }
     let mut render_width = 0;
     for chunk in bytes.utf8_chunks() {
         let text = chunk.valid();
@@ -161,6 +200,17 @@ pub fn skip_ansi_escape(bytes: &[u8], cpos: &mut usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_render_width_retains_cpp_malformed_sequence_behavior() {
+        assert_eq!(native_terminal_render_width(b"caf\xe9").unwrap(), 5);
+        let error = native_terminal_render_width(b"a\xffb").unwrap_err();
+        assert_eq!(
+            error.raw_message_bytes(),
+            b"invalid code point detected in Utf8Proc::UTF8ToCodepoint, likely due to invalid UTF-8"
+        );
+        assert_eq!(native_terminal_render_width("雪".as_bytes()).unwrap(), 2);
+    }
 
     #[test]
     fn widths() {

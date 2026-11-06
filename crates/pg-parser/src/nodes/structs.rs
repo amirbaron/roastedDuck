@@ -1,7 +1,7 @@
 //! The node structs of the Postgres parse tree.
 //!
 //! Field names follow `libpg_query`'s C structs (`targetList` becomes `target_list`).
-//! Pointers become `Option`, lists become [`List`], C strings become `Option<String>`.
+//! Pointers become `Option`, lists become [`List`], C strings become `Option<ByteString>`.
 
 use super::{
     AExprKind, AlterDatabaseType, AlterTableType, BoolExprType, BoolTestType, ColumnCategory, ConstrType,
@@ -12,6 +12,7 @@ use super::{
     SortByDir, SortByNulls, SubLinkType, TransactionStmtKind, TransactionStmtType, Value, VariableSetKind,
     VariableSetScope, ViewCheckOption,
 };
+use rustdb_common::ByteString;
 
 nodes! {
     /// `PGRawStmt`: one statement of the input with its position in the query text.
@@ -201,9 +202,9 @@ nodes! {
     /// parsetrees for component statements of the schema, such as CREATE TABLE, GRANT, etc.
     CreateSchemaStmt {
         /// The name of the catalog in which to create the schema.
-        catalogname: Option<String>,
+        catalogname: Option<ByteString>,
         /// The name of the schema to create.
-        schemaname: Option<String>,
+        schemaname: Option<ByteString>,
         /// Schema components (list of parsenodes)
         schema_elts: List,
         /// What to do on create conflict.
@@ -248,7 +249,7 @@ nodes! {
     /// `PGFunctionParameter`: Function Parameter.
     FunctionParameter {
         /// Name of parameter.
-        name: Option<String>,
+        name: Option<ByteString>,
         /// Type of parameter (optional)
         type_name: Option<Box<TypeName>>,
         /// Default value of parameter (optional)
@@ -272,11 +273,11 @@ nodes! {
     /// `PGCreateSecretStmt`: Create Secret Statement.
     CreateSecretStmt {
         /// The requested persist mode.
-        persist_type: Option<String>,
+        persist_type: Option<ByteString>,
         /// Name of the secret.
-        secret_name: Option<String>,
+        secret_name: Option<ByteString>,
         /// The optional storage type of the secret.
-        secret_storage: Option<String>,
+        secret_storage: Option<ByteString>,
         /// Optionally the scopes of the secret.
         scope: List,
         /// Secret options.
@@ -287,11 +288,11 @@ nodes! {
     /// `PGDropSecretStmt`: Drop Secret Statement.
     DropSecretStmt {
         /// The requested persist mode.
-        persist_type: Option<String>,
+        persist_type: Option<ByteString>,
         /// Name of the secret.
-        secret_name: Option<String>,
+        secret_name: Option<ByteString>,
         /// `secret_storage`.
-        secret_storage: Option<String>,
+        secret_storage: Option<ByteString>,
         /// `missing_ok`.
         missing_ok: bool,
     }
@@ -314,11 +315,11 @@ nodes! {
     /// associated constraint.
     IndexStmt {
         /// Name of new index, or NULL for default.
-        idxname: Option<String>,
+        idxname: Option<ByteString>,
         /// Relation to build index on.
         relation: Option<Box<RangeVar>>,
         /// Name of access method (eg. btree)
-        access_method: Option<String>,
+        access_method: Option<ByteString>,
         /// Columns to index: a list of `PGIndexElem`.
         index_params: List,
         /// WITH clause options: a list of `PGDefElem`.
@@ -348,7 +349,7 @@ nodes! {
         /// Type of table alteration to apply.
         subtype: AlterTableType,
         /// Column, constraint, or trigger to act on, or tablespace.
-        name: Option<String>,
+        name: Option<ByteString>,
         /// Definition of new column, index, * constraint, or parent table.
         def: Option<Node>,
         /// `e.g`. expression list for partitioned by or sorted by.
@@ -367,16 +368,16 @@ nodes! {
         /// In case it's a table.
         relation: Option<Box<RangeVar>>,
         /// The new schema.
-        newschema: Option<String>,
+        newschema: Option<ByteString>,
         /// Skip error if missing?
         missing_ok: bool,
     }
     /// `PGAlterDatabaseStmt`: `ALTER DATABASE`.
     AlterDatabaseStmt {
         /// `dbname`.
-        dbname: Option<String>,
+        dbname: Option<ByteString>,
         /// `new_name`.
-        new_name: Option<String>,
+        new_name: Option<ByteString>,
         /// `alter_type`.
         alter_type: AlterDatabaseType,
         /// `missing_ok`.
@@ -391,11 +392,11 @@ nodes! {
         /// In case it's a table.
         relation: Option<Box<RangeVar>>,
         /// Name of contained object (column, rule, trigger, etc)
-        subname: Option<String>,
+        subname: Option<ByteString>,
         /// Names of contained object (`e.g`. qualified column)
         name_list: List,
         /// The new name.
-        newname: Option<String>,
+        newname: Option<ByteString>,
         /// RESTRICT or CASCADE behavior.
         behavior: DropBehavior,
         /// Skip error if missing?
@@ -444,11 +445,11 @@ nodes! {
     /// `PGCopyDatabaseStmt`: Copy Database Statement.
     CopyDatabaseStmt {
         /// `from_database`.
-        from_database: Option<String>,
+        from_database: Option<ByteString>,
         /// `to_database`.
-        to_database: Option<String>,
+        to_database: Option<ByteString>,
         /// `copy_database_flag`.
-        copy_database_flag: Option<String>,
+        copy_database_flag: Option<ByteString>,
     }
     /// `PGExplainStmt`: Explain Statement The "query" field is initially a raw parse tree, and is
     /// converted to a `PGQuery` node during parse analysis.
@@ -461,21 +462,21 @@ nodes! {
     /// `PGExportStmt`: EXPORT/IMPORT Statements.
     ExportStmt {
         /// Database name.
-        database: Option<String>,
+        database: Option<ByteString>,
         /// Filename.
-        filename: Option<String>,
+        filename: Option<ByteString>,
         /// `PGList` of `PGDefElem` nodes.
         options: List,
     }
     /// `PGImportStmt`: `IMPORT DATABASE`.
     ImportStmt {
         /// Filename.
-        filename: Option<String>,
+        filename: Option<ByteString>,
     }
     /// `PGPrepareStmt`: PREPARE Statement.
     PrepareStmt {
         /// Name of plan, arbitrary.
-        name: Option<String>,
+        name: Option<ByteString>,
         /// Types of parameters (`PGList` of `PGTypeName`)
         argtypes: List,
         /// The query itself (as a raw parsetree)
@@ -484,14 +485,14 @@ nodes! {
     /// `PGExecuteStmt`: EXECUTE Statement.
     ExecuteStmt {
         /// The name of the plan to execute.
-        name: Option<String>,
+        name: Option<ByteString>,
         /// Values to assign to parameters.
         params: List,
     }
     /// `PGDeallocateStmt`: DEALLOCATE Statement.
     DeallocateStmt {
         /// The name of the plan to remove.
-        name: Option<String>,
+        name: Option<ByteString>,
     }
     /// `PGCallStmt`: CALL Statement.
     CallStmt {
@@ -503,7 +504,7 @@ nodes! {
         /// `kind`.
         kind: PragmaKind,
         /// Variable to be set.
-        name: Option<String>,
+        name: Option<ByteString>,
         /// `PGList` of `PGAConst` nodes.
         args: List,
     }
@@ -523,7 +524,7 @@ nodes! {
         /// `scope`.
         scope: VariableSetScope,
         /// Variable to be set.
-        name: Option<String>,
+        name: Option<ByteString>,
         /// `PGList` of `PGAConst` nodes.
         args: List,
     }
@@ -532,7 +533,7 @@ nodes! {
         /// Relation to describe (if any)
         relation: Option<Box<RangeVar>>,
         /// Set to describe (`e.g`. set when using SHOW ALL TABLES)
-        set: Option<String>,
+        set: Option<ByteString>,
         /// Whether or not this is a DESCRIBE or a SUMMARIZE.
         is_summary: i32,
     }
@@ -541,7 +542,7 @@ nodes! {
         /// `stmt`.
         stmt: Option<Node>,
         /// `name`.
-        name: Option<String>,
+        name: Option<ByteString>,
         /// Whether or not this is a DESCRIBE or a SUMMARIZE.
         is_summary: i32,
     }
@@ -557,13 +558,13 @@ nodes! {
     /// `PGLoadStmt`: `LOAD` and `INSTALL` of extensions.
     LoadStmt {
         /// File to load.
-        filename: Option<String>,
+        filename: Option<ByteString>,
         /// Optionally, the repository to load from.
-        repository: Option<String>,
+        repository: Option<ByteString>,
         /// Whether the repository was passed as an alias or a raw path.
         repo_is_alias: bool,
         /// Optionally, the version of the extension to be loaded.
-        version: Option<String>,
+        version: Option<ByteString>,
         /// `load_type`.
         load_type: LoadInstallType,
     }
@@ -575,9 +576,9 @@ nodes! {
     /// `PGAttachStmt`: Attach Statement.
     AttachStmt {
         /// The file path of the to-be-attached database.
-        path: Option<String>,
+        path: Option<ByteString>,
         /// The name of the attached database.
-        name: Option<String>,
+        name: Option<ByteString>,
         /// `PGList` of `PGDefElem` nodes.
         options: List,
         /// `query`.
@@ -588,7 +589,7 @@ nodes! {
     /// `PGDetachStmt`: Dettach Statement.
     DetachStmt {
         /// List of names of attached databases.
-        db_name: Option<String>,
+        db_name: Option<ByteString>,
         /// `missing_ok`.
         missing_ok: bool,
     }
@@ -602,7 +603,7 @@ nodes! {
         /// `force`.
         force: bool,
         /// `name`.
-        name: Option<String>,
+        name: Option<ByteString>,
     }
     /// `PGPivotStmt`: a `PIVOT`/`UNPIVOT` statement.
     PivotStmt {
@@ -623,7 +624,7 @@ nodes! {
     /// columns within the table.
     Alias {
         /// Aliased rel name (never qualified)
-        aliasname: Option<String>,
+        aliasname: Option<ByteString>,
         /// Optional list of column aliases.
         colnames: List,
     }
@@ -632,11 +633,11 @@ nodes! {
     /// operation recursively to child tables.
     RangeVar {
         /// The catalog (database) name, or NULL.
-        catalogname: Option<String>,
+        catalogname: Option<ByteString>,
         /// The schema name, or NULL.
-        schemaname: Option<String>,
+        schemaname: Option<ByteString>,
         /// The relation/sequence name.
-        relname: Option<String>,
+        relname: Option<ByteString>,
         /// Expand rel by inheritance? recursively act on children?
         inh: bool,
         /// See `RELPERSISTENCE_`* in `pg_class.h`.
@@ -712,7 +713,7 @@ nodes! {
     /// `PGCommonTableExpr`: one common table expression of a `WITH` clause.
     CommonTableExpr {
         /// Query name (never qualified)
-        ctename: Option<String>,
+        ctename: Option<ByteString>,
         /// Optional list of column names.
         aliascolnames: List,
         /// Is this an optimization fence?
@@ -775,7 +776,7 @@ nodes! {
         /// Qualification (partial-index predicate)
         where_clause: Option<Node>,
         /// `PGConstraint` name, or NULL if unnamed.
-        conname: Option<String>,
+        conname: Option<ByteString>,
         /// Token location, or -1 if unknown.
         location: i32,
     }
@@ -783,7 +784,7 @@ nodes! {
     /// attribute, 'name' is the name of the table column to index, and 'expr' is NULL.
     IndexElem {
         /// Name of attribute to index, or NULL.
-        name: Option<String>,
+        name: Option<ByteString>,
         /// Expression to index, or NULL.
         expr: Option<Node>,
         /// Name of collation; NIL = default.
@@ -822,9 +823,9 @@ nodes! {
     /// "name" is the window name being defined.
     WindowDef {
         /// Window's own name.
-        name: Option<String>,
+        name: Option<ByteString>,
         /// Referenced window name, if any.
-        refname: Option<String>,
+        refname: Option<ByteString>,
         /// PARTITION BY expression list.
         partition_clause: List,
         /// ORDER BY (list of `PGSortBy`)
@@ -859,7 +860,7 @@ nodes! {
         /// The size of the sample to take.
         sample_size: Option<Node>,
         /// Sample method, or NULL for default.
-        method: Option<String>,
+        method: Option<ByteString>,
         /// If the sample method has seed.
         has_seed: bool,
         /// The seed value if set;.
@@ -875,7 +876,7 @@ nodes! {
     /// `PGAtClause`: AT clause in FROM tables - `e.g`.
     AtClause {
         /// The unit (`e.g`. TIMESTAMP/VERSION)
-        unit: Option<String>,
+        unit: Option<ByteString>,
         /// The expression.
         expr: Option<Node>,
     }
@@ -890,7 +891,7 @@ nodes! {
         /// Subquery to fetch valid pivot values (if any)
         subquery: Option<Node>,
         /// The enum to fetch the unique values from.
-        pivot_enum: Option<String>,
+        pivot_enum: Option<ByteString>,
     }
     /// `PGPivotExpr`: a `PIVOT`/`UNPIVOT` table reference.
     PivotExpr {
@@ -916,7 +917,7 @@ nodes! {
     /// there was none, and 'val' is the value expression itself.
     ResTarget {
         /// Column name or NULL.
-        name: Option<String>,
+        name: Option<ByteString>,
         /// Subscripts, field names, and '*', or NIL.
         indirection: List,
         /// The value expression to compute or assign.
@@ -938,9 +939,9 @@ nodes! {
     /// `PGDefElem`: a generic `name = value` option.
     DefElem {
         /// NULL if unqualified name.
-        defnamespace: Option<String>,
+        defnamespace: Option<ByteString>,
         /// `defname`.
-        defname: Option<String>,
+        defname: Option<ByteString>,
         /// A (`PGValue` *) or a (`PGTypeName` *)
         arg: Option<Node>,
         /// Unspecified action, or SET/ADD/DROP.
@@ -954,7 +955,7 @@ nodes! {
     /// `PGColumnDef` node was created (by parsing, or by inheritance from an existing relation)
     ColumnDef {
         /// Name of column.
-        colname: Option<String>,
+        colname: Option<ByteString>,
         /// Type of column.
         type_name: Option<Box<TypeName>>,
         /// Default value (untransformed parse tree)
@@ -973,7 +974,7 @@ nodes! {
         /// See above.
         contype: ConstrType,
         /// `PGConstraint` name, or NULL if unnamed.
-        conname: Option<String>,
+        conname: Option<ByteString>,
         /// DEFERRABLE?
         deferrable: bool,
         /// INITIALLY DEFERRED?
@@ -991,7 +992,7 @@ nodes! {
         /// Options from WITH clause.
         options: List,
         /// Existing index to use; otherwise NULL.
-        indexname: Option<String>,
+        indexname: Option<ByteString>,
         /// Partial index predicate.
         where_clause: Option<Node>,
         /// Primary key table.
@@ -1011,7 +1012,7 @@ nodes! {
         /// Mark the new constraint as valid?
         initially_valid: bool,
         /// Existing index to use; otherwise NULL.
-        compression_name: Option<String>,
+        compression_name: Option<ByteString>,
     }
     /// `PGCollateClause`: a COLLATE expression.
     CollateClause {
@@ -1073,7 +1074,7 @@ nodes! {
         /// Token location, or -1 if unknown.
         location: i32,
         /// Optional name of the parameter.
-        name: Option<String>,
+        name: Option<ByteString>,
     }
     /// `PGAConst`: a literal constant.
     AConst {
@@ -1088,7 +1089,7 @@ nodes! {
         /// `duckdb_libpgquery`::`T_PGInteger` or `duckdb_libpgquery`::`T_PGAExpr`.
         val_type: i32,
         /// `duckdb_libpgquery`::`T_PGString`.
-        sval: Option<String>,
+        sval: Option<ByteString>,
         /// `duckdb_libpgquery`::`T_PGString`.
         ival: i32,
         /// `duckdb_libpgquery`::`T_PGAExpr`.
@@ -1141,7 +1142,7 @@ nodes! {
     /// `ColumnRef.fields`, `AIndirection.indirection`, and `ResTarget.indirection` lists.
     AStar {
         /// Relation name (optional)
-        relation: Option<String>,
+        relation: Option<ByteString>,
         /// Optional: the expression (regex or list) to select columns.
         expr: Option<Node>,
         /// Optional: EXCLUDE list.
@@ -1260,7 +1261,7 @@ nodes! {
         /// The argument expression.
         arg: Option<Node>,
         /// The name.
-        name: Option<String>,
+        name: Option<ByteString>,
         /// Argument's number in positional notation.
         argnumber: i32,
         /// Argument name location, or -1 if unknown.

@@ -108,7 +108,8 @@ pub struct SchemaEntry {
 
 impl SchemaEntry {
     /// The empty schema `schema` of catalog `catalog`.
-    pub fn new(catalog: &crate::CatalogName, schema: &str) -> Self {
+    pub fn new(catalog: &crate::CatalogName, schema: impl AsRef<[u8]>) -> Self {
+        let schema = schema.as_ref();
         let set = || Arc::new(CatalogSet::new(catalog, schema));
         Self {
             tables: set(),
@@ -127,7 +128,7 @@ impl SchemaEntry {
 /// One column of a table (DuckDB's `ColumnDefinition`, catalog part).
 #[derive(Clone, Debug)]
 pub struct TableColumn {
-    pub name: String,
+    pub name: rustdb_common::ByteString,
     pub logical_type: LogicalType,
     /// `DEFAULT expr`.
     pub default_value: Option<ParsedExpression>,
@@ -199,11 +200,11 @@ impl TableEntry {
     }
 
     /// The column called `name` (case-insensitive), with its index.
-    pub fn column(&self, name: &str) -> Option<(usize, &TableColumn)> {
+    pub fn column(&self, name: impl AsRef<[u8]>) -> Option<(usize, &TableColumn)> {
         self.columns
             .iter()
             .enumerate()
-            .find(|(_, column)| column.name.eq_ignore_ascii_case(name))
+            .find(|(_, column)| column.name.eq_ignore_ascii_case(name.as_ref()))
     }
 
     /// The stored (non-generated) columns as `(physical index, logical index, column)`
@@ -251,7 +252,7 @@ pub struct IndexEntry {
     /// The `CREATE INDEX` definition; `column_ids` are physical column indexes.
     pub info: rustdb_ast::CreateIndexInfo,
     /// The schema of the indexed table.
-    pub schema: String,
+    pub schema: rustdb_common::ByteString,
     /// The indexed table's storage info (`IndexDataTableInfo`).
     pub storage: Option<Arc<rustdb_storage::DataTableInfo>>,
 }
@@ -307,7 +308,8 @@ impl SequenceEntry {
     }
 
     /// `SequenceCatalogEntry::NextValue` of the sequence called `name`.
-    pub fn next_value(&self, name: &str) -> rustdb_common::Result<i64> {
+    pub fn next_value(&self, name: impl AsRef<[u8]>) -> rustdb_common::Result<i64> {
+        let name = name.as_ref();
         let mut data = self.lock();
         let result = data.counter;
         let (next, overflow) = data.counter.overflowing_add(data.increment);
@@ -326,13 +328,13 @@ impl SequenceEntry {
             }
         } else {
             if result < data.min_value || (overflow && data.increment < 0) {
-                return Err(sequence_error(format!(
+                return Err(sequence_error(rustdb_common::byte_format!(
                     "nextval: reached minimum value of sequence \"{name}\" ({})",
                     data.min_value
                 )));
             }
             if result > data.max_value || overflow {
-                return Err(sequence_error(format!(
+                return Err(sequence_error(rustdb_common::byte_format!(
                     "nextval: reached maximum value of sequence \"{name}\" ({})",
                     data.max_value
                 )));
@@ -370,8 +372,8 @@ impl SequenceEntry {
     }
 }
 
-fn sequence_error(message: String) -> rustdb_common::Error {
-    rustdb_common::Error::new(rustdb_common::ErrorKind::Sequence, message)
+fn sequence_error(message: impl Into<rustdb_common::ByteString>) -> rustdb_common::Error {
+    rustdb_common::Error::new_bytes(rustdb_common::ErrorKind::Sequence, message.into().into_bytes())
 }
 
 /// A view: a stored query (DuckDB's `ViewCatalogEntry`).
@@ -379,12 +381,12 @@ fn sequence_error(message: String) -> rustdb_common::Error {
 pub struct ViewEntry {
     pub query: SelectStatement,
     /// Column names given in `CREATE VIEW v(a, b)`.
-    pub aliases: Vec<String>,
+    pub aliases: Vec<rustdb_common::ByteString>,
     /// The result types and names of the query when the view was created.
     pub types: Vec<LogicalType>,
-    pub names: Vec<String>,
+    pub names: Vec<rustdb_common::ByteString>,
     /// `COMMENT ON COLUMN` values, by column name.
-    pub column_comments: rustdb_common::OrderedMap<String, rustdb_types::Value>,
+    pub column_comments: rustdb_common::OrderedMap<rustdb_common::ByteString, rustdb_types::Value>,
 }
 
 /// A user-defined type (DuckDB's `TypeCatalogEntry`): `CREATE TYPE name AS ...`.
@@ -431,8 +433,9 @@ impl EntryKind {
     /// Stamps the functions of a function entry with the entry's catalog and schema, as
     /// the constructors of DuckDB's function catalog entries do (`catalog_name` and
     /// `schema_name`, which serialized plans name the functions by).
-    pub fn set_function_catalog(&mut self, catalog: &str, schema: &str) {
-        let (catalog, schema): (Arc<str>, Arc<str>) = (Arc::from(catalog), Arc::from(schema));
+    pub fn set_function_catalog(&mut self, catalog: impl AsRef<[u8]>, schema: impl AsRef<[u8]>) {
+        let (catalog, schema): (Arc<[u8]>, Arc<[u8]>) =
+            (Arc::from(catalog.as_ref()), Arc::from(schema.as_ref()));
         match self {
             Self::ScalarFunction(set) => {
                 for function in &mut set.functions {
@@ -469,6 +472,22 @@ pub struct CollationEntry {
 /// `FIRST_OID` belong to built-in entries).
 static NEXT_OID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(FIRST_OID);
 
+/// The object IDs owned by one database instance (`DatabaseManager::next_oid`).
+#[derive(Debug)]
+pub struct OidAllocator(std::sync::atomic::AtomicU64);
+
+impl Default for OidAllocator {
+    fn default() -> Self {
+        Self(std::sync::atomic::AtomicU64::new(FIRST_OID))
+    }
+}
+
+impl OidAllocator {
+    pub fn next_oid(&self) -> u64 {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 /// The first object id of entries created after start-up.
 const FIRST_OID: u64 = 20_000;
 
@@ -480,7 +499,7 @@ pub fn next_oid() -> u64 {
 /// A named object in the catalog.
 #[derive(Debug)]
 pub struct CatalogEntry {
-    name: String,
+    name: rustdb_common::ByteString,
     /// The object id (`CatalogEntry::oid`).
     pub oid: u64,
     /// Built-in objects that users cannot drop.
@@ -500,10 +519,15 @@ pub struct CatalogEntry {
 }
 
 impl CatalogEntry {
-    pub fn new(name: impl Into<String>, kind: EntryKind) -> Self {
+    pub fn new(name: impl Into<rustdb_common::ByteString>, kind: EntryKind) -> Self {
+        Self::with_oid(name, kind, next_oid())
+    }
+
+    /// An entry constructed by its owning catalog's allocator.
+    pub fn with_oid(name: impl Into<rustdb_common::ByteString>, kind: EntryKind, oid: u64) -> Self {
         Self {
             name: name.into(),
-            oid: next_oid(),
+            oid,
             internal: false,
             temporary: false,
             kind,
@@ -516,6 +540,10 @@ impl CatalogEntry {
     /// A copy of this entry under the same name (`CatalogEntry::Copy`), for alters that
     /// only change metadata; `None` for entries that cannot be copied.
     pub fn try_copy(&self) -> Option<Self> {
+        self.try_copy_with_oid(next_oid())
+    }
+
+    pub fn try_copy_with_oid(&self, oid: u64) -> Option<Self> {
         let kind = match &self.kind {
             EntryKind::Table(table) => EntryKind::Table(table.clone()),
             EntryKind::View(view) => EntryKind::View(view.clone()),
@@ -526,7 +554,7 @@ impl CatalogEntry {
             EntryKind::Index(index) => EntryKind::Index(index.clone()),
             _ => return None,
         };
-        let mut copy = Self::new(self.name.clone(), kind);
+        let mut copy = Self::with_oid(self.name.clone(), kind, oid);
         copy.inherit_links(self);
         copy.internal = self.internal;
         Some(copy)
@@ -542,22 +570,22 @@ impl CatalogEntry {
     }
 
     /// This entry of `schema` as the subject of a dependency.
-    pub fn info(&self, schema: &str) -> rustdb_ast::CatalogEntryInfo {
+    pub fn info(&self, schema: impl AsRef<[u8]>) -> rustdb_ast::CatalogEntryInfo {
         rustdb_ast::CatalogEntryInfo {
             catalog_type: self.dependency_type(),
-            schema: schema.to_owned(),
+            schema: schema.as_ref().into(),
             name: self.name.clone(),
         }
     }
 
     /// Whether `info` names this entry of `schema`.
-    pub fn is_described_by(&self, schema: &str, info: &rustdb_ast::CatalogEntryInfo) -> bool {
+    pub fn is_described_by(&self, schema: impl AsRef<[u8]>, info: &rustdb_ast::CatalogEntryInfo) -> bool {
         info.catalog_type == self.dependency_type()
-            && info.schema.eq_ignore_ascii_case(schema)
+            && info.schema.eq_ignore_ascii_case(schema.as_ref())
             && info.name.eq_ignore_ascii_case(&self.name)
     }
 
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &rustdb_common::ByteString {
         &self.name
     }
 

@@ -8,7 +8,7 @@ use rustdb_ast::{
     LoadInfo, LoadType, OnEntryNotFound, ParsedExpression, ParsedExpressionKind, PragmaInfo,
     PrepareStatement, SetScope, SetStatement, SqlStatementKind, TransactionInfo,
     TransactionInvalidationPolicy, TransactionModifierType, TransactionType, UpdateExtensionsInfo,
-    VacuumInfo, VacuumOptions, keyword::write_optionally_quoted,
+    VacuumInfo, VacuumOptions, keyword::write_optionally_quoted_bytes as write_optionally_quoted,
 };
 use rustdb_common::{CaseInsensitiveMap, Error, OrderedMap, Result};
 use rustdb_pg_parser::nodes::{
@@ -43,7 +43,7 @@ fn parse_explain_format(value: &Value) -> Result<ExplainFormat> {
         return Err(Error::invalid_input("Expected a string as argument to FORMAT"));
     }
     let text = value.as_str().unwrap_or_default();
-    let mut mapping = CiHashMap::new();
+    let mut mapping: CiHashMap<ExplainFormat> = CiHashMap::new();
     for (name, format) in [
         ("default", ExplainFormat::Default),
         ("text", ExplainFormat::Text),
@@ -59,7 +59,7 @@ fn parse_explain_format(value: &Value) -> Result<ExplainFormat> {
         return Ok(*format);
     }
     let options: Vec<&str> = mapping.iter().map(|(name, _)| name).collect();
-    Err(Error::invalid_input(format!(
+    Err(Error::invalid_input(rustdb_common::byte_format!(
         "\"{text}\" is not a valid FORMAT argument, valid options are: {}",
         options.join(", ")
     )))
@@ -68,7 +68,7 @@ fn parse_explain_format(value: &Value) -> Result<ExplainFormat> {
 /// A `PragmaStatement` with the given name and constant string parameters.
 fn pragma_statement(name: &str, parameters: Vec<ParsedExpression>) -> SqlStatementKind {
     SqlStatementKind::Pragma(Box::new(PragmaInfo {
-        name: name.to_owned(),
+        name: name.into(),
         parameters,
         named_parameters: CaseInsensitiveMap::default(),
     }))
@@ -82,7 +82,7 @@ impl<'a> Transformer<'a> {
             TransactionStmtKind::Commit => TransactionType::Commit,
             TransactionStmtKind::Rollback => TransactionType::Rollback,
             other => {
-                return Err(Error::not_implemented(format!(
+                return Err(Error::not_implemented(rustdb_common::byte_format!(
                     "Transaction type {} not implemented yet",
                     other as i32
                 )));
@@ -128,7 +128,8 @@ impl<'a> Transformer<'a> {
     pub(crate) fn transform_execute(&mut self, stmt: &'a ExecuteStmt) -> Result<SqlStatementKind> {
         let name = stmt.name.clone().unwrap_or_default();
         let values = self.transform_expressions(&stmt.params)?;
-        let mut named_values: CiHashMap<ParsedExpression> = CiHashMap::new();
+        let mut named_values: CiHashMap<ParsedExpression, rustdb_common::ByteString> =
+            CiHashMap::new_with_keys();
         let mut param_idx = 0;
         for (i, mut expr) in values.into_iter().enumerate() {
             if !is_scalar(&expr) {
@@ -143,7 +144,7 @@ impl<'a> Transformer<'a> {
             }
             let mut param_name = expr.alias.clone();
             if expr.alias.is_empty() {
-                param_name = (param_idx + 1).to_string();
+                param_name = (param_idx + 1).to_string().into();
                 if param_idx != i {
                     return Err(Error::not_implemented(
                         "Mixing named parameters and positional parameters is not supported yet",
@@ -167,8 +168,8 @@ impl<'a> Transformer<'a> {
         };
         Ok(SqlStatementKind::Drop(Box::new(DropInfo {
             catalog_type: CatalogType::PreparedStatement,
-            catalog: String::new(),
-            schema: String::new(),
+            catalog: String::new().into(),
+            schema: String::new().into(),
             name: name.clone(),
             if_not_found: OnEntryNotFound::ThrowException,
             cascade: false,
@@ -181,7 +182,8 @@ impl<'a> Transformer<'a> {
     pub(crate) fn transform_pragma(&mut self, stmt: &'a PragmaStmt) -> Result<SqlStatementKind> {
         let name = stmt.name.clone().unwrap_or_default();
         let mut parameters = Vec::new();
-        let mut named_parameters: CiHashMap<ParsedExpression> = CiHashMap::new();
+        let mut named_parameters: CiHashMap<ParsedExpression, rustdb_common::ByteString> =
+            CiHashMap::new_with_keys();
         for node in &stmt.args {
             let expr = self.transform_expression(node)?;
             if expr.expression_type == ExpressionType::CompareEqual {
@@ -201,11 +203,11 @@ impl<'a> Transformer<'a> {
                 named_parameters.insert(key, *comparison.right);
             } else if let ParsedExpressionKind::ColumnRef(column_ref) = &expr.kind {
                 let text = if column_ref.column_names.len() > 1 {
-                    expr.to_string()
+                    expr.to_sql_bytes()
                 } else {
                     column_ref.column_names.last().cloned().unwrap_or_default()
                 };
-                parameters.push(build::varchar_constant(&text));
+                parameters.push(build::varchar_constant_bytes(text.as_bytes())?);
             } else {
                 parameters.push(expr);
             }
@@ -252,7 +254,7 @@ impl<'a> Transformer<'a> {
     pub(crate) fn transform_export(&mut self, stmt: &'a ExportStmt) -> Result<SqlStatementKind> {
         let mut info = copy_info();
         info.file_path = stmt.filename.clone().unwrap_or_default();
-        "csv".clone_into(&mut info.format);
+        info.format = "csv".into();
         info.is_from = false;
         self.transform_copy_options(&mut info, &stmt.options)?;
         Ok(SqlStatementKind::Export(ExportStatement {
@@ -262,13 +264,13 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformImport`: `IMPORT DATABASE 'path'` is `PRAGMA import_database('path')`.
-    pub(crate) fn transform_import(stmt: &ImportStmt) -> SqlStatementKind {
-        pragma_statement(
+    pub(crate) fn transform_import(stmt: &ImportStmt) -> Result<SqlStatementKind> {
+        Ok(pragma_statement(
             "import_database",
-            vec![build::varchar_constant(
+            vec![build::try_varchar_constant(
                 stmt.filename.as_deref().unwrap_or_default(),
-            )],
-        )
+            )?],
+        ))
     }
 
     /// `TransformExplain`.
@@ -283,9 +285,9 @@ impl<'a> Transformer<'a> {
                 .as_deref()
                 .unwrap_or_default()
                 .to_ascii_lowercase();
-            if elem == "analyze" {
+            if elem == b"analyze" {
                 explain_type = ExplainType::ExplainAnalyze;
-            } else if elem == "format" {
+            } else if elem == b"format" {
                 if let Some(arg) = &def_elem.arg {
                     if format_is_set {
                         return Err(Error::invalid_input("FORMAT can not be provided more than once"));
@@ -301,7 +303,7 @@ impl<'a> Transformer<'a> {
                     explain_format = parse_explain_format(&constant.value)?;
                 }
             } else {
-                return Err(Error::not_implemented(format!(
+                return Err(Error::not_implemented(rustdb_common::byte_format!(
                     "Unimplemented explain type: {elem}"
                 )));
             }
@@ -347,7 +349,7 @@ impl<'a> Transformer<'a> {
             info.table_ref = Some(Box::new(self.transform_range_var(relation)?));
             info.has_table = true;
         }
-        info.columns = string_list(&stmt.va_cols)?;
+        info.columns = string_list(&stmt.va_cols)?.into_iter().collect();
         Ok(SqlStatementKind::Vacuum(Box::new(info)))
     }
 
@@ -375,11 +377,11 @@ impl<'a> Transformer<'a> {
                 let mut expr = self.transform_expression(argument)?;
                 if let ParsedExpressionKind::ColumnRef(column_ref) = &expr.kind {
                     let text = if column_ref.column_names.len() > 1 {
-                        expr.to_string()
+                        expr.to_sql_bytes()
                     } else {
                         column_ref.column_names.last().cloned().unwrap_or_default()
                     };
-                    expr = build::varchar_constant(&text);
+                    expr = build::varchar_constant_bytes(text.as_bytes())?;
                 }
                 let value = if expr.expression_type == ExpressionType::ValueDefault {
                     None
@@ -403,7 +405,7 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformCheckpoint`: `CHECKPOINT [db]` is `CALL checkpoint([db])`.
-    pub(crate) fn transform_checkpoint(stmt: &CheckPointStmt) -> SqlStatementKind {
+    pub(crate) fn transform_checkpoint(stmt: &CheckPointStmt) -> Result<SqlStatementKind> {
         let name = if stmt.force {
             "force_checkpoint"
         } else {
@@ -412,16 +414,16 @@ impl<'a> Transformer<'a> {
         let children = stmt
             .name
             .iter()
-            .map(|database| build::varchar_constant(database))
-            .collect();
+            .map(build::try_varchar_constant)
+            .collect::<Result<_>>()?;
         let mut function = build::function(name, children);
         if let ParsedExpressionKind::Function(function) = &mut function.kind {
-            "system".clone_into(&mut function.catalog);
-            "main".clone_into(&mut function.schema);
+            function.catalog = "system".into();
+            function.schema = "main".into();
         }
-        SqlStatementKind::Call(CallStatement {
+        Ok(SqlStatementKind::Call(CallStatement {
             function: Box::new(function),
-        })
+        }))
     }
 
     /// `TransformLoad`: `LOAD` / `INSTALL` / `FORCE INSTALL`.
@@ -441,7 +443,8 @@ impl<'a> Transformer<'a> {
 
     /// `TransformAttach`.
     pub(crate) fn transform_attach(&mut self, stmt: &'a AttachStmt) -> Result<SqlStatementKind> {
-        let mut parsed_options: CiHashMap<ParsedExpression> = CiHashMap::new();
+        let mut parsed_options: CiHashMap<ParsedExpression, rustdb_common::ByteString> =
+            CiHashMap::new_with_keys();
         for node in &stmt.options {
             let def_elem: &'a DefElem = cast_node(node)?;
             let expr = match &def_elem.arg {
@@ -485,16 +488,16 @@ impl<'a> Transformer<'a> {
         let name = if qname.schema.is_empty() {
             write_optionally_quoted(&qname.name)
         } else {
-            format!(
+            rustdb_common::byte_format!(
                 "{}.{}",
                 write_optionally_quoted(&qname.schema),
                 write_optionally_quoted(&qname.name)
             )
         };
         Ok(SqlStatementKind::Set(SetStatement {
-            name: "schema".to_owned(),
+            name: "schema".into(),
             scope: SetScope::Automatic,
-            value: Some(Box::new(build::varchar_constant(&name))),
+            value: Some(Box::new(build::try_varchar_constant(&name)?)),
         }))
     }
 
@@ -505,12 +508,15 @@ impl<'a> Transformer<'a> {
         let Some(flag) = &stmt.copy_database_flag else {
             return Ok(pragma_statement(
                 "copy_database",
-                vec![build::varchar_constant(&from), build::varchar_constant(&to)],
+                vec![
+                    build::try_varchar_constant(&from)?,
+                    build::try_varchar_constant(&to)?,
+                ],
             ));
         };
-        let copy_type = match flag.as_str() {
-            "schema" => CopyDatabaseType::CopySchema,
-            "data" => CopyDatabaseType::CopyData,
+        let copy_type = match flag.as_bytes() {
+            b"schema" => CopyDatabaseType::CopySchema,
+            b"data" => CopyDatabaseType::CopyData,
             _ => return Err(Error::not_implemented("Unsupported flag for COPY DATABASE")),
         };
         Ok(SqlStatementKind::CopyDatabase(CopyDatabaseStatement {

@@ -810,7 +810,7 @@ impl JoinHashTable {
                         (self.data_collection.size_in_bytes() + capacity * size_of::<u64>()).to_string(),
                     ),
                 ],
-            );
+            )?;
         }
         Ok(())
     }

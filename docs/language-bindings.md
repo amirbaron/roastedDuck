@@ -1,5 +1,7 @@
 # Language-client completion
 
+Current release verification (2026-11-03): source2078/signed macOS2088 and Linux ARM2080 supersede the retired source1959 artifacts after the concurrent-index correctness fix. Python3.10–3.14, Go and Swift are being verified afresh; prior client/SDK/simulator receipts below cannot accept the corrected artifacts. Required targets remain macOS arm64, iOS arm64 device/simulator and Linux arm64/x86_64. macOS Intel and other clients are outside scope. C API/ADBC remain required. Physical iOS hardware is unavailable and unverified, not waived. Internal-disk simulator execution is authorized; evidence stays on the external SSD. See [current verification](current-source-verification.md).
+
 The owner narrowed the goal on 2026-10-25: required language clients are **Python,
 Go and Swift only**. Preserve existing **C API and ADBC** functionality. R, Rust
 client wrappers, Node.js, Java/JDBC, ODBC, WebAssembly, C#/.NET, Julia and other
@@ -11,9 +13,245 @@ The [versioned client overview](https://duckdb.org/docs/1.5/clients/overview) an
 upstream packages and tests. Pin matching revisions before implementation/testing;
 a newer client or documentation update must not silently change the target version.
 
+## Current selected-client verification (2026-11-03)
+
+The candidate is frozen source1959/signed macOS arm64 core1961. The S3 worker
+context correction changes two HTTPFS files; the five corrected private Python
+binding files from1742 are included unchanged. Old core1637 and its client
+receipts are historical, not acceptance evidence for the new candidate.
+
+All five current macOS CPython3.10–3.14 normal ABI cells and independent1980
+reviews pass. Matrix2024 exits0; summary2062 verifies31,135matching XML records
+per engine,30,743passes and392retained nonpasses,36typed WAL journeys,216encrypted
+Parquet cases,18installed ADBC environments,40typing checks and108coupled samples
+across18separate workloads. Every workload remains in
+[the binding report](python-fetch-conversion-parity.md), including slower Python-
+backed rows. These observations do not establish TPC-H/ClickBench acceptance.
+
+Both CP313fast profiles and CP314Arrow22 have two reference-only Pandas unraisable
+attribute warning sites;2059/2060/2061 preserve actual raw logs and hashes.
+Warning logs are not byte-identical. No warning suppression or private attribute
+emulation was added.
+
+Current C API1971 passes30harnesses/155cases/745,460assertions. ADBC1972 passes
+64cases/3,040assertions per engine using a separate signed test bridge; shipping
+core1961 retains547C API exports and zero private ADBC test hooks. Current Go1982 passes652cases per engine and1984 verifies four independent typed
+checkpoint/WAL journeys. Full Swift1985 passes133cases per engine. Apple review2001 verifies the signed
+three-slice SDK, relocated Mac consumers/four typed WAL journeys, full133case
+simulator suite and typed simulator consumer/four additional WAL journeys.
+Physical-device execution/provisioning is unverified. Both Linux core builds/sign2027 complete; ARM full SQL collection2010 is live
+under dispatcher2069/session59928. Recoveries2063/2067 preserve and correct the
+CWD-dependent verifier and missed preparation-pin failures before their payloads. PhaseB2047
+covers the ten Linux Python ABI cells. Prepared checks are not passing evidence.
+Physical-device runtime/provisioning and final coupled performance acceptance
+remain open. See [current verification](current-source-verification.md) and
+[required platforms](release-platform-matrix.md).
+
+## Historical selected-client verification (source1634/1742; superseded)
+
+Current matrix update: all five declared Mac CP310–314functional cells and
+independent reviews now pass (index1831:31,135matching XML records per engine,
+392retained nonpasses,36typed WAL journeys,108coupled client samples). Current
+iOS ARM build1686is the sole heavy job in1819. Earlier phase updates below are
+historical; all other platform/client/storage/focused-control and final native
+macro acceptance gates remain open.
+
+Update2026-11-03local: CP313now completes all15stages and independent review1822.
+CP314strict build is live; other platforms and final macro acceptance remain open.
+Reference-only Pandas/pytest warnings are retained in the binding report.
+
+The selected scope remains Python, Go and Swift; C API and ADBC are preserved.
+Common engine source1634/signed Mac core1637 is unchanged. Corrected Python
+source1742 changes five private binding files, with explicit common-core
+source/dependency equivalence1749.
+
+Current macOS arm64 CPython3.10–3.14signed cells complete all required
+functional stages and independent reviews1816/1822. CP310–313each match6,891raw
+XML records per engine (6,804pass/87matching nonpasses). CP314matches3,571records
+(3,527pass/44matching nonpasses) on its soleArrow22profile.
+All420-record fetch-boundary and24-record HTTP profiles, buffer/Arrow producers,
+typed checkpoint/WAL journeys, encryption,385exports/stubs, installed ADBC,
+eight positive/negative typing checks and original non-fast suites pass.
+Individual speed/RSS client rows remain in
+[the binding report](python-fetch-conversion-parity.md). They do not replace
+final TPC-H/ClickBench acceptance. CP313is independently reviewed; CP314strict build is running.
+
+Current Mac C API1661passes155cases; ADBC1662passes64cases/3,040assertions per
+engine with a separate test bridge and unchanged zero-hook shipping library.
+Go1668passes652cases per engine and four typed WAL journeys1670. Swift1671passes
+132upstream+one identity case per engine. Current SDK/relocated consumers/Swift
+WAL, full simulator and physical-device proof remain distinct remaining gates.
+Linux current artifacts/selected clients/API/ADBC/storage/WAL and final coupled
+macro acceptance remain open. Follow [current verification](current-source-verification.md)
+and the [platform matrix](release-platform-matrix.md); queued work is not a pass.
+
+## Historical selected-client checkpoint (2026-11-02, superseded)
+
+The signed source1623 development wheel1626 passes the complete macOS arm64
+CPython3.10.16 fast suites on Arrow19 and21:3,241 and3,492 records per engine,
+respectively. Every case ID, verdict and skip reason matches C++. The unchanged
+HTTP/JSON/installer/S3 profile also matches all24records per engine on each profile,
+including complete error JSON and response attributes. All six supplements pass,
+including eight cross-engine checkpoint/WAL journeys with15typed columns and
+48encrypted-Parquet cases across the profiles. Receipt1642 preserves the raw scope.
+
+Installed-stub check1646 verifies six shared pinned stubs in both engines and the
+seventh Rust forwarding stub. Runtime exports, strict positive/negative typing,
+installed ADBC and non-fast checks1643–1647 are queued after the current core work;
+these prepared checks have not passed yet. No complete Python ABI/platform cell or
+whole release is accepted. Other Python ABIs/platforms, current Go/Swift consumers,
+Apple/Linux runtime gates and coupled speed/memory acceptance remain required.
+See [current-source verification](current-source-verification.md).
+
+## Historical integrated verification frontier (2026-11-01)
+
+Frozen core source1337/signed macOS arm64 release1344 has completed all4,870
+original SQL files:4,826 passes,30 matching skips and14 documented divergences
+(11 private C++ engine ABI demos and3 expected-OOM queries that succeed). No
+crashes, timeouts or resource kills occurred. The exact unchanged C++934 image's
+full baseline is retained with explicit source/runner lineage; see
+[current-source verification](current-source-verification.md).
+
+Fresh workspace build1361/runtime1410 completes148 harnesses:1,066 tests pass,
+zero fail,7 remain explicitly ignored (review1412); two functional supplements
+still require execution. Final C API1360 passes30 files/155 cases/747,104 assertions
+on signed candidate1344. Full Mac shell review1421 preserves393 upstream passes/
+2 skips, the768 differential's4 build-ID/1 native-frame differences, and21,460
+byte cases (20,385 exact,676 native stack suffixes,399 unavailable Mac filename
+fixtures). Every nonpass is retained;399 original fixtures must run on Linux.
+
+Current native Mac ADBC1434 passes64 cases/3,040 assertions each. Storage1437
+passes20 cross-engine DB/WAL journeys and40 tail-recovery checks. Go1438 passes
+652 cases each, plus4 independent typed handoff journeys1425. Swift1443 passes
+132 original+1 identity case per engine. Every image/source/signature guard is
+retained. Runner-only scheduling, prerequisite and fixture errors remain recorded;
+no engine or upstream test assertion changed.
+
+First CP310 Linux x86_64 signed wheel1475 and4 fresh paired Arrow19/21
+environments1375 pass build/sign/import/dependency checks. Both complete original
+fast suites1376 match C++:6,733 records per engine, zero disposition/skip-reason
+differences (review1480). Nine supplements1377 and explicit cell review remain;
+zero of15 cells are accepted yet. Original build OOM is preserved, with build-only SSD-VM swap1472
+and unchanged engine/release flags. All5 Mac dependency profiles are ready1430;
+build1415/install1429/fullfast1433 are prepared but unexecuted.
+Other Apple/Linux artifacts, Swift consumers/relocation/WAL/iOS runtime, Linux
+client suites and coupled performance acceptance remain required. Historical
+receipts below do not establish current common-core acceptance. Third-party
+native crypto is allowed; the DuckDB engine remains Rust.
+
+## Current correction frontier (2026-10-31)
+
+Layout/signature checkpoint430 adds ten independent C layout compilations across
+all five required target slices for the404-field v1.2.0 prefix and546-field full
+table. Official core-signed inet bytes are accepted and a one-bit mutation rejected
+with unsigned/community permissions disabled. Rust's data-only test explicitly
+allows platform metadata mismatch to validate a Linux file on macOS; no downloaded
+code ran. These do not close signed-C-ABI runtime or final platform/client gates.
+
+Shared-library checkpoint420 adds actual public C API INSTALL/LOAD control402
+and exact metadata-error408/initializer-error418 comparisons with C++ oracles.
+It fixes validated string-option boolean handling, required .info mode fields and
+initializer error categories. Workspace/all-target strict Clippy419 passes. These
+remain development components; broad signed/version/lifetime/ABI/platform/client/
+release/performance acceptance is still open.
+
+Implementation checkpoint: the live bridge now passes native macOS SDK control360
+for explicit unsigned loading (scalar/NULL/vector/repeated LOAD/catalog/reconnect,
+two independent databases) and rejects the fixture with unsigned loading disabled.
+Signed native unit355 passes independent OpenSSL signature/tampering/trust and
+version checks; workspace/all-target strict Clippy361 passes. These are development
+components. Initial local INSTALL now also passes signed native379 and exact C++
+.info bytes373; latest workspace Clippy382 passes. Initial force/origin/gzip/permission-mask controls now pass385/391, matching file
+modes0666 filtered by umask and directory0755 filtered by umask393; workspace
+Clippy392 passes. Broader metadata/signature/lifetime controls and
+shared-library/selected-client/platform refreshes,
+complete metadata/signature/lifetime controls and final common-source release/
+performance gates remain open. Source226 receipts remain before-image evidence.
+
+
+Confirmed stable C-ABI loading gap341 now takes core priority: the pure-C plugin
+passes the signed C++ oracle but Rust rejects LOAD. Existing API exports are present;
+the loader/access bridge is missing. Further source226 ABI/platform builds were
+unstarted and deferred321/343, preserving all inputs and prior component receipts.
+After implementation, rebase final selected-client gates on the new common source.
+
+
+Pandas3 defaults to dtype `str`. The signed old135 wheel rejects four original
+before177 cases that C++ reads as VARCHAR, including empty and all-NULL strings.
+Frozen source226 routes `str` through the same Arrow-buffer/Python-object binder
+as `string*`. Signed235 CP313 Linux x86_64 now passes the unchanged original238
+probe on Arrow19/21 and all58 expanded239 cases per engine:22+22 with Arrow and14
+in a real environment without Arrow. Every raw C++/Rust record matches. No table
+cache or whole-data materialization was added. All four complete baseline241 and
+Pandas3 suites242 now match C++ exactly on Arrow19/21:3241/3492 records per engine,
+including the actual Pandas3 new-string test. Nine supplements244 now pass,
+including385 runtime exports/seven pinned stubs, strict typing, installed ADBC,
+eight typed cross-engine checkpoint/WAL journeys,48 encrypted-Parquet cases,
+producer/lifetime controls and coupled client measurements. Native ADBC247 now
+passes all 64 cases/3,040 assertions per engine plus the public shipping consumer.
+Go251 passes all 652 cases per engine and consumer252 passes four typed checkpoint/
+WAL journeys. Swift254 passes 132 upstream cases plus one identity case per engine;
+its consumers255 pass four typed checkpoint/WAL journeys. These are source226 Linux
+x86_64/Rosetta components. Remaining ABI/target and final integrated gates stay open.
+
+The fresh Apple ARM64 native slices and full iOS simulator Swift suite are queued
+behind the current SQL/Python 3.10 gates. Native macOS paired C API296/297 and full
+Go298/299, including four independent typed WAL journeys301/302, are prepared to
+follow serially. The simulator device set and runtime use the authorized internal
+disk; build outputs and verification evidence remain on the external SSD. Queued
+components are unexecuted and do not change release acceptance.
+
+Three interleaved fresh-process client medians under Linux x86_64/Rosetta are
+Python-backed strings85.374ms/196.506MB Rust versus78.073ms/191.959MB C++ (1.094x
+time/1.024x whole RSS,4.547MB excess); Arrow-backed18.509ms/207.032MB versus
+114.499ms/248.300MB (.162x/.834x). Correctness and native identities pass. Preserve
+all raw samples and this per-workload limit: these are not native macro acceptance
+or evidence supporting a table-cache/memory increase. External aggregate253.
+
+Reference224 passes22 Arrow and14 real-no-Arrow controls, covering values/types,
+Unicode/NUL/NULLs, vector boundaries, Pandas3 copy-on-write snapshot semantics,
+mutation, retained owners and closed connections. Minimal no-Arrow environments
+pass dependency checks and actually lack Arrow. Raw old-Rust differences are preserved; both original and expanded controls now
+pass on the new235 wheel as scoped above. This does not close full client acceptance.
+The original218/223 control incorrectly expected mutation visibility; its failed
+reference evidence is preserved, and224 asserts the observed C++ snapshot behavior.
+
+Python3.10 hashing helpers now use a bounded SHA256 fallback when file_digest is
+absent. Actual3.10.22 and host builtin/fallback file controls pass, with every
+other caller AST unchanged. This verifies the helper, not the required15-cell
+wheel/client matrix. Go, Swift, C API/ADBC, final target refreshes and native coupled
+speed/RSS/outlier acceptance remain required. Older signed-client evidence follows.
+
 ## Current signed-candidate gates (2026-10-30)
 
-Client integration is not final. The latest Python object-buffer component passes
+The fresh macOS arm64 CPython3.13 wheel now matches both complete Arrow19/21
+matrices, focused named-memory/ArrowString/object/producer controls and the full
+package/typing/ADBC/non-fast/eight WAL/48 encryption refresh. Python-backed strings
+measure1.180x time/0.992x RSS; Arrow-backed strings0.165x time/0.826x RSS. See
+[macOS Python evidence](macos-python-client-parity.md). Python ABI versions beyond
+3.13, other architectures and final macro acceptance remain open.
+
+The newest Linux arm64 Python candidate fixes named-memory connections that
+previously created persistent files. Byte-string pool keys also preserve raw
+dot/separator names and independence from `chdir`. It matches11 frozen C++ controls
+per profile, both complete fast matrices and all supplemental/package/ADBC/eight
+typed WAL/48 encryption gates. Arrow-backed scans remain11.94ms/148.81MB versus
+C++76.68ms/195.38MB; Python-backed strings remain1.217x time/1.005x RSS. See
+[named-memory evidence](python-named-memory-parity.md). The corresponding macOS
+arm64 refresh is verified above; other targets and final macro acceptance remain
+open. Older checkpoints follow with their original artifact scopes.
+
+The newer Linux arm64 ArrowString wheel matches both complete Arrow19/21 fast
+matrices,23 focused cases per profile and the full installed-client supplement,
+typing/ADBC, eight typed persistence journeys and48 encrypted-Parquet cases.
+Its bind-time bounded Arrow conversion preserves repeat-query mutation behavior.
+Arrow-backed string scanning measures10.90ms/149.23MB versus C++79.56ms/195.65MB;
+Python-backed strings remain1.217x time at1.004x RSS. See
+[ArrowString candidate evidence](python-arrow-string-scan-parity.md). Final integrated
+macro performance and other-platform acceptance remain open. Older wheel checkpoints
+below retain their original artifact identities and outliers.
+
+Client integration is not final. The earlier Python object-buffer component passes
 both complete Arrow19/21 fast matrices and its boundary/non-fast/typing/ADBC/WAL
 gates; its1.21x/1.61x string-scan timing outliers remain explicit. That wheel predates
 the separately verified Parquet core component and needs an integrated refresh.
@@ -21,9 +259,22 @@ See [Python object-buffer evidence](python-object-buffer-parity.md).
 
 Linux arm64 now has optimized signed native artifacts and passes the full30-file
 C API harness (155 cases/862,010 assertions), with no engine changes for Linux
-harness portability. Linux Python/Go/Swift and ADBC have not yet been verified.
-Go harness platform,signature and loader support is implemented with bounded
-Linux helper checks; actual client builds,full cases and consumers remain pending.
+harness portability. Linux arm64 Python subsequently matches both complete
+Arrow19/21 fast matrices and non-fast/object-buffer/package/typing/persistence
+controls. Its string-scan outliers remain explicit; see
+[Linux Python evidence](linux-python-client-parity.md). Linux arm64 Swift now passes
+all132 pinned upstream cases plus its separate identity test on both engines, with
+matching IDs/verdicts and signed payloads verified before/after. Its relocated
+Linux package and deployed independent consumers subsequently pass both normal
+runs and all four typed checkpoint/nonempty-WAL handoffs; see
+[Linux Swift evidence](linux-swift-client-parity.md).
+Linux arm64 Go subsequently passes all652 pinned root-suite cases on both engines
+with exact IDs/verdicts and a separately built module's four checkpoint/nonempty-WAL
+handoffs. See [Linux Go evidence](linux-go-client-parity.md). Other target and final
+integrated client acceptance remains open.
+Linux arm64 native ADBC subsequently passes64 cases/3,040 assertions on each engine,
+plus public-ABI transaction/Arrow/reopen checks on the feature-free shipping library.
+See [Linux ADBC evidence](linux-adbc-parity.md) for the separate opt-in bridge scope.
 See [Linux native evidence](linux-arm64-native-preflight.md) and the
 [required platform matrix](release-platform-matrix.md). macOS x86_64,iOS device/
 simulator and Linux x86_64 gates remain open.

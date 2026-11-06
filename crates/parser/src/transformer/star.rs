@@ -17,11 +17,11 @@ use crate::hash_order::{CiHashMap, HashOrder, ci_hash};
 
 /// `TransformQualifiedColumnName`: `[[[catalog.]schema.]table.]column`.
 fn transform_qualified_column_name(list: &List) -> Result<QualifiedColumnName> {
-    let parts: Vec<&str> = list.iter().map(node_string).collect::<Result<_>>()?;
+    let parts: Vec<&[u8]> = list.iter().map(node_string).collect::<Result<_>>()?;
     let (catalog, schema, table, column) = match parts.as_slice() {
-        [column] => ("", "", "", *column),
-        [table, column] => ("", "", *table, *column),
-        [schema, table, column] => ("", *schema, *table, *column),
+        [column] => (b"".as_slice(), b"".as_slice(), b"".as_slice(), *column),
+        [table, column] => (b"".as_slice(), b"".as_slice(), *table, *column),
+        [schema, table, column] => (b"".as_slice(), *schema, *table, *column),
         [catalog, schema, table, column] => (*catalog, *schema, *table, *column),
         _ => {
             return Err(Error::parser(
@@ -30,16 +30,16 @@ fn transform_qualified_column_name(list: &List) -> Result<QualifiedColumnName> {
         }
     };
     Ok(QualifiedColumnName {
-        catalog: catalog.to_owned(),
-        schema: schema.to_owned(),
-        table: table.to_owned(),
-        column: column.to_owned(),
+        catalog: catalog.to_owned().into(),
+        schema: schema.to_owned().into(),
+        table: table.to_owned().into(),
+        column: column.to_owned().into(),
     })
 }
 
 /// `QualifiedColumnEquality`: a prefix comparison, so `tbl.i` equals `i` but not `tbl2.i`.
 fn qualified_equal(a: &QualifiedColumnName, b: &QualifiedColumnName) -> bool {
-    let part_matches = |x: &str, y: &str| x.is_empty() || y.is_empty() || x.eq_ignore_ascii_case(y);
+    let part_matches = |x: &[u8], y: &[u8]| x.is_empty() || y.is_empty() || x.eq_ignore_ascii_case(y);
     part_matches(&a.catalog, &b.catalog)
         && part_matches(&a.schema, &b.schema)
         && part_matches(&a.table, &b.table)
@@ -93,7 +93,7 @@ impl<V> QualifiedColumnMap<V> {
 /// `qualified_column_set_t`).
 pub fn serialized_exclude_list(exclude: QualifiedColumnMap<()>) -> Vec<QualifiedColumnName> {
     let ordered = exclude.into_ordered();
-    let mut plain = CiHashMap::new();
+    let mut plain: CiHashMap<(), rustdb_common::ByteString> = CiHashMap::new_with_keys();
     let mut qualified = QualifiedColumnMap::default();
     for (name, ()) in ordered {
         if name.is_qualified() {
@@ -129,7 +129,7 @@ impl<'a> Transformer<'a> {
                 let names = root
                     .fields
                     .iter()
-                    .map(|node| node_string(node).map(str::to_owned))
+                    .map(|node| node_string(node).map(rustdb_common::ByteString::from))
                     .collect::<Result<Vec<_>>>()?;
                 let mut column_ref = build::column_ref(names);
                 set_location(&mut column_ref, root.location);
@@ -151,13 +151,13 @@ impl<'a> Transformer<'a> {
             };
             let column = transform_qualified_column_name(parts)?;
             if exclude.contains(&column) {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "Duplicate entry \"{column}\" in EXCLUDE list"
                 )));
             }
             exclude.insert(column, ());
         }
-        let mut replace: CiHashMap<ParsedExpression> = CiHashMap::new();
+        let mut replace: CiHashMap<ParsedExpression, rustdb_common::ByteString> = CiHashMap::new_with_keys();
         for item in &star.replace_list {
             let Node::List(pair) = item else {
                 return Err(Error::internal("REPLACE entry is not a list"));
@@ -168,18 +168,18 @@ impl<'a> Transformer<'a> {
             let replace_expression = self.transform_expression(expression)?;
             let entry = node_string(name)?.to_owned();
             if replace.contains_key(&entry) {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "Duplicate entry \"{entry}\" in REPLACE list"
                 )));
             }
             if exclude.contains(&QualifiedColumnName::column(entry.clone())) {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "Column \"{entry}\" cannot occur in both EXCLUDE and REPLACE list"
                 )));
             }
             replace.insert(entry, replace_expression);
         }
-        let mut rename: QualifiedColumnMap<String> = QualifiedColumnMap::default();
+        let mut rename: QualifiedColumnMap<rustdb_common::ByteString> = QualifiedColumnMap::default();
         for item in &star.rename_list {
             let Node::List(pair) = item else {
                 return Err(Error::internal("RENAME entry is not a list"));
@@ -190,27 +190,27 @@ impl<'a> Transformer<'a> {
             let rename_column = transform_qualified_column_name(column)?;
             let new_name = node_string(new_name)?.to_owned();
             if rename.contains(&rename_column) {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "Duplicate entry \"{rename_column}\" in EXCLUDE list"
                 )));
             }
             if exclude.contains(&rename_column) {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "Column \"{rename_column}\" cannot occur in both EXCLUDE and RENAME list"
                 )));
             }
             if replace.contains_key(&rename_column.column) {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "Column \"{rename_column}\" cannot occur in both REPLACE and RENAME list"
                 )));
             }
-            rename.insert(rename_column, new_name);
+            rename.insert(rename_column, new_name.into());
         }
         result.exclude_list = serialized_exclude_list(exclude);
         result.replace_list = replace
             .into_ordered()
             .into_iter()
-            .collect::<CaseInsensitiveMap<_>>();
+            .collect::<CaseInsensitiveMap<_, rustdb_common::ByteString>>();
         result.rename_list = rename.into_ordered().into_iter().collect::<OrderedMap<_, _>>();
         if let Some(expr) = &star.expr {
             let child = self.transform_expression(expr)?;

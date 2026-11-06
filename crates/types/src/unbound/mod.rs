@@ -10,17 +10,18 @@ use rustdb_serde::{
 };
 
 use crate::Value;
+use rustdb_common::ByteString;
 
 /// A type name the parser could not resolve yet (DuckDB's `UnboundTypeInfo` holding a
 /// `TypeExpression`): `catalog.schema.name(parameters)`, bound later by the binder.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct UnboundTypeInfo {
     /// The catalog qualifier, or empty.
-    pub catalog: String,
+    pub catalog: ByteString,
     /// The schema qualifier, or empty.
-    pub schema: String,
+    pub schema: ByteString,
     /// The type name as written (normalized for builtin types).
-    pub name: String,
+    pub name: ByteString,
     /// The type modifiers in parentheses.
     pub parameters: Vec<TypeParameter>,
     /// Position of the type name in the query text.
@@ -31,7 +32,7 @@ pub struct UnboundTypeInfo {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TypeParameter {
     /// The parameter name (the field name of a STRUCT member), or empty.
-    pub name: String,
+    pub name: ByteString,
     pub value: TypeParameterValue,
     /// Position of the parameter in the query text.
     pub query_location: Option<u64>,
@@ -88,7 +89,7 @@ fn read_id_is(
 
 /// The `ParsedExpression` members of a type parameter: whether it is a constant, its
 /// alias and its query location.
-fn read_expression_base(deserializer: &mut dyn Deserializer) -> Result<(bool, String, Option<u64>)> {
+fn read_expression_base(deserializer: &mut dyn Deserializer) -> Result<(bool, ByteString, Option<u64>)> {
     let is_constant = read_id_is(deserializer, 100, "class", expression_ids::CLASS_CONSTANT)?;
     deserializer.on_property_begin(101, "type")?;
     // The expression type follows from the class.
@@ -107,10 +108,13 @@ fn read_expression_base(deserializer: &mut dyn Deserializer) -> Result<(bool, St
 
 impl UnboundTypeInfo {
     /// Writes this type as a `TypeExpression` (a `ParsedExpression` object's members).
-    fn serialize_expression(&self, serializer: &mut dyn Serializer, alias: &str) -> Result<()> {
+    fn serialize_expression(&self, serializer: &mut dyn Serializer, alias: &[u8]) -> Result<()> {
         write_id(serializer, 100, "class", expression_ids::CLASS_TYPE);
         write_id(serializer, 101, "type", expression_ids::TYPE_TYPE);
-        serializer.write_optional(102, "alias", alias.is_empty(), alias)?;
+        serializer.write_optional_with(102, "alias", alias.is_empty(), |serializer| {
+            serializer.write_string_bytes(alias);
+            Ok(())
+        })?;
         serializer.write_property_with_explicit_default(
             103,
             "query_location",
@@ -207,7 +211,7 @@ impl SerializeObject for UnboundTypeInfo {
             return serializer.write_optional_with(204, "expr", false, |serializer| {
                 serializer.on_nullable_begin(true);
                 serializer.on_object_begin();
-                self.serialize_expression(serializer, "")?;
+                self.serialize_expression(serializer, b"")?;
                 serializer.on_object_end();
                 serializer.on_nullable_end();
                 Ok(())
@@ -267,7 +271,7 @@ impl DeserializeObject for UnboundTypeInfo {
         let parameters = modifiers
             .into_iter()
             .map(|value| TypeParameter {
-                name: String::new(),
+                name: ByteString::new(),
                 value: TypeParameterValue::Constant(value),
                 query_location: None,
             })
@@ -279,6 +283,80 @@ impl DeserializeObject for UnboundTypeInfo {
             parameters,
             query_location: None,
         })
+    }
+}
+
+impl UnboundTypeInfo {
+    /// Native `TypeExpression` SQL text, also used by `ParsedExpression::GetName` during
+    /// legacy default binding when a parameter has no explicit alias.
+    pub fn to_sql_bytes(&self) -> rustdb_common::Result<ByteString> {
+        use crate::identifier::{sql_identifier_bytes, type_identifier_bytes};
+        use rustdb_common::{byte_format, byte_write};
+        let mut output = ByteString::new();
+        if !self.catalog.is_empty() {
+            let _ = byte_write!(output, "{}.", sql_identifier_bytes(&self.catalog));
+        }
+        if !self.schema.is_empty() {
+            let _ = byte_write!(output, "{}.", sql_identifier_bytes(&self.schema));
+        }
+        let render = |parameter: &TypeParameter| match &parameter.value {
+            TypeParameterValue::Type(ty) => ty.to_sql_bytes(),
+            TypeParameterValue::Constant(value) => value.try_to_sql_string(),
+        };
+        if output.is_empty() {
+            match (
+                self.name.as_bytes().to_ascii_uppercase().as_slice(),
+                self.parameters.as_slice(),
+            ) {
+                (b"LIST", [child]) => return Ok(byte_format!("{}[]", render(child)?)),
+                (b"ARRAY", [child, size]) => {
+                    return Ok(byte_format!("{}[{}]", render(child)?, render(size)?));
+                }
+                (b"STRUCT" | b"UNION", []) => return Ok(self.name.as_bytes().to_ascii_uppercase().into()),
+                (b"STRUCT" | b"UNION", parameters) => {
+                    output.push_bytes(self.name.as_bytes().to_ascii_uppercase());
+                    output.push(b'(');
+                    for (i, parameter) in parameters.iter().enumerate() {
+                        if i > 0 {
+                            output.push_bytes(", ");
+                        }
+                        let _ = byte_write!(
+                            output,
+                            "{} {}",
+                            sql_identifier_bytes(&parameter.name),
+                            render(parameter)?
+                        );
+                    }
+                    output.push(b')');
+                    return Ok(output);
+                }
+                (b"MAP", [key, value]) => {
+                    return Ok(byte_format!("MAP({}, {})", render(key)?, render(value)?));
+                }
+                (b"VARCHAR", [.., last]) if last.name.eq_ignore_ascii_case("collation") => {
+                    if let TypeParameterValue::Constant(value) = &last.value {
+                        return Ok(byte_format!(
+                            "VARCHAR COLLATE {}",
+                            sql_identifier_bytes(&value.to_varchar_bytes()?)
+                        ));
+                    }
+                }
+                (b"INTERVAL", [_, ..]) => return Ok("INTERVAL".into()),
+                _ => {}
+            }
+        }
+        output.push_bytes(type_identifier_bytes(&self.name));
+        if !self.parameters.is_empty() {
+            output.push(b'(');
+            for (i, parameter) in self.parameters.iter().enumerate() {
+                if i > 0 {
+                    output.push_bytes(", ");
+                }
+                output.push_bytes(render(parameter)?);
+            }
+            output.push(b')');
+        }
+        Ok(output)
     }
 }
 
@@ -300,11 +378,11 @@ mod tests {
         let unbound = LogicalType::with_info(
             LogicalTypeId::Unbound,
             TypeInfo::Unbound(UnboundTypeInfo {
-                catalog: String::new(),
+                catalog: ByteString::new(),
                 schema: "s".into(),
                 name: "mytype".into(),
                 parameters: vec![TypeParameter {
-                    name: String::new(),
+                    name: ByteString::new(),
                     value: TypeParameterValue::Constant(Value::integer(3)),
                     query_location: None,
                 }],

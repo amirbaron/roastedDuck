@@ -78,7 +78,9 @@ fn extra_byte_loop(
 /// (`ErrorManager::InvalidUnicodeError`).
 pub fn invalid_unicode_error(bytes: &[u8], context: &str) -> Error {
     let base_message = match analyze(bytes) {
-        UnicodeType::Invalid(UnicodeInvalidReason::ByteMismatch) => "Invalid unicode (byte sequence mismatch)",
+        UnicodeType::Invalid(UnicodeInvalidReason::ByteMismatch) => {
+            "Invalid unicode (byte sequence mismatch)"
+        }
         UnicodeType::Invalid(UnicodeInvalidReason::InvalidUnicode) => "Invalid unicode",
         UnicodeType::Ascii | UnicodeType::Utf8 => {
             return Error::invalid_input(format!(
@@ -87,6 +89,11 @@ pub fn invalid_unicode_error(bytes: &[u8], context: &str) -> Error {
         }
     };
     Error::invalid_input(format!("{base_message} detected in {context}"))
+}
+
+/// Native utf8proc traversal, including its malformed-sequence behavior and errors.
+pub fn native_grapheme_cluster(bytes: &[u8], start: usize) -> crate::Result<(usize, usize)> {
+    crate::tree_renderer::unicode::cluster(bytes, start)
 }
 
 #[cfg(test)]

@@ -6,21 +6,75 @@
 //! renderer and the JSON renderer reproduce DuckDB's output byte for byte.
 
 mod formats;
+pub(crate) mod unicode;
 
-use std::fmt::Write as _;
-
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthChar;
-
-use crate::OrderedMap;
+use crate::{ByteString, Error, OrderedMap, Result, byte_format};
 
 /// The key-value lines of a node (DuckDB's `InsertionOrderPreservingMap<string>`).
-pub type RenderParams = OrderedMap<String, String>;
+#[derive(Clone, Debug, Default)]
+pub struct RenderParams(OrderedMap<ByteString, ByteString>);
+impl RenderParams {
+    pub const fn new() -> Self {
+        Self(OrderedMap::new())
+    }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&ByteString, &ByteString)> {
+        self.0.iter()
+    }
+    pub fn get(&self, key: impl AsRef<[u8]>) -> Option<&ByteString> {
+        self.0
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case(key.as_ref()))
+            .map(|(_, value)| value)
+    }
+    pub fn get_mut(&mut self, key: impl AsRef<[u8]>) -> Option<&mut ByteString> {
+        self.0
+            .iter_mut()
+            .find(|(k, _)| k.eq_ignore_ascii_case(key.as_ref()))
+            .map(|(_, value)| value)
+    }
+    pub fn contains_key(&self, key: impl AsRef<[u8]>) -> bool {
+        self.get(key).is_some()
+    }
+    /// C++ insertion keeps the first value of an ASCII-case-insensitive key.
+    pub fn insert(&mut self, key: impl Into<ByteString>, value: impl Into<ByteString>) -> Option<ByteString> {
+        let key = key.into();
+        if let Some(existing) = self.get(&key) {
+            return Some(existing.clone());
+        }
+        self.0.push(key, value.into());
+        None
+    }
+    pub fn push(&mut self, key: impl Into<ByteString>, value: impl Into<ByteString>) {
+        self.0.push(key.into(), value.into());
+    }
+}
+impl<K: Into<ByteString>, V: Into<ByteString>> FromIterator<(K, V)> for RenderParams {
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
+        let mut result = Self::new();
+        for (key, value) in iter {
+            result.insert(key, value);
+        }
+        result
+    }
+}
+impl IntoIterator for RenderParams {
+    type Item = (ByteString, ByteString);
+    type IntoIter = <OrderedMap<ByteString, ByteString> as IntoIterator>::IntoIter;
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
 
 /// One box of the rendered tree (DuckDB's `RenderTreeNode`).
 #[derive(Clone, Debug, Default)]
 pub struct RenderTreeNode {
-    pub name: String,
+    pub name: ByteString,
     pub extra_text: RenderParams,
     /// The grid positions of the node's children.
     pub child_positions: Vec<(usize, usize)>,
@@ -34,7 +88,7 @@ impl RenderTreeNode {
     /// The key of the timing (`RenderTreeNode::TIMING`).
     pub const TIMING: &'static str = "__timing__";
 
-    pub fn new(name: impl Into<String>, extra_text: RenderParams) -> Self {
+    pub fn new(name: impl Into<ByteString>, extra_text: RenderParams) -> Self {
         Self {
             name: name.into(),
             extra_text,
@@ -127,8 +181,8 @@ impl RenderTree {
         for node in self.nodes.iter_mut().flatten() {
             let mut sanitized = RenderParams::new();
             for (key, value) in std::mem::take(&mut node.extra_text) {
-                let key = if key.starts_with("__") {
-                    title(&key.replace("__", "").replace('_', " "))
+                let key = if key.starts_with(b"__") {
+                    title(&sanitize_internal_key(&key))
                 } else {
                     key
                 };
@@ -143,17 +197,30 @@ impl RenderTree {
 
 /// DuckDB's `StringUtil::Title`: the first letter of every word upper case, the rest
 /// lower case.
-fn title(text: &str) -> String {
-    let mut result = String::with_capacity(text.len());
+fn sanitize_internal_key(key: &[u8]) -> ByteString {
+    let mut result = ByteString::new();
+    let mut offset = 0;
+    while offset < key.len() {
+        if key[offset..].starts_with(b"__") {
+            offset += 2;
+            continue;
+        }
+        result.push(if key[offset] == b'_' { b' ' } else { key[offset] });
+        offset += 1;
+    }
+    result
+}
+fn title(text: &[u8]) -> ByteString {
+    let mut result = ByteString::new();
     let mut uppercase_next = true;
-    for c in text.chars() {
+    for &c in text {
         if c.is_ascii_alphabetic() {
-            if uppercase_next {
-                result.push(c.to_ascii_uppercase());
-                uppercase_next = false;
+            result.push(if uppercase_next {
+                c.to_ascii_uppercase()
             } else {
-                result.push(c.to_ascii_lowercase());
-            }
+                c.to_ascii_lowercase()
+            });
+            uppercase_next = false;
         } else {
             uppercase_next = true;
             result.push(c);
@@ -190,30 +257,19 @@ pub enum RendererKind {
 
 /// Renders a tree in the given format (DuckDB's `TreeRenderer::CreateRenderer` +
 /// `ToStream`).
-pub fn render(kind: RendererKind, mut tree: RenderTree) -> String {
-    match kind {
-        RendererKind::Text => TextTreeRenderer::default().render(&tree),
-        RendererKind::Json => {
-            tree.sanitize_key_names();
-            render_json(&tree)
-        }
-        RendererKind::Html => {
-            tree.sanitize_key_names();
-            formats::render_html(&tree)
-        }
-        RendererKind::Graphviz => {
-            tree.sanitize_key_names();
-            formats::render_graphviz(&tree)
-        }
-        RendererKind::Yaml => {
-            tree.sanitize_key_names();
-            formats::render_yaml(&tree)
-        }
-        RendererKind::Mermaid => {
-            tree.sanitize_key_names();
-            formats::render_mermaid(&tree)
-        }
+pub fn render(kind: RendererKind, mut tree: RenderTree) -> Result<ByteString> {
+    if kind == RendererKind::Text {
+        return TextTreeRenderer::default().render(&tree);
     }
+    tree.sanitize_key_names();
+    Ok(match kind {
+        RendererKind::Text => unreachable!(),
+        RendererKind::Json => return render_json(&tree),
+        RendererKind::Html => formats::render_html(&tree),
+        RendererKind::Graphviz => formats::render_graphviz(&tree),
+        RendererKind::Yaml => formats::render_yaml(&tree),
+        RendererKind::Mermaid => formats::render_mermaid(&tree),
+    })
 }
 
 /// The box-drawing text renderer (DuckDB's `TextTreeRenderer` with its default
@@ -251,19 +307,11 @@ const DMIDDLE: &str = "┴";
 const VERTICAL: &str = "│";
 const HORIZONTAL: &str = "─";
 
-/// The render width of the grapheme starting at the first char of `grapheme`
-/// (DuckDB's `Utf8Proc::RenderWidth`, which uses utf8proc's `charwidth`).
-fn grapheme_width(grapheme: &str) -> usize {
-    grapheme
-        .chars()
-        .next()
-        .and_then(UnicodeWidthChar::width)
-        .unwrap_or(0)
-}
-
 /// Whether a line may be broken before this byte (`CanSplitOnThisChar`).
 const fn can_split_on(byte: u8) -> bool {
-    (byte < b'0' || (byte > b'9' && byte < b'A') || (byte > b'Z' && byte < b'a')) && byte != b'_'
+    // The reference compares plain C++ char, whose signedness follows the target ABI.
+    let byte = byte as std::ffi::c_char as i32;
+    (byte < 48 || (byte > 57 && byte < 65) || (byte > 90 && byte < 97)) && byte != 95
 }
 
 const fn is_padding(byte: u8) -> bool {
@@ -271,28 +319,27 @@ const fn is_padding(byte: u8) -> bool {
 }
 
 /// Trims padding characters (`RemovePadding`).
-fn remove_padding(text: &str) -> &str {
-    let bytes = text.as_bytes();
+fn remove_padding(bytes: &[u8]) -> &[u8] {
     let mut start = 0;
     let mut end = bytes.len();
-    while start < bytes.len() && is_padding(bytes[start]) {
+    while start < end && is_padding(bytes[start]) {
         start += 1;
     }
     while end > start && is_padding(bytes[end - 1]) {
         end -= 1;
     }
-    &text[start..end]
+    &bytes[start..end]
 }
 
-/// Centers `source` in `max_render_width` columns, truncating with `...` if it does not
-/// fit (DuckDB's `AdjustTextForRendering`).
-fn adjust_text_for_rendering(source: &str, max_render_width: usize) -> String {
+fn adjust_text_for_rendering(source: &[u8], max_render_width: usize) -> Result<ByteString> {
     let mut render_width = 0;
-    // (end byte offset, cumulative width) per grapheme.
-    let mut render_widths: Vec<(usize, usize)> = Vec::new();
-    for (offset, grapheme) in source.grapheme_indices(true) {
-        render_width += grapheme_width(grapheme);
-        render_widths.push((offset + grapheme.len(), render_width));
+    let mut render_widths = Vec::new();
+    let mut offset = 0;
+    while offset < source.len() {
+        let (next, width) = unicode::cluster(source, offset)?;
+        render_width += width;
+        offset = next;
+        render_widths.push((offset, render_width));
         if render_width > max_render_width {
             break;
         }
@@ -301,43 +348,42 @@ fn adjust_text_for_rendering(source: &str, max_render_width: usize) -> String {
     if render_width > max_render_width {
         for &(start, width) in render_widths.iter().rev() {
             if width + 4 < max_render_width {
-                return format!(
+                return Ok(byte_format!(
                     "{}...{}",
                     &source[..start],
                     " ".repeat(max_render_width - width - 3)
-                );
+                ));
             }
         }
-        source = "...";
+        source = b"...";
         render_width = 3;
     }
     let total_spaces = max_render_width.saturating_sub(render_width);
     let half_spaces = total_spaces / 2;
-    let extra_left_space = total_spaces % 2;
-    format!(
+    Ok(byte_format!(
         "{}{}{}",
-        " ".repeat(half_spaces + extra_left_space),
+        " ".repeat(half_spaces + total_spaces % 2),
         source,
         " ".repeat(half_spaces)
-    )
+    ))
 }
 
 impl TextTreeRenderer {
     /// Renders the tree as text (DuckDB's `TextTreeRenderer::ToStreamInternal`).
-    pub fn render(mut self, root: &RenderTree) -> String {
+    pub fn render(mut self, root: &RenderTree) -> Result<ByteString> {
         while root.width * self.node_render_width > self.maximum_render_width {
             if self.node_render_width - 2 < self.minimum_render_width {
                 break;
             }
             self.node_render_width -= 2;
         }
-        let mut out = String::new();
+        let mut out = ByteString::new();
         for y in 0..root.height {
             self.render_top_layer(root, &mut out, y);
-            self.render_box_content(root, &mut out, y);
+            self.render_box_content(root, &mut out, y)?;
             self.render_bottom_layer(root, &mut out, y);
         }
-        out
+        Ok(out)
     }
 
     fn half(&self) -> usize {
@@ -348,101 +394,104 @@ impl TextTreeRenderer {
         (x..root.width).any(|i| root.has_node(i, y))
     }
 
-    fn render_top_layer(&self, root: &RenderTree, out: &mut String, y: usize) {
+    fn render_top_layer(&self, root: &RenderTree, out: &mut ByteString, y: usize) {
         for x in 0..root.width {
             if x * self.node_render_width >= self.maximum_render_width {
                 break;
             }
             if root.has_node(x, y) {
-                out.push_str(LTCORNER);
-                out.push_str(&HORIZONTAL.repeat(self.half() - 1));
-                out.push_str(if y == 0 { HORIZONTAL } else { DMIDDLE });
-                out.push_str(&HORIZONTAL.repeat(self.half() - 1));
-                out.push_str(RTCORNER);
+                out.push_bytes(LTCORNER);
+                out.push_bytes(HORIZONTAL.repeat(self.half() - 1));
+                out.push_bytes(if y == 0 { HORIZONTAL } else { DMIDDLE });
+                out.push_bytes(HORIZONTAL.repeat(self.half() - 1));
+                out.push_bytes(RTCORNER);
             } else {
                 if !Self::has_adjacent_nodes(root, x, y) {
                     continue;
                 }
-                out.push_str(&" ".repeat(self.node_render_width));
+                out.push_bytes(" ".repeat(self.node_render_width));
             }
         }
-        out.push('\n');
+        out.push(b'\n');
     }
 
-    fn render_bottom_layer(&self, root: &RenderTree, out: &mut String, y: usize) {
+    fn render_bottom_layer(&self, root: &RenderTree, out: &mut ByteString, y: usize) {
         for x in 0..=root.width {
             if x * self.node_render_width >= self.maximum_render_width {
                 break;
             }
             let has_adjacent_nodes = Self::has_adjacent_nodes(root, x, y);
             if root.node(x, y).is_some() {
-                out.push_str(LDCORNER);
-                out.push_str(&HORIZONTAL.repeat(self.half() - 1));
-                out.push_str(if root.has_node(x, y + 1) {
+                out.push_bytes(LDCORNER);
+                out.push_bytes(HORIZONTAL.repeat(self.half() - 1));
+                out.push_bytes(if root.has_node(x, y + 1) {
                     TMIDDLE
                 } else {
                     HORIZONTAL
                 });
-                out.push_str(&HORIZONTAL.repeat(self.half() - 1));
-                out.push_str(RDCORNER);
+                out.push_bytes(HORIZONTAL.repeat(self.half() - 1));
+                out.push_bytes(RDCORNER);
             } else if root.has_node(x, y + 1) {
-                out.push_str(&" ".repeat(self.half()));
-                out.push_str(VERTICAL);
+                out.push_bytes(" ".repeat(self.half()));
+                out.push_bytes(VERTICAL);
                 if has_adjacent_nodes || should_render_whitespace(root, x, y) {
-                    out.push_str(&" ".repeat(self.half()));
+                    out.push_bytes(" ".repeat(self.half()));
                 }
             } else if has_adjacent_nodes || should_render_whitespace(root, x, y) {
-                out.push_str(&" ".repeat(self.node_render_width));
+                out.push_bytes(" ".repeat(self.node_render_width));
             }
         }
-        out.push('\n');
+        out.push(b'\n');
     }
 
     /// Adds thousand separators (DuckDB's `FormatNumber`).
-    fn format_number(&self, input: &str) -> String {
+    fn format_number(&self, input: &[u8]) -> ByteString {
         if self.decimal_separator.is_none() && self.thousand_separator.is_none() {
-            return input.to_owned();
+            return input.into();
         }
-        let bytes = input.as_bytes();
-        let character_count = bytes.iter().take_while(|b| b.is_ascii_digit()).count();
+        let character_count = input.iter().take_while(|b| b.is_ascii_digit()).count();
         let mut separator_position = if character_count % 3 == 0 {
             3
         } else {
             character_count % 3
         };
-        let mut result = String::new();
-        for (c, &byte) in bytes.iter().enumerate().take(character_count) {
+        let mut result = ByteString::new();
+        let mut encoded = [0; 4];
+        for (c, &byte) in input.iter().enumerate().take(character_count) {
             if c == separator_position
                 && let Some(separator) = self.thousand_separator
             {
-                result.push(separator);
+                result.push_bytes(separator.encode_utf8(&mut encoded));
                 separator_position += 3;
             }
-            result.push(char::from(byte));
+            result.push(byte);
         }
-        for c in input[character_count..].chars() {
-            match (c, self.decimal_separator) {
-                ('.', Some(separator)) => result.push(separator),
-                _ => result.push(c),
+        for &byte in &input[character_count..] {
+            if byte == b'.'
+                && let Some(separator) = self.decimal_separator
+            {
+                result.push_bytes(separator.encode_utf8(&mut encoded));
+            } else {
+                result.push(byte);
             }
         }
         result
     }
 
-    fn cardinality_text(&self, prefix: &str, value: &str) -> String {
-        format!(
+    fn cardinality_text(&self, prefix: &str, value: &[u8]) -> ByteString {
+        byte_format!(
             "{prefix}{} row{}",
             self.format_number(value),
-            if value == "1" { "" } else { "s" }
+            if value == b"1" { "" } else { "s" }
         )
     }
 
-    fn render_box_content(&self, root: &RenderTree, out: &mut String, y: usize) {
-        let mut extra_info: Vec<Vec<String>> = vec![Vec::new(); root.width];
+    fn render_box_content(&self, root: &RenderTree, out: &mut ByteString, y: usize) -> Result<()> {
+        let mut extra_info: Vec<Vec<ByteString>> = vec![Vec::new(); root.width];
         let mut extra_height = 0;
         for (x, info) in extra_info.iter_mut().enumerate() {
             if let Some(node) = root.node(x, y) {
-                self.split_up_extra_info(&node.extra_text, info);
+                self.split_up_extra_info(&node.extra_text, info)?;
                 extra_height = extra_height.max(info.len());
             }
         }
@@ -457,7 +506,7 @@ impl TextTreeRenderer {
                     self.render_empty_spot(root, out, x, y, render_y, halfway_point, has_adjacent_nodes);
                     continue;
                 };
-                out.push_str(VERTICAL);
+                out.push_bytes(VERTICAL);
                 let mut render_text = if render_y == 0 {
                     node.name.clone()
                 } else {
@@ -472,7 +521,7 @@ impl TextTreeRenderer {
                 if render_y == extra_height && render_text.is_empty() {
                     let has_cardinality = node.extra_text.contains_key(RenderTreeNode::CARDINALITY);
                     if let Some(timing) = node.extra_text.get(RenderTreeNode::TIMING) {
-                        render_text = format!("({timing})");
+                        render_text = byte_format!("({timing})");
                     }
                     if !has_cardinality
                         && let Some(value) = node.extra_text.get(RenderTreeNode::ESTIMATED_CARDINALITY)
@@ -480,25 +529,26 @@ impl TextTreeRenderer {
                         render_text = self.cardinality_text("~", value);
                     }
                 }
-                out.push_str(&adjust_text_for_rendering(
+                out.push_bytes(&adjust_text_for_rendering(
                     &render_text,
                     self.node_render_width - 2,
-                ));
+                )?);
                 if render_y == halfway_point && node.child_positions.len() > 1 {
-                    out.push_str(LMIDDLE);
+                    out.push_bytes(LMIDDLE);
                 } else {
-                    out.push_str(VERTICAL);
+                    out.push_bytes(VERTICAL);
                 }
             }
-            out.push('\n');
+            out.push(b'\n');
         }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
     fn render_empty_spot(
         &self,
         root: &RenderTree,
-        out: &mut String,
+        out: &mut ByteString,
         x: usize,
         y: usize,
         render_y: usize,
@@ -508,75 +558,76 @@ impl TextTreeRenderer {
         if render_y == halfway_point {
             let has_child_to_the_right = should_render_whitespace(root, x, y);
             if root.has_node(x, y + 1) {
-                out.push_str(&HORIZONTAL.repeat(self.half()));
+                out.push_bytes(HORIZONTAL.repeat(self.half()));
                 if has_child_to_the_right {
-                    out.push_str(TMIDDLE);
-                    out.push_str(&HORIZONTAL.repeat(self.half()));
+                    out.push_bytes(TMIDDLE);
+                    out.push_bytes(HORIZONTAL.repeat(self.half()));
                 } else {
-                    out.push_str(RTCORNER);
+                    out.push_bytes(RTCORNER);
                     if has_adjacent_nodes {
-                        out.push_str(&" ".repeat(self.half()));
+                        out.push_bytes(" ".repeat(self.half()));
                     }
                 }
             } else if has_child_to_the_right {
-                out.push_str(&HORIZONTAL.repeat(self.node_render_width));
+                out.push_bytes(HORIZONTAL.repeat(self.node_render_width));
             } else if has_adjacent_nodes {
-                out.push_str(&" ".repeat(self.node_render_width));
+                out.push_bytes(" ".repeat(self.node_render_width));
             }
         } else if render_y >= halfway_point {
             if root.has_node(x, y + 1) {
-                out.push_str(&" ".repeat(self.half()));
-                out.push_str(VERTICAL);
+                out.push_bytes(" ".repeat(self.half()));
+                out.push_bytes(VERTICAL);
                 if has_adjacent_nodes || should_render_whitespace(root, x, y) {
-                    out.push_str(&" ".repeat(self.half()));
+                    out.push_bytes(" ".repeat(self.half()));
                 }
             } else if has_adjacent_nodes || should_render_whitespace(root, x, y) {
-                out.push_str(&" ".repeat(self.node_render_width));
+                out.push_bytes(" ".repeat(self.node_render_width));
             }
         } else if has_adjacent_nodes {
-            out.push_str(&" ".repeat(self.node_render_width));
+            out.push_bytes(" ".repeat(self.node_render_width));
         }
     }
 
     /// Breaks a line into pieces that fit a box (DuckDB's `SplitStringBuffer`).
-    fn split_string_buffer(&self, source: &str, result: &mut Vec<String>) {
+    fn split_string_buffer(&self, source: &[u8], result: &mut Vec<ByteString>) -> Result<()> {
         let max_line_render_size = self.node_render_width - 2;
-        let bytes = source.as_bytes();
         let mut character_pos = 0;
         let mut start_pos = 0;
         let mut render_width = 0;
         let mut last_possible_split = 0;
-        while character_pos < bytes.len() {
-            // Every position visited is a grapheme boundary (`NextGraphemeCluster`).
-            let grapheme = source[character_pos..].graphemes(true).next().unwrap_or_default();
-            let char_render_width = grapheme_width(grapheme);
-            let next_character_pos = character_pos + grapheme.len().max(1);
+        while character_pos < source.len() {
+            let (next_character_pos, char_render_width) = unicode::cluster(source, character_pos)?;
             if render_width + char_render_width > max_line_render_size {
                 if start_pos + 8 > last_possible_split {
                     last_possible_split = character_pos;
                 }
-                result.push(source[start_pos..last_possible_split].to_owned());
+                result.push(source[start_pos..last_possible_split].into());
                 render_width = character_pos - last_possible_split;
                 start_pos = last_possible_split;
                 character_pos = last_possible_split;
             }
-            if can_split_on(bytes[character_pos]) {
+            if can_split_on(source[character_pos]) {
                 last_possible_split = character_pos;
             }
             character_pos = next_character_pos;
             render_width += char_render_width;
         }
-        if bytes.len() > start_pos {
-            result.push(source[start_pos..].to_owned());
+        if source.len() > start_pos {
+            result.push(source[start_pos..].into());
         }
+        Ok(())
     }
 
     /// The lines of a node's key-value text (DuckDB's `SplitUpExtraInfo`).
-    fn split_up_extra_info(&self, extra_info: &RenderParams, result: &mut Vec<String>) {
-        if extra_info.is_empty() {
-            return;
+    fn split_up_extra_info(&self, extra_info: &RenderParams, result: &mut Vec<ByteString>) -> Result<()> {
+        if extra_info.is_empty()
+            || extra_info
+                .iter()
+                .any(|(_, value)| std::str::from_utf8(value).is_err())
+        {
+            return Ok(());
         }
-        result.push(HORIZONTAL.repeat(self.node_render_width - 9));
+        result.push(HORIZONTAL.repeat(self.node_render_width - 9).into());
         let mut requires_padding = false;
         let mut was_inlined = false;
         for (key, value) in extra_info.iter() {
@@ -584,29 +635,29 @@ impl TextTreeRenderer {
             if trimmed.is_empty() {
                 continue;
             }
-            let mut text = trimmed.to_owned();
+            let mut text = ByteString::from(trimmed);
             let mut is_inlined = false;
-            if !key.starts_with("__") {
+            if !key.starts_with(b"__") {
                 let available_width = self.node_render_width - 7;
                 let total_size = key.len() + text.len() + 2;
-                let is_multiline = text.contains('\n');
+                let is_multiline = text.contains(&b'\n');
                 if !is_multiline && total_size < available_width {
-                    text = format!("{key}: {text}");
+                    text = byte_format!("{key}: {text}");
                     is_inlined = true;
                 } else {
-                    text = format!("{key}:\n{text}");
+                    text = byte_format!("{key}:\n{text}");
                 }
             }
             if is_inlined && was_inlined {
                 requires_padding = false;
             }
             if requires_padding {
-                result.push(String::new());
+                result.push(ByteString::new());
             }
             if key == RenderTreeNode::CARDINALITY {
-                result.push(String::new());
+                result.push(ByteString::new());
                 if extra_info.contains_key(RenderTreeNode::TIMING) {
-                    result.push(String::new());
+                    result.push(ByteString::new());
                 }
                 continue;
             }
@@ -615,23 +666,24 @@ impl TextTreeRenderer {
                     result.pop();
                     continue;
                 }
-                result.push(String::new());
+                result.push(ByteString::new());
                 continue;
             }
-            let mut splits: Vec<&str> = text.split('\n').collect();
+            let mut splits: Vec<&[u8]> = split_newlines(&text);
             if splits.len() > self.max_extra_lines {
                 let half = self.max_extra_lines / 2;
-                let mut truncated: Vec<&str> = splits[..half].to_vec();
-                truncated.push("...");
+                let mut truncated: Vec<&[u8]> = splits[..half].to_vec();
+                truncated.push(b"...");
                 truncated.extend_from_slice(&splits[splits.len() - half..]);
                 splits = truncated;
             }
             for split in splits {
-                self.split_string_buffer(split, result);
+                self.split_string_buffer(split, result)?;
             }
             requires_padding = true;
             was_inlined = is_inlined;
         }
+        Ok(())
     }
 }
 
@@ -654,106 +706,124 @@ fn should_render_whitespace(root: &RenderTree, x: usize, y: usize) -> bool {
     }
 }
 
+// StringUtil::Split(string, string) omits empty pieces, and preserves the input
+// as one piece when every piece is empty.
+fn split_newlines(text: &[u8]) -> Vec<&[u8]> {
+    let parts: Vec<_> = text
+        .split(|byte| *byte == b'\n')
+        .filter(|part| !part.is_empty())
+        .collect();
+    if parts.is_empty() { vec![text] } else { parts }
+}
+
 /// Appends a JSON string literal the way yyjson writes it.
-fn json_string(out: &mut String, text: &str) {
-    out.push('"');
-    for c in text.chars() {
+fn json_string(out: &mut ByteString, text: &[u8]) -> Result<()> {
+    let text = text.split(|b| *b == 0).next().unwrap_or_default();
+    if std::str::from_utf8(text).is_err() {
+        return Err(Error::internal(
+            "The plan could not be rendered as JSON, yyjson failed",
+        ));
+    }
+    out.push(b'"');
+    for &c in text {
         match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{08}' => out.push_str("\\b"),
-            '\u{0c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => {
-                let _ = write!(out, "\\u{:04x}", c as u32);
+            b'"' => out.push_bytes(b"\\\""),
+            b'\\' => out.push_bytes(b"\\\\"),
+            b'\n' => out.push_bytes(b"\\n"),
+            b'\r' => out.push_bytes(b"\\r"),
+            b'\t' => out.push_bytes(b"\\t"),
+            8 => out.push_bytes(b"\\b"),
+            12 => out.push_bytes(b"\\f"),
+            c if c < 0x20 => {
+                out.push_bytes(format!("\\u{c:04X}"));
             }
             c => out.push(c),
         }
     }
-    out.push('"');
+    out.push(b'"');
+    Ok(())
 }
 
-fn indent(out: &mut String, level: usize) {
-    out.push_str(&"    ".repeat(level));
+fn indent(out: &mut ByteString, level: usize) {
+    out.push_bytes("    ".repeat(level));
 }
 
-fn render_json_node(tree: &RenderTree, x: usize, y: usize, out: &mut String, level: usize) {
+fn render_json_node(tree: &RenderTree, x: usize, y: usize, out: &mut ByteString, level: usize) -> Result<()> {
     let Some(node) = tree.node(x, y) else {
-        out.push_str("{}");
-        return;
+        out.push_bytes("{}");
+        return Ok(());
     };
-    out.push_str("{\n");
+    out.push_bytes("{\n");
     indent(out, level + 1);
-    out.push_str("\"name\": ");
-    json_string(out, &node.name);
-    out.push_str(",\n");
+    out.push_bytes("\"name\": ");
+    json_string(out, &node.name)?;
+    out.push_bytes(",\n");
     indent(out, level + 1);
-    out.push_str("\"children\": ");
+    out.push_bytes("\"children\": ");
     if node.child_positions.is_empty() {
-        out.push_str("[]");
+        out.push_bytes("[]");
     } else {
-        out.push_str("[\n");
+        out.push_bytes("[\n");
         for (i, &(child_x, child_y)) in node.child_positions.iter().enumerate() {
             indent(out, level + 2);
-            render_json_node(tree, child_x, child_y, out, level + 2);
+            render_json_node(tree, child_x, child_y, out, level + 2)?;
             if i + 1 < node.child_positions.len() {
-                out.push(',');
+                out.push(b',');
             }
-            out.push('\n');
+            out.push(b'\n');
         }
         indent(out, level + 1);
-        out.push(']');
+        out.push(b']');
     }
-    out.push_str(",\n");
+    out.push_bytes(",\n");
     indent(out, level + 1);
-    out.push_str("\"extra_info\": ");
+    out.push_bytes("\"extra_info\": ");
     if node.extra_text.is_empty() {
-        out.push_str("{}");
+        out.push_bytes("{}");
     } else {
-        out.push_str("{\n");
+        out.push_bytes("{\n");
         let count = node.extra_text.len();
         for (i, (key, value)) in node.extra_text.iter().enumerate() {
             indent(out, level + 2);
-            json_string(out, key);
-            out.push_str(": ");
-            let splits: Vec<&str> = value.split('\n').collect();
+            json_string(out, key)?;
+            out.push_bytes(": ");
+            let splits: Vec<&[u8]> = split_newlines(value);
             if splits.len() > 1 {
-                out.push_str("[\n");
+                out.push_bytes("[\n");
                 for (j, split) in splits.iter().enumerate() {
                     indent(out, level + 3);
-                    json_string(out, split);
+                    json_string(out, split)?;
                     if j + 1 < splits.len() {
-                        out.push(',');
+                        out.push(b',');
                     }
-                    out.push('\n');
+                    out.push(b'\n');
                 }
                 indent(out, level + 2);
-                out.push(']');
+                out.push(b']');
             } else {
-                json_string(out, value);
+                json_string(out, value)?;
             }
             if i + 1 < count {
-                out.push(',');
+                out.push(b',');
             }
-            out.push('\n');
+            out.push(b'\n');
         }
         indent(out, level + 1);
-        out.push('}');
+        out.push(b'}');
     }
-    out.push('\n');
+    out.push(b'\n');
     indent(out, level);
-    out.push('}');
+    out.push(b'}');
+    Ok(())
 }
 
 /// Renders the tree as a JSON array holding the root node (DuckDB's `JSONTreeRenderer`).
-fn render_json(tree: &RenderTree) -> String {
-    let mut out = String::from("[\n");
+fn render_json(tree: &RenderTree) -> Result<ByteString> {
+    let mut out = ByteString::from("[\n");
     indent(&mut out, 1);
-    render_json_node(tree, 0, 0, &mut out, 1);
-    out.push_str("\n]");
-    out
+    render_json_node(tree, 0, 0, &mut out, 1)?;
+    out.push_bytes("\n]");
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -793,7 +863,7 @@ mod tests {
             ],
             children: Vec::new(),
         });
-        let text = render(RendererKind::Text, tree);
+        let text = render(RendererKind::Text, tree).unwrap();
         let expected = "┌───────────────────────────┐\n\
                         │         SEQ_SCAN          │\n\
                         │    ────────────────────   │\n\
@@ -820,18 +890,23 @@ mod tests {
             params: vec![("Join Type", "INNER")],
             children: vec![leaf("A"), leaf("B")],
         });
-        let text = render(RendererKind::Text, tree);
-        assert!(text.contains("├──────────────┐"), "{text}");
+        let text = render(RendererKind::Text, tree).unwrap();
         assert!(
-            text.contains("┌─────────────┴─────────────┐┌─────────────┴─────────────┐"),
-            "{text}"
+            text.windows("├──────────────┐".len())
+                .any(|part| part == "├──────────────┐".as_bytes()),
+            "{text:?}"
+        );
+        assert!(
+            text.windows("┌─────────────┴─────────────┐┌─────────────┴─────────────┐".len())
+                .any(|part| part == "┌─────────────┴─────────────┐┌─────────────┴─────────────┐".as_bytes()),
+            "{text:?}"
         );
     }
 
     #[test]
     fn formats_numbers_with_separators() {
         let renderer = TextTreeRenderer::default();
-        assert_eq!(renderer.format_number("1234567"), "1,234,567");
-        assert_eq!(renderer.format_number("123"), "123");
+        assert_eq!(renderer.format_number(b"1234567"), "1,234,567");
+        assert_eq!(renderer.format_number(b"123"), "123");
     }
 }

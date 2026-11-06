@@ -3,14 +3,14 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
 use rustdb_common::Result;
 use rustdb_planner::Expression;
-use rustdb_row::{AppendState, PartitionedTupleData, PinProperties, TupleDataCollection};
 use rustdb_row::hash::hash_columns;
+use rustdb_row::{AppendState, PartitionedTupleData, PinProperties, TupleDataCollection};
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
+use crate::column_data_collection::ColumnDataCollection;
 use crate::operators::hash_aggregate::{finalize_capacity, repartitioned, table_data};
 use crate::operators::radix_sink::initial_radix_bits;
-use crate::column_data_collection::ColumnDataCollection;
 use rustdb_common::tree_renderer::RenderParams;
 
 use crate::operator::{
@@ -160,7 +160,13 @@ impl PhysicalDelimJoin {
             .iter()
             .map(|group| group.return_type.clone())
             .collect();
-        GroupedAggregateHashTable::new(ctx.env.buffer_manager.clone(), group_types, &[], capacity, radix_bits)
+        GroupedAggregateHashTable::new(
+            ctx.env.buffer_manager.clone(),
+            group_types,
+            &[],
+            capacity,
+            radix_bits,
+        )
     }
 }
 
@@ -241,9 +247,19 @@ impl Sink for PhysicalDelimJoin {
         let columns = (0..self.children[0].types().len()).collect();
         *self.shared.cached.lock().unwrap_or_else(PoisonError::into_inner) =
             Arc::new(BufferedRows::new(buffered, columns));
-        let parts = std::mem::take(global.distinct_parts.get_mut().unwrap_or_else(PoisonError::into_inner));
-        let radix_bits = parts.iter().map(PartitionedTupleData::radix_bits).max().unwrap_or(0);
-        let mut partitions: Vec<Vec<TupleDataCollection>> = (0..1usize << radix_bits).map(|_| Vec::new()).collect();
+        let parts = std::mem::take(
+            global
+                .distinct_parts
+                .get_mut()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        let radix_bits = parts
+            .iter()
+            .map(PartitionedTupleData::radix_bits)
+            .max()
+            .unwrap_or(0);
+        let mut partitions: Vec<Vec<TupleDataCollection>> =
+            (0..1usize << radix_bits).map(|_| Vec::new()).collect();
         for part in parts {
             let mut part = repartitioned(part, radix_bits)?;
             for (partition, collection) in part.take_partitions().into_iter().enumerate() {
@@ -281,7 +297,9 @@ impl Sink for PhysicalDelimJoin {
     /// Deduplicates one partition of the threads' distinct values.
     fn execute_finalize_task(&self, ctx: &ExecutionContext, global: &DelimGlobal, task: usize) -> Result<()> {
         let (Some(partition), Some(result)) = (global.partitions.get(task), global.distinct.get(task)) else {
-            return Err(rustdb_common::Error::internal("delim join finalize task out of range"));
+            return Err(rustdb_common::Error::internal(
+                "delim join finalize task out of range",
+            ));
         };
         let data = std::mem::take(&mut *partition.lock().unwrap_or_else(PoisonError::into_inner));
         let mut table = self.distinct_table(ctx, finalize_capacity(ctx, &data), 0)?;

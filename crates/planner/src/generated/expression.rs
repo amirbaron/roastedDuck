@@ -10,7 +10,7 @@ pub struct Expression<'a> {
     /// `type` (property 101).
     pub expression_type: rustdb_ast::ExpressionType,
     /// `alias` (property 102).
-    pub alias: &'a str,
+    pub alias: &'a rustdb_common::ByteString,
     /// `query_location` (property 103).
     pub query_location: Option<u64>,
 }
@@ -242,7 +242,7 @@ impl SerializeObject for BoundOperatorExpression<'_> {
 #[derive(Clone, Copy, Debug)]
 pub struct BoundParameterExpression<'a> {
     /// `identifier` (property 200).
-    pub identifier: &'a str,
+    pub identifier: &'a rustdb_common::ByteString,
     /// `return_type` (property 201).
     pub return_type: &'a rustdb_types::LogicalType,
     /// `parameter_data` (property 202).

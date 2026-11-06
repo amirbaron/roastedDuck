@@ -136,7 +136,7 @@ fn hash_row(format: &VectorFormat<'_>, row: usize) -> u64 {
         FormatKind::Struct => {
             let mut children = format.children.iter();
             let first = children.next().map_or(NULL_HASH, |child| hash_row(child, row));
-            children.fold(first, |hash, child| combine_hash(hash, hash_row(child, row)))
+            children.fold(first, |hash, child| combine_row(child, row, hash))
         }
         FormatKind::List => {
             if !format.slot_is_valid(slot) {
@@ -159,6 +159,29 @@ fn hash_row(format: &VectorFormat<'_>, row: usize) -> u64 {
             let (offset, length) = format.list_entry(slot);
             let child = &format.children[0];
             (offset..offset + length).fold(0, |hash, element| combine_hash(hash, hash_row(child, element)))
+        }
+    }
+}
+
+/// Combines one row into an existing hash (`CombineHashTypeSwitch`). Nested
+/// values cannot first be reduced to one hash: combining is not associative.
+fn combine_row(format: &VectorFormat<'_>, row: usize, hash: u64) -> u64 {
+    let slot = format.slot(row);
+    match format.kind {
+        FormatKind::Fixed(_) | FormatKind::Varchar => combine_hash(hash, hash_row(format, row)),
+        FormatKind::Struct => format
+            .children
+            .iter()
+            .fold(hash, |hash, child| combine_row(child, row, hash)),
+        FormatKind::List | FormatKind::Array(_) => {
+            // DuckDB leaves an existing hash unchanged for null/empty nested
+            // sequences. Each element contributes its standalone hash.
+            if !format.slot_is_valid(slot) {
+                return hash;
+            }
+            let (offset, length) = format.list_entry(slot);
+            let child = &format.children[0];
+            (offset..offset + length).fold(hash, |hash, element| combine_hash(hash, hash_row(child, element)))
         }
     }
 }
@@ -350,7 +373,11 @@ fn hash_rows(input: &Vector, out: &mut [u64], combine: bool) -> Result<()> {
     }
     let format = VectorFormat::new(input, out.len())?;
     for (row, target) in out.iter_mut().enumerate() {
-        emit(target, hash_row(&format, row), combine);
+        *target = if combine {
+            combine_row(&format, row, *target)
+        } else {
+            hash_row(&format, row)
+        };
     }
     Ok(())
 }
@@ -386,7 +413,9 @@ pub fn hash_selected(input: &Vector, rows: &[u32], out: &mut [u64]) -> Result<()
         }
     }
     let out = &mut out[..rows.len()];
-    if input.storage_dictionary_parts().is_none() && matches!(input.kind(), VectorKind::Flat | VectorKind::Dictionary) {
+    if input.storage_dictionary_parts().is_none()
+        && matches!(input.kind(), VectorKind::Flat | VectorKind::Dictionary)
+    {
         type Hasher = fn(&Vector, &[u32], &mut [u64]);
         let typed: Option<Hasher> = match input.logical_type().physical_type() {
             PhysicalType::Int8 => Some(native::<i8>),
@@ -438,7 +467,7 @@ pub fn combine_hash_vector(hashes: &mut Vector, input: &Vector, count: usize) ->
         let format = VectorFormat::new(input, count)?;
         let current = hashes.unified::<u64>().values[0];
         let mut constant = Vector::flat(hashes.logical_type().clone(), 1);
-        constant.values_mut::<u64>()[0] = combine_hash(current, hash_row(&format, 0));
+        constant.values_mut::<u64>()[0] = combine_row(&format, 0, current);
         constant.make_constant();
         *hashes = constant;
         return Ok(());
@@ -545,6 +574,68 @@ mod tests {
         children[0].set_value(0, &Value::integer(1)).unwrap();
         children[1].set_value(0, &Value::varchar("x")).unwrap();
         assert_eq!(hash_one(&row), 14_110_061_903_442_261_593);
+    }
+
+    #[test]
+    fn nested_sequences_combine_like_cpp_for_constant_flat_and_selected_vectors() {
+        // Frozen DuckDB 1.5.6 SELECT hash(42, <value>) controls.
+        let values = [
+            (
+                Value::list(LogicalType::INTEGER, vec![Value::integer(1), Value::integer(2)]),
+                2_330_544_478_907_178_959,
+            ),
+            (
+                Value::list(LogicalType::INTEGER, vec![]),
+                7_199_933_130_570_745_587,
+            ),
+            (
+                Value::null(LogicalType::list(LogicalType::INTEGER)),
+                7_199_933_130_570_745_587,
+            ),
+            (
+                Value::array(LogicalType::INTEGER, vec![Value::integer(1), Value::integer(2)]),
+                2_330_544_478_907_178_959,
+            ),
+            (
+                Value::null(LogicalType::array(LogicalType::INTEGER, 2)),
+                7_199_933_130_570_745_587,
+            ),
+            (
+                Value::struct_value(vec![
+                    ("a".into(), Value::integer(42)),
+                    (
+                        "b".into(),
+                        Value::list(LogicalType::INTEGER, vec![Value::integer(1), Value::integer(2)]),
+                    ),
+                ]),
+                13_504_997_306_263_010_542,
+            ),
+        ];
+        let seed = hash_one(&single(&Value::integer(42)));
+        for (value, expected) in values {
+            let constant = Vector::constant(&value).unwrap();
+            let mut hashes = Vector::constant(&Value::ubigint(seed)).unwrap();
+            combine_hash_vector(&mut hashes, &constant, 3).unwrap();
+            assert_eq!(hashes.kind(), VectorKind::Constant);
+            assert_eq!(hashes.get_value(0), Value::ubigint(expected));
+
+            let mut flat = Vector::flat(value.logical_type().clone(), 3);
+            for row in 0..3 {
+                flat.set_value(row, &value).unwrap();
+            }
+            for input in [
+                flat.clone(),
+                flat.slice(&rustdb_types::SelectionVector::new(vec![2, 0, 2])),
+            ] {
+                let mut hashes = Vector::flat(LogicalType::UBIGINT, 3);
+                hashes.values_mut::<u64>().fill(seed);
+                combine_hash_vector(&mut hashes, &input, 3).unwrap();
+                assert_eq!(hashes.values::<u64>(), &[expected; 3]);
+                let mut selected = [0; 2];
+                hash_selected(&input, &[2, 0], &mut selected).unwrap();
+                assert_eq!(selected, [hash_one(&constant); 2]);
+            }
+        }
     }
 
     #[test]

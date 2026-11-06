@@ -437,7 +437,7 @@ fn transform_from_string_with_format(
 }
 
 /// Names of a struct type.
-fn struct_names(ty: &LogicalType) -> Vec<String> {
+fn struct_names(ty: &LogicalType) -> Vec<rustdb_common::ByteString> {
     ty.struct_children()
         .unwrap_or_default()
         .iter()
@@ -447,14 +447,14 @@ fn struct_names(ty: &LogicalType) -> Vec<String> {
 
 /// Looks up keys in a set of column names (a hash map for many columns).
 pub(crate) struct KeyMap<'n> {
-    names: &'n [String],
+    names: &'n [rustdb_common::ByteString],
     map: Option<HashMap<&'n [u8], usize>>,
     /// Whether the names are distinct, so that a guessed match is the first match.
     distinct: bool,
 }
 
 impl<'n> KeyMap<'n> {
-    pub(crate) fn new(names: &'n [String]) -> Self {
+    pub(crate) fn new(names: &'n [rustdb_common::ByteString]) -> Self {
         let mut map = HashMap::with_capacity(names.len());
         for (index, name) in names.iter().enumerate() {
             map.entry(name.as_bytes()).or_insert(index);
@@ -493,7 +493,7 @@ impl<'n> KeyMap<'n> {
 pub(crate) fn transform_object(
     doc: &Doc<'_>,
     objects: &Vals,
-    names: &[String],
+    names: &[rustdb_common::ByteString],
     types: &[LogicalType],
     options: &mut TransformOptions,
     error_unknown_key: bool,
@@ -563,7 +563,7 @@ pub(crate) fn transform_object(
                     continue;
                 }
                 if success && options.error_missing_key {
-                    options.error_message = format!(
+                    options.error_message = rustdb_common::byte_format!(
                         "Object {} does not have key \"{}\"",
                         val_to_string(doc, obj, Some(50)),
                         names[col]
@@ -808,8 +808,8 @@ fn transform_map(
     let (value_vector, values_ok) = transform(doc, &values, &value_type, options)?;
     success &= values_ok;
     let entry_type = LogicalType::struct_type(vec![
-        ("key".to_owned(), key_type),
-        ("value".to_owned(), value_type),
+        ("key".to_owned().into(), key_type),
+        ("value".to_owned().into(), value_type),
     ]);
     let mut entry_vector = Vector::flat(entry_type, keys.len().max(1));
     if let Some(slots) = entry_vector.struct_children_mut() {
@@ -842,7 +842,8 @@ fn transform_union(
     target: &LogicalType,
     options: &mut TransformOptions,
 ) -> Result<(Vector, bool)> {
-    let members: Vec<(String, LogicalType)> = target.union_members().unwrap_or_default().to_vec();
+    let members: Vec<(rustdb_common::ByteString, LogicalType)> =
+        target.union_members().unwrap_or_default().to_vec();
     let count = vals.len();
     let mut success = true;
     let mut result = Vector::flat(target.clone(), count.max(1));
@@ -1168,12 +1169,12 @@ fn structure_string_to_type(
             for (key, value) in doc.obj_iter(val) {
                 let name = String::from_utf8_lossy(doc.str(key)).into_owned();
                 if !names.insert(name.clone()) {
-                    return Err(Error::invalid_input(format!(
+                    return Err(Error::invalid_input(rustdb_common::byte_format!(
                         "Duplicate keys in object in JSON structure: {}",
                         val_to_string(doc, value, None)
                     )));
                 }
-                children.push((name, structure_string_to_type(doc, value, context)?));
+                children.push((name.into(), structure_string_to_type(doc, value, context)?));
             }
             if children.is_empty() {
                 return Err(Error::binder("Empty object in JSON structure"));

@@ -9,16 +9,16 @@ use rustdb_ast::{
     ColumnDefinition, ColumnList, Constraint, ConstraintType, JoinRefType, JoinType, ParsedExpression,
     PivotColumn, QueryNode, SelectStatement, SetScope, TableRef, WindowBoundary, WindowExcludeMode,
 };
-use rustdb_common::{CaseInsensitiveMap, Error, Result};
+use rustdb_common::{ByteString, CaseInsensitiveMap, Error, Result};
 use rustdb_types::{LogicalType, Value};
 
 /// A possibly qualified name, `[catalog.][schema.]name` (DuckDB's `QualifiedName`);
 /// missing parts are empty (`INVALID_CATALOG` / `INVALID_SCHEMA`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct QualifiedName {
-    pub catalog: String,
-    pub schema: String,
-    pub name: String,
+    pub catalog: ByteString,
+    pub schema: ByteString,
+    pub name: ByteString,
 }
 
 impl QualifiedName {
@@ -28,15 +28,15 @@ impl QualifiedName {
             .pop()
             .ok_or_else(|| Error::internal("QualifiedName cannot be made with an empty input."))?;
         let mut result = Self {
-            name,
+            name: name.into(),
             ..Self::default()
         };
         match parts.len() {
             0 => {}
-            1 => result.schema = parts.remove(0),
+            1 => result.schema = parts.remove(0).into(),
             2 => {
-                result.schema = parts.remove(1);
-                result.catalog = parts.remove(0);
+                result.schema = parts.remove(1).into();
+                result.catalog = parts.remove(0).into();
             }
             _ => {
                 return Err(Error::parser(
@@ -96,7 +96,7 @@ pub(crate) struct JoinPrefix {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct JoinQualifier {
     pub on_clause: Option<ParsedExpression>,
-    pub using_columns: Vec<String>,
+    pub using_columns: Vec<ByteString>,
 }
 
 /// `DISTINCT [ON (...)]` / `ALL` (DuckDB's `DistinctClause`).
@@ -109,8 +109,8 @@ pub(crate) struct DistinctClause {
 /// `AS name (columns)` (DuckDB's `TableAlias`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct TableAlias {
-    pub name: String,
-    pub column_name_alias: Vec<String>,
+    pub name: ByteString,
+    pub column_name_alias: Vec<ByteString>,
 }
 
 /// A parameter of a macro (DuckDB's `MacroParameter`).
@@ -143,7 +143,7 @@ pub(crate) struct PartitionSortedOptions {
 /// `ON CONFLICT (columns) WHERE ...` (DuckDB's `OnConflictExpressionTarget`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct OnConflictExpressionTarget {
-    pub indexed_columns: Vec<String>,
+    pub indexed_columns: Vec<ByteString>,
     pub where_clause: Option<ParsedExpression>,
 }
 
@@ -172,14 +172,14 @@ pub(crate) struct ColumnElements {
     pub constraints: Vec<Constraint>,
     pub partition_keys: Vec<ParsedExpression>,
     pub sort_keys: Vec<ParsedExpression>,
-    pub options: CaseInsensitiveMap<ParsedExpression>,
+    pub options: CaseInsensitiveMap<ParsedExpression, ByteString>,
 }
 
 /// The column of `ALTER TABLE ... ADD COLUMN` (DuckDB's `AddColumnEntry`).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AddColumnEntry {
     pub ty: LogicalType,
-    pub column_path: Vec<String>,
+    pub column_path: Vec<ByteString>,
     pub default_value: Option<ParsedExpression>,
 }
 
@@ -187,7 +187,7 @@ pub(crate) struct AddColumnEntry {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AnalyzeTarget {
     pub table: Option<TableRef>,
-    pub columns: Vec<String>,
+    pub columns: Vec<ByteString>,
 }
 
 /// `FROM repository` of `INSTALL` (DuckDB's `ExtensionRepositoryInfo`).
@@ -205,7 +205,7 @@ pub(crate) struct CreateTableAs {
     pub column_names: ColumnList,
     pub partition_keys: Vec<ParsedExpression>,
     pub sort_keys: Vec<ParsedExpression>,
-    pub options: CaseInsensitiveMap<ParsedExpression>,
+    pub options: CaseInsensitiveMap<ParsedExpression, ByteString>,
 }
 
 /// A column definition with its constraints (DuckDB's `ConstraintColumnDefinition`):
@@ -243,7 +243,7 @@ pub(crate) struct InsertValues {
 /// `INTO NAME n VALUE v` of `UNPIVOT` (DuckDB's `UnpivotNameValues`).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct UnpivotNameValues {
-    pub unpivot_names: Vec<String>,
+    pub unpivot_names: Vec<ByteString>,
     pub column: PivotColumn,
 }
 

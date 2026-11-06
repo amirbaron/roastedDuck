@@ -1,0 +1,32 @@
+[package]
+name = "rustdb-python"
+description = "Native Python bindings for the Rust DuckDB engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "_duckdb"
+crate-type = ["cdylib", "rlib"]
+test = false
+doctest = false
+
+[features]
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+pyo3 = { version = "=0.27.2" }
+rustdb.workspace = true
+rustdb-common.workspace = true
+rustdb-types.workspace = true
+rustdb-ast.workspace = true
+rustdb-parser.workspace = true
+rustdb-planner.workspace = true
+rustdb-arrow = { path = "../arrow" }
+rustdb-function = { path = "../function" }
+rustdb-shell = { path = "../shell" }
+rustdb_capi = { package = "rustdb-capi", path = "../capi" }
+
+[lints]
+workspace = true

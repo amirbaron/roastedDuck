@@ -1,6 +1,6 @@
 //! Casts from VARCHAR (DuckDB's `string_cast.cpp` in `src/function/cast`).
 
-use rustdb_common::Result;
+use rustdb_common::{Error, Result};
 use rustdb_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType, Uuid, bit, blob};
 
 use super::decimal::string_to_decimal_kernel;
@@ -10,11 +10,11 @@ use super::{BoundCastInfo, CastFunctionSet};
 
 /// `Could not convert string 'abc' to INT32` (DuckDB's `CastExceptionText` for strings).
 pub(super) fn could_not_convert(text: &[u8], physical: PhysicalType) -> RowError {
-    RowError::Invalid(format!(
-        "Could not convert string '{}' to {}",
-        String::from_utf8_lossy(text),
-        physical.name()
-    ))
+    let mut message = b"Could not convert string '".to_vec();
+    message.extend_from_slice(text);
+    message.extend_from_slice(b"' to ");
+    message.extend_from_slice(physical.name().as_bytes());
+    RowError::InvalidBytes(message)
 }
 
 /// VARCHAR -> `T` with `parse`, failing with DuckDB's generic string cast message.
@@ -68,7 +68,13 @@ pub(super) fn cast_switch(
         L::Decimal => return Ok(string_to_decimal_kernel(target)),
         L::Uuid => parse_kernel::<Uuid>(Uuid::parse),
         L::Blob => string_kernel(blob::parse_text),
-        L::Bit => string_kernel(bit::parse_text),
+        L::Bit => BoundCastInfo::new(|source, result, count, params| {
+            // Bit::TryGetBitStringSize receives only error_message, without the
+            // cast source or query location. CAST throws directly; TRY_CAST records it.
+            try_map_strings_to_string(source, result, count, params, |text, out| {
+                bit::parse_text(text, out).map_err(|message| RowError::Error(Error::conversion(message)))
+            })
+        }),
         L::Geometry => super::geometry::from_string(),
         L::Varchar => BoundCastInfo::reinterpret(),
         L::Enum => return Ok(super::enums::string_to_enum(target)),

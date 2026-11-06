@@ -32,7 +32,7 @@ struct DsdgenFunctionData {
     finished: AtomicBool,
     sf: f64,
     target: DsdgenTarget,
-    suffix: String,
+    suffix: rustdb_common::ByteString,
     overwrite: bool,
     keys: bool,
     /// The number of threads of the connection (`TaskScheduler::NumberOfThreads`).
@@ -44,8 +44,8 @@ impl FunctionData for DsdgenFunctionData {
         self
     }
 
-    fn modified_database(&self) -> Option<String> {
-        Some(self.target.catalog.name().to_string())
+    fn modified_database(&self) -> Option<rustdb_common::ByteString> {
+        Some((&*self.target.catalog.name()).into())
     }
 }
 
@@ -73,30 +73,31 @@ fn dsdgen_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOu
     let context = client_context(input)?;
     // The current catalog and schema.
     let mut catalog = context.default_catalog();
-    let mut schema = context.default_schema().to_owned();
+    let mut schema = rustdb_common::ByteString::from(context.default_schema());
     let mut sf = 0.0;
-    let mut suffix = String::new();
+    let mut suffix = rustdb_common::ByteString::new();
     let mut overwrite = false;
     let mut keys = false;
     for (name, value) in input.named_parameters {
         if value.is_null() {
             return Err(Error::binder("Cannot use NULL as function argument"));
         }
-        match name.as_str() {
-            "sf" => sf = value.as_f64().unwrap_or_default(),
-            "catalog" => catalog = value.to_varchar()?,
-            "schema" => schema = value.to_varchar()?,
-            "suffix" => suffix = value.to_varchar()?,
-            "overwrite" => overwrite = value.as_bool().unwrap_or_default(),
-            "keys" => keys = value.as_bool().unwrap_or_default(),
+        match name.as_bytes() {
+            b"sf" => sf = value.as_f64().unwrap_or_default(),
+            b"catalog" => catalog = value.to_varchar_bytes()?,
+            b"schema" => schema = value.to_varchar_bytes()?,
+            b"suffix" => suffix = value.to_varchar_bytes()?,
+            b"overwrite" => overwrite = value.as_bool().unwrap_or_default(),
+            b"keys" => keys = value.as_bool().unwrap_or_default(),
             _ => {}
         }
     }
     // `RegisterDBModify`: the call writes to the catalog (see `modified_database`).
-    let catalog = context
-        .catalog(&catalog)
-        .cloned()
-        .ok_or_else(|| Error::binder(format!("Catalog \"{catalog}\" does not exist!")))?;
+    let catalog = context.catalog(&catalog).cloned().ok_or_else(|| {
+        Error::binder(rustdb_common::byte_format!(
+            "Catalog \"{catalog}\" does not exist!"
+        ))
+    })?;
     let data = DsdgenFunctionData {
         finished: AtomicBool::new(false),
         sf,
@@ -112,7 +113,7 @@ fn dsdgen_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOu
     };
     Ok(TableFunctionBindOutput {
         return_types: vec![LogicalType::BOOLEAN],
-        names: vec!["Success".to_owned()],
+        names: vec!["Success".into()],
         bind_data: Some(Arc::new(data)),
     })
 }
@@ -161,7 +162,7 @@ fn rows_function(
         .with_bind(move |_| {
             Ok(TableFunctionBindOutput {
                 return_types: columns.iter().map(|(_, ty)| ty.clone()).collect(),
-                names: columns.iter().map(|(name, _)| (*name).to_owned()).collect(),
+                names: columns.iter().map(|(name, _)| (*name).into()).collect(),
                 bind_data: None,
             })
         })

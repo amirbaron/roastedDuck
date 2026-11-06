@@ -218,19 +218,19 @@ const GENERATED_TABLES: [Table; 6] = [
 #[derive(Debug, Clone)]
 pub(crate) struct DbgenTarget {
     pub(crate) catalog: Arc<Catalog>,
-    pub(crate) schema: String,
+    pub(crate) schema: rustdb_common::ByteString,
     pub(crate) transaction: Arc<Transaction>,
 }
 
 /// `DBGenWrapper::CreateTPCHSchema`: creates the tables (named with `suffix`) unless
 /// they exist.
-pub(crate) fn create_tpch_schema(target: &DbgenTarget, suffix: &str) -> Result<()> {
+pub(crate) fn create_tpch_schema(target: &DbgenTarget, suffix: &[u8]) -> Result<()> {
     for table in SCHEMA_TABLES {
         let columns = table
             .columns
             .iter()
             .map(|&(name, ty)| ColumnDefinition {
-                name: name.to_owned(),
+                name: name.into(),
                 logical_type: ty.logical_type(),
                 expression: None,
                 category: TableColumnType::Standard,
@@ -247,17 +247,17 @@ pub(crate) fn create_tpch_schema(target: &DbgenTarget, suffix: &str) -> Result<(
             })
             .collect();
         let info = CreateInfo {
-            catalog: target.catalog.name().to_string(),
+            catalog: (&*target.catalog.name()).into(),
             schema: target.schema.clone(),
             temporary: false,
             internal: false,
             on_conflict: OnCreateConflict::IgnoreOnConflict,
-            sql: String::new(),
+            sql: rustdb_common::ByteString::new(),
             comment: Value::default(),
             tags: CaseInsensitiveMap::default(),
             dependencies: LogicalDependencyList::default(),
             kind: CreateInfoKind::Table(Box::new(CreateTableInfo {
-                table: format!("{}{suffix}", table.name),
+                table: rustdb_common::byte_format!("{}{suffix}", table.name),
                 columns: ColumnList { columns },
                 constraints,
                 query: None,
@@ -445,19 +445,25 @@ struct TableAppends {
 
 impl TableAppends {
     /// Looks the tables up and starts appending to them.
-    fn new(target: &DbgenTarget, suffix: &str) -> Result<Self> {
+    fn new(target: &DbgenTarget, suffix: &[u8]) -> Result<Self> {
         let mut appends = Vec::new();
         for table in Table::ALL {
             let Some(info) = table_info(table) else {
                 continue;
             };
-            let name = format!("{}{suffix}", info.name);
+            let name = rustdb_common::byte_format!("{}{suffix}", info.name);
             let entry = target
                 .catalog
                 .get_entry(&target.transaction, CatalogType::Table, &target.schema, &name)
-                .ok_or_else(|| Error::catalog(format!("Table with name {name} does not exist!")))?;
+                .ok_or_else(|| {
+                    Error::catalog(rustdb_common::byte_format!(
+                        "Table with name {name} does not exist!"
+                    ))
+                })?;
             let EntryKind::Table(table_entry) = &entry.kind else {
-                return Err(Error::catalog(format!("{name} is not a table")));
+                return Err(Error::catalog(rustdb_common::byte_format!(
+                    "{name} is not a table"
+                )));
             };
             let storage = table_entry
                 .storage
@@ -790,7 +796,7 @@ const CHILDREN_PER_SCALE_FACTOR: f64 = 20.0;
 pub(crate) fn load_tpch_data(
     target: &DbgenTarget,
     flt_scale: f64,
-    suffix: &str,
+    suffix: &[u8],
     children: usize,
     current_step: Option<usize>,
     threads: usize,

@@ -38,9 +38,9 @@ impl CopyOption {
 #[derive(Debug)]
 pub struct CopyFunctionBindInput<'a> {
     /// The options of the statement that are not generic COPY options.
-    pub options: &'a CaseInsensitiveMap<Vec<Value>>,
-    pub file_path: &'a str,
-    pub format: &'a str,
+    pub options: &'a CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteString>,
+    pub file_path: &'a [u8],
+    pub format: &'a [u8],
     /// The extension of written files; the function may extend it (e.g. `.gz`).
     pub file_extension: String,
     /// The binder's client context (the planner's `ClientContext`).
@@ -50,9 +50,9 @@ pub struct CopyFunctionBindInput<'a> {
 /// What `copy_from_bind` receives (DuckDB's `CopyFromFunctionBindInput`).
 #[derive(Debug)]
 pub struct CopyFromBindInput<'a> {
-    pub options: &'a CaseInsensitiveMap<Vec<Value>>,
-    pub file_path: &'a str,
-    pub format: &'a str,
+    pub options: &'a CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteString>,
+    pub file_path: &'a [u8],
+    pub format: &'a [u8],
     /// The binder's client context (the planner's `ClientContext`).
     pub binder: Option<&'a dyn Any>,
 }
@@ -68,9 +68,9 @@ pub enum CopyToType {
 /// query being written.
 #[derive(Debug)]
 pub struct CopyToSelectInput<'a> {
-    pub names: &'a [String],
+    pub names: &'a [rustdb_common::ByteString],
     pub types: &'a [LogicalType],
-    pub options: &'a CaseInsensitiveMap<Vec<Value>>,
+    pub options: &'a CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteString>,
     pub copy_to_type: CopyToType,
     /// The binder's client context (the planner's `ClientContext`).
     pub binder: Option<&'a dyn Any>,
@@ -86,13 +86,17 @@ pub type CopyGlobalState = Box<dyn Any + Send + Sync>;
 
 /// `copy_to_bind`: the bind data of a write of `names` / `types`.
 pub type CopyToBind = Arc<
-    dyn Fn(&mut CopyFunctionBindInput<'_>, &[String], &[LogicalType]) -> Result<Arc<dyn FunctionData>>
+    dyn Fn(
+            &mut CopyFunctionBindInput<'_>,
+            &[rustdb_common::ByteString],
+            &[LogicalType],
+        ) -> Result<Arc<dyn FunctionData>>
         + Send
         + Sync,
 >;
 /// `copy_to_initialize_global`: opens the file at the path.
 pub type CopyToInitializeGlobal =
-    Arc<dyn Fn(&dyn FunctionData, &str) -> Result<CopyGlobalState> + Send + Sync>;
+    Arc<dyn Fn(&dyn FunctionData, &[u8]) -> Result<CopyGlobalState> + Send + Sync>;
 /// `copy_to_initialize_operator`: hands a file's state the logger of the COPY operator,
 /// when the query logs it.
 pub type CopyToInitializeOperator =
@@ -110,7 +114,7 @@ pub struct CopyFunctionFileStatistics {
     pub file_size_bytes: u64,
     pub footer_size_bytes: Value,
     /// Per column: statistic name -> value.
-    pub column_statistics: Vec<(String, Vec<(String, Value)>)>,
+    pub column_statistics: Vec<(rustdb_common::ByteString, Vec<(String, Value)>)>,
 }
 
 /// `copy_to_get_written_statistics`: the statistics of a finalized file.
@@ -127,7 +131,13 @@ pub type CopyRotateNextFile =
     Arc<dyn Fn(&CopyGlobalState, &dyn FunctionData, Option<u64>) -> bool + Send + Sync>;
 /// `copy_from_bind`: the bind data of the reader for the target columns.
 pub type CopyFromBind = Arc<
-    dyn Fn(&CopyFromBindInput<'_>, &[String], &[LogicalType]) -> Result<Arc<dyn FunctionData>> + Send + Sync,
+    dyn Fn(
+            &CopyFromBindInput<'_>,
+            &[rustdb_common::ByteString],
+            &[LogicalType],
+        ) -> Result<Arc<dyn FunctionData>>
+        + Send
+        + Sync,
 >;
 
 /// How a COPY runs (DuckDB's `CopyFunctionExecutionMode`).
@@ -147,9 +157,15 @@ pub type CopyExecutionMode =
     Arc<dyn Fn(&dyn FunctionData, bool, bool) -> CopyFunctionExecutionMode + Send + Sync>;
 /// A batch prepared for writing (DuckDB's `PreparedBatchData`).
 pub type PreparedBatch = Box<dyn Any + Send>;
+/// Replayable, buffer-managed rows passed to a batched writer. A column scan
+/// visits only that column; callers keep at most one raw chunk pinned at a time.
+pub trait CopyBatch: Send + Sync {
+    fn count(&self) -> usize;
+    fn scan(&self, column: Option<usize>, visit: &mut dyn FnMut(&DataChunk) -> Result<()>) -> Result<()>;
+}
 /// `prepare_batch`: encodes the rows of a batch (any thread, concurrently).
 pub type CopyPrepareBatch =
-    Arc<dyn Fn(&dyn FunctionData, &CopyGlobalState, Vec<DataChunk>) -> Result<PreparedBatch> + Send + Sync>;
+    Arc<dyn Fn(&dyn FunctionData, &CopyGlobalState, &dyn CopyBatch) -> Result<PreparedBatch> + Send + Sync>;
 /// `flush_batch`: writes a prepared batch (one thread at a time, in batch order).
 pub type CopyFlushBatch =
     Arc<dyn Fn(&dyn FunctionData, &CopyGlobalState, PreparedBatch) -> Result<()> + Send + Sync>;
@@ -170,20 +186,20 @@ pub type CopyDesiredBatchSize = Arc<dyn Fn(&dyn FunctionData) -> u64 + Send + Sy
 /// What a `plan` callback sees (the bound query of `COPY ... TO`).
 #[derive(Debug)]
 pub struct CopyPlanInput<'a> {
-    pub names: &'a [String],
+    pub names: &'a [rustdb_common::ByteString],
     pub types: &'a [LogicalType],
     /// The options of the statement (the generic COPY options included).
-    pub options: &'a CaseInsensitiveMap<Vec<Value>>,
+    pub options: &'a CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteString>,
 }
 
 /// How a `plan` callback rewrites `COPY ... TO`: as a COPY in `format` with `options` of
-/// `SELECT <select_list> FROM (<query>)`, where `select_list` is SQL over positional
+/// `SELECT <select_list> FROM (<query>)`, where `select_list` contains native expressions over positional
 /// references (`#1`, ...) of the query's columns.
 #[derive(Debug)]
 pub struct CopyPlanRewrite {
-    pub format: String,
-    pub options: CaseInsensitiveMap<Vec<Value>>,
-    pub select_list: String,
+    pub format: rustdb_common::ByteString,
+    pub options: CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteString>,
+    pub select_list: Vec<rustdb_ast::ParsedExpression>,
 }
 
 /// `copy_to_plan_t`: rewrites a `COPY ... TO` into another COPY (DuckDB's `CopyFunction::plan`).

@@ -200,14 +200,20 @@ pub(crate) use rustdb_common::libcxx::ci_hash;
 
 /// A `case_insensitive_map_t` or `case_insensitive_set_t` whose iteration order follows
 /// libc++, built by unique insertions.
-#[derive(Clone, Debug, Default)]
-pub struct CiHashMap<V> {
+#[derive(Clone, Debug)]
+pub struct CiHashMap<V, K = String> {
     order: HashOrder,
-    entries: Vec<(String, V)>,
+    entries: Vec<(K, V)>,
 }
 
 impl<V> CiHashMap<V> {
     pub fn new() -> Self {
+        Self::new_with_keys()
+    }
+}
+
+impl<V, K> CiHashMap<V, K> {
+    pub fn new_with_keys() -> Self {
         Self {
             order: HashOrder::new(),
             entries: Vec::new(),
@@ -217,27 +223,32 @@ impl<V> CiHashMap<V> {
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
+}
 
-    fn position(&self, key: &str) -> Option<usize> {
+impl<V, K: AsRef<[u8]>> CiHashMap<V, K> {
+    fn position(&self, key: impl AsRef<[u8]>) -> Option<usize> {
         let entries = &self.entries;
         self.order
-            .find(ci_hash(key), |node| entries[node - 1].0.eq_ignore_ascii_case(key))
+            .find(ci_hash(key.as_ref()), |node| {
+                entries[node - 1].0.as_ref().eq_ignore_ascii_case(key.as_ref())
+            })
             .map(|node| node - 1)
     }
 
-    pub fn get(&self, key: &str) -> Option<&V> {
+    pub fn get(&self, key: impl AsRef<[u8]>) -> Option<&V> {
         self.position(key).map(|index| &self.entries[index].1)
     }
 
-    pub fn contains_key(&self, key: &str) -> bool {
+    pub fn contains_key(&self, key: impl AsRef<[u8]>) -> bool {
         self.position(key).is_some()
     }
 
     /// `map[key] = value`: inserts, or overwrites the value of an existing key.
-    pub fn set(&mut self, key: String, value: V) {
+    pub fn set(&mut self, key: impl Into<K>, value: V) {
+        let key = key.into();
         let entries = &self.entries;
         match self.order.insert_unique(ci_hash(&key), |node| {
-            entries[node - 1].0.eq_ignore_ascii_case(&key)
+            entries[node - 1].0.as_ref().eq_ignore_ascii_case(key.as_ref())
         }) {
             Ok(_) => self.entries.push((key, value)),
             Err(node) => self.entries[node - 1].1 = value,
@@ -245,7 +256,8 @@ impl<V> CiHashMap<V> {
     }
 
     /// `map.insert({key, value})`: inserts unless the key exists; returns whether it did.
-    pub fn insert(&mut self, key: String, value: V) -> bool {
+    pub fn insert(&mut self, key: impl Into<K>, value: V) -> bool {
+        let key = key.into();
         if self.contains_key(&key) {
             return false;
         }
@@ -260,21 +272,37 @@ impl<V> CiHashMap<V> {
     }
 
     /// The entries in iteration order.
-    pub fn iter(&self) -> impl Iterator<Item = (&str, &V)> {
+    pub fn iter_keys(&self) -> impl Iterator<Item = (&K, &V)> {
         self.order.order().into_iter().map(|node| {
             let (key, value) = &self.entries[node - 1];
-            (key.as_str(), value)
+            (key, value)
         })
     }
 
     /// Consumes the map, yielding the entries in iteration order.
-    pub fn into_ordered(self) -> Vec<(String, V)> {
-        let mut slots: Vec<Option<(String, V)>> = self.entries.into_iter().map(Some).collect();
+    pub fn into_ordered(self) -> Vec<(K, V)> {
+        let mut slots: Vec<Option<(K, V)>> = self.entries.into_iter().map(Some).collect();
         self.order
             .order()
             .into_iter()
             .filter_map(|node| slots[node - 1].take())
             .collect()
+    }
+}
+
+impl<V, K> Default for CiHashMap<V, K> {
+    fn default() -> Self {
+        Self::new_with_keys()
+    }
+}
+impl<V> CiHashMap<V> {
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &V)> {
+        self.iter_keys().map(|(key, value)| (key.as_str(), value))
+    }
+}
+impl<V> CiHashMap<V, rustdb_common::ByteString> {
+    pub fn iter(&self) -> impl Iterator<Item = (&rustdb_common::ByteString, &V)> {
+        self.iter_keys()
     }
 }
 

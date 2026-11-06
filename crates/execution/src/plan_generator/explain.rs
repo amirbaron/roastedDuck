@@ -72,6 +72,7 @@ fn utility_name(op: &LogicalOperator) -> Option<&'static str> {
         K::Attach(_) => "ATTACH",
         K::Detach(_) => "DETACH",
         K::Load(_) => "LOAD",
+        K::UpdateExtensions(_) => "UPDATE_EXTENSIONS",
         K::AlterDatabase(_) => "ALTER",
         K::Deallocate { .. } => "DEALLOCATE",
         _ => return None,
@@ -145,12 +146,15 @@ impl RenderSource for PhysicalRenderNode<'_> {
             }
             Self::DelimDistinct { delim } => {
                 let mut params = rustdb_common::tree_renderer::RenderParams::new();
-                let groups: Vec<String> = delim
+                let groups: Vec<rustdb_common::ByteString> = delim
                     .distinct_groups
                     .iter()
-                    .map(|index| format!("#{index}"))
+                    .map(|index| rustdb_common::byte_format!("#{index}"))
                     .collect();
-                params.insert("Groups".to_owned(), groups.join("\n"));
+                params.insert(
+                    "Groups".to_owned(),
+                    rustdb_common::ByteString::join(&groups, b"\n"),
+                );
                 crate::operator::set_estimated_cardinality(&mut params, delim.distinct_estimate);
                 RenderTreeNode::new("HASH_GROUP_BY".to_owned(), params)
             }
@@ -186,7 +190,7 @@ fn render_physical_plan(
     estimates: &HashMap<usize, u64>,
     delim_joins: &HashMap<usize, DelimExplain>,
     format: ExplainFormat,
-) -> String {
+) -> Result<rustdb_common::ByteString> {
     let info = ExplainInfo {
         estimates,
         delim_joins,
@@ -222,11 +226,11 @@ impl PlanGenerator {
         &mut self,
         explain_type: ExplainType,
         explain_format: ExplainFormat,
-        logical_plan_unopt: String,
+        logical_plan_unopt: rustdb_common::ByteString,
         child: LogicalOperator,
         types: Vec<LogicalType>,
     ) -> Result<PhysicalRef> {
-        let logical_plan_opt = child.to_explain_string(explain_format);
+        let logical_plan_opt = child.to_explain_string(explain_format)?;
         let mut child = child;
         if let rustdb_planner::LogicalKind::Execute { .. } = &child.kind
             && let Some(prepared) = child.children.pop()
@@ -257,12 +261,12 @@ impl PlanGenerator {
             &self.estimates,
             &self.delim_explain,
             explain_format,
-        );
+        )?;
         let output = self
             .context
             .as_ref()
             .map_or(ExplainOutput::default(), |context| context.explain_output);
-        let rows: Vec<(&str, String)> = match output {
+        let rows: Vec<(&str, rustdb_common::ByteString)> = match output {
             ExplainOutput::OptimizedOnly => vec![("logical_opt", logical_plan_opt)],
             ExplainOutput::PhysicalOnly => vec![("physical_plan", physical_plan)],
             ExplainOutput::All => vec![
@@ -275,7 +279,7 @@ impl PlanGenerator {
         let mut chunk = DataChunk::with_types(&types, count);
         for (row, (key, value)) in rows.into_iter().enumerate() {
             chunk.column_mut(0).set_value(row, &Value::varchar(key))?;
-            chunk.column_mut(1).set_value(row, &Value::varchar(value))?;
+            chunk.column_mut(1).set_value(row, &Value::try_varchar(&value)?)?;
         }
         chunk.set_len(count);
         Ok(Arc::new(PhysicalColumnDataScan::new(types, Arc::from([chunk]))))

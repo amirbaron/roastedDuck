@@ -51,7 +51,7 @@ pub(super) fn index_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<
 pub(super) fn access_method_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // /* empty */
-        1 => Ok(SemValue::Str(Some("art".to_owned()))),
+        1 => Ok(SemValue::Str(Some("art".into()))),
         _ => Err(rhs.bad_alternative()),
     }
 }

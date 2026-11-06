@@ -37,13 +37,21 @@ pub fn typeof_functions() -> ScalarFunctionSet {
         "typeof",
         vec![LogicalType::ANY],
         LogicalType::VARCHAR,
-        |args, _, result| constant(result, &Value::varchar(args.column(0).logical_type().to_string())),
+        |args, _, result| {
+            constant(
+                result,
+                &Value::try_varchar(&args.column(0).logical_type().to_bytes())?,
+            )
+        },
     )
-    .with_bind_expression(|_, argument_types| {
-        // `BindTypeOfFunctionExpression`: a constant unless the type is unknown.
-        let ty = argument_types.first()?;
-        (!matches!(ty.id(), LogicalTypeId::Unknown | LogicalTypeId::SqlNull))
-            .then(|| Value::varchar(ty.to_string()))
+    .with_fallible_bind_expression(|_, argument_types| {
+        let Some(ty) = argument_types.first() else {
+            return Ok(None);
+        };
+        if matches!(ty.id(), LogicalTypeId::Unknown | LogicalTypeId::SqlNull) {
+            return Ok(None);
+        }
+        Ok(Some(Value::try_varchar(&ty.to_bytes())?))
     });
     function.null_handling = NullHandling::Special;
     set("typeof", vec![function])
@@ -82,21 +90,30 @@ pub fn alias_functions() -> ScalarFunctionSet {
         vec![LogicalType::ANY],
         LogicalType::VARCHAR,
         |_, state, result| {
-            let name = if state.alias.is_empty() {
+            let bytes = if state.alias.is_empty() {
                 state
                     .bind_data
                     .as_ref()
-                    .and_then(|data| data.as_any().downcast_ref::<ConstantValue>())
-                    .map_or_else(|| Value::varchar(""), |data| data.0.clone())
+                    .and_then(|data| data.as_any().downcast_ref::<AliasName>())
+                    .map_or(b"".as_slice(), |data| data.0.as_bytes())
             } else {
-                Value::varchar(&state.alias)
+                state.alias.as_bytes()
             };
-            constant(result, &name)
+            constant(result, &Value::try_varchar(bytes)?)
         },
     )
-    .with_bind(|_, input| Ok(Some(Arc::new(ConstantValue(Value::varchar(&input.names[0]))))));
+    .with_bind(|_, input| Ok(Some(Arc::new(AliasName(input.names[0].clone())))));
     function.null_handling = NullHandling::Special;
     set("alias", vec![function])
+}
+
+/// The argument name is retained at bind time; `AliasFunction` constructs VARCHAR at execution.
+#[derive(Debug, Clone, PartialEq)]
+struct AliasName(rustdb_common::ByteString);
+impl FunctionData for AliasName {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// A value computed at bind time.
@@ -403,7 +420,7 @@ fn bind_create_sort_key(
     let mut modifiers = Vec::new();
     for index in (1..input.argument_types.len()).step_by(2) {
         let Some(specifier) = &input.constants[index] else {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "sort_specifier must be a constant value - but got {}",
                 input.aliases[index]
             )));
@@ -700,5 +717,31 @@ mod tests {
         let mut result = Vector::flat(LogicalType::VARCHAR, 0);
         (function.kernel)(&args, &mut FunctionState::default(), &mut result).unwrap();
         assert_eq!(result.get_value(0), Value::varchar("BIGINT"));
+    }
+    #[test]
+    fn typeof_binding_preserves_native_value_errors() {
+        let function = &typeof_functions().functions[0];
+        let ty = LogicalType::enum_type_bytes(vec![b"bad\xff".as_slice().into()]);
+        let error = function.bind_expression.as_ref().unwrap()(None, &[ty]).unwrap_err();
+        assert_eq!(
+            error.raw_message_bytes(),
+            b"Invalid unicode (byte sequence mismatch) detected in value construction"
+        );
+    }
+
+    #[test]
+    fn alias_constructs_its_varchar_during_execution() {
+        let function = &alias_functions().functions[0];
+        let mut state = FunctionState {
+            bind_data: Some(Arc::new(AliasName(b"bad\xff".as_slice().into()))),
+            ..FunctionState::default()
+        };
+        let args = rustdb_types::DataChunk::new(vec![Vector::constant(&Value::integer(42)).unwrap()], 1);
+        let mut result = Vector::flat(LogicalType::VARCHAR, 1);
+        let error = (function.kernel)(&args, &mut state, &mut result).unwrap_err();
+        assert_eq!(
+            error.raw_message_bytes(),
+            b"Invalid unicode (byte sequence mismatch) detected in value construction"
+        );
     }
 }

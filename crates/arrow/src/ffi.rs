@@ -110,18 +110,16 @@ impl ArrowSchema {
         unsafe { c_str_or_empty(self.format) }
     }
 
-    /// The field name (empty when there is none); invalid UTF-8 is replaced.
+    /// The native field-name bytes, read through the Arrow C-string boundary.
     ///
     /// # Safety
     /// `name` must be NULL or a NUL-terminated string.
-    pub unsafe fn name_string(&self) -> String {
+    pub unsafe fn name_string(&self) -> rustdb_common::ByteString {
         if self.name.is_null() {
-            return String::new();
+            return rustdb_common::ByteString::new();
         }
         // SAFETY: guaranteed by the caller.
-        unsafe { CStr::from_ptr(self.name) }
-            .to_string_lossy()
-            .into_owned()
+        unsafe { CStr::from_ptr(self.name) }.to_bytes().into()
     }
 }
 

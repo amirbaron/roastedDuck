@@ -7,7 +7,6 @@ use std::fmt::Write as _;
 use rustdb::{Error, Result};
 
 use crate::prompt::{PROMPT_SETTINGS, Prompt, PromptContext, PromptOptions};
-use crate::state::ShellState;
 
 /// The width and characters of the bar (`ProgressBarDisplayInfo`).
 const PROGRESS_BAR_WIDTH: usize = 38;
@@ -103,7 +102,7 @@ pub struct ProgressBarPrompt {
     alignment: ProgressBarAlignment,
     content_alignment: ProgressBarAlignment,
     /// The component is hidden while its text contains this.
-    does_not_contain: String,
+    does_not_contain: rustdb_common::ByteString,
     min_size: Option<usize>,
 }
 
@@ -112,38 +111,38 @@ pub struct ProgressBarPrompt {
 struct ProgressBarOptions {
     alignment: ProgressBarAlignment,
     content_alignment: ProgressBarAlignment,
-    does_not_contain: String,
+    does_not_contain: rustdb_common::ByteString,
     min_size: Option<usize>,
 }
 
 impl PromptOptions for ProgressBarOptions {
-    fn parse_setting(&mut self, _prompt: &mut Prompt, bracket_type: &str, value: &str) -> Result<bool> {
+    fn parse_setting(&mut self, _prompt: &mut Prompt, bracket_type: &[u8], value: &[u8]) -> Result<bool> {
         match bracket_type {
-            "align" => {
+            b"align" => {
                 self.alignment = match value {
-                    "right" => ProgressBarAlignment::Right,
-                    "left" => ProgressBarAlignment::Left,
+                    b"right" => ProgressBarAlignment::Right,
+                    b"left" => ProgressBarAlignment::Left,
                     _ => {
-                        return Err(Error::invalid_input(format!(
+                        return Err(Error::invalid_input(rustdb_common::byte_format!(
                             "Unsupported type {value} for align: expected left or right"
                         )));
                     }
                 };
             }
-            "content_align" => {
+            b"content_align" => {
                 self.content_alignment = match value {
-                    "right" => ProgressBarAlignment::Right,
-                    "left" => ProgressBarAlignment::Left,
-                    "middle" => ProgressBarAlignment::Middle,
+                    b"right" => ProgressBarAlignment::Right,
+                    b"left" => ProgressBarAlignment::Left,
+                    b"middle" => ProgressBarAlignment::Middle,
                     _ => {
-                        return Err(Error::invalid_input(format!(
+                        return Err(Error::invalid_input(rustdb_common::byte_format!(
                             "Unsupported type {value} for content_align: expected left or right"
                         )));
                     }
                 };
             }
-            "hide_if_contains" => value.clone_into(&mut self.does_not_contain),
-            "min_size" => self.min_size = Some(crate::prompt::to_unsigned(value)?),
+            b"hide_if_contains" => self.does_not_contain = value.into(),
+            b"min_size" => self.min_size = Some(crate::prompt::parse_optional_index(value)?),
             _ => return Ok(false),
         }
         Ok(true)
@@ -158,11 +157,11 @@ impl PromptOptions for ProgressBarOptions {
 
 impl ProgressBarPrompt {
     /// `ParsePrompt` of a component.
-    fn parse(text: &str) -> Result<Self> {
+    fn parse(text: &[u8]) -> Result<Self> {
         let mut options = ProgressBarOptions {
             alignment: ProgressBarAlignment::Left,
             content_alignment: ProgressBarAlignment::Left,
-            does_not_contain: String::new(),
+            does_not_contain: rustdb_common::ByteString::new(),
             min_size: None,
         };
         let prompt = Prompt::parse(text, &mut options)?;
@@ -176,7 +175,7 @@ impl ProgressBarPrompt {
     }
 
     /// `AddPaddingIfRequired`: pads the text to the minimum size.
-    fn add_padding_if_required(&self, text: &mut String, render_length: &mut usize) {
+    fn add_padding_if_required(&self, text: &mut rustdb_common::ByteString, render_length: &mut usize) {
         let Some(min_size) = self.min_size.filter(|&min_size| *render_length < min_size) else {
             return;
         };
@@ -186,7 +185,8 @@ impl ProgressBarPrompt {
             ProgressBarAlignment::Middle => (padding_required - padding_required / 2, padding_required / 2),
             ProgressBarAlignment::Right => (padding_required - 1, 1),
         };
-        *text = format!("{}{text}{}", " ".repeat(left_padding), " ".repeat(right_padding));
+        *text =
+            rustdb_common::byte_format!("{}{text}{}", " ".repeat(left_padding), " ".repeat(right_padding));
         *render_length += padding_required;
     }
 }
@@ -206,9 +206,9 @@ struct ProgressBarContext<'a> {
 }
 
 impl PromptContext for ProgressBarContext<'_> {
-    fn setting(&mut self, name: &str) -> Result<String> {
+    fn setting(&mut self, name: &[u8]) -> Result<rustdb_common::ByteString> {
         match name {
-            "progress_bar_percentage" => {
+            b"progress_bar_percentage" => {
                 let mut result = String::new();
                 if self.status.percentage < 100 {
                     result.push(' ');
@@ -217,15 +217,15 @@ impl PromptContext for ProgressBarContext<'_> {
                     result.push(' ');
                 }
                 let _ = write!(result, "{}%", self.status.percentage);
-                Ok(result)
+                Ok(result.into())
             }
-            "progress_bar" => Ok(format_progress_bar(self.status.percentage)),
-            "eta" => Ok(format_eta(self.status.estimated_remaining_seconds, false)),
+            b"progress_bar" => Ok(format_progress_bar(self.status.percentage).into()),
+            b"eta" => Ok(format_eta(self.status.estimated_remaining_seconds, false).into()),
             _ => self.base.setting(name),
         }
     }
 
-    fn execute_sql(&mut self, query: &str) -> String {
+    fn execute_sql(&mut self, query: &[u8]) -> rustdb_common::ByteString {
         self.base.execute_sql(query)
     }
 }
@@ -254,8 +254,8 @@ impl ShellProgressBar {
     }
 
     /// `AddComponent`.
-    pub fn add_component(&mut self, text: &str) -> Result<()> {
-        self.components.push(ProgressBarPrompt::parse(text)?);
+    pub fn add_component(&mut self, text: impl AsRef<[u8]>) -> Result<()> {
+        self.components.push(ProgressBarPrompt::parse(text.as_ref())?);
         Ok(())
     }
 
@@ -271,32 +271,36 @@ impl ShellProgressBar {
         status: ProgressStatus,
         base: &mut dyn PromptContext,
         terminal_width: usize,
-    ) -> Result<String> {
+    ) -> Result<rustdb_common::ByteString> {
         let mut context = ProgressBarContext { status, base };
-        let mut lhs = String::new();
-        let mut rhs = String::new();
+        let mut lhs = rustdb_common::ByteString::new();
+        let mut rhs = rustdb_common::ByteString::new();
         let mut total_render_length = 0;
         for component in &self.components {
             let mut text = component.prompt.generate_prompt(&mut context)?;
-            if !component.does_not_contain.is_empty() && text.contains(&component.does_not_contain) {
+            if !component.does_not_contain.is_empty()
+                && text
+                    .windows(component.does_not_contain.len())
+                    .any(|part| part == component.does_not_contain.as_ref())
+            {
                 continue;
             }
-            let mut render_length = ShellState::render_length(&text);
+            let mut render_length = crate::utf8::native_terminal_render_width(&text)?;
             component.add_padding_if_required(&mut text, &mut render_length);
             if total_render_length + render_length > terminal_width {
                 break;
             }
             total_render_length += render_length;
             if component.alignment == ProgressBarAlignment::Left {
-                lhs += &text;
+                lhs.push_bytes(&text);
             } else {
-                rhs += &text;
+                rhs.push_bytes(&text);
             }
         }
         let mut result = lhs;
         if total_render_length < terminal_width {
-            result += &" ".repeat(terminal_width - total_render_length);
-            result += &rhs;
+            result.push_bytes(" ".repeat(terminal_width - total_render_length));
+            result.push_bytes(&rhs);
         }
         Ok(result)
     }

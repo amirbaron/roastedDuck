@@ -6,8 +6,8 @@
 
 use std::sync::Arc;
 
-use rustdb_common::string_util::{candidates_message, top_n_jaro_winkler};
-use rustdb_common::{Error, Result};
+use rustdb_common::string_util::{candidates_message_bytes, top_n_jaro_winkler};
+use rustdb_common::{ByteString, Error, Result};
 use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
 use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
 
@@ -19,7 +19,7 @@ use crate::scalar::structs::struct_extract::FieldIndex;
 type BindResult = Result<Option<Arc<dyn FunctionData>>>;
 
 /// The members of the UNION argument, or DuckDB's bind error.
-fn union_members<'a>(input: &'a BindInput<'_>, error: &str) -> Result<&'a [(String, LogicalType)]> {
+fn union_members<'a>(input: &'a BindInput<'_>, error: &str) -> Result<&'a [(ByteString, LogicalType)]> {
     let ty = &input.argument_types[0];
     if ty.id() == LogicalTypeId::Unknown {
         return Err(crate::parameter_not_resolved());
@@ -48,17 +48,20 @@ fn bind_union_extract(function: &mut ScalarFunction, input: &BindInput<'_>) -> B
             ));
         }
     };
-    let key = key.as_str().unwrap_or_default();
+    let key = key.as_bytes().unwrap_or_default();
     if key.is_empty() {
         return Err(Error::binder(
             "Key name for union_extract needs to be neither NULL nor empty",
         ));
     }
-    let key = key.to_lowercase();
-    let Some(index) = members.iter().position(|(name, _)| name.to_lowercase() == key) else {
-        let names: Vec<String> = members.iter().map(|(name, _)| name.clone()).collect();
-        let message = candidates_message(&top_n_jaro_winkler(&names, &key), "Candidate Entries");
-        return Err(Error::binder(format!(
+    let key = ByteString::from(key.to_ascii_lowercase());
+    let Some(index) = members
+        .iter()
+        .position(|(name, _)| name.eq_ignore_ascii_case(&key))
+    else {
+        let names: Vec<ByteString> = members.iter().map(|(name, _)| name.clone()).collect();
+        let message = candidates_message_bytes(&top_n_jaro_winkler(&names, &key), b"Candidate Entries");
+        return Err(Error::binder(rustdb_common::byte_format!(
             "Could not find key \"{key}\" in union\n{message}"
         )));
     };
@@ -98,7 +101,8 @@ fn bind_union_tag(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindR
         "First argument to union_tag function must be a union type.",
     )?;
     function.arguments[0] = input.argument_types[0].clone();
-    function.return_type = LogicalType::enum_type(members.iter().map(|(name, _)| name.clone()).collect());
+    function.return_type =
+        LogicalType::enum_type_bytes(members.iter().map(|(name, _)| name.clone()).collect());
     Ok(None)
 }
 

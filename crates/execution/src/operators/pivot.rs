@@ -21,7 +21,7 @@ pub struct PhysicalPivot {
     types: Vec<LogicalType>,
     group_count: usize,
     /// Output column of the first aggregate of each pivot value name.
-    pivot_map: HashMap<String, usize>,
+    pivot_map: HashMap<rustdb_common::ByteString, usize>,
     /// Each aggregate finalized over an empty state.
     empty_aggregates: Vec<Value>,
     children: [PhysicalRef; 1],
@@ -146,7 +146,7 @@ impl Operator for PhysicalPivot {
             for element in 0..list.length {
                 let position = (list.offset + element) as usize;
                 let name = name_child.get_value(position);
-                let Some(&column) = name.as_str().and_then(|name| self.pivot_map.get(name)) else {
+                let Some(&column) = name.as_bytes().and_then(|name| self.pivot_map.get(name)) else {
                     // Not one of the requested pivot values.
                     continue;
                 };

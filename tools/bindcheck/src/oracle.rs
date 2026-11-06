@@ -19,9 +19,39 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 /// A query result: column names, types as DuckDB prints them, and rendered rows.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Table {
-    pub names: Vec<String>,
+    #[serde(with = "native_names")]
+    pub names: Vec<Vec<u8>>,
     pub types: Vec<String>,
     pub rows: Vec<Vec<String>>,
+}
+
+mod native_names {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    #[derive(Serialize, Deserialize)]
+    #[serde(untagged)]
+    enum Name {
+        Text(String),
+        Bytes(Vec<u8>),
+    }
+    pub fn serialize<S: Serializer>(names: &[Vec<u8>], serializer: S) -> Result<S::Ok, S::Error> {
+        names
+            .iter()
+            .map(|bytes| match std::str::from_utf8(bytes) {
+                Ok(text) => Name::Text(text.into()),
+                Err(_) => Name::Bytes(bytes.clone()),
+            })
+            .collect::<Vec<_>>()
+            .serialize(serializer)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<Vec<u8>>, D::Error> {
+        Ok(Vec::<Name>::deserialize(deserializer)?
+            .into_iter()
+            .map(|name| match name {
+                Name::Text(text) => text.into_bytes(),
+                Name::Bytes(bytes) => bytes,
+            })
+            .collect())
+    }
 }
 
 /// The CLI's outcome for one statement.
@@ -154,7 +184,10 @@ pub fn run_one(duckdb: &Path, id: u64, sql: &str) -> OracleResult {
                 id,
                 error: None,
                 table: Table {
-                    names: columns.iter().map(|column| column[0].clone()).collect(),
+                    names: columns
+                        .iter()
+                        .map(|column| column[0].as_bytes().to_vec())
+                        .collect(),
                     types: columns.iter().map(|column| column[1].clone()).collect(),
                     rows,
                 },

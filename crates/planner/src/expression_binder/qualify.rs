@@ -9,7 +9,7 @@ use rustdb_ast::{
     ParsedExpressionKind, lambda_parameters,
 };
 use rustdb_catalog::CatalogType;
-use rustdb_common::{Error, Result};
+use rustdb_common::{ByteString, Error, Result};
 use rustdb_types::Value;
 
 use super::{BindError, function_call, is_bound, is_unnest_function, operator_expression};
@@ -17,7 +17,7 @@ use crate::binder::{Binder, Binding, BindingAlias};
 use crate::context::EntryLookup;
 
 /// Parameter names of the lambdas being qualified, innermost last.
-type LambdaParameters = Vec<HashSet<String>>;
+type LambdaParameters = Vec<HashSet<ByteString>>;
 
 /// What qualification needs: the binder's relations, macro and lambda parameters, and
 /// which names are select-list aliases. Expression binders implement it; binders that
@@ -28,14 +28,14 @@ pub trait ColumnQualifier {
     fn lambda_bindings(&self) -> &[Binding];
 
     /// Whether `names` could be a select-list alias (DuckDB's `DoesColumnAliasExist`).
-    fn does_column_alias_exist(&self, _names: &[String]) -> bool {
+    fn does_column_alias_exist(&self, _names: &[rustdb_common::ByteString]) -> bool {
         false
     }
 
     /// The qualified form of a column reference (DuckDB's virtual `QualifyColumnName`).
     fn qualify_column_name(
         &self,
-        names: &[String],
+        names: &[rustdb_common::ByteString],
         location: Option<u64>,
     ) -> Result<std::result::Result<ParsedExpression, BindError>> {
         default_qualify_column_name(self, names, location)
@@ -80,7 +80,7 @@ pub fn qualify_column_names(binder: &Binder, expr: &mut ParsedExpression) -> Res
     QualifyContext::new(binder, &[]).qualify_column_names(expr)
 }
 
-fn is_lambda_parameter(lambda_params: &LambdaParameters, name: &str) -> bool {
+fn is_lambda_parameter(lambda_params: &LambdaParameters, name: &[u8]) -> bool {
     lambda_params.iter().any(|level| level.contains(name))
 }
 
@@ -283,15 +283,18 @@ pub fn for_each_child(
 }
 
 /// `base.field` as a `STRUCT_EXTRACT` operator (DuckDB's `CreateStructExtract`).
-pub fn create_struct_extract(base: ParsedExpression, field: &str) -> ParsedExpression {
-    operator_expression(
+pub fn create_struct_extract(base: ParsedExpression, field: impl AsRef<[u8]>) -> Result<ParsedExpression> {
+    Ok(operator_expression(
         ExpressionType::StructExtract,
-        vec![base, ParsedExpression::constant(Value::varchar(field))],
-    )
+        vec![
+            base,
+            ParsedExpression::constant(Value::try_varchar(field.as_ref())?),
+        ],
+    ))
 }
 
 /// A lambda parameter reference if `name` is one (DuckDB's `LambdaRefExpression::FindMatchingBinding`).
-fn lambda_reference(lambda_bindings: &[Binding], name: &str) -> Option<ParsedExpression> {
+fn lambda_reference(lambda_bindings: &[Binding], name: &[u8]) -> Option<ParsedExpression> {
     let index = lambda_bindings
         .iter()
         .rposition(|binding| binding.has_matching_binding(name))?;
@@ -299,11 +302,11 @@ fn lambda_reference(lambda_bindings: &[Binding], name: &str) -> Option<ParsedExp
         ExpressionType::LambdaRef,
         ParsedExpressionKind::LambdaRef(LambdaRefExpression {
             lambda_idx: index as u64,
-            column_name: name.to_owned(),
+            column_name: name.into(),
         }),
     );
     // The `LambdaRefExpression` constructor.
-    name.clone_into(&mut reference.alias);
+    reference.alias = name.into();
     Some(reference)
 }
 
@@ -312,7 +315,7 @@ fn lambda_reference(lambda_bindings: &[Binding], name: &str) -> Option<ParsedExp
 fn matching_binding(
     binder: &Binder,
     alias: &BindingAlias,
-    column: &str,
+    column: &[u8],
 ) -> Result<std::result::Result<BindingAlias, Error>> {
     if let Some(macro_binding) = &binder.macro_binding
         && alias.catalog.is_empty()
@@ -332,7 +335,7 @@ fn matching_binding(
 /// scope.
 fn qualify_single<Q: ColumnQualifier + ?Sized>(
     qualifier: &Q,
-    column_name: &str,
+    column_name: &[u8],
     location: Option<u64>,
 ) -> Result<std::result::Result<ParsedExpression, BindError>> {
     let binder = qualifier.binder_ref();
@@ -365,10 +368,10 @@ fn qualify_single<Q: ColumnQualifier + ?Sized>(
         && macro_binding.has_matching_binding(column_name)
     {
         if table_binding.is_some() {
-            return Err(
-                Error::binder(format!("Conflicting column names for column {column_name}!"))
-                    .with_position(location),
-            );
+            return Err(Error::binder(rustdb_common::byte_format!(
+                "Conflicting column names for column {column_name}!"
+            ))
+            .with_position(location));
         }
         return Ok(Ok(
             context.create_column_reference(&macro_binding.alias, column_name)
@@ -381,20 +384,23 @@ fn qualify_single<Q: ColumnQualifier + ?Sized>(
     Ok(Err(BindError::column_not_found(column_name, similar, location)))
 }
 
-fn column_reference(alias: &BindingAlias, column: &str) -> ParsedExpression {
+fn column_reference(alias: &BindingAlias, column: &[u8]) -> ParsedExpression {
     let mut names = Vec::new();
     for part in [&alias.catalog, &alias.schema, &alias.alias] {
         if !part.is_empty() {
             names.push(part.clone());
         }
     }
-    names.push(column.to_owned());
+    names.push(column.into());
     ParsedExpression::column_ref(names)
 }
 
 /// An implicit `struct_pack` of all columns of a table referenced by name
 /// (DuckDB's `CreateStructPack`).
-fn create_struct_pack(binder: &Binder, names: &[String]) -> Result<Option<ParsedExpression>> {
+fn create_struct_pack(
+    binder: &Binder,
+    names: &[rustdb_common::ByteString],
+) -> Result<Option<ParsedExpression>> {
     let context = &binder.bind_context;
     let lookup = |alias: BindingAlias| -> Result<Option<BindingAlias>> {
         Ok(context.binding(&alias)?.map(|binding| binding.alias.clone()))
@@ -423,7 +429,7 @@ fn create_struct_pack(binder: &Binder, names: &[String]) -> Result<Option<Parsed
 /// DuckDB's base `ExpressionBinder::QualifyColumnName(ColumnRefExpression &)`.
 pub fn default_qualify_column_name<Q: ColumnQualifier + ?Sized>(
     qualifier: &Q,
-    names: &[String],
+    names: &[rustdb_common::ByteString],
     location: Option<u64>,
 ) -> Result<std::result::Result<ParsedExpression, BindError>> {
     let binder = qualifier.binder_ref();
@@ -442,7 +448,7 @@ pub fn default_qualify_column_name<Q: ColumnQualifier + ?Sized>(
             Ok(alias) => Ok(Ok(binder.bind_context.create_column_reference(&alias, column))),
             Err(error) => {
                 if let Ok(qualified) = qualify_single(qualifier, table, location)? {
-                    return Ok(Ok(create_struct_extract(qualified, column)));
+                    return Ok(Ok(create_struct_extract(qualified, column)?));
                 }
                 Ok(create_struct_pack(binder, names)?.ok_or_else(|| BindError::from(error)))
             }
@@ -455,12 +461,12 @@ pub fn default_qualify_column_name<Q: ColumnQualifier + ?Sized>(
 /// `QualifyColumnNameWithManyDots`).
 fn qualify_many_dots<Q: ColumnQualifier + ?Sized>(
     qualifier: &Q,
-    names: &[String],
+    names: &[rustdb_common::ByteString],
     location: Option<u64>,
 ) -> Result<std::result::Result<ParsedExpression, BindError>> {
     let binder = qualifier.binder_ref();
     let context = &binder.bind_context;
-    let attempt = |alias: BindingAlias, column: &str| matching_binding(binder, &alias, column);
+    let attempt = |alias: BindingAlias, column: &[u8]| matching_binding(binder, &alias, column);
     let mut fully_qualified_error = None;
     let mut resolved: Option<(ParsedExpression, usize)> = None;
     if names.len() > 3 {
@@ -500,7 +506,7 @@ fn qualify_many_dots<Q: ColumnQualifier + ?Sized>(
     }
     if let Some((mut result, start)) = resolved {
         for field in &names[start..] {
-            result = create_struct_extract(result, field);
+            result = create_struct_extract(result, field)?;
         }
         return Ok(Ok(result));
     }
@@ -559,7 +565,7 @@ pub fn bind_and_qualify_function<Q: ColumnQualifier + ?Sized>(
     {
         function.catalog = std::mem::take(&mut function.schema);
     }
-    let lookup = |catalog: &str, schema: &str, ty: CatalogType| {
+    let lookup = |catalog: &[u8], schema: &[u8], ty: CatalogType| {
         context.get_entry(catalog, schema, ty, &function.function_name, true)
     };
     let found = lookup(&function.catalog, &function.schema, CatalogType::ScalarFunction)?;
@@ -570,32 +576,35 @@ pub fn bind_and_qualify_function<Q: ColumnQualifier + ?Sized>(
         if !allow_throw {
             return Ok(None);
         }
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "Function \"{}\" is a table function but it was used as a scalar function. This function has to be \
              called in a FROM clause (similar to a table).",
             function.function_name
         )));
     }
-    if !function.schema.is_empty() && lookup("", "", CatalogType::ScalarFunction)?.is_some() {
+    if !function.schema.is_empty() && lookup(b"", b"", CatalogType::ScalarFunction)?.is_some() {
         // `x.f()` where `f` is a built-in: a method call on the column `x`.
         let names = if function.catalog.is_empty() {
-            vec![function.schema.clone()]
+            vec![ByteString::from(&function.schema)]
         } else {
-            vec![function.catalog.clone(), function.schema.clone()]
+            vec![
+                ByteString::from(&function.catalog),
+                ByteString::from(&function.schema),
+            ]
         };
         let column = ParsedExpression::column_ref(names.clone());
         if let Err(error) = qualifier.qualify_column_name(&names, None)?
             && !qualifier.does_column_alias_exist(&names)
         {
             if !allow_throw {
-                return lookup("", "", CatalogType::ScalarFunction);
+                return lookup(b"", b"", CatalogType::ScalarFunction);
             }
             return Err(error.error);
         }
         function.children.insert(0, column);
         function.catalog.clear();
         function.schema.clear();
-        return lookup("", "", CatalogType::ScalarFunction);
+        return lookup(b"", b"", CatalogType::ScalarFunction);
     }
     context
         .get_entry(

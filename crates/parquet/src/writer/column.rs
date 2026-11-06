@@ -29,14 +29,14 @@ const MAX_UNCOMPRESSED_PAGE_SIZE: usize = 104_857_600;
 /// The schema of a column being written (the writer's `ParquetColumnSchema`).
 #[derive(Clone, Debug)]
 pub struct WriterSchema {
-    pub name: String,
+    pub name: rustdb_common::ByteString,
     pub logical_type: LogicalType,
     pub max_define: u16,
     pub max_repeat: u16,
     pub repetition: FieldRepetitionType,
     pub field_id: Option<i32>,
     /// `path_in_schema` of the column chunks below this node.
-    pub path: Vec<String>,
+    pub path: Vec<rustdb_common::ByteString>,
 }
 
 /// The levels computed for a node while preparing a row group (`ColumnWriterState`).
@@ -286,7 +286,7 @@ impl ColumnWriter {
                     schemas.push(SchemaElement {
                         repetition_type: Some(FieldRepetitionType::REPEATED),
                         num_children: Some(1),
-                        name: "list".to_owned(),
+                        name: "list".to_owned().into(),
                         ..SchemaElement::default()
                     });
                 }
@@ -770,7 +770,7 @@ pub struct FinishedColumn {
     /// The min/max of the values when NaNs kept them out of the file.
     pub nan_min_max: Option<(Vec<u8>, Vec<u8>)>,
     /// The geometry statistics of a GEOMETRY column: its name, type and statistics.
-    pub geo: Option<(String, LogicalType, crate::geo::GeoStats)>,
+    pub geo: Option<(rustdb_common::ByteString, LogicalType, crate::geo::GeoStats)>,
     pub bloom_filter: Option<super::bloom::BloomFilter>,
 }
 
@@ -1171,7 +1171,7 @@ impl PrimitiveWriter {
             sink.write_thrift(&page.header)?;
             total_uncompressed += sink.written() - header_start;
             total_uncompressed += page.header.uncompressed_page_size as u64;
-            sink.write_all(&page.compressed)?;
+            sink.write_data(&page.compressed)?;
         }
         for page in std::mem::take(&mut self.pages) {
             self.recycle_buffer(page.compressed);
@@ -1221,7 +1221,7 @@ pub fn set_schema_properties(ty: &LogicalType, element: &mut SchemaElement, opti
         }
         return;
     }
-    if ty.alias() == Some("JSON") && ty.id() == LogicalTypeId::Varchar {
+    if ty.alias().is_some_and(|alias| alias.as_bytes() == b"JSON") && ty.id() == LogicalTypeId::Varchar {
         element.converted_type = Some(ConvertedType::JSON);
         element.logical_type = Some(ParquetLogicalType {
             json: Some(JsonType {}),

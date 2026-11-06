@@ -23,11 +23,11 @@ pub struct SqlStatement {
     /// Length of the statement in the query string.
     pub length: u64,
     /// The statement's text.
-    pub query: String,
+    pub query: rustdb_common::ByteString,
     /// The prepared-statement parameters by name (positional ones are named `1`, `2`,
     /// ...), with their indexes, in DuckDB's iteration order (`named_param_map`). For a
     /// SELECT this equals [`SelectStatement::named_param_map`].
-    pub named_param_map: CaseInsensitiveMap<u64>,
+    pub named_param_map: CaseInsensitiveMap<u64, rustdb_common::ByteString>,
     /// What the statement does.
     pub kind: SqlStatementKind,
 }
@@ -38,7 +38,7 @@ impl SqlStatement {
         Self {
             location: 0,
             length: 0,
-            query: String::new(),
+            query: rustdb_common::ByteString::new(),
             named_param_map: CaseInsensitiveMap::default(),
             kind,
         }
@@ -143,10 +143,10 @@ pub struct InsertStatement {
     /// The rows to insert (a `VALUES` list or a query); `None` for `DEFAULT VALUES`.
     pub select_statement: Option<Box<SelectStatement>>,
     /// The target columns, if listed.
-    pub columns: Vec<String>,
-    pub catalog: String,
-    pub schema: String,
-    pub table: String,
+    pub columns: Vec<rustdb_common::ByteString>,
+    pub catalog: rustdb_common::ByteString,
+    pub schema: rustdb_common::ByteString,
+    pub table: rustdb_common::ByteString,
     /// The target table as a table reference (for aliases).
     pub table_ref: Option<Box<TableRef>>,
     /// `RETURNING ...`
@@ -165,7 +165,7 @@ pub struct InsertStatement {
 pub struct OnConflictInfo {
     pub action_type: OnConflictAction,
     /// The conflict target columns.
-    pub indexed_columns: Vec<String>,
+    pub indexed_columns: Vec<rustdb_common::ByteString>,
     /// `DO UPDATE SET ...`
     pub set_info: Option<Box<UpdateSetInfo>>,
     /// The `WHERE` of the conflict target.
@@ -178,7 +178,7 @@ pub struct UpdateSetInfo {
     /// `WHERE ...`
     pub condition: Option<Box<ParsedExpression>>,
     /// The assigned columns, parallel to `expressions`.
-    pub columns: Vec<String>,
+    pub columns: Vec<rustdb_common::ByteString>,
     pub expressions: Vec<ParsedExpression>,
 }
 
@@ -217,7 +217,7 @@ pub struct MergeIntoStatement {
     /// `ON ...`
     pub join_condition: Option<Box<ParsedExpression>>,
     /// `USING (...)`
-    pub using_columns: Vec<String>,
+    pub using_columns: Vec<rustdb_common::ByteString>,
     /// The `WHEN ... THEN ...` actions, by condition, in order.
     pub actions: BTreeMap<MergeActionCondition, Vec<MergeIntoAction>>,
     /// `RETURNING ...`
@@ -234,7 +234,7 @@ pub struct MergeIntoAction {
     /// `UPDATE SET ...`
     pub update_info: Option<Box<UpdateSetInfo>>,
     /// `INSERT (columns)`
-    pub insert_columns: Vec<String>,
+    pub insert_columns: Vec<rustdb_common::ByteString>,
     /// `INSERT VALUES (...)`
     pub expressions: Vec<ParsedExpression>,
     /// `BY POSITION` or `BY NAME`.
@@ -242,22 +242,22 @@ pub struct MergeIntoAction {
     /// `INSERT DEFAULT VALUES`.
     pub default_values: bool,
     /// Columns left out of an `INSERT BY NAME` / `UPDATE BY NAME`.
-    pub exclude_columns: BTreeSet<String>,
+    pub exclude_columns: BTreeSet<rustdb_common::ByteString>,
 }
 
 /// `PREPARE name AS statement` (DuckDB's `PrepareStatement`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct PrepareStatement {
-    pub name: String,
+    pub name: rustdb_common::ByteString,
     pub statement: Box<SqlStatement>,
 }
 
 /// `EXECUTE name(values)` (DuckDB's `ExecuteStatement`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExecuteStatement {
-    pub name: String,
+    pub name: rustdb_common::ByteString,
     /// The parameter values, by parameter name (positional ones are named `1`, `2`, ...).
-    pub named_values: CaseInsensitiveMap<ParsedExpression>,
+    pub named_values: CaseInsensitiveMap<ParsedExpression, rustdb_common::ByteString>,
 }
 
 /// What `COPY FROM DATABASE` copies (DuckDB's `CopyDatabaseType`).
@@ -272,8 +272,8 @@ pub enum CopyDatabaseType {
 /// `COPY FROM DATABASE source TO target` (DuckDB's `CopyDatabaseStatement`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct CopyDatabaseStatement {
-    pub from_database: String,
-    pub to_database: String,
+    pub from_database: rustdb_common::ByteString,
+    pub to_database: rustdb_common::ByteString,
     pub copy_type: CopyDatabaseType,
 }
 
@@ -282,7 +282,7 @@ pub struct CopyDatabaseStatement {
 pub struct ExportStatement {
     pub info: Box<CopyInfo>,
     /// The database to export, or empty for the default one.
-    pub database: String,
+    pub database: rustdb_common::ByteString,
 }
 
 /// `EXPLAIN [ANALYZE] statement` (DuckDB's `ExplainStatement`).
@@ -303,7 +303,7 @@ pub struct CallStatement {
 /// `ResetVariableStatement`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct SetStatement {
-    pub name: String,
+    pub name: rustdb_common::ByteString,
     pub scope: SetScope,
     /// The new value for `SET`; `None` for `RESET`.
     pub value: Option<Box<ParsedExpression>>,

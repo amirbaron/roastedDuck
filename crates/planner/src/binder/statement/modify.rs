@@ -7,7 +7,6 @@ use rustdb_ast::{
     DeleteStatement, ExpressionType, InsertColumnOrder, InsertStatement, ParsedExpressionKind, QueryNodeKind,
     TableRefKind, UpdateSetInfo, UpdateStatement,
 };
-use rustdb_common::string_util::top_n_strings;
 use rustdb_common::{Error, Result};
 use rustdb_types::LogicalType;
 
@@ -30,7 +29,7 @@ use crate::operator::{
 use crate::prepared::StatementReturnType;
 
 fn count_result(plan: LogicalOperator) -> BoundStatement {
-    BoundStatement::new(plan, vec!["Count".to_owned()], vec![LogicalType::BIGINT])
+    BoundStatement::new(plan, vec!["Count".into()], vec![LogicalType::BIGINT])
 }
 
 /// `Binder::CheckInsertColumnCountMismatch`.
@@ -38,17 +37,18 @@ pub(super) fn check_column_count(
     expected: usize,
     result: usize,
     columns_provided: bool,
-    table: &str,
+    table: impl AsRef<[u8]>,
 ) -> Result<()> {
+    let table = table.as_ref();
     if expected == result {
         return Ok(());
     }
     Err(Error::binder(if columns_provided {
-        format!(
+        rustdb_common::byte_format!(
             "Column name/value mismatch for insert on {table}: expected {expected} columns but {result} values were supplied"
         )
     } else {
-        format!("table {table} has {expected} columns but {result} values were supplied")
+        rustdb_common::byte_format!("table {table} has {expected} columns but {result} values were supplied")
     }))
 }
 
@@ -82,9 +82,10 @@ pub(super) fn values_list(stmt: &mut InsertStatement) -> Option<&mut rustdb_ast:
 pub(super) fn expand_default_in_values_list(
     stmt: &mut InsertStatement,
     table: &rustdb_catalog::TableEntry,
-    table_name: &str,
+    table_name: impl AsRef<[u8]>,
     named_column_map: &[usize],
 ) -> Result<()> {
+    let table_name = table_name.as_ref();
     let expected_columns = if stmt.columns.is_empty() {
         table.physical_columns().count()
     } else {
@@ -96,7 +97,8 @@ pub(super) fn expand_default_in_values_list(
     };
     list.expected_types
         .resize(expected_columns, LogicalType::default());
-    list.expected_names.resize(expected_columns, String::new());
+    list.expected_names
+        .resize(expected_columns, rustdb_common::ByteString::new());
     let first_len = list.values.first().map_or(0, Vec::len);
     check_column_count(expected_columns, first_len, columns_provided, table_name)?;
     for (column_index, &logical) in named_column_map.iter().enumerate().take(expected_columns) {
@@ -201,7 +203,7 @@ pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Res
         let alias = stmt
             .table_ref
             .as_ref()
-            .map_or_else(String::new, |r| r.alias.clone());
+            .map_or_else(rustdb_common::ByteString::new, |r| r.alias.clone());
         let returning = std::mem::take(&mut stmt.returning_list);
         return bind_returning(
             scope,
@@ -231,10 +233,11 @@ pub(super) struct InsertColumnList {
 /// `Binder::BindInsertColumnList`.
 pub(super) fn bind_insert_column_list(
     table: &rustdb_catalog::TableEntry,
-    table_name: &str,
-    columns: &[String],
+    table_name: impl AsRef<[u8]>,
+    columns: &[rustdb_common::ByteString],
     default_values: bool,
 ) -> Result<InsertColumnList> {
+    let table_name = table_name.as_ref();
     let mut result = InsertColumnList::default();
     if columns.is_empty() && !default_values {
         for (_, logical, column) in table.physical_columns() {
@@ -245,7 +248,7 @@ pub(super) fn bind_insert_column_list(
     }
     for (i, name) in columns.iter().enumerate() {
         if columns[..i].iter().any(|other| other.eq_ignore_ascii_case(name)) {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Duplicate column name \"{name}\" in INSERT"
             )));
         }
@@ -333,7 +336,7 @@ fn add_scan_column(get: &mut LogicalOperator, logical: usize) -> Result<(u64, u6
 }
 
 /// The catalog of the table a scan reads.
-fn table_catalog(get: &crate::operator::LogicalGet) -> String {
+fn table_catalog(get: &crate::operator::LogicalGet) -> rustdb_common::ByteString {
     get.table_schema
         .as_ref()
         .map(|(catalog, _)| catalog.clone())
@@ -481,14 +484,14 @@ pub fn bind_update(scope: &mut BindScope<'_>, stmt: &mut UpdateStatement) -> Res
             base.catalog_name.clone()
         };
         let schema = if base.schema_name.is_empty() {
-            "main".to_owned()
+            rustdb_common::ByteString::from("main")
         } else {
             base.schema_name.clone()
         };
         let mut context = (*scope.binder.context).clone();
         context.search_path = vec![(catalog.clone(), schema.clone())];
         if !schema.eq_ignore_ascii_case("main") {
-            context.search_path.push((catalog, "main".to_owned()));
+            context.search_path.push((catalog, "main".into()));
         }
         Some(std::mem::replace(&mut scope.binder.context, Arc::new(context)))
     } else {
@@ -604,38 +607,33 @@ pub(super) fn bind_update_set(
     } = set;
     for (name, expression) in set_info.columns.iter().zip(set_info.expressions.iter_mut()) {
         let Some((logical, column)) = table.column(name) else {
-            let candidates: Vec<String> = table.physical_columns().map(|(_, _, c)| c.name.clone()).collect();
-            let scores = candidates
-                .iter()
-                .map(|candidate| {
-                    (
-                        candidate.clone(),
-                        rustdb_common::string_util::similarity_rating(candidate, name),
-                    )
-                })
-                .collect();
-            let suggestions = top_n_strings(scores, 5, 0.5);
-            let message = if suggestions.is_empty() {
-                String::new()
-            } else {
-                let quoted: Vec<String> = suggestions.iter().map(|s| format!("\"{s}\"")).collect();
-                format!("Did you mean: {}", quoted.join(", "))
-            };
-            return Err(Error::binder(format!(
+            let candidates: Vec<rustdb_common::ByteString> =
+                table.physical_columns().map(|(_, _, c)| c.name.clone()).collect();
+            let message = rustdb_common::string_util::candidates_error_message_bytes(
+                &candidates,
+                name,
+                b"Did you mean",
+            );
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Referenced update column {name} not found in table!\n{message}"
             )));
         };
         if column.generated.is_some() {
-            return Err(Error::binder(format!(
-                "Cant update column \"{}\" because it is a generated column!",
-                column.name
-            )));
+            return Err(Error::new_bytes(
+                rustdb_common::ErrorKind::Binder,
+                [
+                    "Cant update column \"".as_bytes(),
+                    column.name.as_bytes(),
+                    "\" because it is a generated column!".as_bytes(),
+                ]
+                .concat(),
+            ));
         }
         let physical = table
             .logical_to_physical(logical)
             .ok_or_else(|| Error::internal("generated column in UPDATE"))?;
         if columns.contains(&physical) {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Multiple assignments to same column \"{name}\""
             )));
         }

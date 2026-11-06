@@ -9,13 +9,13 @@ use super::prelude::*;
 /// `CopyInfo()`: DuckDB's defaults of a COPY / EXPORT.
 fn copy_info() -> CopyInfo {
     CopyInfo {
-        catalog: String::new(),
-        schema: "main".to_owned(),
-        table: String::new(),
+        catalog: String::new().into(),
+        schema: "main".to_owned().into(),
+        table: String::new().into(),
         select_list: Vec::new(),
         is_from: false,
-        format: String::new(),
-        file_path: String::new(),
+        format: String::new().into(),
+        file_path: String::new().into(),
         options: CaseInsensitiveMap::default(),
         select_statement: None,
         is_format_auto_detected: true,
@@ -30,8 +30,8 @@ impl PegTransformer {
     pub(super) fn transform_export_statement(&mut self, parse_result: &ParseResult) -> Result<SqlStatement> {
         let mut info = copy_info();
         let list = parse_result.list()?;
-        list.child(3)?.string_literal()?.0.clone_into(&mut info.file_path);
-        "csv".clone_into(&mut info.format);
+        info.file_path = list.child(3)?.string_literal()?.0.into();
+        info.format = "csv".into();
         info.is_from = false;
 
         if let Some(parens) = list.optional(4)? {
@@ -39,7 +39,7 @@ impl PegTransformer {
             let mut option_result = CiHashMap::new();
             for option in option_list {
                 if option.name == "format" {
-                    info.format = vector_element(&option.children, 0)?.to_varchar()?;
+                    info.format = vector_element(&option.children, 0)?.to_varchar_bytes()?;
                     info.is_format_auto_detected = false;
                 } else {
                     option_result.set(option.name.to_ascii_uppercase(), option.children);
@@ -54,7 +54,7 @@ impl PegTransformer {
         }
         Ok(SqlStatement::new(SqlStatementKind::Export(ExportStatement {
             info: Box::new(info),
-            database,
+            database: database.into(),
         })))
     }
 

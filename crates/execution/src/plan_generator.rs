@@ -12,7 +12,7 @@ use crate::operators::{
 use rustdb_ast::MergeActionType;
 use rustdb_ast::{JoinType, OrderByNullType, OrderType};
 use rustdb_catalog::{Catalog, CatalogEntry, EntryKind, Transaction};
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use rustdb_common::{ByteString, Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_function::TablePartitionInfo;
 use rustdb_functions::aggregate::distributive::first_last_any::first_function;
 use rustdb_functions::aggregate::sorted::{
@@ -144,7 +144,7 @@ pub struct PlanContext {
     /// Which plans `EXPLAIN` shows.
     pub explain_output: ExplainOutput,
     /// The statement's text, shown by `EXPLAIN ANALYZE`.
-    pub query: String,
+    pub query: ByteString,
     /// The client for the rewrites DuckDB's planner makes when the optimizer is enabled
     /// (the ordered aggregates of DISTINCT ON); `None` with the optimizer disabled.
     pub optimizer_client: Option<Arc<rustdb_planner::ClientContext>>,
@@ -160,7 +160,8 @@ pub struct PlanContext {
 
 impl PlanContext {
     /// The catalog called `name`; `""` is the default catalog.
-    fn catalog(&self, name: &str) -> Result<Arc<Catalog>> {
+    fn catalog(&self, name: impl AsRef<[u8]>) -> Result<Arc<Catalog>> {
+        let name = name.as_ref();
         let found = if name.is_empty() {
             self.catalogs.first()
         } else {
@@ -168,9 +169,11 @@ impl PlanContext {
                 .iter()
                 .find(|catalog| catalog.name().eq_ignore_ascii_case(name))
         };
-        found
-            .cloned()
-            .ok_or_else(|| Error::catalog(format!("Catalog with name {name} does not exist!")))
+        found.cloned().ok_or_else(|| {
+            Error::catalog(rustdb_common::byte_format!(
+                "Catalog with name {name} does not exist!"
+            ))
+        })
     }
 }
 
@@ -205,7 +208,7 @@ fn scan_filter_set(
 
 /// What `EXPLAIN` lists under `Projections` for each scanned column of `get` (the names
 /// DuckDB's `PhysicalTableScan::ParamsToString` builds with `AddProjectionNames`).
-fn projection_names(get: &LogicalGet) -> Result<Vec<String>> {
+fn projection_names(get: &LogicalGet) -> Result<Vec<ByteString>> {
     get.column_ids
         .iter()
         .map(|column| {
@@ -215,7 +218,7 @@ fn projection_names(get: &LogicalGet) -> Result<Vec<String>> {
             ) else {
                 return Ok(get.column_name(column));
             };
-            let mut result = String::new();
+            let mut result = ByteString::new();
             add_projection_names(column, name, ty, &mut result)?;
             Ok(result)
         })
@@ -226,19 +229,19 @@ fn projection_names(get: &LogicalGet) -> Result<Vec<String>> {
 /// `AddProjectionNames`).
 fn add_projection_names(
     index: &ColumnIndex,
-    name: &str,
+    name: &[u8],
     ty: &LogicalType,
-    result: &mut String,
+    result: &mut ByteString,
 ) -> Result<()> {
     if index.child_indexes.is_empty() {
         // No fields projected out.
         if !result.is_empty() {
-            result.push('\n');
+            result.push(b'\n');
         }
-        result.push_str(name);
+        result.push_bytes(name);
         return Ok(());
     }
-    let variant_field = |child: &ColumnIndex, result: &mut String| {
+    let variant_field = |child: &ColumnIndex, result: &mut ByteString| {
         let field_type = if child.has_type() {
             child.ty.clone()
         } else {
@@ -246,7 +249,7 @@ fn add_projection_names(
         };
         add_projection_names(
             child,
-            &format!("{name}.{}", child.field_name()),
+            &rustdb_common::byte_format!("{name}.{}", child.field_name()),
             &field_type,
             result,
         )
@@ -259,7 +262,12 @@ fn add_projection_names(
                     let (field, field_type) = fields
                         .get(child.index as usize)
                         .ok_or_else(|| Error::internal("projected struct field out of range"))?;
-                    add_projection_names(child, &format!("{name}.{field}"), field_type, result)?;
+                    add_projection_names(
+                        child,
+                        &rustdb_common::byte_format!("{name}.{field}"),
+                        field_type,
+                        result,
+                    )?;
                 } else {
                     variant_field(child, result)?;
                 }
@@ -272,7 +280,7 @@ fn add_projection_names(
             }
             Ok(())
         }
-        _ => Err(Error::internal(format!(
+        _ => Err(Error::internal(rustdb_common::byte_format!(
             "Unexpected type ({ty}) in AddProjectionNames"
         ))),
     }
@@ -281,11 +289,16 @@ fn add_projection_names(
 /// The storage of a table entry (`DuckTableEntry::GetStorage`).
 fn table_storage(entry: &CatalogEntry) -> Result<Arc<DataTable>> {
     match &entry.kind {
-        EntryKind::Table(table) => table
-            .storage
-            .clone()
-            .ok_or_else(|| Error::internal(format!("table {} has no storage", entry.name()))),
-        _ => Err(Error::internal(format!("{} is not a table", entry.name()))),
+        EntryKind::Table(table) => table.storage.clone().ok_or_else(|| {
+            Error::internal(rustdb_common::byte_format!(
+                "table {} has no storage",
+                entry.name()
+            ))
+        }),
+        _ => Err(Error::internal(rustdb_common::byte_format!(
+            "{} is not a table",
+            entry.name()
+        ))),
     }
 }
 
@@ -420,7 +433,7 @@ impl PlanGenerator {
                 .iter()
                 .map(|column| {
                     if column.is_row_id_column() {
-                        "rowid".to_owned()
+                        ByteString::from("rowid")
                     } else {
                         get.names.get(column.index as usize).cloned().unwrap_or_default()
                     }
@@ -1303,7 +1316,7 @@ impl PlanGenerator {
             {
                 let column_ids: Vec<u64> = get.column_ids.iter().map(|column| column.index).collect();
                 let explain = crate::operators::ScanExplainInfo {
-                    table: String::new(),
+                    table: ByteString::new(),
                     column_names: get
                         .column_ids
                         .iter()
@@ -1338,6 +1351,7 @@ impl PlanGenerator {
                         .with_column_indexes(get.column_ids)
                         .with_projection(projection)
                         .with_filters(filters)
+                        .with_dynamic_filters(get.dynamic_filters)
                         .with_explain_info(explain),
                 )
             }
@@ -1448,7 +1462,12 @@ impl PlanGenerator {
                         child,
                     )));
                 }
-                if !groups.is_empty() || grouping_sets.len() > 1 {
+                if !groups.is_empty()
+                    || grouping_sets.len() > 1
+                    || aggregates
+                        .iter()
+                        .any(|aggregate| !aggregate.function.ops.has_simple_update())
+                {
                     return Ok(Arc::new(
                         PhysicalHashAggregate::new(
                             types,
@@ -1991,16 +2010,13 @@ fn plan_copy_to_file(
     // The writers open the file on worker threads, where the statement's file opener is
     // not set, so the access configuration is checked here (`OpenerFileSystem`).
     rustdb_function::file_system::verify_can_access_file(&file_path)?;
-    if let Some(rest) = file_path.strip_prefix('~')
-        && (rest.is_empty() || rest.starts_with('/'))
-        && let Some(home) = std::env::var_os("HOME")
-    {
-        file_path = format!("{}{rest}", home.to_string_lossy());
-    }
+    file_path = rustdb_function::file_system::expand_path_bytes(&file_path);
     if copy.use_tmp_file {
-        file_path = match file_path.rfind('/') {
-            Some(slash) => format!("{}tmp_{}", &file_path[..=slash], &file_path[slash + 1..]),
-            None => format!("tmp_{file_path}"),
+        file_path = match file_path.iter().rposition(|byte| *byte == b'/') {
+            Some(slash) => {
+                rustdb_common::byte_format!("{}tmp_{}", &file_path[..=slash], &file_path[slash + 1..])
+            }
+            None => rustdb_common::byte_format!("tmp_{file_path}"),
         };
     }
     let options = crate::operators::CopyToFileOptions {

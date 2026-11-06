@@ -6,7 +6,7 @@
 //! targets walk OBJECTs and ARRAYs, falling back to the value cast when the shape does
 //! not match.
 
-use rustdb_common::Result;
+use rustdb_common::{ByteString, Error, ErrorKind, Result, byte_format as format};
 use rustdb_types::variant::{self, VariantData, VariantLogicalType, VariantNested, VariantPathComponent};
 use rustdb_types::variant_vector::VariantVectorView;
 use rustdb_types::{LogicalType, LogicalTypeId, Value, Vector};
@@ -137,10 +137,10 @@ fn cast_from_variant(
     // `FinalizeErrorMessage`: the message is used as is (no source column suffix).
     let message = format!("{} to '{target}'", converter.error);
     if !params.is_try_cast() {
-        return Err(rustdb_common::Error::conversion(message));
+        return Err(Error::new_bytes(ErrorKind::Conversion, message.into_bytes()));
     }
     let column = params.source_column.take();
-    let assigned = params.assign_error(message);
+    let assigned = params.assign_error_bytes(message.into_bytes());
     params.source_column = column;
     assigned?;
     Ok(false)
@@ -244,10 +244,10 @@ fn write_payload(vector: &mut Vector, row: usize, type_id: VariantLogicalType, p
             }
         }
         _ => {
-            return Err(rustdb_common::Error::internal(format!(
-                "VARIANT({}) payload written in place",
-                type_id.name()
-            )));
+            return Err(Error::new_bytes(
+                ErrorKind::Internal,
+                format!("VARIANT({}) payload written in place", type_id.name()).into_bytes(),
+            ));
         }
     }
     Ok(())
@@ -368,7 +368,7 @@ fn cast_primitive_in_place(
 #[derive(Default)]
 struct Converter {
     /// The error of the conversion, if unsuccessful.
-    error: String,
+    error: ByteString,
 }
 
 /// The variant type a target type reads directly, if any.
@@ -453,7 +453,7 @@ impl Converter {
             L::List | L::Map => self.convert_list(items, target)?,
             L::Array => self.convert_array(items, target)?,
             L::Union => {
-                "Can't convert VARIANT".clone_into(&mut self.error);
+                self.error = "Can't convert VARIANT".into();
                 return Ok((vec![Value::null(target.clone()); items.len()], false));
             }
             _ => {
@@ -487,7 +487,7 @@ impl Converter {
         let Some(direct) = direct_type(target)
             .or_else(|| (target.id() == LogicalTypeId::Boolean).then_some(VariantLogicalType::BoolTrue))
         else {
-            "Can't convert VARIANT".clone_into(&mut self.error);
+            self.error = "Can't convert VARIANT".into();
             return Ok((vec![Value::null(target.clone()); items.len()], false));
         };
         let mut all_valid = true;
@@ -539,7 +539,7 @@ impl Converter {
         Ok((values, all_valid))
     }
 
-    fn set_error_if_empty(&mut self, message: String) {
+    fn set_error_if_empty(&mut self, message: ByteString) {
         if self.error.is_empty() {
             self.error = message;
         }
@@ -569,7 +569,10 @@ impl Converter {
                 };
                 let Some(child) = data.find_child(*nested, &component)? else {
                     let keys = data.object_keys(*nested)?;
-                    self.error = format!("VARIANT(OBJECT({})) is missing key '{name}'", keys.join(","));
+                    self.error = format!(
+                        "VARIANT(OBJECT({})) is missing key '{name}'",
+                        ByteString::join(&keys, ",")
+                    );
                     return Ok(None);
                 };
                 child_items.push(Some((*data, child)));

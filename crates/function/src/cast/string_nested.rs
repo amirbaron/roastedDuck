@@ -47,10 +47,10 @@ impl<'a> TextInput<'a> {
 }
 
 /// `Type VARCHAR with value '...' can't be cast to the destination type ...`.
-fn cannot_cast(text: &[u8], target: &LogicalType) -> String {
-    format!(
+fn cannot_cast(text: &[u8], target: &LogicalType) -> rustdb_common::ByteString {
+    rustdb_common::byte_format!(
         "Type VARCHAR with value '{}' can't be cast to the destination type {target}",
-        String::from_utf8_lossy(text)
+        rustdb_common::ByteString::from(text)
     )
 }
 
@@ -76,7 +76,7 @@ fn string_to_list(
             None => validity.set_invalid(row, input.rows),
             Some(text) => {
                 if !split_list(text, &mut scratch, |element| parts.push(element)) {
-                    params.assign_error(cannot_cast(text, &target))?;
+                    params.assign_error_bytes(cannot_cast(text, &target).into_bytes())?;
                     all_converted = false;
                     validity.set_invalid(row, input.rows);
                 }
@@ -124,14 +124,17 @@ fn string_to_array(
         if count_list_parts(text) != size {
             if all_lengths_match {
                 all_lengths_match = false;
-                let message = format!(
+                let message = rustdb_common::byte_format!(
                     "{}, the size of the array must match the destination type",
                     cannot_cast(text, &target)
                 );
                 if params.strict {
-                    return Err(Error::conversion(message));
+                    return Err(Error::new_bytes(
+                        rustdb_common::ErrorKind::Conversion,
+                        message.into_bytes(),
+                    ));
                 }
-                params.assign_error(message)?;
+                params.assign_error_bytes(message.into_bytes())?;
             }
             validity.set_invalid(row, input.rows);
         }
@@ -144,7 +147,7 @@ fn string_to_array(
         match input.text(row) {
             Some(text) if validity.is_valid(row) => {
                 if !split_list(text, &mut scratch, |element| parts.push(element)) {
-                    params.assign_error(cannot_cast(text, &target))?;
+                    params.assign_error_bytes(cannot_cast(text, &target).into_bytes())?;
                     all_converted = false;
                     validity.set_invalid(row, input.rows);
                 }
@@ -177,7 +180,7 @@ fn string_to_struct(
     let input = TextInput::new(source, count);
     let target = result.logical_type().clone();
     let fields = target.struct_children().ok_or_else(|| missing_child(&target))?;
-    let names: Vec<&str> = fields.iter().map(|(name, _)| name.as_str()).collect();
+    let names: Vec<&[u8]> = fields.iter().map(|(name, _)| name.as_bytes()).collect();
     let layout = if target.is_unnamed_struct() {
         StructFields::Unnamed(fields.len())
     } else {
@@ -201,7 +204,7 @@ fn string_to_struct(
             for column in &mut columns {
                 column.set(row, None);
             }
-            params.assign_error(cannot_cast(text, &target))?;
+            params.assign_error_bytes(cannot_cast(text, &target).into_bytes())?;
             all_converted = false;
             validity.set_invalid(row, input.rows);
         }
@@ -253,7 +256,7 @@ fn string_to_map(
                 MapPart::Value(value) => values.push(value),
             });
             if !parsed {
-                params.assign_error(cannot_cast(text, &target))?;
+                params.assign_error_bytes(cannot_cast(text, &target).into_bytes())?;
                 all_converted = false;
                 validity.set_invalid(row, input.rows);
             }

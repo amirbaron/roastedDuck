@@ -292,7 +292,7 @@ thrift_struct! {
         1: optional type_: Type,
         2: optional type_length: i32,
         3: optional repetition_type: FieldRepetitionType,
-        4: required name: String,
+        4: required name: rustdb_common::ByteString,
         5: optional num_children: i32,
         6: optional converted_type: ConvertedType,
         7: optional scale: i32,
@@ -412,7 +412,7 @@ thrift_struct! {
     ColumnMetaData {
         1: required type_: Type,
         2: required encodings: Vec<Encoding>,
-        3: required path_in_schema: Vec<String>,
+        3: required path_in_schema: Vec<rustdb_common::ByteString>,
         4: required codec: CompressionCodec,
         5: required num_values: i64,
         6: required total_uncompressed_size: i64,
@@ -433,7 +433,7 @@ thrift_struct! {
 thrift_struct! {
     /// `EncryptionWithColumnKey`.
     EncryptionWithColumnKey {
-        1: required path_in_schema: Vec<String>,
+        1: required path_in_schema: Vec<rustdb_common::ByteString>,
         2: optional key_metadata: Binary,
     }
 }

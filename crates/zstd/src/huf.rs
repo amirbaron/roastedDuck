@@ -403,7 +403,7 @@ pub(crate) fn estimate_compressed_size(table: &CTable, count: &[u32], max_symbol
 }
 
 /// `HUF_validateCTable`: whether `table` encodes every symbol present.
-fn validate_ctable(table: &CTable, count: &[u32], max_symbol: u32) -> bool {
+pub(crate) fn validate_ctable(table: &CTable, count: &[u32], max_symbol: u32) -> bool {
     if table.max_symbol < max_symbol {
         return false;
     }
@@ -475,7 +475,13 @@ fn compress_ctable(out: &mut Vec<u8>, start: usize, src: &[u8], four_streams: bo
 }
 
 /// `HUF_optimalTableLog`.
-fn optimal_table_log(max_table_log: u32, src_size: usize, max_symbol: u32, count: &[u32], flags: u32) -> u32 {
+pub(crate) fn optimal_table_log(
+    max_table_log: u32,
+    src_size: usize,
+    max_symbol: u32,
+    count: &[u32],
+    flags: u32,
+) -> u32 {
     if flags & FLAG_OPTIMAL_DEPTH == 0 {
         return fse::optimal_table_log_internal(max_table_log, src_size, max_symbol, 1);
     }

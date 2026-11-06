@@ -22,7 +22,7 @@ enum ResultRows {
 /// A fully materialised query result (DuckDB's `MaterializedQueryResult`).
 #[derive(Clone, Debug)]
 pub struct MaterializedResult {
-    names: Vec<String>,
+    names: Vec<rustdb_common::ByteString>,
     types: Vec<LogicalType>,
     rows: ResultRows,
     /// Row index of the first row of every chunk, plus the row count.
@@ -52,7 +52,11 @@ fn chunk_starts(counts: impl Iterator<Item = usize>) -> Arc<[usize]> {
 
 impl MaterializedResult {
     /// A result of in-memory chunks.
-    pub fn new(names: Vec<String>, types: Vec<LogicalType>, chunks: Vec<DataChunk>) -> Self {
+    pub fn new(
+        names: Vec<rustdb_common::ByteString>,
+        types: Vec<LogicalType>,
+        chunks: Vec<DataChunk>,
+    ) -> Self {
         let chunk_starts = chunk_starts(chunks.iter().map(DataChunk::len));
         Self {
             names,
@@ -65,7 +69,11 @@ impl MaterializedResult {
     }
 
     /// A result of the rows a result collector collected.
-    pub(crate) fn from_rows(names: Vec<String>, types: Vec<LogicalType>, rows: CollectedRows) -> Self {
+    pub(crate) fn from_rows(
+        names: Vec<rustdb_common::ByteString>,
+        types: Vec<LogicalType>,
+        rows: CollectedRows,
+    ) -> Self {
         match rows {
             CollectedRows::Chunks(chunks) => Self::new(names, types, chunks),
             CollectedRows::Collection(collection) => {
@@ -106,7 +114,7 @@ impl MaterializedResult {
         self.return_type
     }
 
-    pub fn names(&self) -> &[String] {
+    pub fn names(&self) -> &[rustdb_common::ByteString] {
         &self.names
     }
 

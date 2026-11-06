@@ -135,7 +135,7 @@ struct CCopyToGlobalState {
 /// `CCopyFunctionToInternalBindInfo`).
 struct CCopyToInternalBindInfo<'a> {
     client: Option<&'a Arc<FunctionClient>>,
-    options: &'a CaseInsensitiveMap<Vec<Value>>,
+    options: &'a CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteString>,
     types: &'a [LogicalType],
     extra_info: *mut c_void,
     bind_data: UserData,
@@ -184,7 +184,7 @@ fn binder_client(binder: Option<&dyn Any>) -> Option<&Arc<FunctionClient>> {
 /// `MakeValueFromCopyOptions`: the options as a STRUCT with upper-case names, NULL without
 /// options. An option without values is NULL, one value is itself, values of one type a
 /// LIST, others an unnamed STRUCT.
-fn options_value(options: &CaseInsensitiveMap<Vec<Value>>) -> Value {
+fn options_value(options: &CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteString>) -> Value {
     if options.is_empty() {
         return Value::default();
     }
@@ -204,11 +204,11 @@ fn options_value(options: &CaseInsensitiveMap<Vec<Value>>) -> Value {
                 _ => Value::struct_value(
                     values
                         .iter()
-                        .map(|value| (String::new(), value.clone()))
+                        .map(|value| (rustdb_common::ByteString::new(), value.clone()))
                         .collect(),
                 ),
             };
-            (name.to_uppercase(), value)
+            (name.to_ascii_uppercase().into(), value)
         })
         .collect();
     Value::struct_value(fields)
@@ -248,7 +248,7 @@ fn c_copy_to_bind(
 
 /// `CCopyToGlobalInit`: runs the client's global init callback for the file at `path`,
 /// whose error is an invalid-input error.
-fn c_copy_to_global_init(bind_data: &dyn FunctionData, path: &str) -> Result<CopyGlobalState> {
+fn c_copy_to_global_init(bind_data: &dyn FunctionData, path: &[u8]) -> Result<CopyGlobalState> {
     let bind_data = copy_bind_data(bind_data)?;
     let mut global_state = UserData::none();
     if let Some(global_init) = bind_data.info.callbacks().global_init {
@@ -325,13 +325,13 @@ fn c_copy_to_finalize(bind_data: &dyn FunctionData, global_state: &CopyGlobalSta
 fn c_copy_from_bind(
     function: &CTableFunction,
     input: &CopyFromBindInput<'_>,
-    names: &[String],
+    names: &[rustdb_common::ByteString],
     types: &[LogicalType],
 ) -> Result<Arc<dyn FunctionData>> {
     let mut named_parameters = CaseInsensitiveMap::default();
     for (name, values) in input.options.iter() {
         if function.named_parameter(name).is_none() {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "'{name}' is not a supported option for copy function '{}'",
                 function.name
             )));
@@ -344,7 +344,7 @@ fn c_copy_from_bind(
                     .iter()
                     .any(|value| value.logical_type() != first.logical_type())
                 {
-                    return Err(Error::binder(format!(
+                    return Err(Error::binder(rustdb_common::byte_format!(
                         "Cannot pass multiple values of different types for copy option '{name}'"
                     )));
                 }
@@ -353,7 +353,7 @@ fn c_copy_from_bind(
         };
         named_parameters.insert(name, value);
     }
-    let parameters = [Value::varchar(input.file_path)];
+    let parameters = [Value::try_varchar(input.file_path)?];
     let (bind_data, _) = c_table_bind(
         &function.info,
         binder_client(input.binder),

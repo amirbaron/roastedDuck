@@ -467,18 +467,23 @@ impl<'a, E: Engine> BenchmarkRun<'a, E> {
         let table = result.to_table()?;
         let mut seen = std::collections::HashSet::new();
         for column in &table.columns {
-            if !seen.insert(column.name.to_lowercase()) {
+            if !seen.insert(column.name.to_ascii_lowercase()) {
                 return Err(Failure::error(format!(
                     "Duplicate column name \"{}\" in benchmark query",
-                    column.name
+                    String::from_utf8_lossy(&column.name)
                 )));
             }
         }
         let columns: Vec<String> = table
             .columns
             .iter()
-            .map(|c| format!("{} {}", quote_identifier(&c.name), c.type_name))
-            .collect();
+            .map(|c| {
+                let name = std::str::from_utf8(&c.name).map_err(|_| {
+                    Failure::error("Benchmark result_query SQL requires a UTF-8 column name".to_owned())
+                })?;
+                Ok(format!("{} {}", quote_identifier(name), c.type_name))
+            })
+            .collect::<Result<_, Failure>>()?;
         self.engine.query(&format!(
             "CREATE OR REPLACE TEMP TABLE {ANSWER_TABLE}({})",
             columns.join(", ")

@@ -24,7 +24,7 @@ pub struct StorageIndex<'a> {
     /// `index` (property 101).
     pub index: u64,
     /// `field` (property 102).
-    pub field: &'a str,
+    pub field: &'a rustdb_common::ByteString,
     /// `type` (property 103).
     pub ty: &'a rustdb_types::LogicalType,
     /// `index_type` (property 104).

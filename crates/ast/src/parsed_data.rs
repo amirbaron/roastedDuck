@@ -64,7 +64,7 @@ pub struct MacroFunction {
     /// All parameters as column references, including those with defaults.
     pub parameters: Vec<ParsedExpression>,
     /// Default values of parameters, by name.
-    pub default_parameters: CaseInsensitiveMap<ParsedExpression>,
+    pub default_parameters: CaseInsensitiveMap<ParsedExpression, rustdb_common::ByteString>,
     /// Parameter types (`UNKNOWN` when untyped), one per parameter.
     pub types: Vec<LogicalType>,
     /// The body.
@@ -91,12 +91,12 @@ impl MacroFunctionKind {
 }
 
 /// The name a macro parameter is known by (`ColumnRefExpression::GetName`).
-fn parameter_name(parameter: &ParsedExpression) -> Option<&str> {
+fn parameter_name(parameter: &ParsedExpression) -> Option<&rustdb_common::ByteString> {
     if !parameter.alias.is_empty() {
         return Some(&parameter.alias);
     }
     match &parameter.kind {
-        ParsedExpressionKind::ColumnRef(column) => column.column_names.last().map(String::as_str),
+        ParsedExpressionKind::ColumnRef(column) => column.column_names.last(),
         _ => None,
     }
 }
@@ -188,7 +188,7 @@ rustdb_serde::impl_pointee_serde!(MacroFunction);
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateMacroInfo {
     /// The macro name.
-    pub name: String,
+    pub name: rustdb_common::ByteString,
     /// The overloads; never empty.
     pub macros: Vec<MacroFunction>,
 }
@@ -225,17 +225,17 @@ const COMMENT_MAP_VERSION: u64 = 7;
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateViewInfo {
     /// The view name.
-    pub view_name: String,
+    pub view_name: rustdb_common::ByteString,
     /// Column names given in `CREATE VIEW v(a, b)`.
-    pub aliases: Vec<String>,
+    pub aliases: Vec<rustdb_common::ByteString>,
     /// Column types, once bound.
     pub types: Vec<LogicalType>,
     /// The view's query.
     pub query: Box<SelectStatement>,
     /// Column names, once bound.
-    pub names: Vec<String>,
+    pub names: Vec<rustdb_common::ByteString>,
     /// `COMMENT ON COLUMN` values, by column name.
-    pub column_comments: OrderedMap<String, Value>,
+    pub column_comments: OrderedMap<rustdb_common::ByteString, Value>,
 }
 
 impl CreateViewInfo {
@@ -252,7 +252,7 @@ impl CreateViewInfo {
         let mut list = vec![Value::default(); self.names.len()];
         for (name, comment) in self.column_comments.iter() {
             let index = self.names.iter().position(|n| n == name).ok_or_else(|| {
-                Error::internal(format!(
+                Error::internal(rustdb_common::byte_format!(
                     "While serializing comments for view \"{}\" - did not find column \"{name}\" in list of names",
                     self.view_name
                 ))
@@ -285,9 +285,9 @@ impl DeserializeObject for CreateViewInfo {
         let aliases = deserializer.read_property_with_default(201, "aliases")?;
         let types = deserializer.read_property_with_default(202, "types")?;
         let query: Option<Box<SelectStatement>> = deserializer.read_property_with_default(203, "query")?;
-        let names: Vec<String> = deserializer.read_property_with_default(204, "names")?;
+        let names: Vec<rustdb_common::ByteString> = deserializer.read_property_with_default(204, "names")?;
         let list: Vec<Value> = deserializer.read_property_with_default(205, "column_comments")?;
-        let mut column_comments: OrderedMap<String, Value> =
+        let mut column_comments: OrderedMap<rustdb_common::ByteString, Value> =
             deserializer.read_property_with_default(206, "column_comments_map")?;
         if !list.is_empty() {
             if !column_comments.is_empty() {
@@ -320,9 +320,9 @@ pub struct CreateSecretInfo {
     /// `PERSISTENT`, `TEMPORARY`, or the default.
     pub persist_type: SecretPersistType,
     /// The secret storage (`IN storage`), lower-cased, or empty.
-    pub storage_type: String,
+    pub storage_type: rustdb_common::ByteString,
     /// The secret's name, lower-cased; empty names are derived from the type.
-    pub name: String,
+    pub name: rustdb_common::ByteString,
     /// `SCOPE ...`
     pub scope: Option<Box<ParsedExpression>>,
     /// `TYPE ...`
@@ -330,5 +330,37 @@ pub struct CreateSecretInfo {
     /// `PROVIDER ...`
     pub provider: Option<Box<ParsedExpression>>,
     /// The other options, by lower-cased name.
-    pub options: CaseInsensitiveMap<ParsedExpression>,
+    pub options: CaseInsensitiveMap<ParsedExpression, rustdb_common::ByteString>,
+}
+
+impl crate::LoadInfo {
+    /// DuckDB's `LoadInfo::ToString`; the version is metadata, omitted by C++ here.
+    pub fn to_sql_bytes(&self) -> rustdb_common::ByteString {
+        use rustdb_common::{ByteString, byte_write};
+        let command = match self.load_type {
+            crate::LoadType::Load => "LOAD",
+            crate::LoadType::Install => "INSTALL",
+            crate::LoadType::ForceInstall => "FORCE INSTALL",
+        };
+        let mut output = ByteString::new();
+        let _ = byte_write!(output, "{command} '{}'", self.filename);
+        if !self.repository.is_empty() {
+            output.push_bytes(" FROM ");
+            output.push_bytes(if self.repo_is_alias {
+                crate::keyword::write_optionally_quoted_bytes(&self.repository)
+            } else {
+                let mut quoted = ByteString::from(b"'");
+                for &byte in self.repository.as_bytes() {
+                    if byte == b'\'' {
+                        quoted.push(byte);
+                    }
+                    quoted.push(byte);
+                }
+                quoted.push(b'\'');
+                quoted
+            });
+        }
+        output.push(b';');
+        output
+    }
 }

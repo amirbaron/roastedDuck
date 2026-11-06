@@ -59,6 +59,8 @@ pub struct ParquetOptions {
     /// end of the file and the scanned row groups (or columns) are read whole, through
     /// the external file cache.
     pub prefetch: bool,
+    /// The explicit setting also disables the bounded remote-footer prefetch.
+    pub disable_prefetch: bool,
     /// The database's external file cache, which files are read through (`CachingFileSystem`).
     pub file_cache: Option<std::sync::Arc<rustdb_function::external_file_cache::ExternalFileCache>>,
     /// `validate_external_file_cache`.
@@ -70,7 +72,7 @@ pub struct ParquetOptions {
 pub struct ParquetColumnDefinition {
     /// The field id (INTEGER) or name (VARCHAR) the column is matched by.
     pub identifier: rustdb_types::Value,
-    pub name: String,
+    pub name: rustdb_common::ByteString,
     pub logical_type: LogicalType,
     pub default_value: rustdb_types::Value,
 }
@@ -78,7 +80,7 @@ pub struct ParquetColumnDefinition {
 /// A node of the column tree (`ParquetColumnSchema`).
 #[derive(Clone, Debug)]
 pub struct ColumnSchema {
-    pub name: String,
+    pub name: rustdb_common::ByteString,
     pub max_define: u8,
     pub max_repeat: u8,
     /// The index of the node's `SchemaElement`.
@@ -103,7 +105,7 @@ impl ColumnSchema {
         reason = "the fields of ParquetColumnSchema::FromChildSchemas"
     )]
     fn from_children(
-        name: &str,
+        name: impl AsRef<[u8]>,
         logical_type: LogicalType,
         max_define: u8,
         max_repeat: u8,
@@ -113,7 +115,7 @@ impl ColumnSchema {
         kind: SchemaKind,
     ) -> Self {
         Self {
-            name: name.to_owned(),
+            name: name.as_ref().into(),
             max_define,
             max_repeat,
             schema_index: Some(schema_index),
@@ -132,7 +134,7 @@ impl ColumnSchema {
     /// `ParquetColumnSchema::FileRowNumber`.
     pub fn file_row_number() -> Self {
         Self {
-            name: "file_row_number".to_owned(),
+            name: "file_row_number".into(),
             max_define: 0,
             max_repeat: 0,
             schema_index: Some(0),
@@ -149,8 +151,8 @@ impl ColumnSchema {
     }
 }
 
-fn io_error(message: impl Into<String>) -> Error {
-    Error::new(ErrorKind::Io, message.into())
+fn io_error(message: impl Into<rustdb_common::ByteString>) -> Error {
+    Error::new_bytes(ErrorKind::Io, message.into())
 }
 
 /// `ParquetReader::DeriveLogicalType`: the DuckDB type of a leaf, recording how its
@@ -166,7 +168,7 @@ pub fn derive_logical_type(
     }
     if let Some(length) = element.type_length {
         schema.type_length = u32::try_from(length).map_err(|_| {
-            Error::conversion(format!(
+            Error::conversion(rustdb_common::byte_format!(
                 "Type INT32 with value {length} can't be cast because the value is out of range for the destination type UINT32"
             ))
         })?;
@@ -280,7 +282,7 @@ pub fn derive_logical_type(
                     return Err(io_error("DECIMAL requires a length and scale specifier!"));
                 };
                 schema.type_scale = u32::try_from(scale).map_err(|_| {
-                    Error::conversion(format!(
+                    Error::conversion(rustdb_common::byte_format!(
                         "Type INT32 with value {scale} can't be cast because the value is out of range for the destination type UINT32"
                     ))
                 })?;
@@ -300,7 +302,7 @@ pub fn derive_logical_type(
                 };
                 // `LogicalType::DECIMAL(width, scale)` validates its arguments.
                 if precision < 1 || scale < 0 || scale > precision {
-                    return Err(Error::invalid_input(format!(
+                    return Err(Error::invalid_input(rustdb_common::byte_format!(
                         "Invalid DECIMAL({precision}, {scale}) type in Parquet file"
                     )));
                 }
@@ -330,7 +332,10 @@ pub fn derive_logical_type(
             }
             ConvertedType::INTERVAL => Ok(LogicalType::INTERVAL),
             ConvertedType::JSON => Ok(LogicalType::VARCHAR.with_alias("JSON")),
-            _ => Err(io_error(format!("Unsupported converted type ({})", converted.0))),
+            _ => Err(io_error(rustdb_common::byte_format!(
+                "Unsupported converted type ({})",
+                converted.0
+            ))),
         };
     }
     Ok(match physical {
@@ -362,7 +367,7 @@ fn time_unit(unit: &crate::thrift::TimeUnit, what: &str) -> Result<ExtraTypeInfo
     } else if unit.nanos.is_some() {
         Ok(ExtraTypeInfo::UnitNs)
     } else {
-        Err(Error::not_implemented(format!(
+        Err(Error::not_implemented(rustdb_common::byte_format!(
             "Unimplemented {what} encoding - missing UNIT"
         )))
     }
@@ -396,7 +401,7 @@ fn leaf_schema(
 pub struct SchemaParser<'a> {
     metadata: &'a FileMetaData,
     options: &'a ParquetOptions,
-    file_path: &'a str,
+    file_path: &'a [u8],
     next_schema_index: usize,
     next_file_index: usize,
     /// The `GeoParquet` metadata of the file, if any.
@@ -406,7 +411,7 @@ pub struct SchemaParser<'a> {
 }
 
 impl<'a> SchemaParser<'a> {
-    pub fn new(metadata: &'a FileMetaData, options: &'a ParquetOptions, file_path: &'a str) -> Self {
+    pub fn new(metadata: &'a FileMetaData, options: &'a ParquetOptions, file_path: &'a [u8]) -> Self {
         Self {
             metadata,
             options,
@@ -429,25 +434,25 @@ impl<'a> SchemaParser<'a> {
     pub fn parse(mut self) -> Result<ColumnSchema> {
         let path = self.file_path;
         if self.metadata.schema.is_empty() {
-            return Err(io_error(format!(
+            return Err(io_error(rustdb_common::byte_format!(
                 "Failed to read Parquet file \"{path}\": no schema elements found"
             )));
         }
         if self.metadata.schema[0].num_children.unwrap_or(0) == 0 {
-            return Err(io_error(format!(
+            return Err(io_error(rustdb_common::byte_format!(
                 "Failed to read Parquet file \"{path}\": root schema element has no children"
             )));
         }
         let mut root = self.parse_recursive(0, 0)?;
         if root.logical_type.id() != LogicalTypeId::Struct {
-            return Err(Error::invalid_input(format!(
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "Failed to read Parquet file \"{path}\": Root element of Parquet file must be a struct"
             )));
         }
         if let Some(first) = self.metadata.row_groups.first()
             && self.next_file_index != first.columns.len()
         {
-            return Err(Error::invalid_input(format!(
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "Failed to read Parquet file \"{path}\": row group does not have enough columns"
             )));
         }
@@ -457,7 +462,7 @@ impl<'a> SchemaParser<'a> {
                 .iter()
                 .any(|column| column.name.eq_ignore_ascii_case("file_row_number"))
             {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "Failed to read Parquet file \"{path}\": Using file_row_number option on file with column named file_row_number is not supported"
                 )));
             }
@@ -471,7 +476,7 @@ impl<'a> SchemaParser<'a> {
         let metadata = self.metadata;
         let this_index = self.next_schema_index;
         let Some(element) = metadata.schema.get(this_index) else {
-            return Err(Error::invalid_input(format!(
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "Malformed Parquet schema in file \"{}\": invalid schema index {this_index}",
                 self.file_path
             )));
@@ -520,7 +525,7 @@ impl<'a> SchemaParser<'a> {
         if is_inner {
             let count = match element.num_children {
                 Some(count) => usize::try_from(count).map_err(|_| {
-                    Error::invalid_input(format!(
+                    Error::invalid_input(rustdb_common::byte_format!(
                         "Failed to read Parquet file \"{}\": schema element has negative number of children",
                         self.file_path
                     ))
@@ -535,12 +540,13 @@ impl<'a> SchemaParser<'a> {
             }
             self.depth -= 1;
             // Rename case-insensitive duplicates by appending _1, _2, ...
-            let mut collisions: CaseInsensitiveMap<usize> = CaseInsensitiveMap::default();
+            let mut collisions: CaseInsensitiveMap<usize, rustdb_common::ByteString> =
+                CaseInsensitiveMap::default();
             for child in &mut children {
                 let mut name = child.name.clone();
                 while let Some(count) = collisions.get_mut(&name) {
                     *count += 1;
-                    name = format!("{name}_{count}");
+                    name = rustdb_common::byte_format!("{name}_{count}");
                 }
                 collisions.insert(name.clone(), 0);
                 child.name = name;
@@ -618,7 +624,7 @@ impl<'a> SchemaParser<'a> {
                     kind,
                 )
             } else if children.is_empty() {
-                return Err(Error::invalid_input(format!(
+                return Err(Error::invalid_input(rustdb_common::byte_format!(
                     "Failed to read Parquet file \"{}\": schema element has no children",
                     self.file_path
                 )));
@@ -645,7 +651,7 @@ impl<'a> SchemaParser<'a> {
             return Ok(result);
         }
         if element.type_.is_none() {
-            return Err(Error::invalid_input(format!(
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "Node '{}' has neither num_children nor type set - this violates the Parquet spec (corrupted file)",
                 element.name
             )));

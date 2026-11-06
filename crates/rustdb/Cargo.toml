@@ -7,6 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+flate2 = "1"
 rustdb-common.workspace = true
 rustdb-types.workspace = true
 rustdb-ast.workspace = true
@@ -30,6 +31,10 @@ rustdb-tpcds = { path = "../tpcds" }
 rustdb-icu = { path = "../icu" }
 rustdb-arrow = { path = "../arrow" }
 rustdb-autocomplete = { path = "../autocomplete" }
+rustdb-httpfs = { path = "../httpfs" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }

@@ -8,8 +8,9 @@
 //! NULL), 0 a field missing from its OBJECT, and any other value the 1-based index of the
 //! value in the unshredded VARIANT of the row.
 
+use rustdb_common::{ByteString, byte_format as format, byte_write as write};
 use std::cmp::Ordering;
-use std::fmt::{self, Write as _};
+use std::fmt;
 
 use rustdb_common::Result;
 use rustdb_types::variant::{VariantPathComponent, unshredded_type};
@@ -159,9 +160,9 @@ impl VariantStats {
     }
 }
 
-impl fmt::Display for VariantStats {
+impl VariantStats {
     /// `VariantStats::ToString`.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn write_statistics_bytes(&self, f: &mut ByteString) -> fmt::Result {
         write!(f, "shredding_state: {}", self.shredding_state.name())?;
         if let Some(shredded) = self.shredded_stats() {
             write!(
@@ -176,14 +177,14 @@ impl fmt::Display for VariantStats {
 }
 
 /// `ToStringInternal`: whether each level of shredded statistics is fully shredded.
-fn shredded_stats_text(stats: &BaseStatistics) -> String {
+fn shredded_stats_text(stats: &BaseStatistics) -> ByteString {
     let mut result = format!("fully_shredded: {}", is_fully_shredded(stats));
     let typed = typed_stats(stats);
     match typed.logical_type().id() {
         LogicalTypeId::List => {
             if let Some(child) = typed.child() {
-                result.push_str(", child: ");
-                result.push_str(&shredded_stats_text(child));
+                result.push_bytes(", child: ");
+                result.push_bytes(shredded_stats_text(child));
             }
         }
         LogicalTypeId::Struct => {
@@ -192,14 +193,14 @@ fn shredded_stats_text(stats: &BaseStatistics) -> String {
             // `std::lexicographical_compare` of the names' (signed) chars.
             let mut order: Vec<usize> = (0..fields.len()).collect();
             order.sort_by(|&a, &b| signed_char_cmp(&fields[a].0, &fields[b].0));
-            let entries: Vec<String> = order
+            let entries: Vec<ByteString> = order
                 .into_iter()
                 .filter_map(|index| {
                     let child = children.get(index)?;
                     Some(format!("{}: {}", fields[index].0, shredded_stats_text(child)))
                 })
                 .collect();
-            let _ = write!(result, ", children: {{{}}}", entries.join(", "));
+            let _ = write!(result, ", children: {{{}}}", ByteString::join(&entries, ", "));
         }
         _ => {}
     }
@@ -207,10 +208,10 @@ fn shredded_stats_text(stats: &BaseStatistics) -> String {
 }
 
 /// Compares strings by their bytes as (signed) `char`s.
-fn signed_char_cmp(a: &str, b: &str) -> Ordering {
-    a.bytes()
-        .map(|byte| byte as i8)
-        .cmp(b.bytes().map(|byte| byte as i8))
+fn signed_char_cmp(a: &[u8], b: &[u8]) -> Ordering {
+    a.iter()
+        .map(|&byte| byte as i8)
+        .cmp(b.iter().map(|&byte| byte as i8))
 }
 
 /// `ToStructuredType`: the DuckDB type of a shredding, without the `typed_value` /
@@ -227,7 +228,7 @@ pub fn structured_type(shredding: &LogicalType) -> LogicalType {
     };
     match typed_value.id() {
         LogicalTypeId::Struct => {
-            let mut fields: Vec<(String, LogicalType)> = typed_value
+            let mut fields: Vec<(ByteString, LogicalType)> = typed_value
                 .struct_children()
                 .unwrap_or_default()
                 .iter()
@@ -261,8 +262,8 @@ pub fn wrap_shredded_levels(ty: &LogicalType) -> LogicalType {
         _ => ty.clone(),
     };
     LogicalType::struct_type(vec![
-        ("typed_value".to_owned(), level),
-        ("untyped_value_index".to_owned(), LogicalType::UINTEGER),
+        ("typed_value".into(), level),
+        ("untyped_value_index".into(), LogicalType::UINTEGER),
     ])
 }
 
@@ -350,9 +351,9 @@ fn wrap_typed_value(typed: BaseStatistics, untyped: Option<BaseStatistics>) -> B
     if untyped.is_none() && !typed.logical_type().is_nested() {
         return typed;
     }
-    let mut fields = vec![("typed_value".to_owned(), typed.logical_type().clone())];
+    let mut fields = vec![("typed_value".into(), typed.logical_type().clone())];
     if let Some(untyped) = &untyped {
-        fields.push(("untyped_value_index".to_owned(), untyped.logical_type().clone()));
+        fields.push(("untyped_value_index".into(), untyped.logical_type().clone()));
     }
     let mut wrapped = BaseStatistics::create_empty(LogicalType::struct_type(fields));
     if let Some(children) = wrapped.struct_children_mut() {
@@ -536,4 +537,23 @@ pub(super) fn read_variant_stats(
         BaseStatistics::deserialize_fields(d, &shredded_type)
     })?);
     Ok(())
+}
+
+impl VariantStats {
+    pub fn to_bytes(&self) -> ByteString {
+        let mut out = ByteString::new();
+        let _ = self.write_statistics_bytes(&mut out);
+        out
+    }
+}
+impl rustdb_common::byte_format::NativeByteFormat for VariantStats {
+    fn append_native_bytes(&self, output: &mut ByteString) {
+        let _ = self.write_statistics_bytes(output);
+    }
+}
+impl fmt::Display for VariantStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let bytes = self.to_bytes();
+        f.write_str(bytes.to_str().map_err(|_| fmt::Error)?)
+    }
 }

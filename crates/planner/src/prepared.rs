@@ -41,7 +41,7 @@ pub struct StatementProperties {
     pub parameter_count: usize,
     /// The databases that functions in the statement write to, in the order their
     /// calls were bound (`RegisterDBModify` by a function's `get_modified_databases`).
-    pub modified_databases: Vec<String>,
+    pub modified_databases: Vec<rustdb_common::ByteString>,
 }
 
 impl Default for StatementProperties {
@@ -64,11 +64,11 @@ pub struct PreparedStatementData {
     pub statement_type: StatementType,
     /// The statement as parsed, bound again for each execution.
     pub unbound_statement: SqlStatement,
-    pub names: Vec<String>,
+    pub names: Vec<rustdb_common::ByteString>,
     pub types: Vec<LogicalType>,
     pub properties: StatementProperties,
     /// The parameters and their resolved types.
-    pub value_map: CaseInsensitiveMap<SharedParameterData>,
+    pub value_map: CaseInsensitiveMap<SharedParameterData, rustdb_common::ByteString>,
     /// Bound plan awaiting physical-preparation metadata checks. Consumed when the
     /// client prepares it; execution still binds against current catalog state.
     pub preparation_plan: Option<crate::LogicalOperator>,
@@ -87,7 +87,7 @@ impl PreparedStatementData {
     }
 
     /// The type a parameter was resolved to, if any.
-    pub fn parameter_type(&self, identifier: &str) -> Option<LogicalType> {
+    pub fn parameter_type(&self, identifier: impl AsRef<[u8]>) -> Option<LogicalType> {
         self.value_map.get(identifier).map(|data| {
             data.lock()
                 .unwrap_or_else(PoisonError::into_inner)
@@ -101,15 +101,15 @@ impl PreparedStatementData {
 #[derive(Debug, Default)]
 pub struct BoundParameterMap {
     /// Values supplied up front (`EXECUTE` with values): bound as constants.
-    pub parameter_data: CaseInsensitiveMap<BoundParameterData>,
+    pub parameter_data: CaseInsensitiveMap<BoundParameterData, rustdb_common::ByteString>,
     /// The parameters bound so far.
-    pub parameters: CaseInsensitiveMap<SharedParameterData>,
+    pub parameters: CaseInsensitiveMap<SharedParameterData, rustdb_common::ByteString>,
     /// Whether the statement must be bound again once all types are known.
     pub rebind: bool,
 }
 
 impl BoundParameterMap {
-    pub fn new(parameter_data: CaseInsensitiveMap<BoundParameterData>) -> Self {
+    pub fn new(parameter_data: CaseInsensitiveMap<BoundParameterData, rustdb_common::ByteString>) -> Self {
         Self {
             parameter_data,
             parameters: CaseInsensitiveMap::default(),
@@ -118,7 +118,7 @@ impl BoundParameterMap {
     }
 
     /// The type of a supplied parameter value, or `UNKNOWN`.
-    pub fn return_type(&self, identifier: &str) -> LogicalType {
+    pub fn return_type(&self, identifier: impl AsRef<[u8]>) -> LogicalType {
         self.parameter_data
             .get(identifier)
             .map_or(LogicalType::UNKNOWN, |data| data.return_type.clone())
@@ -126,7 +126,12 @@ impl BoundParameterMap {
 
     /// A parameter expression sharing data with every other occurrence of `identifier`
     /// (DuckDB's `BindParameterExpression`).
-    pub fn bind_parameter_expression(&mut self, identifier: &str, alias: &str) -> Expression {
+    pub fn bind_parameter_expression(
+        &mut self,
+        identifier: impl AsRef<[u8]>,
+        alias: impl AsRef<[u8]>,
+    ) -> Expression {
+        let identifier = identifier.as_ref();
         let identifier_type = self.return_type(identifier);
         let data = if let Some(data) = self.parameters.get(identifier) {
             Arc::clone(data)
@@ -150,11 +155,11 @@ impl BoundParameterMap {
             rustdb_ast::ExpressionType::ValueParameter,
             identifier_type,
             ExpressionKind::Parameter(BoundParameterExpression {
-                identifier: identifier.to_owned(),
+                identifier: identifier.into(),
                 parameter_data: data,
             }),
         );
-        alias.clone_into(&mut expression.alias);
+        expression.alias = alias.as_ref().into();
         expression
     }
 }

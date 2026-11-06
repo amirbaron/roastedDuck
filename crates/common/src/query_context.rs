@@ -7,8 +7,7 @@
 //!                ^
 //! ```
 
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthChar;
+use crate::ByteString;
 
 const MAX_LINE_RENDER_WIDTH: usize = 120;
 
@@ -22,14 +21,21 @@ fn is_space(byte: u8) -> bool {
 }
 
 /// Appends the line of `query` containing byte `position`, with a caret under it.
+#[cfg(test)]
 pub(crate) fn format(query: &str, message: &str, position: u64) -> String {
+    // Text input guarantees the resulting source slice is UTF-8.
+    String::from_utf8(format_bytes(query.as_bytes(), message.as_bytes(), position).into_bytes())
+        .expect("UTF-8 query context")
+}
+
+pub(crate) fn format_bytes(query: &[u8], message: &[u8], position: u64) -> ByteString {
     let Ok(error_location) = usize::try_from(position) else {
-        return message.to_owned();
+        return message.into();
     };
     if error_location >= query.len() {
-        return message.to_owned();
+        return message.into();
     }
-    let bytes = query.as_bytes();
+    let bytes = query;
     let mut line_start = 0;
     let mut line_number = 1;
     for i in 0..error_location {
@@ -49,24 +55,30 @@ pub(crate) fn format(query: &str, message: &str, position: u64) -> String {
         .map_or(query.len(), |offset| error_location + offset);
 
     // Grapheme clusters of the line with their byte offsets and render widths.
-    let line = query.get(line_start..end_pos).unwrap_or_default();
-    let (positions, widths, natural_break): (Vec<usize>, Vec<usize>, Vec<bool>) = {
+    let line = &query[line_start..end_pos];
+    let (positions, widths, natural_break) = {
         let mut positions = Vec::new();
         let mut widths = Vec::new();
         let mut breaks = Vec::new();
-        for (offset, grapheme) in line.grapheme_indices(true) {
+        let valid = !matches!(crate::utf8::analyze(line), crate::utf8::UnicodeType::Invalid(_));
+        let mut offset = 0;
+        while offset < line.len() {
+            let (next, width) = if valid {
+                // The line was validated before calling utf8proc's native traversal.
+                #[allow(
+                    clippy::expect_used,
+                    reason = "strict UTF-8 validation precedes native cluster traversal"
+                )]
+                let cluster =
+                    crate::tree_renderer::unicode::cluster(line, offset).expect("validated UTF-8 cluster");
+                cluster
+            } else {
+                (offset + 1, 1)
+            };
             positions.push(offset);
-            // `Utf8Proc::RenderWidth`: the width of the cluster's first code point, zero for
-            // control characters such as a tab.
-            widths.push(
-                grapheme
-                    .chars()
-                    .next()
-                    .and_then(UnicodeWidthChar::width)
-                    .unwrap_or(0),
-            );
-            let first = grapheme.as_bytes()[0];
-            breaks.push(is_operator(first) || is_space(first));
+            widths.push(width);
+            breaks.push(is_operator(line[offset]) || is_space(line[offset]));
+            offset = next;
         }
         (positions, widths, breaks)
     };
@@ -118,8 +130,8 @@ pub(crate) fn format(query: &str, message: &str, position: u64) -> String {
     let end_trunc = if truncate_end { "..." } else { "" };
     let caret_offset: usize =
         widths[spos..epos].iter().sum::<usize>() + line_indicator.len() + begin_trunc.len();
-    let shown = query.get(start_pos..end_pos).unwrap_or_default();
-    format!(
+    let shown = &query[start_pos..end_pos];
+    crate::byte_format!(
         "{message}\n\n{line_indicator}{begin_trunc}{shown}{end_trunc}\n{}^",
         " ".repeat(caret_offset)
     )

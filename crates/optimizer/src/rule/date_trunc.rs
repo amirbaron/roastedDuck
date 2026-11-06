@@ -125,7 +125,7 @@ fn as_trunc(side: &Expression) -> Option<(&Expression, &Expression)> {
     let ExpressionKind::Function(function) = &side.kind else {
         return None;
     };
-    if !matches!(&*function.function.name, "date_trunc" | "datetrunc") || function.children.len() != 2 {
+    if !matches!(&*function.function.name, b"date_trunc" | b"datetrunc") || function.children.len() != 2 {
         return None;
     }
     if !matches!(function.children[0].kind, ExpressionKind::Constant(_)) {

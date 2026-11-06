@@ -57,23 +57,26 @@ fn serialize_plan_bind(
         let Some(Some(value)) = input.constants.get(i) else {
             return Err(Error::binder("json_serialize_plan: arguments must be constant"));
         };
-        let alias = input.aliases.get(i).map_or("", String::as_str);
-        let flag = |name: &str| -> Result<bool> {
+        let alias = input
+            .aliases
+            .get(i)
+            .map_or(b"".as_slice(), rustdb_common::ByteString::as_bytes);
+        let flag = |name: &[u8]| -> Result<bool> {
             if input.argument_types[i].id() != LogicalTypeId::Boolean {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "json_serialize_plan: '{name}' argument must be a boolean"
                 )));
             }
             Ok(value.as_bool().unwrap_or(false))
         };
         match alias {
-            "skip_null" => json.skip_null = flag(alias)?,
-            "skip_empty" => json.skip_empty = flag(alias)?,
-            "skip_default" => json.skip_default = flag(alias)?,
-            "format" => format = flag(alias)?,
-            "optimize" => optimize = flag(alias)?,
+            b"skip_null" => json.skip_null = flag(alias)?,
+            b"skip_empty" => json.skip_empty = flag(alias)?,
+            b"skip_default" => json.skip_default = flag(alias)?,
+            b"format" => format = flag(alias)?,
+            b"optimize" => optimize = flag(alias)?,
             _ => {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "json_serialize_plan: Unknown argument '{alias}'"
                 )));
             }
@@ -135,26 +138,26 @@ fn serialize_plans(sql: &str, data: &SerializePlanBindData) -> Result<Vec<JsonVa
 fn serialize_plan_document(sql: &str, data: &SerializePlanBindData) -> String {
     let document = match serialize_plans(sql, data) {
         Ok(plans) => JsonValue::Object(vec![
-            ("error".to_owned(), JsonValue::Bool(false)),
-            ("plans".to_owned(), JsonValue::Array(plans)),
+            ("error".into(), JsonValue::Bool(false)),
+            ("plans".into(), JsonValue::Array(plans)),
         ]),
         Err(error) => {
             let mut entries = vec![
-                ("error".to_owned(), JsonValue::Bool(true)),
+                ("error".into(), JsonValue::Bool(true)),
                 (
-                    "error_type".to_owned(),
+                    "error_type".into(),
                     JsonValue::Str(error.kind().display_name().to_ascii_lowercase()),
                 ),
                 (
-                    "error_message".to_owned(),
-                    JsonValue::Str(error.raw_message().into_owned()),
+                    "error_message".into(),
+                    JsonValue::ByteStr(error.raw_message_bytes().into()),
                 ),
             ];
             entries.extend(
                 error
                     .extra_info()
                     .into_iter()
-                    .map(|(key, value)| (key.to_owned(), JsonValue::Str(value.to_owned()))),
+                    .map(|(key, value)| (key.into(), JsonValue::ByteStr(value.into()))),
             );
             JsonValue::Object(entries)
         }

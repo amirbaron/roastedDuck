@@ -85,7 +85,7 @@ fn build() -> Vec<GridType> {
         let sql: &'static str = format!("DECIMAL({width},{scale})").leak();
         types.push(simple(sql, LogicalType::decimal(width, scale), F::Decimal));
     }
-    let child = |name: &str, ty: LogicalType| (name.to_owned(), ty);
+    let child = |name: &str, ty: LogicalType| (rustdb_common::ByteString::from(name), ty);
     types.extend([
         simple("VARCHAR", LogicalType::VARCHAR, F::Varchar),
         simple("BLOB", LogicalType::BLOB, F::Blob),

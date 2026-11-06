@@ -278,7 +278,7 @@ fn bind_list_zip(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindRe
     let types = input.argument_types;
     let mut size = types.len();
     if size == 0 {
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "Provide at least one argument to {}",
             function.name
         )));
@@ -286,7 +286,7 @@ fn bind_list_zip(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindRe
     if types[size - 1].id() == LogicalTypeId::Boolean {
         size -= 1;
         if size == 0 {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Provide at least one list argument to {}",
                 function.name
             )));
@@ -301,9 +301,9 @@ fn bind_list_zip(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindRe
                     // `AddArrayCastToList`.
                     function.cast_argument(index, LogicalType::list(child.clone()));
                 }
-                children.push((String::new(), child));
+                children.push((rustdb_common::ByteString::new(), child));
             }
-            LogicalTypeId::SqlNull => children.push((String::new(), LogicalType::SQLNULL)),
+            LogicalTypeId::SqlNull => children.push((rustdb_common::ByteString::new(), LogicalType::SQLNULL)),
             LogicalTypeId::Unknown => return Err(crate::parameter_not_resolved()),
             _ => return Err(Error::binder("Parameter type needs to be List")),
         }

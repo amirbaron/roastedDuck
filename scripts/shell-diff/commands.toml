@@ -654,7 +654,8 @@ INSERT INTO t VALUES (1);
 
 [[case]]
 name = "open-errors"
-known = "internal errors have no Stack Trace section"
+known = "originating native stack frames reflect the Rust/C++ implementation and compiler build"
+known_scope = "native_stack_trace"
 files = { "notadb.db" = "this is not a database file" }
 stdin = '''
 .open notadb.db

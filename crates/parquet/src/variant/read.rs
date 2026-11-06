@@ -32,11 +32,11 @@ fn group_of(vector: &Vector) -> Result<Group<'_>> {
     let mut value = None;
     let mut typed_value = None;
     for ((name, _), child) in fields.iter().zip(children) {
-        match name.as_str() {
-            "value" => value = Some(child),
-            "typed_value" => typed_value = Some(child),
+        match name.as_bytes() {
+            b"value" => value = Some(child),
+            b"typed_value" => typed_value = Some(child),
             other => {
-                return Err(Error::invalid_input(format!(
+                return Err(Error::invalid_input(rustdb_common::byte_format!(
                     "Variant group can only contain 'value'/'typed_value', not: {other}"
                 )));
             }
@@ -169,7 +169,7 @@ fn convert_object(
     let mut shredded = Vec::with_capacity(fields.len());
     for ((name, _), child) in fields.iter().zip(children) {
         let group = group_of(child)?;
-        shredded.push((name.as_str(), convert(metadata, &group, rows)?));
+        shredded.push((name.as_bytes(), convert(metadata, &group, rows)?));
     }
     let mut result = Vec::with_capacity(rows.len());
     for (position, &row) in rows.iter().enumerate() {

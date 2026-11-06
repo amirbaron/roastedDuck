@@ -6,6 +6,7 @@
 
 #include "duckdb.h"
 
+#include <atomic>
 #include <cmath>
 #include <cstdarg>
 #include <cstdint>
@@ -76,6 +77,7 @@ public:
 };
 
 struct StringUtil {
+ static string Replace(string value,const string &from,const string &to){if(from.empty())return value;size_t pos=0;while((pos=value.find(from,pos))!=string::npos){value.replace(pos,from.size(),to);pos+=to.size();}return value;}
 	static bool Contains(const string &haystack, const string &needle) {
 		return haystack.find(needle) != string::npos;
 	}

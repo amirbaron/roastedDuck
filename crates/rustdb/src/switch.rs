@@ -43,7 +43,7 @@ pub(crate) fn switch_functions() -> ScalarFunctionSet {
 /// The call of `map` an argument binds to, under the cast to the overload's type.
 fn map_call(expression: &Expression) -> Option<&Expression> {
     match &expression.kind {
-        ExpressionKind::Function(function) if &*function.function.name == "map" => Some(expression),
+        ExpressionKind::Function(function) if function.function.name.as_bytes() == b"map" => Some(expression),
         ExpressionKind::Cast(cast) => map_call(&cast.child),
         _ => None,
     }
@@ -54,7 +54,7 @@ fn constant_list(expression: Expression) -> Result<Vec<Expression>> {
     let ExpressionKind::Function(list) = expression.kind else {
         return Err(Error::binder("Expected a function for the cases"));
     };
-    if &*list.function.name != "list_value" {
+    if list.function.name.as_bytes() != b"list_value" {
         return Err(Error::binder("Expected a list function"));
     }
     if list.children.is_empty() {

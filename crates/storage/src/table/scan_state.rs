@@ -20,7 +20,7 @@ pub struct StorageIndex {
     /// [`COLUMN_IDENTIFIER_ROW_ID`].
     pub index: u64,
     /// The field name of a VARIANT path element (DuckDB's `has_index` false).
-    pub field: Option<String>,
+    pub field: Option<rustdb_common::ByteString>,
     /// The type the index produces (a pushdown extract), `INVALID` if unset.
     pub ty: LogicalType,
     /// Whether the scan extracts the (single) child path and emits it directly
@@ -34,10 +34,11 @@ pub struct StorageIndex {
 impl rustdb_serde::Serialize for StorageIndex {
     /// `StorageIndex::Serialize`.
     fn serialize(&self, serializer: &mut dyn rustdb_serde::Serializer) -> rustdb_common::Result<()> {
+        let empty = rustdb_common::ByteString::new();
         serializer.write_object(&crate::generated::nodes::StorageIndex {
             has_index: self.field.is_none(),
             index: self.index,
-            field: self.field.as_deref().unwrap_or_default(),
+            field: self.field.as_ref().unwrap_or(&empty),
             ty: &self.ty,
             index_type: if self.pushdown_extract {
                 crate::StorageIndexType::PushdownExtract
@@ -96,7 +97,7 @@ impl StorageIndex {
     }
 
     /// The field name of a VARIANT path element.
-    pub fn field_name(&self) -> &str {
+    pub fn field_name(&self) -> &[u8] {
         self.field.as_deref().unwrap_or_default()
     }
 
@@ -391,4 +392,27 @@ pub(crate) struct ParallelScanPosition {
 pub struct ParallelTableScanState {
     pub scan_state: ParallelCollectionScanState,
     pub local_state: ParallelCollectionScanState,
+}
+
+impl rustdb_serde::DeserializeObject for StorageIndex {
+    fn deserialize_fields(d: &mut dyn rustdb_serde::Deserializer) -> rustdb_common::Result<Self> {
+        let has_index: bool = d.read_property_with_default(100, "has_index")?;
+        let index = d.read_property_with_default(101, "index")?;
+        let field: rustdb_common::ByteString = d.read_property_with_default(102, "field")?;
+        let ty = d.read_property(103, "type")?;
+        let index_type: crate::StorageIndexType = d.read_property(104, "index_type")?;
+        let children = d.read_property_with_default(105, "child_indexes")?;
+        Ok(Self {
+            index,
+            field: (!has_index).then_some(field),
+            ty,
+            pushdown_extract: index_type == crate::StorageIndexType::PushdownExtract,
+            children,
+        })
+    }
+}
+impl rustdb_serde::Deserialize for StorageIndex {
+    fn deserialize(d: &mut dyn rustdb_serde::Deserializer) -> rustdb_common::Result<Self> {
+        d.read_object()
+    }
 }

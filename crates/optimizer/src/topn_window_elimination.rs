@@ -259,7 +259,7 @@ fn binding_types(op: &LogicalOperator, bindings: &[ColumnBinding], types: &mut [
 
 /// A column of the late-materialized scan (DuckDB's `LHSColumnInfo`).
 struct LhsColumnInfo {
-    name: String,
+    name: rustdb_common::ByteString,
     ty: LogicalType,
     binding: ColumnBinding,
 }
@@ -286,7 +286,7 @@ fn lhs_column_info(op: &LogicalOperator, column: usize) -> Result<LhsColumnInfo>
         .get(get_binding.column_index as usize)
         .ok_or_else(missing)?;
     let name = if column_index.is_row_id_column() {
-        ROW_ID_NAME.to_owned()
+        rustdb_common::ByteString::from(ROW_ID_NAME)
     } else {
         get.names
             .get(column_index.index as usize)
@@ -548,7 +548,7 @@ impl TopNWindowElimination<'_> {
                 child: generate_series,
             })),
         );
-        "row_number".clone_into(&mut unnest.alias);
+        unnest.alias = "row_number".into();
         Ok(unnest)
     }
 
@@ -609,7 +609,7 @@ impl TopNWindowElimination<'_> {
                 "struct_extract",
                 vec![
                     aggregate_column_ref.clone(),
-                    Expression::constant(Value::varchar(alias)),
+                    Expression::constant(Value::try_varchar(alias)?),
                 ],
             )?;
             extract.alias.clone_from(alias);

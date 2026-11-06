@@ -10,6 +10,7 @@ use std::ffi::{CString, c_char, c_void};
 use std::sync::Arc;
 
 use rustdb::{MaterializedResult, QueryResult, StatementReturnType, StatementType, StreamQueryResult};
+use rustdb_arrow::ClientProperties;
 use rustdb_common::Error;
 use rustdb_types::{
     DataChunk, LogicalType, LogicalTypeId, PhysicalType, STANDARD_VECTOR_SIZE, Timestamp, Vector,
@@ -46,8 +47,11 @@ enum ResultState {
 /// What `duckdb_result::internal_data` points to (DuckDB's `DuckDBResultData`).
 #[derive(Debug)]
 pub(crate) struct ResultData {
-    /// The connection a streaming result fetches from.
-    context: Arc<SharedConnection>,
+    /// Only a streaming result needs its connection. Materialized rows own their
+    /// storage and must not keep catalog callbacks or the database alive.
+    context: Option<Arc<SharedConnection>>,
+    /// Conversion settings captured with the query result, independent of later SETs.
+    pub(crate) properties: ClientProperties,
     state: ResultState,
     pub(crate) result_set_type: ResultSetType,
     names: Vec<CString>,
@@ -64,9 +68,18 @@ pub(crate) struct ResultData {
 }
 
 impl ResultData {
-    fn new(context: &Arc<SharedConnection>, outcome: rustdb::Result<QueryResult>) -> Self {
+    fn new(
+        context: &Arc<SharedConnection>,
+        outcome: rustdb::Result<QueryResult>,
+        properties: ClientProperties,
+    ) -> Self {
         let mut data = Self {
-            context: Arc::clone(context),
+            context: None,
+            properties: if outcome.is_ok() {
+                properties
+            } else {
+                ClientProperties::default()
+            },
             state: ResultState::Failed,
             result_set_type: ResultSetType::None,
             names: Vec::new(),
@@ -85,6 +98,7 @@ impl ResultData {
                 data.state = ResultState::Materialized(result);
             }
             Ok(QueryResult::Stream(stream)) => {
+                data.context = Some(Arc::clone(context));
                 data.set_columns(stream.names(), stream.types());
                 data.statement_type = stream.statement_type();
                 data.return_type = stream.return_type();
@@ -95,7 +109,7 @@ impl ResultData {
         data
     }
 
-    fn set_columns(&mut self, names: &[String], types: &[LogicalType]) {
+    fn set_columns(&mut self, names: &[rustdb_common::ByteString], types: &[LogicalType]) {
         self.names = names.iter().map(to_cstring).collect();
         self.types = types.to_vec();
     }
@@ -105,11 +119,7 @@ impl ResultData {
         let message = to_cstring(error.to_bytes());
         self.error = Some((error, message));
         self.state = ResultState::Failed;
-    }
-
-    /// The connection the result came from.
-    pub(crate) fn context(&self) -> &Arc<SharedConnection> {
-        &self.context
+        self.context = None;
     }
 
     pub(crate) fn has_error(&self) -> bool {
@@ -129,9 +139,12 @@ impl ResultData {
     fn materialize(&mut self) -> Option<&MaterializedResult> {
         if let ResultState::Stream(stream) = &self.state {
             let stream = stream.clone();
-            let materialized = catch(|| self.context.lock().materialize(&stream));
+            let materialized = catch(|| self.stream_context()?.lock().materialize(&stream));
             match materialized {
-                Ok(result) => self.state = ResultState::Materialized(result),
+                Ok(result) => {
+                    self.state = ResultState::Materialized(result);
+                    self.context = None;
+                }
                 Err(error) => self.set_error(error),
             }
         }
@@ -139,6 +152,12 @@ impl ResultData {
             ResultState::Materialized(result) => Some(result),
             ResultState::Stream(_) | ResultState::Failed => None,
         }
+    }
+
+    fn stream_context(&self) -> rustdb::Result<&Arc<SharedConnection>> {
+        self.context
+            .as_ref()
+            .ok_or_else(|| Error::internal("Streaming C API result has no connection"))
     }
 
     /// The rows in chunks of `STANDARD_VECTOR_SIZE` rows (`MaterializedQueryResult::Collection`).
@@ -168,7 +187,7 @@ impl ResultData {
             ResultState::Stream(stream) => {
                 let stream = stream.clone();
                 loop {
-                    match catch(|| self.context.lock().fetch(&stream))? {
+                    match catch(|| self.stream_context()?.lock().fetch(&stream))? {
                         Some(chunk) if chunk.is_empty() => {}
                         chunk => return Ok(chunk.map(|chunk| flat_chunk(&chunk))),
                     }
@@ -182,8 +201,10 @@ impl ResultData {
 impl Drop for ResultData {
     fn drop(&mut self) {
         // A stream still open ends with its result (`StreamQueryResult::Close`).
-        if let ResultState::Stream(stream) = &self.state {
-            self.context.lock().close_query(stream.id());
+        if let ResultState::Stream(stream) = &self.state
+            && let Some(context) = &self.context
+        {
+            context.lock().close_query(stream.id());
         }
     }
 }
@@ -259,6 +280,7 @@ pub(crate) unsafe fn result_data<'a>(result: *const DuckdbResult) -> Option<&'a 
 pub(crate) unsafe fn translate_result(
     context: &Arc<SharedConnection>,
     outcome: rustdb::Result<QueryResult>,
+    properties: ClientProperties,
     out: *mut DuckdbResult,
 ) -> DuckdbState {
     let state = DuckdbState::from_ok(outcome.is_ok());
@@ -266,7 +288,7 @@ pub(crate) unsafe fn translate_result(
     let Some(out) = (unsafe { out.as_mut() }) else {
         return state;
     };
-    let data = Box::new(ResultData::new(context, outcome));
+    let data = Box::new(ResultData::new(context, outcome, properties));
     *out = DuckdbResult {
         deprecated_column_count: data.column_count() as Idx,
         deprecated_row_count: 0,

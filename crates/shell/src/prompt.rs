@@ -3,6 +3,7 @@
 //! e.g. `{max_length:40}{color:green}{setting:current_database_and_schema}{color:reset} D `.
 
 use rustdb::{Error, Result};
+use rustdb_common::{ByteString, ErrorKind};
 
 use crate::highlight::{
     self, HighlightElementType, PrintColor, PrintIntensity, RESET_TERMINAL_CODE, ShellHighlight,
@@ -26,7 +27,7 @@ pub enum PromptComponentType {
 #[derive(Clone, Debug)]
 pub struct PromptComponent {
     pub kind: PromptComponentType,
-    pub literal: String,
+    pub literal: ByteString,
     pub color: PrintColor,
     pub intensity: PrintIntensity,
     pub highlight_element: HighlightElementType,
@@ -36,7 +37,7 @@ impl PromptComponent {
     fn new(kind: PromptComponentType) -> Self {
         Self {
             kind,
-            literal: String::new(),
+            literal: ByteString::new(),
             color: PrintColor::STANDARD,
             intensity: PrintIntensity::Standard,
             highlight_element: HighlightElementType::None,
@@ -48,9 +49,9 @@ impl PromptComponent {
 /// `Prompt::ExecuteSQL` with `Prompt::GetConnection`).
 pub trait PromptContext {
     /// The value of `{setting:name}`.
-    fn setting(&mut self, name: &str) -> Result<String>;
+    fn setting(&mut self, name: &[u8]) -> Result<rustdb_common::ByteString>;
     /// The single value `query` returns, or a `#...#` marker for other results.
-    fn execute_sql(&mut self, query: &str) -> String;
+    fn execute_sql(&mut self, query: &[u8]) -> ByteString;
 }
 
 /// The settings of the main prompt (`Prompt::GetSupportedSettings`).
@@ -71,7 +72,7 @@ pub const PROMPT_SETTINGS: [&str; 9] = [
 /// `Prompt::GetSupportedSettings`, which the progress bar's prompts override).
 pub trait PromptOptions {
     /// Applies `{bracket_type:value}`; `false` if it is not an option.
-    fn parse_setting(&mut self, prompt: &mut Prompt, bracket_type: &str, value: &str) -> Result<bool>;
+    fn parse_setting(&mut self, prompt: &mut Prompt, bracket_type: &[u8], value: &[u8]) -> Result<bool>;
     /// The names `{setting:...}` accepts.
     fn supported_settings(&self) -> Vec<&'static str>;
 }
@@ -81,14 +82,14 @@ pub trait PromptOptions {
 pub struct MainPromptOptions;
 
 impl PromptOptions for MainPromptOptions {
-    fn parse_setting(&mut self, prompt: &mut Prompt, bracket_type: &str, value: &str) -> Result<bool> {
-        if bracket_type != "max_length" {
+    fn parse_setting(&mut self, prompt: &mut Prompt, bracket_type: &[u8], value: &[u8]) -> Result<bool> {
+        if bracket_type != b"max_length" {
             return Ok(false);
         }
         if value.is_empty() {
             return Err(Error::invalid_input("max_length requires a parameter"));
         }
-        prompt.max_length = Some(to_unsigned(value)?);
+        prompt.max_length = Some(parse_optional_index(value)?);
         Ok(true)
     }
 
@@ -113,13 +114,41 @@ pub struct Prompt {
     pub max_length: Option<usize>,
 }
 
-/// `StringUtil::ToUnsigned` (`std::stoull`): the leading digits of `text`.
-pub fn to_unsigned(text: &str) -> Result<usize> {
-    let trimmed = text.trim_start();
-    let digits = trimmed.bytes().take_while(u8::is_ascii_digit).count();
-    trimmed[..digits]
-        .parse()
-        .map_err(|_| Error::invalid_input("stoull".to_owned()))
+/// `StringUtil::ToUnsigned` (`std::stoull`), followed by `optional_idx` validation.
+pub fn parse_optional_index(text: &[u8]) -> Result<usize> {
+    let text = text.trim_ascii_start();
+    let (negative, digits) = match text.first() {
+        Some(b'-') => (true, &text[1..]),
+        Some(b'+') => (false, &text[1..]),
+        _ => (false, text),
+    };
+    if digits.first().is_none_or(|c| !c.is_ascii_digit()) {
+        return Err(unsigned_conversion_error("stoull: no conversion"));
+    }
+    let mut value = 0_u64;
+    for &digit in digits.iter().take_while(|c| c.is_ascii_digit()) {
+        value = value.checked_mul(10)
+            .and_then(|value| value.checked_add(u64::from(digit - b'0')))
+            .ok_or_else(|| unsigned_conversion_error("stoull: out of range"))?;
+    }
+    if negative {
+        value = 0_u64.wrapping_sub(value);
+    }
+    if value == u64::MAX {
+        return Err(Error::internal("optional_idx cannot be initialized with an invalid index"));
+    }
+    usize::try_from(value).map_err(|_| unsigned_conversion_error("stoull: out of range"))
+}
+
+fn unsigned_conversion_error(libcxx_message: &'static str) -> Error {
+    // libstdc++ reports only the conversion name for both invalid_argument and
+    // out_of_range. Apple's libc++ includes the reason in the message.
+    let message = if cfg!(target_env = "gnu") {
+        "stoull"
+    } else {
+        libcxx_message
+    };
+    Error::new(ErrorKind::Invalid, message)
 }
 
 impl Prompt {
@@ -133,7 +162,7 @@ impl Prompt {
     }
 
     /// `AddLiteral`.
-    fn add_literal(&mut self, text: &str) {
+    fn add_literal(&mut self, text: &[u8]) {
         if self
             .components
             .last()
@@ -143,7 +172,7 @@ impl Prompt {
                 .push(PromptComponent::new(PromptComponentType::Literal));
         }
         if let Some(last) = self.components.last_mut() {
-            last.literal.push_str(text);
+            last.literal.push_bytes(text);
         }
     }
 
@@ -151,49 +180,49 @@ impl Prompt {
     fn add_component(
         &mut self,
         options: &mut dyn PromptOptions,
-        bracket_type: &str,
-        value: &str,
+        bracket_type: &[u8],
+        value: &[u8],
     ) -> Result<()> {
-        let requires_parameter = || Error::invalid_input(format!("{bracket_type} requires a parameter"));
+        let requires_parameter = || Error::invalid_input(rustdb_common::byte_format!("{bracket_type} requires a parameter"));
         let component = match bracket_type {
-            "setting" => {
+            b"setting" => {
                 if value.is_empty() {
                     return Err(requires_parameter());
                 }
                 let supported_settings = options.supported_settings();
-                if !supported_settings.contains(&value) {
-                    return Err(Error::invalid_input(format!(
+                if !supported_settings.iter().any(|setting| setting.as_bytes() == value) {
+                    return Err(Error::invalid_input(rustdb_common::byte_format!(
                         "unsupported setting \"{value}\" for setting, supported values: {}",
                         supported_settings.join(", ")
                     )));
                 }
                 let mut component = PromptComponent::new(PromptComponentType::Setting);
-                value.clone_into(&mut component.literal);
+                component.literal = value.into();
                 component
             }
-            "sql" => {
+            b"sql" => {
                 if value.is_empty() {
                     return Err(requires_parameter());
                 }
                 let mut component = PromptComponent::new(PromptComponentType::Sql);
-                value.clone_into(&mut component.literal);
+                component.literal = value.into();
                 component
             }
-            "color" => {
+            b"color" => {
                 if value.is_empty() {
                     return Err(requires_parameter());
                 }
                 match value {
-                    "bold" | "underline" => {
+                    b"bold" | b"underline" => {
                         let mut component = PromptComponent::new(PromptComponentType::SetIntensity);
-                        component.intensity = if value == "bold" {
+                        component.intensity = if value == b"bold" {
                             PrintIntensity::Bold
                         } else {
                             PrintIntensity::Underline
                         };
                         component
                     }
-                    "reset" => PromptComponent::new(PromptComponentType::ResetColor),
+                    b"reset" => PromptComponent::new(PromptComponentType::ResetColor),
                     _ => {
                         let mut component = PromptComponent::new(PromptComponentType::SetColor);
                         component.color =
@@ -202,7 +231,7 @@ impl Prompt {
                     }
                 }
             }
-            "highlight_element" => {
+            b"highlight_element" => {
                 if value.is_empty() {
                     return Err(requires_parameter());
                 }
@@ -215,7 +244,7 @@ impl Prompt {
                 if options.parse_setting(self, bracket_type, value)? {
                     return Ok(());
                 }
-                return Err(Error::invalid_input(format!(
+                return Err(Error::invalid_input(rustdb_common::byte_format!(
                     "Unknown bracket type {bracket_type}"
                 )));
             }
@@ -225,20 +254,21 @@ impl Prompt {
     }
 
     /// `ParsePrompt`, with `options` taking the option brackets.
-    pub fn parse(text: &str, options: &mut dyn PromptOptions) -> Result<Self> {
+    pub fn parse(text: impl AsRef<[u8]>, options: &mut dyn PromptOptions) -> Result<Self> {
+        let text = text.as_ref();
         let mut prompt = Self::default();
         let mut parse_state = PromptParseState::Standard;
         let mut prev_state = parse_state;
-        let mut bracket_type = String::new();
-        let mut literal = String::new();
-        for c in text.chars() {
+        let mut bracket_type = ByteString::new();
+        let mut literal = ByteString::new();
+        for &c in text {
             match parse_state {
                 PromptParseState::Standard => match c {
-                    '\\' => {
+                    b'\\' => {
                         prev_state = parse_state;
                         parse_state = PromptParseState::Escaped;
                     }
-                    '{' => {
+                    b'{' => {
                         if !literal.is_empty() {
                             prompt.add_literal(&literal);
                             literal.clear();
@@ -252,29 +282,29 @@ impl Prompt {
                     parse_state = prev_state;
                 }
                 PromptParseState::ParseBracketType => match c {
-                    '}' => {
-                        prompt.add_component(options, &literal, "")?;
+                    b'}' => {
+                        prompt.add_component(options, &literal, b"")?;
                         literal.clear();
                         parse_state = PromptParseState::Standard;
                     }
-                    ':' => {
+                    b':' => {
                         bracket_type = std::mem::take(&mut literal);
                         parse_state = PromptParseState::ParseBracketContent;
                     }
-                    '\\' => {
+                    b'\\' => {
                         prev_state = parse_state;
                         parse_state = PromptParseState::Escaped;
                     }
                     _ => literal.push(c),
                 },
                 PromptParseState::ParseBracketContent => match c {
-                    '}' => {
+                    b'}' => {
                         prompt.add_component(options, &bracket_type, &literal)?;
                         bracket_type.clear();
                         literal.clear();
                         parse_state = PromptParseState::Standard;
                     }
-                    '\\' => {
+                    b'\\' => {
                         prev_state = parse_state;
                         parse_state = PromptParseState::Escaped;
                     }
@@ -283,7 +313,7 @@ impl Prompt {
             }
         }
         if parse_state != PromptParseState::Standard {
-            return Err(Error::invalid_input(format!(
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "Failed to parse prompt \"{text}\" - unterminated bracket or escape"
             )));
         }
@@ -315,60 +345,63 @@ impl Prompt {
 
     /// `HandleText`: text that keeps the prompt within `max_length` columns, ending in
     /// `... D ` where it is cut.
-    fn handle_text(&self, text: &str, length: &mut usize) -> String {
+    fn handle_text(&self, text: impl AsRef<[u8]>, length: &mut usize) -> Result<ByteString> {
+        let text = text.as_ref();
         let Some(max_length) = self.max_length else {
-            return text.to_owned();
+            return Ok(text.into());
         };
         if *length > max_length {
             // Already exceeded.
-            return String::new();
+            return Ok(ByteString::new());
         }
-        let render_length = ShellState::render_length(text);
+        let render_length = crate::utf8::native_terminal_render_width(text)?;
         if *length + render_length <= max_length {
             *length += render_length;
-            return text.to_owned();
+            return Ok(text.into());
         }
         // Render the characters that fit.
-        let bytes = text.as_bytes();
+        let bytes = text;
         let mut start_pos = 0;
-        let mut truncated_text = String::new();
+        let mut truncated_text = rustdb_common::ByteString::new();
         for i in 1..=bytes.len() {
             if i < bytes.len() && !ShellState::is_character(bytes[i]) {
                 continue;
             }
             let prev_character = &text[start_pos..i];
-            let char_length = ShellState::render_length(prev_character);
+            let char_length = crate::utf8::native_terminal_render_width(prev_character)?;
             if *length + char_length > max_length {
                 break;
             }
-            truncated_text.push_str(prev_character);
+            truncated_text.push_bytes(prev_character);
             *length += char_length;
             start_pos = i;
         }
-        truncated_text.push_str("... D ");
+        truncated_text.push_bytes(b"... D ");
         *length += 6;
-        truncated_text
+        Ok(truncated_text)
     }
 
     /// `GeneratePrompt`: the prompt with terminal color codes.
-    pub fn generate_prompt(&self, context: &mut dyn PromptContext) -> Result<String> {
-        let mut prompt = String::new();
+    pub fn generate_prompt(&self, context: &mut dyn PromptContext) -> Result<rustdb_common::ByteString> {
+        let mut prompt = rustdb_common::ByteString::new();
         let mut length = 0;
         for component in &self.components {
             match component.kind {
-                PromptComponentType::Literal => prompt += &self.handle_text(&component.literal, &mut length),
+                PromptComponentType::Literal => {
+                    prompt.push_bytes(self.handle_text(&component.literal, &mut length)?);
+                }
                 PromptComponentType::Sql => {
                     let result = context.execute_sql(&component.literal);
-                    prompt += &self.handle_text(&result, &mut length);
+                    prompt.push_bytes(self.handle_text(&result, &mut length)?);
                 }
                 PromptComponentType::Setting => {
                     let value = context.setting(&component.literal)?;
-                    prompt += &self.handle_text(&value, &mut length);
+                    prompt.push_bytes(self.handle_text(&value, &mut length)?);
                 }
                 PromptComponentType::SetColor
                 | PromptComponentType::SetHighlightElement
                 | PromptComponentType::SetIntensity
-                | PromptComponentType::ResetColor => prompt += &Self::handle_color(component),
+                | PromptComponentType::ResetColor => prompt.push_bytes(Self::handle_color(component)),
             }
         }
         Ok(prompt)
@@ -388,18 +421,18 @@ impl Prompt {
         for component in &self.components {
             match component.kind {
                 PromptComponentType::Literal => {
-                    let text = self.handle_text(&component.literal, &mut length);
-                    highlight.print_text_colored(&text, output, color, intensity);
+                    let text = self.handle_text(&component.literal, &mut length)?;
+                    highlight.print_bytes_colored(&text, output, color, intensity);
                 }
                 PromptComponentType::Sql => {
                     let result = context.execute_sql(&component.literal);
-                    let text = self.handle_text(&result, &mut length);
-                    highlight.print_text_colored(&text, output, color, intensity);
+                    let text = self.handle_text(&result, &mut length)?;
+                    highlight.print_bytes_colored(&text, output, color, intensity);
                 }
                 PromptComponentType::Setting => {
                     let result = context.setting(&component.literal)?;
-                    let text = self.handle_text(&result, &mut length);
-                    highlight.print_text_colored(&text, output, color, intensity);
+                    let text = self.handle_text(&result, &mut length)?;
+                    highlight.print_bytes_colored(&text, output, color, intensity);
                 }
                 PromptComponentType::SetColor => color = component.color,
                 PromptComponentType::SetHighlightElement => {

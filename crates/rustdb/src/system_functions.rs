@@ -17,7 +17,7 @@ use rustdb_ast::{
     CreateViewInfo, LogicalDependencyList, OnCreateConflict, TableColumnType,
 };
 use rustdb_catalog::{Catalog, CatalogEntry, EntryKind, SchemaEntry, TableEntry};
-use rustdb_common::{CaseInsensitiveMap, Error, OrderedMap, Result, STANDARD_VECTOR_SIZE};
+use rustdb_common::{ByteString, CaseInsensitiveMap, Error, OrderedMap, Result, STANDARD_VECTOR_SIZE};
 use rustdb_function::{
     FunctionData, FunctionState, PragmaFunction, PragmaFunctionSet, ScalarFunction, ScalarFunctionSet,
     Stability, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
@@ -64,7 +64,7 @@ fn rows_function(
                 let rows = rows(context)?;
                 Ok(TableFunctionBindOutput {
                     return_types: types.clone(),
-                    names: columns.iter().map(|(name, _)| (*name).to_owned()).collect(),
+                    names: columns.iter().map(|(name, _)| (*name).into()).collect(),
                     bind_data: Some(Arc::new(Rows { types, rows })),
                 })
             })
@@ -110,8 +110,9 @@ fn string_map() -> LogicalType {
     LogicalType::map(LogicalType::VARCHAR, LogicalType::VARCHAR)
 }
 
-fn text(value: impl Into<String>) -> Value {
-    Value::varchar(value.into())
+fn text(value: impl Into<ByteString>) -> Result<Value> {
+    let bytes = value.into();
+    Value::try_varchar(&bytes)
 }
 
 fn null_text() -> Value {
@@ -119,11 +120,14 @@ fn null_text() -> Value {
 }
 
 /// A `comment` column value: NULL without a comment.
-fn comment_text(comment: &Value) -> Value {
+fn comment_text(comment: &Value) -> Result<Value> {
     if comment.is_null() {
-        return null_text();
+        return Ok(null_text());
     }
-    comment.to_varchar().map_or_else(|_| null_text(), text)
+    if comment.logical_type().id() == LogicalTypeId::Varchar {
+        return Ok(comment.clone());
+    }
+    text(comment.to_varchar_bytes()?)
 }
 
 fn oid(value: u64) -> Value {
@@ -139,15 +143,12 @@ fn empty_map() -> Value {
 }
 
 /// A `MAP(VARCHAR, VARCHAR)` of `entries`.
-fn text_map(entries: &[(String, String)]) -> Value {
-    Value::map(
-        LogicalType::VARCHAR,
-        LogicalType::VARCHAR,
-        entries
-            .iter()
-            .map(|(key, value)| (text(key.clone()), text(value.clone())))
-            .collect(),
-    )
+fn text_map<K: AsRef<[u8]>, V: AsRef<[u8]>>(entries: &[(K, V)]) -> Result<Value> {
+    let mut values = Vec::with_capacity(entries.len());
+    for (key, value) in entries {
+        values.push((text(key.as_ref())?, text(value.as_ref())?));
+    }
+    Ok(Value::map(LogicalType::VARCHAR, LogicalType::VARCHAR, values))
 }
 
 /// The visible catalogs, sorted by name, without hidden ones.
@@ -157,7 +158,7 @@ fn visible_catalogs(context: &ClientContext) -> Vec<&Arc<Catalog>> {
         .iter()
         .filter(|catalog| !catalog.attach_info().is_some_and(|info| info.hidden))
         .collect();
-    catalogs.sort_by_key(|catalog| catalog.name().to_lowercase());
+    catalogs.sort_by_key(|catalog| catalog.name().to_ascii_lowercase());
     catalogs
 }
 
@@ -195,35 +196,35 @@ const DATABASE_COLUMNS: Columns = &[
 
 /// `duckdb_databases()`.
 fn database_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
-    let mut rows: Vec<(String, Vec<Value>)> = Vec::new();
+    let mut rows: Vec<(ByteString, Vec<Value>)> = Vec::new();
     for catalog in visible_catalogs(context) {
         let info = catalog.attach_info();
         let internal = info.is_none();
         let path = info
             .filter(|info| !info.path.is_empty())
-            .map_or_else(null_text, |info| text(info.path.clone()));
+            .map_or_else(|| Ok(null_text()), |info| text(info.path.clone()))?;
         rows.push((
-            catalog.name().to_lowercase(),
+            catalog.name().to_ascii_lowercase().into(),
             vec![
-                text(&*catalog.name()),
+                text(&*catalog.name())?,
                 oid(catalog.oid()),
                 path,
                 null_text(),
-                info.map_or_else(empty_map, |info| text_map(&info.tags)),
+                info.map_or_else(|| Ok(empty_map()), |info| text_map(&info.tags))?,
                 Value::boolean(internal),
-                text("duckdb"),
+                text("duckdb")?,
                 Value::boolean(info.is_some_and(|info| info.read_only)),
                 Value::boolean(info.is_some_and(|info| info.cipher.is_some())),
                 info.and_then(|info| info.cipher.as_ref())
-                    .map_or_else(null_text, |cipher| text(cipher.clone())),
-                info.map_or_else(empty_map, |info| text_map(&info.options)),
+                    .map_or_else(|| Ok(null_text()), |cipher| text(cipher.clone()))?,
+                info.map_or_else(|| Ok(empty_map()), |info| text_map(&info.options))?,
             ],
         ));
     }
     // `DatabaseManager::GetDatabases`: the attached databases, then `system` and `temp`.
-    let rank = |name: &str| match name {
-        "system" => 1,
-        "temp" => 2,
+    let rank = |name: &[u8]| match name {
+        b"system" => 1,
+        b"temp" => 2,
         _ => 0,
     };
     rows.sort_by(|a, b| (rank(&a.0), &a.0).cmp(&(rank(&b.0), &b.0)));
@@ -243,23 +244,25 @@ const SCHEMA_COLUMNS: Columns = &[
 
 /// `duckdb_schemas()`.
 fn schema_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
-    let mut rows: Vec<(String, String, Vec<Value>)> = Vec::new();
-    let mut push = |catalog: &str, catalog_oid: u64, schema: &str, schema_oid: u64, internal: bool| {
-        rows.push((
-            catalog.to_lowercase(),
-            schema.to_lowercase(),
-            vec![
-                oid(schema_oid),
-                text(catalog),
-                oid(catalog_oid),
-                text(schema),
-                null_text(),
-                empty_map(),
-                Value::boolean(internal),
-                null_text(),
-            ],
-        ));
-    };
+    let mut rows: Vec<(ByteString, ByteString, Vec<Value>)> = Vec::new();
+    let mut push =
+        |catalog: &[u8], catalog_oid: u64, schema: &[u8], schema_oid: u64, internal: bool| -> Result<()> {
+            rows.push((
+                catalog.to_ascii_lowercase().into(),
+                schema.to_ascii_lowercase().into(),
+                vec![
+                    oid(schema_oid),
+                    text(catalog)?,
+                    oid(catalog_oid),
+                    text(schema)?,
+                    null_text(),
+                    empty_map(),
+                    Value::boolean(internal),
+                    null_text(),
+                ],
+            ));
+            Ok(())
+        };
     for (catalog, schema) in schemas(context) {
         push(
             &catalog.name(),
@@ -267,14 +270,19 @@ fn schema_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
             schema.name(),
             schema.oid,
             schema.internal,
-        );
+        )?;
     }
     rows.sort_by(|a, b| (&a.0, &a.1).cmp(&(&b.0, &b.1)));
     Ok(rows.into_iter().map(|(_, _, row)| row).collect())
 }
 
 /// The `CreateInfo` of a table entry (`TableCatalogEntry::GetInfo`).
-fn table_create_info(catalog: &str, schema: &str, entry: &CatalogEntry, table: &TableEntry) -> CreateInfo {
+fn table_create_info(
+    catalog: impl AsRef<[u8]>,
+    schema: impl AsRef<[u8]>,
+    entry: &CatalogEntry,
+    table: &TableEntry,
+) -> CreateInfo {
     let columns = table
         .columns
         .iter()
@@ -310,14 +318,19 @@ fn table_create_info(catalog: &str, schema: &str, entry: &CatalogEntry, table: &
     )
 }
 
-fn base_info(catalog: &str, schema: &str, temporary: bool, kind: CreateInfoKind) -> CreateInfo {
+fn base_info(
+    catalog: impl AsRef<[u8]>,
+    schema: impl AsRef<[u8]>,
+    temporary: bool,
+    kind: CreateInfoKind,
+) -> CreateInfo {
     CreateInfo {
-        catalog: catalog.to_owned(),
-        schema: schema.to_owned(),
+        catalog: catalog.as_ref().into(),
+        schema: schema.as_ref().into(),
         temporary,
         internal: false,
         on_conflict: OnCreateConflict::ErrorOnConflict,
-        sql: String::new(),
+        sql: String::new().into(),
         comment: Value::default(),
         tags: CaseInsensitiveMap::default(),
         dependencies: LogicalDependencyList::default(),
@@ -369,13 +382,13 @@ fn table_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 .count();
             let info = table_create_info("", schema.name(), &entry, table);
             rows.push(vec![
-                text(&*catalog.name()),
+                text(&*catalog.name())?,
                 oid(catalog.oid()),
-                text(schema.name()),
+                text(schema.name())?,
                 oid(schema.oid),
-                text(entry.name()),
+                text(entry.name())?,
                 oid(entry.oid),
-                comment_text(&entry.comment),
+                comment_text(&entry.comment)?,
                 empty_map(),
                 Value::boolean(entry.internal),
                 Value::boolean(entry.temporary),
@@ -384,7 +397,7 @@ fn table_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 count(table.columns.len()),
                 count(index_count),
                 count(checks),
-                info.to_sql().map_or_else(null_text, text),
+                info.to_sql().map_or_else(|| Ok(null_text()), text)?,
             ]);
         }
     }
@@ -432,18 +445,18 @@ fn view_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 })),
             );
             rows.push(vec![
-                text(&*catalog.name()),
+                text(&*catalog.name())?,
                 oid(catalog.oid()),
-                text(schema.name()),
+                text(schema.name())?,
                 oid(schema.oid),
-                text(entry.name()),
+                text(entry.name())?,
                 oid(entry.oid),
-                comment_text(&entry.comment),
+                comment_text(&entry.comment)?,
                 empty_map(),
                 Value::boolean(entry.internal),
                 Value::boolean(entry.temporary),
                 count(view.types.len()),
-                info.to_sql().map_or_else(null_text, text),
+                info.to_sql().map_or_else(|| Ok(null_text()), text)?,
                 Value::boolean(true),
             ]);
         }
@@ -492,15 +505,15 @@ fn index_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 CreateInfoKind::Index(Box::new(index.info.clone())),
             );
             rows.push(vec![
-                text(&*catalog.name()),
+                text(&*catalog.name())?,
                 oid(catalog.oid()),
-                text(schema.name()),
+                text(schema.name())?,
                 oid(schema.oid),
-                text(entry.name()),
+                text(entry.name())?,
                 oid(entry.oid),
-                text(index.info.table.clone()),
+                text(index.info.table.clone())?,
                 table_oid,
-                comment_text(&entry.comment),
+                comment_text(&entry.comment)?,
                 empty_map(),
                 Value::boolean(matches!(
                     constraint,
@@ -511,11 +524,14 @@ fn index_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 text(
                     Value::list(
                         LogicalType::VARCHAR,
-                        expressions.iter().map(Value::varchar).collect(),
+                        expressions
+                            .iter()
+                            .map(|expression| Value::try_varchar(expression))
+                            .collect::<Result<_>>()?,
                     )
                     .to_varchar()?,
-                ),
-                info.to_sql().map_or_else(null_text, text),
+                )?,
+                info.to_sql().map_or_else(|| Ok(null_text()), text)?,
             ]);
         }
     }
@@ -563,13 +579,13 @@ fn sequence_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 cycle: data.cycle,
             });
             rows.push(vec![
-                text(&*catalog.name()),
+                text(&*catalog.name())?,
                 oid(catalog.oid()),
-                text(schema.name()),
+                text(schema.name())?,
                 oid(schema.oid),
-                text(entry.name()),
+                text(entry.name())?,
                 oid(entry.oid),
-                comment_text(&entry.comment),
+                comment_text(&entry.comment)?,
                 empty_map(),
                 Value::boolean(entry.temporary),
                 Value::bigint(data.start_value),
@@ -582,7 +598,7 @@ fn sequence_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 } else {
                     Value::bigint(data.last_value)
                 },
-                text(sql),
+                text(sql)?,
             ]);
         }
     }
@@ -644,33 +660,33 @@ fn column_row(
     schema: &CatalogEntry,
     entry: &CatalogEntry,
     index: usize,
-    name: &str,
+    name: &[u8],
     ty: &LogicalType,
-    default: Option<String>,
+    default: Option<ByteString>,
     nullable: bool,
     comment: &Value,
-) -> Vec<Value> {
+) -> Result<Vec<Value>> {
     let [precision, radix, scale] = numeric_properties(ty);
-    vec![
-        text(&*catalog.name()),
+    Ok(vec![
+        text(&*catalog.name())?,
         oid(catalog.oid()),
-        text(schema.name()),
+        text(schema.name())?,
         oid(schema.oid),
-        text(entry.name()),
+        text(entry.name())?,
         oid(entry.oid),
-        text(name),
+        text(name)?,
         Value::integer(i32::try_from(index + 1).unwrap_or(i32::MAX)),
-        comment_text(comment),
+        comment_text(comment)?,
         Value::boolean(entry.internal),
-        default.map_or_else(null_text, text),
+        default.map_or_else(|| Ok(null_text()), text)?,
         Value::boolean(nullable),
-        text(ty.to_string()),
+        text(ty.to_bytes())?,
         Value::bigint(i64::from(ty.id() as u8)),
         Value::null(LogicalType::INTEGER),
         precision,
         radix,
         scale,
-    ]
+    ])
 }
 
 /// `duckdb_columns()`: the columns of every table and view.
@@ -689,7 +705,7 @@ fn column_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                             .generated
                             .as_ref()
                             .or(column.default_value.as_ref())
-                            .map(ToString::to_string);
+                            .map(rustdb_ast::ParsedExpression::to_sql_bytes);
                         rows.push(column_row(
                             catalog,
                             &schema,
@@ -700,12 +716,12 @@ fn column_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                             default,
                             nullable,
                             &column.comment,
-                        ));
+                        )?);
                     }
                 }
                 EntryKind::View(view) => {
                     // `ViewColumnHelper`: the view's column names, deduplicated.
-                    let mut names: Vec<String> = (0..view.types.len())
+                    let mut names: Vec<ByteString> = (0..view.types.len())
                         .map(|index| {
                             view.aliases
                                 .get(index)
@@ -719,7 +735,7 @@ fn column_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                         let comment = view.column_comments.get(name).cloned().unwrap_or_default();
                         rows.push(column_row(
                             catalog, &schema, &entry, index, name, ty, None, true, &comment,
-                        ));
+                        )?);
                     }
                 }
                 _ => {}
@@ -739,17 +755,17 @@ pub(crate) fn register_default_views(system: &Catalog) -> Result<()> {
         let rustdb_ast::SqlStatementKind::Select(select) = statement.kind else {
             return Err(Error::internal("default view is not a SELECT"));
         };
-        system.register_view_in(
+        system.register_default_entry(
             schema,
-            name,
-            rustdb_catalog::ViewEntry {
+            *name,
+            EntryKind::View(rustdb_catalog::ViewEntry {
                 query: select,
                 aliases: Vec::new(),
                 types: Vec::new(),
                 names: Vec::new(),
                 column_comments: rustdb_common::OrderedMap::default(),
-            },
-        )?;
+            }),
+        );
     }
     Ok(())
 }
@@ -826,9 +842,7 @@ pub(crate) fn register_default_macros(system: &Catalog) -> Result<()> {
             } else {
                 EntryKind::Macro(entry)
             };
-            let mut entry = CatalogEntry::new(first.name, kind);
-            entry.internal = true;
-            system.create_entry_committed(first.schema, entry)?;
+            system.register_default_entry(first.schema, first.name, kind);
         }
     }
     Ok(())
@@ -840,7 +854,7 @@ pub(crate) fn register_json_macros(system: &Catalog) -> Result<()> {
     let json_type = rustdb_catalog::TypeEntry {
         user_type: rustdb_json::json_type(),
     };
-    let mut entry = CatalogEntry::new(rustdb_json::JSON_TYPE_NAME, EntryKind::Type(json_type));
+    let mut entry = system.new_entry(rustdb_json::JSON_TYPE_NAME, EntryKind::Type(json_type));
     entry.internal = true;
     system.create_entry_committed("main", entry)?;
     for json_macro in rustdb_json::JSON_MACROS {
@@ -854,7 +868,7 @@ pub(crate) fn register_json_macros(system: &Catalog) -> Result<()> {
         let entry = rustdb_catalog::MacroEntry {
             macros: vec![default_macro_function(&default, false)?],
         };
-        let mut entry = CatalogEntry::new(json_macro.name, EntryKind::Macro(entry));
+        let mut entry = system.new_entry(json_macro.name, EntryKind::Macro(entry));
         entry.internal = true;
         system.create_entry_committed("main", entry)?;
     }
@@ -937,17 +951,18 @@ const SECRET_TYPE_COLUMNS: Columns = &[
 
 /// `duckdb_secret_types()` (`DuckDBSecretTypesFunction`): the secret types of the secret
 /// manager (`AllSecretTypes`).
-fn secret_type_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
-    Ok(crate::secrets::SECRET_TYPES
+fn secret_type_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
+    secret_manager(context)?
+        .secret_types()
         .iter()
         .map(|secret_type| {
-            vec![
-                text(secret_type.name),
-                text(secret_type.default_provider),
-                text(secret_type.extension),
-            ]
+            Ok(vec![
+                text(secret_type.name)?,
+                text(secret_type.default_provider)?,
+                text(secret_type.extension)?,
+            ])
         })
-        .collect())
+        .collect::<Result<_>>()
 }
 
 const COORDINATE_SYSTEM_COLUMNS: Columns = &[
@@ -972,11 +987,16 @@ struct CoordinateSystemOids(Vec<u64>);
 fn coordinate_system_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     use rustdb_types::geometry::DEFAULT_COORDINATE_SYSTEMS;
     const KEY: &str = "duckdb_coordinate_systems_oids";
+    let Some((system, main)) = schemas(context).into_iter().find(|(catalog, schema)| {
+        catalog.name().eq_ignore_ascii_case(b"system") && schema.name() == rustdb_catalog::DEFAULT_SCHEMA
+    }) else {
+        return Ok(Vec::new());
+    };
     let new_oids = || {
         Arc::new(CoordinateSystemOids(
             DEFAULT_COORDINATE_SYSTEMS
                 .iter()
-                .map(|_| rustdb_catalog::next_oid())
+                .map(|_| system.oid_allocator().next_oid())
                 .collect(),
         ))
     };
@@ -989,30 +1009,25 @@ fn coordinate_system_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     } else {
         new_oids()
     };
-    let Some((system, main)) = schemas(context).into_iter().find(|(catalog, schema)| {
-        catalog.name().eq_ignore_ascii_case("system") && schema.name() == rustdb_catalog::DEFAULT_SCHEMA
-    }) else {
-        return Ok(Vec::new());
-    };
     let mut systems: Vec<_> = DEFAULT_COORDINATE_SYSTEMS.iter().zip(&oids.0).collect();
     systems.sort_by_key(|(crs, _)| crs.name);
-    Ok(systems
+    systems
         .into_iter()
         .map(|(crs, crs_oid)| {
-            vec![
-                text(&*system.name()),
+            Ok(vec![
+                text(&*system.name())?,
                 oid(system.oid()),
-                text(main.name()),
+                text(main.name())?,
                 oid(main.oid),
                 oid(*crs_oid),
-                text(crs.name),
-                text(crs.auth_name),
-                text(crs.auth_code),
-                text(crs.projjson),
-                text(crs.wkt2_2019),
-            ]
+                text(crs.name)?,
+                text(crs.auth_name)?,
+                text(crs.auth_code)?,
+                text(crs.projjson)?,
+                text(crs.wkt2_2019)?,
+            ])
         })
-        .collect())
+        .collect::<Result<_>>()
 }
 
 /// `duckdb_table_sample(table)` (`DuckDBTableSampleFunction`): the reservoir sample of a
@@ -1077,7 +1092,7 @@ fn seq_scan_function() -> TableFunctionSet {
 
 /// A constant VARCHAR computed from the client context when bound.
 #[derive(Debug)]
-struct ConstantText(String);
+struct ConstantText(ByteString);
 
 impl FunctionData for ConstantText {
     fn as_any(&self) -> &dyn Any {
@@ -1086,7 +1101,7 @@ impl FunctionData for ConstantText {
 }
 
 /// A function without arguments returning `value(context)`.
-fn context_function(name: &'static str, value: fn(&ClientContext) -> String) -> ScalarFunctionSet {
+fn context_function(name: &'static str, value: fn(&ClientContext) -> ByteString) -> ScalarFunctionSet {
     let mut function = ScalarFunction::new(
         name,
         Vec::new(),
@@ -1098,7 +1113,7 @@ fn context_function(name: &'static str, value: fn(&ClientContext) -> String) -> 
                 .and_then(|data| data.as_any().downcast_ref::<ConstantText>())
                 .map(|text| text.0.clone())
                 .ok_or_else(|| Error::internal("context function without bind data"))?;
-            *result = Vector::constant(&Value::varchar(text))?;
+            *result = Vector::constant(&Value::try_varchar(&text)?)?;
             Ok(())
         },
     )
@@ -1185,9 +1200,9 @@ fn make_type_function() -> ScalarFunctionSet {
         let unbound = LogicalType::with_info(
             LogicalTypeId::Unbound,
             TypeInfo::Unbound(UnboundTypeInfo {
-                catalog,
-                schema,
-                name,
+                catalog: catalog.into(),
+                schema: schema.into(),
+                name: name.into(),
                 parameters,
                 query_location: None,
             }),
@@ -1260,7 +1275,9 @@ fn getvariable_function() -> ScalarFunctionSet {
 pub(crate) fn context_scalar_functions() -> Vec<ScalarFunctionSet> {
     vec![
         context_function("current_database", rustdb_planner::ClientContext::default_catalog),
-        context_function("current_schema", |context| context.default_schema().to_owned()),
+        context_function("current_schema", |context| {
+            context.default_schema().to_owned().into()
+        }),
         in_search_path_function(),
         getvariable_function(),
         make_type_function(),
@@ -1317,7 +1334,7 @@ fn rows_function_with_name(
                 let rows = rows(context, &argument)?;
                 Ok(TableFunctionBindOutput {
                     return_types: types.clone(),
-                    names: columns.iter().map(|(name, _)| (*name).to_owned()).collect(),
+                    names: columns.iter().map(|(name, _)| (*name).into()).collect(),
                     bind_data: Some(Arc::new(Rows { types, rows })),
                 })
             })
@@ -1369,11 +1386,11 @@ fn table_info_rows(context: &ClientContext, name: &str) -> Result<Vec<Vec<Value>
                     .generated
                     .as_ref()
                     .or(column.default_value.as_ref())
-                    .map_or_else(null_text, |expression| text(expression.to_string()));
+                    .map_or_else(|| Ok(null_text()), |expression| text(expression.to_sql_bytes()))?;
                 rows.push(vec![
                     Value::integer(i32::try_from(index).unwrap_or(i32::MAX)),
-                    text(column.name.clone()),
-                    text(column.logical_type.to_string()),
+                    text(column.name.clone())?,
+                    text(column.logical_type.to_string())?,
                     Value::boolean(entry.not_null_columns.contains(&index)),
                     default,
                     Value::boolean(pk),
@@ -1390,8 +1407,8 @@ fn table_info_rows(context: &ClientContext, name: &str) -> Result<Vec<Vec<Value>
                     .unwrap_or_default();
                 rows.push(vec![
                     Value::integer(i32::try_from(index).unwrap_or(i32::MAX)),
-                    text(name),
-                    text(ty.to_string()),
+                    text(name)?,
+                    text(ty.to_string())?,
                     Value::boolean(false),
                     null_text(),
                     Value::boolean(false),
@@ -1456,22 +1473,22 @@ fn show_rows(context: &ClientContext, name: &str) -> Result<Vec<Vec<Value>>> {
                     .generated
                     .as_ref()
                     .or(column.default_value.as_ref())
-                    .map_or_else(null_text, |expression| text(expression.to_string()));
+                    .map_or_else(|| Ok(null_text()), |expression| text(expression.to_sql_bytes()))?;
                 let key = if pk {
-                    text("PRI")
+                    text("PRI")?
                 } else if unique {
-                    text("UNI")
+                    text("UNI")?
                 } else {
                     null_text()
                 };
                 rows.push(vec![
-                    text(column.name.clone()),
-                    text(column.logical_type.to_string()),
+                    text(column.name.clone())?,
+                    text(column.logical_type.to_string())?,
                     text(if entry.not_null_columns.contains(&index) {
                         "NO"
                     } else {
                         "YES"
-                    }),
+                    })?,
                     key,
                     default,
                     null_text(),
@@ -1487,9 +1504,9 @@ fn show_rows(context: &ClientContext, name: &str) -> Result<Vec<Vec<Value>>> {
                     .cloned()
                     .unwrap_or_default();
                 rows.push(vec![
-                    text(name),
-                    text(ty.to_string()),
-                    text("YES"),
+                    text(name)?,
+                    text(ty.to_string())?,
+                    text("YES")?,
                     null_text(),
                     null_text(),
                     null_text(),
@@ -1512,9 +1529,9 @@ const VERSION_COLUMNS: Columns = &[
 fn version_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
     use crate::Database;
     Ok(vec![vec![
-        text(Database::library_version()),
-        text(Database::source_id()),
-        text(Database::release_codename()),
+        text(Database::library_version())?,
+        text(Database::source_id())?,
+        text(Database::release_codename())?,
     ]])
 }
 
@@ -1557,6 +1574,15 @@ fn extensions_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 .is_none_or(|cache| crate::database::static_extension_loaded(cache, name))
         },
         &client_extensions,
+        &cache
+            .as_deref()
+            .and_then(|cache| {
+                cache.get::<crate::external_extensions::ExternalExtensionState>(
+                    crate::external_extensions::EXTERNAL_EXTENSIONS_KEY,
+                )
+            })
+            .map(|state| state.records())
+            .unwrap_or_default(),
     )
 }
 
@@ -1564,7 +1590,7 @@ const PLATFORM_COLUMNS: Columns = &[("platform", varchar)];
 
 /// `pragma_platform()`.
 fn platform_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
-    Ok(vec![vec![text(crate::extensions::platform())]])
+    Ok(vec![vec![text(crate::extensions::platform())?]])
 }
 
 const USER_AGENT_COLUMNS: Columns = &[("user_agent", varchar)];
@@ -1593,7 +1619,7 @@ fn user_agent_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
             user_agent.push_str(&value);
         }
     }
-    Ok(vec![vec![text(user_agent)]])
+    Ok(vec![vec![text(user_agent)?]])
 }
 
 const DATABASE_SIZE_COLUMNS: Columns = &[
@@ -1632,18 +1658,18 @@ fn database_size_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
         let buffer_manager = io.buffer_manager();
         let limit = buffer_manager.max_memory();
         rows.push(vec![
-            text(&*catalog.name()),
-            text(rustdb_buffer::format_bytes(total * block_size)),
+            text(&*catalog.name())?,
+            text(rustdb_buffer::format_bytes(total * block_size))?,
             Value::bigint(i64::try_from(block_size).unwrap_or(i64::MAX)),
             Value::bigint(i64::try_from(total).unwrap_or(i64::MAX)),
             Value::bigint(i64::try_from(total - free.min(total)).unwrap_or(i64::MAX)),
             Value::bigint(i64::try_from(free).unwrap_or(i64::MAX)),
-            text(rustdb_buffer::format_bytes(wal_size)),
-            text(rustdb_buffer::format_bytes(buffer_manager.used_memory())),
+            text(rustdb_buffer::format_bytes(wal_size))?,
+            text(rustdb_buffer::format_bytes(buffer_manager.used_memory()))?,
             if limit == u64::MAX {
-                text("Unlimited")
+                text("Unlimited")?
             } else {
-                text(rustdb_buffer::format_bytes(limit))
+                text(rustdb_buffer::format_bytes(limit))?
             },
         ]);
     }
@@ -1663,12 +1689,17 @@ fn memory_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
         return Ok(Vec::new());
     };
     let clamp = |bytes: u64| Value::bigint(i64::try_from(bytes).unwrap_or(0));
-    Ok(io
-        .buffer_manager()
+    io.buffer_manager()
         .memory_usage_info()
         .into_iter()
-        .map(|info| vec![text(info.tag.name()), clamp(info.size), clamp(info.evicted_data)])
-        .collect())
+        .map(|info| {
+            Ok(vec![
+                text(info.tag.name())?,
+                clamp(info.size),
+                clamp(info.evicted_data),
+            ])
+        })
+        .collect::<Result<_>>()
 }
 
 const EXTERNAL_FILE_CACHE_COLUMNS: Columns = &[
@@ -1685,18 +1716,18 @@ fn external_file_cache_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> 
         return Ok(Vec::new());
     };
     let bigint = |value: u64| Value::bigint(i64::try_from(value).unwrap_or(i64::MAX));
-    Ok(cache
+    cache
         .cached_file_information()
         .into_iter()
         .map(|entry| {
-            vec![
-                text(entry.path),
+            Ok(vec![
+                text(entry.path)?,
                 bigint(entry.nr_bytes),
                 bigint(entry.location),
                 Value::boolean(entry.loaded),
-            ]
+            ])
         })
-        .collect())
+        .collect::<Result<_>>()
 }
 
 /// `duckdb_temporary_files()` (`DuckDBTemporaryFilesFunction`): the files of the
@@ -1705,17 +1736,16 @@ fn temporary_file_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     let Some(io) = context.catalogs.iter().find_map(|catalog| catalog.io().ok()) else {
         return Ok(Vec::new());
     };
-    Ok(io
-        .buffer_manager()
+    io.buffer_manager()
         .temporary_files()
         .into_iter()
         .map(|file| {
-            vec![
-                text(&file.path),
+            Ok(vec![
+                text(&file.path)?,
                 Value::bigint(i64::try_from(file.size).unwrap_or(i64::MAX)),
-            ]
+            ])
         })
-        .collect())
+        .collect::<Result<_>>()
 }
 
 fn bigint_list() -> LogicalType {
@@ -1737,27 +1767,28 @@ const SETTING_COLUMNS: Columns = &[
 
 /// `duckdb_settings()` (`DuckDBSettingsFunction`): every option with its current value.
 fn setting_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
-    let settings = context
+    let mut settings = context
         .function_client
         .settings()
         .map(|settings| settings.settings())
         .unwrap_or_default();
-    Ok(settings
+    settings.sort_unstable_by(|left, right| left.name.cmp(&right.name));
+    settings
         .into_iter()
         .map(|setting| {
-            vec![
-                text(setting.name),
-                text(setting.value),
-                text(setting.description),
-                text(setting.input_type),
-                text(if setting.global { "GLOBAL" } else { "LOCAL" }),
+            Ok(vec![
+                text(setting.name)?,
+                setting.value.map_or_else(|| Ok(null_text()), text)?,
+                text(setting.description)?,
+                text(setting.input_type)?,
+                text(if setting.global { "GLOBAL" } else { "LOCAL" })?,
                 Value::list(
                     LogicalType::VARCHAR,
-                    setting.aliases.into_iter().map(text).collect(),
+                    setting.aliases.into_iter().map(text).collect::<Result<_>>()?,
                 ),
-            ]
+            ])
         })
-        .collect())
+        .collect::<Result<_>>()
 }
 
 const KEYWORD_COLUMNS: Columns = &[("keyword_name", varchar), ("keyword_category", varchar)];
@@ -1765,7 +1796,7 @@ const KEYWORD_COLUMNS: Columns = &[("keyword_name", varchar), ("keyword_category
 /// `duckdb_keywords()` (`DuckDBKeywordsFunction`): the grammar's keywords.
 fn keyword_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
     use rustdb_parser::KeywordCategory;
-    Ok(rustdb_parser::keyword_list()
+    rustdb_parser::keyword_list()
         .iter()
         .map(|keyword| {
             let category = match keyword.category {
@@ -1774,9 +1805,9 @@ fn keyword_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 KeywordCategory::TypeFunc => "type_function",
                 KeywordCategory::ColName => "column_name",
             };
-            vec![text(keyword.name), text(category)]
+            Ok(vec![text(keyword.name)?, text(category)?])
         })
-        .collect())
+        .collect::<Result<_>>()
 }
 
 const OPTIMIZER_COLUMNS: Columns = &[("name", varchar)];
@@ -1818,7 +1849,10 @@ fn optimizer_rows(_: &ClientContext) -> Result<Vec<Vec<Value>>> {
         "join_elimination",
         "window_self_join",
     ];
-    Ok(OPTIMIZERS.iter().map(|name| vec![text(*name)]).collect())
+    OPTIMIZERS
+        .iter()
+        .map(|name| Ok(vec![text(*name)?]))
+        .collect::<Result<_>>()
 }
 
 fn ubigint() -> LogicalType {
@@ -1840,9 +1874,9 @@ fn variable_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
         .iter()
         .map(|(name, value)| {
             Ok(vec![
-                text(name),
-                text(value.to_varchar()?),
-                text(value.logical_type().to_string()),
+                text(name)?,
+                text(value.to_varchar()?)?,
+                text(value.logical_type().to_string())?,
             ])
         })
         .collect()
@@ -1866,14 +1900,14 @@ fn prepared_statement_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
         )
     };
     let null_list = || Value::null(varchar_list());
-    Ok(context
+    context
         .prepared_statements
         .iter()
         .map(|(name, prepared)| {
             let statement = &prepared.unbound_statement;
             let sql = match &statement.kind {
-                rustdb_ast::SqlStatementKind::Select(select) => select.to_string(),
-                rustdb_ast::SqlStatementKind::Insert(insert) => insert.to_string(),
+                rustdb_ast::SqlStatementKind::Select(select) => rustdb_common::byte_format!("{select}"),
+                rustdb_ast::SqlStatementKind::Insert(insert) => rustdb_common::byte_format!("{insert}"),
                 _ => statement.query.clone(),
             };
             let parameters = if statement.named_param_map.is_empty() {
@@ -1888,9 +1922,9 @@ fn prepared_statement_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 StatementReturnType::ChangedRows => names(vec!["BIGINT".to_owned()]),
                 _ => null_list(),
             };
-            vec![text(name), text(sql), parameters, results]
+            Ok(vec![text(name)?, text(sql)?, parameters, results])
         })
-        .collect())
+        .collect::<Result<_>>()
 }
 
 const TEMPORARY_FILE_COLUMNS: Columns = &[("path", varchar), ("size", bigint)];
@@ -1930,15 +1964,15 @@ fn dependency_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
         }
     }
     let row = |object: u64, dependent: u64, kind: &str| {
-        vec![
+        Ok(vec![
             Value::bigint(0),
             Value::bigint(object as i64),
             Value::integer(0),
             Value::bigint(0),
             Value::bigint(dependent as i64),
             Value::integer(0),
-            text(kind),
-        ]
+            text(kind)?,
+        ])
     };
     let mut rows = Vec::new();
     for (_, dependent) in &entries {
@@ -1947,7 +1981,7 @@ fn dependency_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 .iter()
                 .find(|(schema, entry)| entry.is_described_by(schema, &dependency.entry))
             {
-                rows.push(row(object.oid, dependent.oid, "n"));
+                rows.push(row(object.oid, dependent.oid, "n")?);
             }
         }
         if let Some(owner) = &dependent.owned_by
@@ -1955,7 +1989,7 @@ fn dependency_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 .iter()
                 .find(|(schema, entry)| entry.is_described_by(schema, owner))
         {
-            rows.push(row(object.oid, dependent.oid, "a"));
+            rows.push(row(object.oid, dependent.oid, "a")?);
         }
     }
     Ok(rows)
@@ -1964,10 +1998,7 @@ fn dependency_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
 /// `pragma_collations()`: the builtin collations (`PragmaCollations`; the ICU collations
 /// come with the ICU extension).
 fn collation_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
-    let mut names: Vec<String> = ["nocase", "noaccent", "nfc"]
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
+    let mut names: Vec<ByteString> = Vec::new();
     if let Some(system) = context.catalog("system")
         && let Some(schema) = system.schema(&context.transaction, rustdb_catalog::DEFAULT_SCHEMA)
         && let Some(schema) = schema.as_schema()
@@ -1981,7 +2012,7 @@ fn collation_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
         );
     }
     names.sort();
-    Ok(names.into_iter().map(|name| vec![Value::varchar(name)]).collect())
+    names.into_iter().map(|name| Ok(vec![text(name)?])).collect()
 }
 
 /// `duckdb_connection_count()`: the number of open connections
@@ -2034,9 +2065,9 @@ const FUNCTION_COLUMNS: Columns = &[
 struct FunctionRow {
     function_type: &'static str,
     return_type: Value,
-    parameters: Vec<String>,
+    parameters: Vec<ByteString>,
     /// `None` for untyped macro parameters (NULL).
-    parameter_types: Vec<Option<String>>,
+    parameter_types: Vec<Option<ByteString>>,
     varargs: Value,
     macro_definition: Value,
     has_side_effects: Value,
@@ -2051,7 +2082,7 @@ fn describe_overload(
     info: Option<&rustdb_function::function_descriptions::FunctionInfo>,
     arguments: &[LogicalType],
 ) -> (
-    Vec<String>,
+    Vec<ByteString>,
     Option<rustdb_function::function_descriptions::FunctionDescription>,
 ) {
     let description = info.and_then(|info| {
@@ -2066,6 +2097,7 @@ fn describe_overload(
                     .get(index)
                     .cloned()
                     .unwrap_or_else(|| format!("col{index}"))
+                    .into()
             })
             .collect(),
         _ => positional_names(arguments.len()),
@@ -2074,7 +2106,7 @@ fn describe_overload(
 }
 
 /// `FunctionStabilityToValue`.
-fn stability_value(stability: rustdb_function::Stability) -> Value {
+fn stability_value(stability: rustdb_function::Stability) -> Result<Value> {
     text(match stability {
         rustdb_function::Stability::Volatile => "VOLATILE",
         rustdb_function::Stability::ConsistentWithinQuery => "CONSISTENT_WITHIN_QUERY",
@@ -2083,37 +2115,37 @@ fn stability_value(stability: rustdb_function::Stability) -> Value {
 }
 
 /// `col0, col1, ...`: the parameter names of built-in functions.
-fn positional_names(count: usize) -> Vec<String> {
-    (0..count).map(|index| format!("col{index}")).collect()
+fn positional_names(count: usize) -> Vec<ByteString> {
+    (0..count).map(|index| format!("col{index}").into()).collect()
 }
 
 /// The rows of a macro's overloads (`MacroExtractor` / `TableMacroExtractor`).
-fn macro_rows(entry: &rustdb_catalog::MacroEntry, table: bool) -> Vec<FunctionRow> {
+fn macro_rows(entry: &rustdb_catalog::MacroEntry, table: bool) -> Result<Vec<FunctionRow>> {
     entry
         .macros
         .iter()
         .map(|function| {
-            let parameters: Vec<String> = function
+            let parameters: Vec<ByteString> = function
                 .parameters
                 .iter()
                 .map(|parameter| match &parameter.kind {
                     rustdb_ast::ParsedExpressionKind::ColumnRef(column) => {
                         column.column_names.last().cloned().unwrap_or_default()
                     }
-                    _ => parameter.to_string(),
+                    _ => parameter.to_sql_bytes(),
                 })
                 .collect();
             let parameter_types = (0..parameters.len())
                 .map(|index| match function.types.get(index) {
-                    Some(ty) if ty.id() != LogicalTypeId::Unknown => Some(ty.to_string()),
+                    Some(ty) if ty.id() != LogicalTypeId::Unknown => Some(ty.to_bytes()),
                     _ => None,
                 })
                 .collect();
             let macro_definition = match &function.kind {
-                rustdb_ast::MacroFunctionKind::Scalar(scalar) => text(scalar.expression.to_string()),
-                rustdb_ast::MacroFunctionKind::Table(table) => text(table.query_node.to_string()),
+                rustdb_ast::MacroFunctionKind::Scalar(scalar) => text(scalar.expression.to_sql_bytes())?,
+                rustdb_ast::MacroFunctionKind::Table(table) => text(table.query_node.to_sql_bytes())?,
             };
-            FunctionRow {
+            Ok(FunctionRow {
                 function_type: if table { "table_macro" } else { "macro" },
                 return_type: null_text(),
                 parameters,
@@ -2123,7 +2155,7 @@ fn macro_rows(entry: &rustdb_catalog::MacroEntry, table: bool) -> Vec<FunctionRo
                 has_side_effects: Value::null(LogicalType::BOOLEAN),
                 stability: null_text(),
                 description: None,
-            }
+            })
         })
         .collect()
 }
@@ -2132,27 +2164,28 @@ fn macro_rows(entry: &rustdb_catalog::MacroEntry, table: bool) -> Vec<FunctionRo
 fn entry_function_rows(
     entry: &CatalogEntry,
     info: Option<&rustdb_function::function_descriptions::FunctionInfo>,
-) -> Vec<FunctionRow> {
-    let varargs = |varargs: Option<&LogicalType>| varargs.map_or_else(null_text, |ty| text(ty.to_string()));
+) -> Result<Vec<FunctionRow>> {
+    let varargs =
+        |varargs: Option<&LogicalType>| varargs.map_or_else(|| Ok(null_text()), |ty| text(ty.to_bytes()));
     match &entry.kind {
         EntryKind::ScalarFunction(set) => set
             .functions
             .iter()
             .map(|function| {
                 let (parameters, description) = describe_overload(info, &function.arguments);
-                FunctionRow {
+                Ok(FunctionRow {
                     function_type: "scalar",
-                    return_type: text(function.return_type.to_string()),
+                    return_type: text(function.return_type.to_bytes())?,
                     parameters,
-                    parameter_types: function.arguments.iter().map(|ty| Some(ty.to_string())).collect(),
-                    varargs: varargs(function.varargs.as_ref()),
+                    parameter_types: function.arguments.iter().map(|ty| Some(ty.to_bytes())).collect(),
+                    varargs: varargs(function.varargs.as_ref())?,
                     macro_definition: null_text(),
                     has_side_effects: Value::boolean(
                         function.stability == rustdb_function::Stability::Volatile,
                     ),
-                    stability: stability_value(function.stability),
+                    stability: stability_value(function.stability)?,
                     description,
-                }
+                })
             })
             .collect(),
         EntryKind::AggregateFunction(set) => set
@@ -2160,17 +2193,17 @@ fn entry_function_rows(
             .iter()
             .map(|function| {
                 let (parameters, description) = describe_overload(info, &function.arguments);
-                FunctionRow {
+                Ok(FunctionRow {
                     function_type: "aggregate",
-                    return_type: text(function.return_type.to_string()),
+                    return_type: text(function.return_type.to_bytes())?,
                     parameters,
-                    parameter_types: function.arguments.iter().map(|ty| Some(ty.to_string())).collect(),
-                    varargs: varargs(function.varargs.as_ref()),
+                    parameter_types: function.arguments.iter().map(|ty| Some(ty.to_bytes())).collect(),
+                    varargs: varargs(function.varargs.as_ref())?,
                     macro_definition: null_text(),
                     has_side_effects: Value::boolean(false),
-                    stability: stability_value(rustdb_function::Stability::Consistent),
+                    stability: stability_value(rustdb_function::Stability::Consistent)?,
                     description,
-                }
+                })
             })
             .collect(),
         EntryKind::TableFunction(set) => set
@@ -2178,23 +2211,23 @@ fn entry_function_rows(
             .iter()
             .map(|function| {
                 let mut parameters = positional_names(function.arguments.len());
-                let mut parameter_types: Vec<Option<String>> =
-                    function.arguments.iter().map(|ty| Some(ty.to_string())).collect();
+                let mut parameter_types: Vec<Option<ByteString>> =
+                    function.arguments.iter().map(|ty| Some(ty.to_bytes())).collect();
                 for (name, ty) in rustdb_function::named_parameters_in_map_order(&function.named_parameters) {
-                    parameters.push(name.clone());
-                    parameter_types.push(Some(ty.to_string()));
+                    parameters.push(name.clone().into());
+                    parameter_types.push(Some(ty.to_bytes()));
                 }
-                FunctionRow {
+                Ok(FunctionRow {
                     function_type: "table",
                     return_type: null_text(),
                     parameters,
                     parameter_types,
-                    varargs: varargs(function.varargs.as_ref()),
+                    varargs: varargs(function.varargs.as_ref())?,
                     macro_definition: null_text(),
                     has_side_effects: Value::null(LogicalType::BOOLEAN),
                     stability: null_text(),
                     description: None,
-                }
+                })
             })
             .collect(),
         EntryKind::PragmaFunction(set) => set
@@ -2203,28 +2236,28 @@ fn entry_function_rows(
             .map(|function| {
                 // `PragmaFunctionExtractor`.
                 let mut parameters = positional_names(function.arguments.len());
-                let mut parameter_types: Vec<Option<String>> =
-                    function.arguments.iter().map(|ty| Some(ty.to_string())).collect();
+                let mut parameter_types: Vec<Option<ByteString>> =
+                    function.arguments.iter().map(|ty| Some(ty.to_bytes())).collect();
                 for (name, ty) in rustdb_function::named_parameters_in_map_order(&function.named_parameters) {
-                    parameters.push(name.clone());
-                    parameter_types.push(Some(ty.to_string()));
+                    parameters.push(name.clone().into());
+                    parameter_types.push(Some(ty.to_bytes()));
                 }
-                FunctionRow {
+                Ok(FunctionRow {
                     function_type: "pragma",
                     return_type: null_text(),
                     parameters,
                     parameter_types,
-                    varargs: varargs(function.varargs.as_ref()),
+                    varargs: varargs(function.varargs.as_ref())?,
                     macro_definition: null_text(),
                     has_side_effects: Value::null(LogicalType::BOOLEAN),
                     stability: null_text(),
                     description: None,
-                }
+                })
             })
             .collect(),
         EntryKind::Macro(macro_entry) => macro_rows(macro_entry, false),
         EntryKind::TableMacro(macro_entry) => macro_rows(macro_entry, true),
-        _ => Vec::new(),
+        _ => Ok(Vec::new()),
     }
 }
 
@@ -2234,7 +2267,7 @@ fn window_function_rows() -> Vec<(&'static str, Vec<LogicalType>, LogicalType)> 
     let template = || {
         LogicalType::with_info(
             LogicalTypeId::Template,
-            rustdb_types::TypeInfo::Template(rustdb_types::TemplateTypeInfo { name: "T".to_owned() }),
+            rustdb_types::TypeInfo::Template(rustdb_types::TemplateTypeInfo { name: "T".into() }),
         )
     };
     vec![
@@ -2268,53 +2301,59 @@ fn window_function_rows() -> Vec<(&'static str, Vec<LogicalType>, LogicalType)> 
 /// schema, then the window functions. Descriptions, examples and categories are not
 /// recorded by the function sets, so they are empty.
 fn function_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
-    let list =
-        |values: Vec<String>| Value::list(LogicalType::VARCHAR, values.into_iter().map(text).collect());
+    let list = |values: Vec<ByteString>| -> Result<Value> {
+        Ok(Value::list(
+            LogicalType::VARCHAR,
+            values.into_iter().map(text).collect::<Result<_>>()?,
+        ))
+    };
     let mut rows = Vec::new();
-    let mut push = |catalog_name: &str,
+    let mut push = |catalog_name: &[u8],
                     catalog_oid: u64,
-                    schema_name: &str,
-                    name: &str,
-                    alias_of: Option<&str>,
+                    schema_name: &[u8],
+                    name: &[u8],
+                    alias_of: Option<&[u8]>,
                     internal: bool,
                     function_oid: u64,
                     comment: &Value,
-                    row: FunctionRow| {
+                    row: FunctionRow|
+     -> Result<()> {
         let description = row.description.unwrap_or_default();
         rows.push(vec![
-            text(catalog_name),
-            text(catalog_oid.to_string()),
-            text(schema_name),
-            text(name),
+            text(catalog_name)?,
+            text(catalog_oid.to_string())?,
+            text(schema_name)?,
+            text(name)?,
             alias_of
                 .filter(|alias_of| *alias_of != name)
-                .map_or_else(null_text, text),
-            text(row.function_type),
+                .map_or_else(|| Ok(null_text()), text)?,
+            text(row.function_type)?,
             if description.description.is_empty() {
                 null_text()
             } else {
-                text(description.description)
+                text(description.description)?
             },
-            comment_text(comment),
+            comment_text(comment)?,
             empty_map(),
             row.return_type,
-            list(row.parameters),
+            list(row.parameters)?,
             Value::list(
                 LogicalType::VARCHAR,
                 row.parameter_types
                     .into_iter()
-                    .map(|ty| ty.map_or_else(null_text, text))
-                    .collect(),
+                    .map(|ty| ty.map_or_else(|| Ok(null_text()), text))
+                    .collect::<Result<_>>()?,
             ),
             row.varargs,
             row.macro_definition,
             row.has_side_effects,
             Value::boolean(internal),
             oid(function_oid),
-            list(description.examples),
+            list(description.examples.into_iter().map(Into::into).collect())?,
             row.stability,
-            list(description.categories),
+            list(description.categories.into_iter().map(Into::into).collect())?,
         ]);
+        Ok(())
     };
     for (catalog, schema) in schemas(context) {
         let Some(contents) = schema_contents(&schema) else {
@@ -2342,43 +2381,43 @@ fn function_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 ))
             .then(|| rustdb_function::function_descriptions::function_info(entry.name()))
             .flatten();
-            for row in entry_function_rows(&entry, info.as_ref()) {
+            for row in entry_function_rows(&entry, info.as_ref())? {
                 push(
                     &catalog.name(),
                     catalog.oid(),
                     schema.name(),
                     entry.name(),
-                    info.as_ref().map(|info| info.alias_of.as_str()),
+                    info.as_ref().map(|info| info.alias_of.as_bytes()),
                     entry.internal,
                     entry.oid,
                     &entry.comment,
                     row,
-                );
+                )?;
             }
         }
     }
     for (name, arguments, return_type) in window_function_rows() {
         push(
-            "system",
+            b"system",
             0,
-            "main",
-            name,
+            b"main",
+            name.as_bytes(),
             None,
             true,
             0,
             &Value::default(),
             FunctionRow {
                 function_type: "aggregate",
-                return_type: text(return_type.to_string()),
+                return_type: text(return_type.to_bytes())?,
                 parameters: positional_names(arguments.len()),
-                parameter_types: arguments.iter().map(|ty| Some(ty.to_string())).collect(),
+                parameter_types: arguments.iter().map(|ty| Some(ty.to_bytes())).collect(),
                 varargs: null_text(),
                 macro_definition: null_text(),
                 has_side_effects: Value::boolean(false),
-                stability: stability_value(rustdb_function::Stability::Consistent),
+                stability: stability_value(rustdb_function::Stability::Consistent)?,
                 description: None,
             },
-        );
+        )?;
     }
     Ok(rows)
 }
@@ -2439,7 +2478,7 @@ fn type_category(id: LogicalTypeId) -> Option<&'static str> {
 /// builtin type's oid is its type id, listed once.
 fn type_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     struct TypeRow {
-        name: String,
+        name: ByteString,
         ty: LogicalType,
         internal: bool,
         oid: u64,
@@ -2468,7 +2507,7 @@ fn type_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
             }
         }
         // The catalog orders entries by their upper-cased names.
-        types.sort_by_cached_key(|row| row.name.to_uppercase());
+        types.sort_by_cached_key(|row| row.name.iter().map(u8::to_ascii_uppercase).collect::<Vec<_>>());
         for row in types {
             let type_oid = if seen_oids.insert(row.oid) {
                 oid(row.oid)
@@ -2482,20 +2521,25 @@ fn type_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 count(physical.size())
             };
             let labels = row.ty.enum_values().map_or_else(
-                || Value::null(LogicalType::list(LogicalType::VARCHAR)),
-                |values| Value::list(LogicalType::VARCHAR, values.iter().map(text).collect()),
-            );
+                || Ok(Value::null(LogicalType::list(LogicalType::VARCHAR))),
+                |values| {
+                    Ok(Value::list(
+                        LogicalType::VARCHAR,
+                        values.iter().map(text).collect::<Result<_>>()?,
+                    ))
+                },
+            )?;
             rows.push(vec![
-                text(&*catalog.name()),
+                text(&*catalog.name())?,
                 oid(catalog.oid()),
-                text(schema.name()),
+                text(schema.name())?,
                 oid(schema.oid),
                 type_oid,
-                text(row.name),
+                text(row.name)?,
                 size,
-                text(row.ty.id().name()),
-                type_category(row.ty.id()).map_or_else(null_text, text),
-                comment_text(&row.comment),
+                text(row.ty.id().name())?,
+                type_category(row.ty.id()).map_or_else(|| Ok(null_text()), text)?,
+                comment_text(&row.comment)?,
                 empty_map(),
                 Value::boolean(row.internal),
                 labels,
@@ -2540,25 +2584,25 @@ fn secrets_function() -> TableFunctionSet {
             return Err(Error::invalid_input("Displaying unredacted secrets is disabled"));
         }
         let mut rows = Vec::new();
-        for entry in secret_manager(context)?.all_secrets()? {
+        for entry in secret_manager(context)?.all_secrets_in(Some(&context.transaction))? {
             let secret = &entry.secret;
             rows.push(vec![
-                text(&secret.name),
-                text(&secret.secret_type),
-                text(&secret.provider),
+                text(&secret.name)?,
+                text(&secret.secret_type)?,
+                text(&secret.provider)?,
                 Value::boolean(entry.persistent),
-                text(&entry.storage),
-                Value::list(LogicalType::VARCHAR, secret.scope.iter().map(text).collect()),
-                text(secret.to_display_string(redact)),
+                text(&entry.storage)?,
+                Value::list(
+                    LogicalType::VARCHAR,
+                    secret.scope.iter().map(text).collect::<Result<_>>()?,
+                ),
+                text(secret.to_display_string(redact)?)?,
             ]);
         }
         let types: Vec<LogicalType> = SECRET_COLUMNS.iter().map(|(_, ty)| ty()).collect();
         Ok(TableFunctionBindOutput {
             return_types: types.clone(),
-            names: SECRET_COLUMNS
-                .iter()
-                .map(|(name, _)| (*name).to_owned())
-                .collect(),
+            names: SECRET_COLUMNS.iter().map(|(name, _)| (*name).into()).collect(),
             bind_data: Some(Arc::new(Rows { types, rows })),
         })
     });
@@ -2589,19 +2633,19 @@ fn which_secret_function() -> TableFunctionSet {
             let mut rows = Vec::new();
             if let Some(entry) = secret_manager(context)?.lookup_secret(&path, &secret_type)? {
                 rows.push(vec![
-                    text(&entry.secret.name),
+                    text(&entry.secret.name)?,
                     text(if entry.persistent {
                         "PERSISTENT"
                     } else {
                         "TEMPORARY"
-                    }),
-                    text(&entry.storage),
+                    })?,
+                    text(&entry.storage)?,
                 ]);
             }
             let types: Vec<LogicalType> = COLUMNS.iter().map(|(_, ty)| ty()).collect();
             Ok(TableFunctionBindOutput {
                 return_types: types.clone(),
-                names: COLUMNS.iter().map(|(name, _)| (*name).to_owned()).collect(),
+                names: COLUMNS.iter().map(|(name, _)| (*name).into()).collect(),
                 bind_data: Some(Arc::new(Rows { types, rows })),
             })
         })
@@ -2630,7 +2674,7 @@ const CONSTRAINT_COLUMNS: Columns = &[
 ];
 
 /// The column names a CHECK expression references (`ExtractReferencedColumns`).
-struct ColumnNames(Vec<String>);
+struct ColumnNames(Vec<ByteString>);
 
 impl rustdb_ast::visit::VisitorMut for ColumnNames {
     fn visit_expression(&mut self, expression: &mut rustdb_ast::ParsedExpression) {
@@ -2663,19 +2707,24 @@ fn constraint_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
             let EntryKind::Table(table) = &entry.kind else {
                 continue;
             };
-            let column_index = |name: &str| {
+            let column_index = |name: &[u8]| {
                 table
                     .columns
                     .iter()
                     .position(|column| column.name.eq_ignore_ascii_case(name))
-                    .ok_or_else(|| Error::internal(format!("Column with name {name} does not exist")))
+                    .ok_or_else(|| {
+                        Error::internal(rustdb_common::byte_format!(
+                            "Column with name {} does not exist",
+                            name
+                        ))
+                    })
             };
             for constraint in &table.constraints {
                 // `GetExtraConstraintInfo`.
                 let mut indexes: Vec<usize> = Vec::new();
-                let mut names: Vec<String> = Vec::new();
-                let mut referenced_table = String::new();
-                let mut referenced_columns: Vec<String> = Vec::new();
+                let mut names: Vec<ByteString> = Vec::new();
+                let mut referenced_table = ByteString::new();
+                let mut referenced_columns: Vec<ByteString> = Vec::new();
                 let (constraint_type, suffix) = match constraint {
                     Constraint::Check(check) => {
                         let mut visitor = ColumnNames(Vec::new());
@@ -2729,38 +2778,44 @@ fn constraint_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                         .collect();
                 }
                 // `GetConstraintName`.
-                let mut constraint_name = format!("{}_", entry.name());
+                let mut constraint_name = entry.name().to_owned();
+                constraint_name.push(b'_');
                 for column in names.iter().chain(&referenced_columns) {
-                    constraint_name.push_str(&column.to_lowercase());
-                    constraint_name.push('_');
+                    for byte in column.iter() {
+                        constraint_name.push(byte.to_ascii_lowercase());
+                    }
+                    constraint_name.push(b'_');
                 }
-                constraint_name.push_str(suffix);
+                constraint_name.push_bytes(suffix.as_bytes());
                 let expression = match constraint {
-                    Constraint::Check(check) => text(check.expression.to_string()),
+                    Constraint::Check(check) => text(check.expression.to_sql_bytes())?,
                     _ => null_text(),
                 };
                 rows.push(vec![
-                    text(&*catalog.name()),
+                    text(&*catalog.name())?,
                     oid(catalog.oid()),
-                    text(schema.name()),
+                    text(schema.name())?,
                     oid(schema.oid),
-                    text(entry.name()),
+                    text(entry.name())?,
                     oid(entry.oid),
                     Value::bigint(constraint_index),
-                    text(constraint_type),
-                    text(constraint.to_sql()),
+                    text(constraint_type)?,
+                    text(constraint.to_sql())?,
                     expression,
                     list(LogicalType::BIGINT, indexes.into_iter().map(count).collect()),
-                    list(LogicalType::VARCHAR, names.into_iter().map(text).collect()),
-                    text(constraint_name),
+                    list(
+                        LogicalType::VARCHAR,
+                        names.into_iter().map(text).collect::<Result<_>>()?,
+                    ),
+                    text(constraint_name)?,
                     if referenced_table.is_empty() {
                         null_text()
                     } else {
-                        text(referenced_table)
+                        text(referenced_table)?
                     },
                     list(
                         LogicalType::VARCHAR,
-                        referenced_columns.into_iter().map(text).collect(),
+                        referenced_columns.into_iter().map(text).collect::<Result<_>>()?,
                     ),
                 ]);
                 constraint_index += 1;
@@ -2838,20 +2893,20 @@ fn storage_info_rows(context: &ClientContext, name: &str) -> Result<Vec<Vec<Valu
         };
         rows.push(vec![
             big(info.row_group_index),
-            text(column_name),
+            text(column_name)?,
             big(info.column_id),
-            text(info.column_path),
+            text(info.column_path)?,
             big(info.segment_idx),
-            text(info.segment_type),
+            text(info.segment_type)?,
             big(info.segment_start),
             big(info.segment_count),
-            text(info.compression_type),
-            text(info.segment_stats),
+            text(info.compression_type)?,
+            text(info.segment_stats)?,
             Value::boolean(info.has_updates),
             Value::boolean(info.persistent),
             block_id,
             block_offset,
-            text(info.segment_info),
+            text(info.segment_info)?,
             additional,
         ]);
     }
@@ -2867,10 +2922,10 @@ const METADATA_INFO_COLUMNS: Columns = &[
 
 /// The rows of `pragma_metadata_info` for the catalog called `name`
 /// (`PragmaMetadataInfoFunction`).
-fn metadata_info_rows(context: &ClientContext, name: &str) -> Result<Vec<Vec<Value>>> {
+fn metadata_info_rows(context: &ClientContext, name: &[u8]) -> Result<Vec<Vec<Value>>> {
     let catalog = context
         .catalog(name)
-        .ok_or_else(|| Error::binder(format!("Catalog \"{name}\" does not exist!")))?;
+        .ok_or_else(|| Error::binder(rustdb_common::byte_format!("Catalog \"{name}\" does not exist!")))?;
     let as_bigint = |value: u64| Value::bigint(i64::try_from(value).unwrap_or(i64::MAX));
     Ok(catalog
         .metadata_info()
@@ -2906,7 +2961,7 @@ fn metadata_info_functions() -> TableFunctionSet {
                             "Database argument for pragma_metadata_info cannot be NULL",
                         ));
                     }
-                    Some(value) => value.to_varchar()?,
+                    Some(value) => value.to_varchar_bytes()?,
                     None => context.default_catalog(),
                 };
                 let types: Vec<LogicalType> = METADATA_INFO_COLUMNS.iter().map(|(_, ty)| ty()).collect();
@@ -2915,7 +2970,7 @@ fn metadata_info_functions() -> TableFunctionSet {
                     return_types: types.clone(),
                     names: METADATA_INFO_COLUMNS
                         .iter()
-                        .map(|(name, _)| (*name).to_owned())
+                        .map(|(name, _)| (*name).into())
                         .collect(),
                     bind_data: Some(Arc::new(Rows { types, rows })),
                 })
@@ -2942,7 +2997,7 @@ pub(crate) fn pragma_table_functions() -> Vec<TableFunctionSet> {
 
 /// The search path entries of the calling connection.
 #[derive(Debug)]
-struct SearchPath(Vec<(String, String)>);
+struct SearchPath(Vec<(ByteString, ByteString)>);
 
 impl FunctionData for SearchPath {
     fn as_any(&self) -> &dyn Any {
@@ -2973,8 +3028,8 @@ fn in_search_path_function() -> ScalarFunctionSet {
                     if database.is_null() || schema.is_null() {
                         Value::null(LogicalType::BOOLEAN)
                     } else {
-                        let database = database.to_varchar()?;
-                        let schema = schema.to_varchar()?;
+                        let database = database.to_varchar_bytes()?;
+                        let schema = schema.to_varchar_bytes()?;
                         Value::boolean(path.0.iter().any(|(c, s)| {
                             c.eq_ignore_ascii_case(&database) && s.eq_ignore_ascii_case(&schema)
                         }))
@@ -3069,38 +3124,41 @@ pub(crate) fn builtin_pragma_functions() -> Vec<PragmaFunctionSet> {
 }
 
 /// The SQL a `PRAGMA` stands for (DuckDB's `PragmaQueries`), if it is one.
-pub(crate) fn pragma_query(name: &str, parameters: &[Value]) -> Result<Option<String>> {
+pub(crate) fn pragma_query(name: impl AsRef<[u8]>, parameters: &[Value]) -> Result<Option<String>> {
+    let name = name.as_ref();
     let first = || -> Result<String> {
         parameters
             .first()
             .map(Value::to_varchar)
             .transpose()?
-            .ok_or_else(|| Error::invalid_input(format!("PRAGMA {name} requires an argument")))
+            .ok_or_else(|| {
+                Error::invalid_input(rustdb_common::byte_format!("PRAGMA {name} requires an argument"))
+            })
     };
     let quoted = |text: &str| format!("'{}'", text.replace('\'', "''"));
-    Ok(Some(match name.to_ascii_lowercase().as_str() {
-        "table_info" => format!("SELECT * FROM pragma_table_info({});", quoted(&first()?)),
-        "storage_info" => format!("SELECT * FROM pragma_storage_info({});", quoted(&first()?)),
-        "show_tables_expanded" => rustdb_planner::SHOW_TABLES_EXPANDED.to_owned(),
-        "show_tables" => "with \"tables\" as (SELECT table_name as \"name\" FROM duckdb_tables WHERE in_search_path(database_name, schema_name)), \"views\" as (SELECT view_name as \"name\" FROM duckdb_views WHERE in_search_path(database_name, schema_name)), db_objects as (SELECT \"name\" FROM \"tables\" UNION ALL SELECT \"name\" FROM \"views\") SELECT \"name\" FROM db_objects ORDER BY \"name\";".to_owned(),
-        "show_databases" => "SELECT database_name FROM duckdb_databases() WHERE NOT internal ORDER BY database_name;".to_owned(),
-        "database_list" => "SELECT * FROM pragma_database_list;".to_owned(),
-        "database_size" => "SELECT * FROM pragma_database_size();".to_owned(),
-        "metadata_info" => "SELECT * FROM pragma_metadata_info();".to_owned(),
-        "collations" => "SELECT * FROM pragma_collations() ORDER BY 1".to_owned(),
-        "show" => format!("SELECT * FROM pragma_show({});", quoted(&first()?)),
-        "json_execute_serialized_sql" => rustdb_json::execute_serialized_sql_pragma(&first()?)?,
-        "version" => "SELECT * FROM pragma_version();".to_owned(),
-        "platform" => "SELECT * FROM pragma_platform();".to_owned(),
-        "extension_versions" => "select extension_name, extension_version, install_mode, installed_from from \
+    Ok(Some(match name.to_ascii_lowercase().as_slice() {
+        b"table_info" => format!("SELECT * FROM pragma_table_info({});", quoted(&first()?)),
+        b"storage_info" => format!("SELECT * FROM pragma_storage_info({});", quoted(&first()?)),
+        b"show_tables_expanded" => rustdb_planner::SHOW_TABLES_EXPANDED.to_owned(),
+        b"show_tables" => "with \"tables\" as (SELECT table_name as \"name\" FROM duckdb_tables WHERE in_search_path(database_name, schema_name)), \"views\" as (SELECT view_name as \"name\" FROM duckdb_views WHERE in_search_path(database_name, schema_name)), db_objects as (SELECT \"name\" FROM \"tables\" UNION ALL SELECT \"name\" FROM \"views\") SELECT \"name\" FROM db_objects ORDER BY \"name\";".to_owned(),
+        b"show_databases" => "SELECT database_name FROM duckdb_databases() WHERE NOT internal ORDER BY database_name;".to_owned(),
+        b"database_list" => "SELECT * FROM pragma_database_list;".to_owned(),
+        b"database_size" => "SELECT * FROM pragma_database_size();".to_owned(),
+        b"metadata_info" => "SELECT * FROM pragma_metadata_info();".to_owned(),
+        b"collations" => "SELECT * FROM pragma_collations() ORDER BY 1".to_owned(),
+        b"show" => format!("SELECT * FROM pragma_show({});", quoted(&first()?)),
+        b"json_execute_serialized_sql" => rustdb_json::execute_serialized_sql_pragma(&first()?)?,
+        b"version" => "SELECT * FROM pragma_version();".to_owned(),
+        b"platform" => "SELECT * FROM pragma_platform();".to_owned(),
+        b"extension_versions" => "select extension_name, extension_version, install_mode, installed_from from \
                                  duckdb_extensions() where installed"
             .to_owned(),
-        "user_agent" => "SELECT * FROM pragma_user_agent()".to_owned(),
-        "functions" => "SELECT function_name AS name, upper(function_type) AS type, parameter_types AS parameters, \
+        b"user_agent" => "SELECT * FROM pragma_user_agent()".to_owned(),
+        b"functions" => "SELECT function_name AS name, upper(function_type) AS type, parameter_types AS parameters, \
                         varargs, return_type, has_side_effects AS side_effects FROM duckdb_functions() WHERE \
                         function_type IN ('scalar', 'aggregate') ORDER BY 1;"
             .to_owned(),
-        "copy_database" => {
+        b"copy_database" => {
             let second = parameters
                 .get(1)
                 .map(Value::to_varchar)

@@ -117,12 +117,12 @@ pub(crate) fn insert(
                 status = GateStatus::Set;
                 continue;
             }
-            return Err(Error::new(
+            return Err(Error::new_bytes(
                 ErrorKind::Fatal,
-                format!(
+                rustdb_common::byte_format!(
                     "Corrupted unique ART index \"{}\": encountered an existing gated leaf in unique index while inserting",
                     art.name()
-                ),
+                ).into_bytes(),
             ));
         }
         match node.ntype()? {

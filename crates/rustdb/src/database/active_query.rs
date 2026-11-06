@@ -92,7 +92,7 @@ impl StatementRun {
 #[derive(Debug)]
 pub(crate) struct PlanExecution {
     execution: QueryExecution,
-    names: Vec<String>,
+    names: Vec<rustdb_common::ByteString>,
     types: Vec<LogicalType>,
     return_type: StatementReturnType,
     /// Records what every operator did (EXPLAIN ANALYZE, profiling).
@@ -119,7 +119,7 @@ enum StreamExecutionResult {
 impl PlanExecution {
     pub(crate) fn new(
         execution: QueryExecution,
-        names: Vec<String>,
+        names: Vec<rustdb_common::ByteString>,
         types: Vec<LogicalType>,
         profiler: Option<Arc<QueryProfiler>>,
         streaming: bool,
@@ -141,7 +141,7 @@ impl PlanExecution {
         self,
     ) -> (
         QueryExecution,
-        Vec<String>,
+        Vec<rustdb_common::ByteString>,
         Vec<LogicalType>,
         Option<Arc<QueryProfiler>>,
         StatementReturnType,
@@ -342,13 +342,13 @@ impl ClientHandle {
 #[derive(Clone, Debug)]
 pub struct PendingQuery {
     id: u64,
-    names: Vec<String>,
+    names: Vec<rustdb_common::ByteString>,
     types: Vec<LogicalType>,
     statement_type: StatementType,
 }
 
 impl PendingQuery {
-    pub fn names(&self) -> &[String] {
+    pub fn names(&self) -> &[rustdb_common::ByteString] {
         &self.names
     }
 
@@ -366,14 +366,14 @@ impl PendingQuery {
 #[derive(Clone, Debug)]
 pub struct StreamQueryResult {
     id: u64,
-    names: Vec<String>,
+    names: Vec<rustdb_common::ByteString>,
     types: Vec<LogicalType>,
     return_type: StatementReturnType,
     statement_type: StatementType,
 }
 
 impl StreamQueryResult {
-    pub fn names(&self) -> &[String] {
+    pub fn names(&self) -> &[rustdb_common::ByteString] {
         &self.names
     }
 
@@ -402,11 +402,17 @@ pub enum QueryResult {
 #[derive(Debug)]
 pub(crate) struct ActiveQuery {
     id: u64,
-    query: String,
+    query: rustdb_common::ByteString,
     statement_type: StatementType,
     state: ActiveState,
     /// Whether the progress of the query is tracked (`enable_progress_bar`).
     progress_bar: bool,
+    /// The bar starts unknown even while the public client reports restarted at0.
+    /// Unsupported pipeline updates retain this last known internal progress.
+    progress: QueryProgress,
+    /// Read-only catalog/transaction view for callbacks. It outlives planning and
+    /// is dropped with the active query, including cancellation and stream close.
+    pub(super) callback_context: Option<Arc<rustdb_planner::ClientContext>>,
 }
 
 #[derive(Debug)]
@@ -445,6 +451,7 @@ impl Connection {
     /// with this (`ClientContext::InitialCleanup`).
     pub(crate) fn initial_cleanup(&mut self) {
         self.cleanup_active_query();
+        self.client.set_progress(QueryProgress::NONE);
         self.client.interrupted.store(false, Ordering::Release);
     }
 
@@ -469,10 +476,11 @@ impl Connection {
     /// statement allows it.
     pub fn pending_query(
         &mut self,
-        query: &str,
+        query: impl AsRef<[u8]>,
         statement: SqlStatement,
         allow_stream: bool,
     ) -> Result<PendingQuery> {
+        let query = query.as_ref();
         self.pending_query_with(query, statement, allow_stream, QueryResultMemoryType::InMemory)
     }
 
@@ -480,11 +488,12 @@ impl Connection {
     /// `memory_type` says (`QueryParameters::memory_type`).
     pub fn pending_query_with(
         &mut self,
-        query: &str,
+        query: impl AsRef<[u8]>,
         statement: SqlStatement,
         allow_stream: bool,
         memory_type: QueryResultMemoryType,
     ) -> Result<PendingQuery> {
+        let query = query.as_ref();
         self.initial_cleanup();
         let statement_type = statement.statement_type();
         self.begin_query(query, &statement)?;
@@ -505,17 +514,18 @@ impl Connection {
     /// statement that failed or completed when it started ends right away.
     pub(crate) fn activate(
         &mut self,
-        query: &str,
+        query: impl AsRef<[u8]>,
         statement_type: StatementType,
         started: Result<StatementRun>,
     ) -> Result<PendingQuery> {
+        let query = query.as_ref();
         let (state, names, types) = match started {
             Ok(StatementRun::Executing(run)) => {
                 let (names, types) = (run.names.clone(), run.types.clone());
                 (ActiveState::Running(run), names, types)
             }
             Ok(StatementRun::Done(result)) => {
-                let result = self.end_query(query, Ok(result))?;
+                let result = self.end_query(query, Ok(result.with_statement_type(statement_type)))?;
                 let (names, types) = (result.names().to_vec(), result.types().to_vec());
                 (ActiveState::Ended(Ok(result)), names, types)
             }
@@ -526,12 +536,20 @@ impl Connection {
         if progress_bar {
             self.client.set_progress(QueryProgress::STARTED);
         }
+        let callback_context = if matches!(state, ActiveState::Running(_)) {
+            let transaction = self.transactions.current();
+            Some(self.client_context(transaction))
+        } else {
+            None
+        };
         self.active_query = Some(ActiveQuery {
             id: self.next_query_id,
-            query: query.to_owned(),
+            query: query.into(),
             statement_type,
             state,
             progress_bar,
+            progress: QueryProgress::NONE,
+            callback_context,
         });
         Ok(PendingQuery {
             id: self.next_query_id,
@@ -574,7 +592,10 @@ impl Connection {
         if run.finished {
             return Ok(PendingExecutionResult::ResultReady);
         }
-        let step = run.execute_step();
+        let step = run.execute_step().and_then(|step| {
+            self.apply_checkpoint_requests()?;
+            Ok(step)
+        });
         drop(scope);
         match step {
             Ok(step) => {
@@ -675,6 +696,13 @@ impl Connection {
 
     /// The next chunk of a streaming result, `None` once it is exhausted (DuckDB's
     /// `StreamQueryResult::Fetch`). The query ends when its last chunk was fetched.
+    /// Whether this stream is still the connection's open result.
+    pub fn stream_is_open(&self, stream: &StreamQueryResult) -> bool {
+        self.active_query
+            .as_ref()
+            .is_some_and(|active| active.id == stream.id)
+    }
+
     pub fn fetch(&mut self, stream: &StreamQueryResult) -> Result<Option<DataChunk>> {
         let interrupted = self.client.is_interrupted();
         let scope = self.query_scope();
@@ -691,9 +719,12 @@ impl Connection {
                 let Some(active) = self.active_query.take() else {
                     return Ok(None);
                 };
-                drop(active.state);
+                let ActiveState::Running(run) = active.state else {
+                    return Err(closed_stream_error());
+                };
+                let outcome = self.in_query_scope(|connection| connection.finish_stream(*run));
                 self.client.set_progress(QueryProgress::NONE);
-                self.end_query(&active.query, Ok(MaterializedResult::default()))?;
+                self.end_query(&active.query, outcome)?;
                 Ok(None)
             }
             Err(error) => Err(self.fail_active_query(error)),
@@ -718,31 +749,33 @@ impl Connection {
     /// ends (`PendingQueryResult::Close`, `StreamQueryResult::Close`).
     pub fn close_query(&mut self, id: QueryId) {
         if self.active_query.as_ref().is_some_and(|active| active.id == id.0) {
+            // Closing the result preserves C++'s last public progress snapshot.
+            // Keep only that metadata; cleanup still releases the query resources.
+            let progress = self.client.query_progress();
             self.cleanup_active_query();
+            self.client.set_progress(progress);
         }
     }
 
     /// Updates the progress of the active query after a step (`ProgressBar::Update`).
     fn update_progress(&mut self) {
-        let Some(ActiveQuery {
-            state: ActiveState::Running(run),
-            ..
-        }) = &self.active_query
-        else {
+        let Some(active) = &mut self.active_query else {
             return;
         };
-        let Some(progress) = run.execution.progress() else {
+        let ActiveState::Running(run) = &active.state else {
             return;
         };
-        let current = self.client.query_progress();
-        let percentage = progress.percentage();
-        if percentage > current.percentage {
-            self.client.set_progress(QueryProgress {
-                percentage,
-                rows_processed: progress.done as u64,
-                total_rows_to_process: progress.total as u64,
-            });
+        if let Some(progress) = run.execution.progress() {
+            active.progress.rows_processed = progress.done as u64;
+            active.progress.total_rows_to_process = progress.total as u64;
+            // An empty completed pipeline set has0/0 progress, like C++: NaN
+            // does not replace the highest known percentage.
+            let percentage = progress.done / progress.total * 100.0;
+            if percentage > active.progress.percentage {
+                active.progress.percentage = percentage;
+            }
         }
+        self.client.set_progress(active.progress);
     }
 }
 

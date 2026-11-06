@@ -15,6 +15,7 @@ rustdb-parser.workspace = true
 rustdb-catalog = { path = "../catalog" }
 rustdb-storage = { path = "../storage" }
 rustdb-function = { path = "../function" }
+rustdb-buffer = { path = "../buffer" }
 regex = "1"
 
 [lints]

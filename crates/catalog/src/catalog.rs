@@ -1,8 +1,7 @@
-use std::fmt::Write as _;
 use std::sync::{Arc, OnceLock};
 
 use rustdb_ast::OnCreateConflict;
-use rustdb_common::{Error, Result};
+use rustdb_common::{ByteString, Error, Result};
 use rustdb_function::{AggregateFunctionSet, ScalarFunctionSet, TableFunctionSet};
 use rustdb_types::Value;
 
@@ -25,12 +24,16 @@ pub struct Catalog {
     /// The WAL changes to this database are logged to (database files only).
     wal: OnceLock<Arc<rustdb_storage::wal::WriteAheadLog>>,
     /// The object id of the database (`AttachedDatabase::oid`; 0 for `system`).
-    oid: u64,
+    oid: OnceLock<u64>,
+    /// Ordinary attached databases have an entry identity while initializing their
+    /// catalog/storage; `FinalizeAttach` replaces it with the registered identity.
+    provisional_oid: u64,
     /// How the database is attached, for `duckdb_databases()`.
     attach_info: OnceLock<AttachedInfo>,
     /// The table the catalog's name refers to, as (schema, name) (`DEFAULT_TABLE`;
     /// DuckDB's `Catalog::default_table`).
-    default_table: std::sync::Mutex<Option<(String, String)>>,
+    default_table: std::sync::Mutex<Option<(ByteString, ByteString)>>,
+    default_entries: Arc<std::sync::Mutex<Vec<(ByteString, ByteString, DefaultEntryKind)>>>,
     /// The storage of a database file (unset in memory), for `pragma_metadata_info`.
     storage: OnceLock<std::sync::Weak<rustdb_storage::storage_manager::StorageManager>>,
     /// The locks transactions writing to the database hold and checkpoints take.
@@ -42,12 +45,12 @@ pub struct Catalog {
 #[derive(Clone, Debug, Default)]
 pub struct AttachedInfo {
     /// The database file, empty for an in-memory database.
-    pub path: String,
+    pub path: ByteString,
     pub read_only: bool,
     /// Left out of catalog listings (`HIDDEN`).
     pub hidden: bool,
     /// The ATTACH options the database keeps, as text (`AttachedDatabase::GetAttachOptions`).
-    pub options: Vec<(String, String)>,
+    pub options: Vec<(ByteString, ByteString)>,
     /// `AttachedDatabase::tags` (the file's `storage_version`).
     pub tags: Vec<(String, String)>,
     /// The cipher of an encrypted database (`DuckCatalog::GetEncryptionCipher`), `None`
@@ -55,40 +58,162 @@ pub struct AttachedInfo {
     pub cipher: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+enum DefaultEntryKind {
+    View(crate::ViewEntry),
+    Macro(crate::MacroEntry),
+    TableMacro(crate::MacroEntry),
+}
+
+impl DefaultEntryKind {
+    fn into_entry_kind(self) -> EntryKind {
+        match self {
+            Self::View(value) => EntryKind::View(value),
+            Self::Macro(value) => EntryKind::Macro(value),
+            Self::TableMacro(value) => EntryKind::TableMacro(value),
+        }
+    }
+}
+
 impl Catalog {
     /// A catalog containing the empty `main` schema.
-    pub fn new(name: impl Into<String>) -> Result<Self> {
-        let name = CatalogName::new(&name.into());
+    pub fn new(name: impl Into<ByteString>) -> Result<Self> {
+        Self::with_oid_allocator(name, Arc::default())
+    }
+
+    pub fn with_oid_allocator(
+        name: impl Into<ByteString>,
+        allocator: Arc<crate::OidAllocator>,
+    ) -> Result<Self> {
+        Self::with_registration(name, allocator, true)
+    }
+
+    pub fn unregistered(name: impl Into<ByteString>, allocator: Arc<crate::OidAllocator>) -> Result<Self> {
+        Self::with_registration(name, allocator, false)
+    }
+
+    fn with_registration(
+        name: impl Into<ByteString>,
+        allocator: Arc<crate::OidAllocator>,
+        registered: bool,
+    ) -> Result<Self> {
+        let name = CatalogName::with_oid_allocator(name.into(), allocator);
+        let provisional_oid = if registered { 0 } else { name.next_oid() };
         let catalog = Self {
             schemas: Arc::new(CatalogSet::new(&name, "")),
             name,
             io: OnceLock::new(),
             wal: OnceLock::new(),
-            oid: 0,
+            oid: OnceLock::new(),
+            provisional_oid,
             attach_info: OnceLock::new(),
             default_table: std::sync::Mutex::default(),
+            default_entries: Arc::default(),
             storage: OnceLock::new(),
             locks: rustdb_storage::checkpoint_lock::DatabaseLocks::default(),
         };
-        let mut catalog = catalog;
-        if !catalog.name().eq_ignore_ascii_case("system") {
-            catalog.oid = crate::next_oid();
+        if registered && !catalog.name().eq_ignore_ascii_case(b"system") {
+            catalog.finalize_registration();
         }
-        let mut main = CatalogEntry::new(
+        let mut main = catalog.new_entry(
             DEFAULT_SCHEMA,
             EntryKind::Schema(SchemaEntry::new(&catalog.name, DEFAULT_SCHEMA)),
         );
         main.internal = true;
-        catalog.schemas.create_committed(main)?;
+        catalog.schemas.create_committed_chain(main)?;
         Ok(catalog)
     }
 
-    pub fn name(&self) -> Arc<str> {
+    /// Allocates from this instance, including constructors preceding conflicts.
+    pub fn new_entry(&self, name: impl Into<ByteString>, kind: EntryKind) -> CatalogEntry {
+        CatalogEntry::with_oid(name, kind, self.name.next_oid())
+    }
+
+    pub fn oid_allocator(&self) -> Arc<crate::OidAllocator> {
+        self.name.oid_allocator()
+    }
+
+    /// Defers default entry allocation while keeping definition validation at startup.
+    pub fn register_default_entry(&self, schema: &str, name: impl Into<ByteString>, kind: EntryKind) {
+        let kind = match kind {
+            EntryKind::View(value) => DefaultEntryKind::View(value),
+            EntryKind::Macro(value) => DefaultEntryKind::Macro(value),
+            EntryKind::TableMacro(value) => DefaultEntryKind::TableMacro(value),
+            _ => unreachable!("only validated default views and macros are deferred"),
+        };
+        let schema_name = ByteString::from(schema);
+        let name = name.into();
+        self.default_entries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((schema_name.clone(), name.clone(), kind.clone()));
+        if let Some(entry) = self.schemas.get_committed_existing(schema)
+            && let Some(schema) = entry.as_schema()
+        {
+            Self::install_default(&self.name, schema, name, kind);
+            return;
+        }
+        let catalog_name = self.name.clone();
+        let defaults = Arc::downgrade(&self.default_entries);
+        self.schemas.register_default(
+            schema_name.clone(),
+            Arc::new(move || {
+                let schema = SchemaEntry::new(&catalog_name, &schema_name);
+                if let Some(defaults) = defaults.upgrade() {
+                    for (owner, name, kind) in defaults
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .iter()
+                    {
+                        if owner.eq_ignore_ascii_case(&schema_name) {
+                            Self::install_default(&catalog_name, &schema, name.clone(), kind.clone());
+                        }
+                    }
+                }
+                let mut entry = CatalogEntry::with_oid(
+                    schema_name.clone(),
+                    EntryKind::Schema(schema),
+                    catalog_name.next_oid(),
+                );
+                entry.internal = true;
+                entry
+            }),
+        );
+    }
+
+    fn install_default(
+        catalog: &CatalogName,
+        schema: &SchemaEntry,
+        name: ByteString,
+        kind: DefaultEntryKind,
+    ) {
+        let set = match &kind {
+            DefaultEntryKind::View(_) => &schema.tables,
+            DefaultEntryKind::Macro(_) => &schema.functions,
+            DefaultEntryKind::TableMacro(_) => &schema.table_functions,
+        };
+        let allocator = catalog.clone();
+        set.register_default(
+            name.clone(),
+            Arc::new(move || {
+                let mut entry = CatalogEntry::with_oid(
+                    name.clone(),
+                    kind.clone().into_entry_kind(),
+                    allocator.next_oid(),
+                );
+                entry.internal = true;
+                entry
+            }),
+        );
+    }
+
+    pub fn name(&self) -> Arc<[u8]> {
         self.name.get()
     }
 
     /// Renames the catalog along with its attached database (`AttachedDatabase::SetName`).
-    pub fn rename(&self, name: &str) {
+    pub fn rename(&self, name: impl AsRef<[u8]>) {
+        let name = name.as_ref();
         self.name.set(name);
     }
 
@@ -100,7 +225,14 @@ impl Catalog {
 
     /// The object id of the database.
     pub fn oid(&self) -> u64 {
-        self.oid
+        self.oid.get().copied().unwrap_or(self.provisional_oid)
+    }
+
+    /// Called once after attached storage/catalog initialization, before publication.
+    pub fn finalize_registration(&self) {
+        if !self.name().eq_ignore_ascii_case(b"system") {
+            self.oid.get_or_init(|| self.name.next_oid());
+        }
     }
 
     /// Records how the database is attached (once).
@@ -110,16 +242,22 @@ impl Catalog {
 
     /// Makes the catalog's name refer to `schema.name` (`Catalog::SetDefaultTable`); an
     /// empty schema is `main`.
-    pub fn set_default_table(&self, schema: &str, name: &str) {
-        let schema = if schema.is_empty() { DEFAULT_SCHEMA } else { schema };
+    pub fn set_default_table(&self, schema: impl AsRef<[u8]>, name: impl AsRef<[u8]>) {
+        let name = name.as_ref();
+        let schema = schema.as_ref();
+        let schema = if schema.is_empty() {
+            DEFAULT_SCHEMA.as_bytes()
+        } else {
+            schema
+        };
         *self
             .default_table
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((schema.to_owned(), name.to_owned()));
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((schema.into(), name.into()));
     }
 
     /// The (schema, name) of the default table, if any (`Catalog::HasDefaultTable`).
-    pub fn default_table(&self) -> Option<(String, String)> {
+    pub fn default_table(&self) -> Option<(ByteString, ByteString)> {
         self.default_table
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -164,9 +302,12 @@ impl Catalog {
 
     /// Where the database's tables keep their data.
     pub fn io(&self) -> Result<&Arc<rustdb_storage::TableIoManager>> {
-        self.io
-            .get()
-            .ok_or_else(|| Error::internal(format!("catalog \"{}\" has no storage", self.name())))
+        self.io.get().ok_or_else(|| {
+            Error::internal(rustdb_common::byte_format!(
+                "catalog \"{}\" has no storage",
+                self.name()
+            ))
+        })
     }
 
     /// Logs every following commit to this database to `wal` (once, after replay).
@@ -186,55 +327,66 @@ impl Catalog {
     }
 
     /// The schema called `name`, if visible to `transaction`.
-    pub fn schema(&self, transaction: &Transaction, name: &str) -> Option<Arc<CatalogEntry>> {
+    pub fn schema(&self, transaction: &Transaction, name: impl AsRef<[u8]>) -> Option<Arc<CatalogEntry>> {
+        let name = name.as_ref();
+
         self.schemas.get(transaction, name)
     }
 
     /// Registers a built-in scalar function set in `main`.
     pub fn register_scalar_functions(&self, set: ScalarFunctionSet) -> Result<()> {
-        let name = set.name.to_string();
+        let name = set.name.clone();
         self.register_builtin(name, EntryKind::ScalarFunction(set))
     }
 
     /// Registers a built-in aggregate function set in `main`.
     pub fn register_aggregate_functions(&self, set: AggregateFunctionSet) -> Result<()> {
         let name = set.name.to_string();
-        self.register_builtin(name, EntryKind::AggregateFunction(set))
+        self.register_builtin(name.into(), EntryKind::AggregateFunction(set))
     }
 
     /// Registers a built-in table function set in `main`.
     pub fn register_table_functions(&self, set: TableFunctionSet) -> Result<()> {
         let name = set.name.to_string();
-        self.register_builtin(name, EntryKind::TableFunction(set))
+        self.register_builtin(name.into(), EntryKind::TableFunction(set))
     }
 
     /// Registers a built-in pragma in `main`.
     pub fn register_pragma_functions(&self, set: rustdb_function::PragmaFunctionSet) -> Result<()> {
         let name = set.name.to_string();
-        self.register_builtin(name, EntryKind::PragmaFunction(set))
+        self.register_builtin(name.into(), EntryKind::PragmaFunction(set))
     }
 
     /// Registers a built-in COPY file format in `main`.
     pub fn register_copy_function(&self, function: rustdb_function::CopyFunction) -> Result<()> {
         let name = function.name.to_string();
-        self.register_builtin(name, EntryKind::CopyFunction(Box::new(function)))
+        self.register_builtin(name.into(), EntryKind::CopyFunction(Box::new(function)))
     }
 
     /// Registers a built-in view in `main` (DuckDB's `DefaultViewGenerator`).
-    pub fn register_view(&self, name: &str, view: crate::ViewEntry) -> Result<()> {
-        self.register_builtin(name.to_owned(), EntryKind::View(view))
+    pub fn register_view(&self, name: impl AsRef<[u8]>, view: crate::ViewEntry) -> Result<()> {
+        let name = name.as_ref();
+
+        self.register_builtin(name.into(), EntryKind::View(view))
     }
 
     /// Registers a built-in view in `schema`, creating the (internal) schema if needed
     /// (DuckDB's `DefaultSchemaGenerator` and `DefaultViewGenerator`).
-    pub fn register_view_in(&self, schema: &str, name: &str, view: crate::ViewEntry) -> Result<()> {
+    pub fn register_view_in(
+        &self,
+        schema: impl AsRef<[u8]>,
+        name: impl AsRef<[u8]>,
+        view: crate::ViewEntry,
+    ) -> Result<()> {
+        let name = name.as_ref();
+        let schema = schema.as_ref();
+
         if self.schema(&Transaction::system(), schema).is_none() {
-            let mut entry =
-                CatalogEntry::new(schema, EntryKind::Schema(SchemaEntry::new(&self.name, schema)));
+            let mut entry = self.new_entry(schema, EntryKind::Schema(SchemaEntry::new(&self.name, schema)));
             entry.internal = true;
             self.schemas.create_committed(entry)?;
         }
-        let mut entry = CatalogEntry::new(name, EntryKind::View(view));
+        let mut entry = self.new_entry(name, EntryKind::View(view));
         entry.internal = true;
         self.create_entry_committed(schema, entry)
     }
@@ -248,12 +400,12 @@ impl Catalog {
             .schema(&Transaction::system(), DEFAULT_SCHEMA)
             .ok_or_else(missing_main)?;
         let schema = schema.as_schema().ok_or_else(missing_main)?;
-        let existing = schema.functions.get_committed(&set.name);
+        let existing = schema.functions.get_committed(set.name.as_bytes());
         let Some(existing) = existing else {
             return self.register_scalar_functions(set);
         };
         let EntryKind::ScalarFunction(current) = &existing.kind else {
-            return Err(rustdb_common::Error::internal(format!(
+            return Err(rustdb_common::Error::internal(rustdb_common::byte_format!(
                 "\"{}\" is not a scalar function",
                 set.name
             )));
@@ -261,8 +413,8 @@ impl Catalog {
         let mut merged = current.clone();
         merged.merge_function_set(set, true);
         let mut kind = EntryKind::ScalarFunction(merged);
-        kind.set_function_catalog(&self.name(), DEFAULT_SCHEMA);
-        let mut entry = CatalogEntry::new(existing.name(), kind);
+        kind.set_function_catalog(self.name(), DEFAULT_SCHEMA);
+        let mut entry = self.new_entry(existing.name(), kind);
         entry.oid = existing.oid;
         entry.internal = true;
         schema.functions.replace_committed(entry);
@@ -276,12 +428,12 @@ impl Catalog {
             .schema(&Transaction::system(), DEFAULT_SCHEMA)
             .ok_or_else(missing_main)?;
         let schema = schema.as_schema().ok_or_else(missing_main)?;
-        let existing = schema.table_functions.get_committed(&set.name);
+        let existing = schema.table_functions.get_committed(set.name.as_bytes());
         let Some(existing) = existing else {
             return self.register_table_functions(set);
         };
         let EntryKind::TableFunction(current) = &existing.kind else {
-            return Err(rustdb_common::Error::internal(format!(
+            return Err(rustdb_common::Error::internal(rustdb_common::byte_format!(
                 "\"{}\" is not a table function",
                 set.name
             )));
@@ -289,13 +441,13 @@ impl Catalog {
         let mut merged = current.clone();
         let name = Arc::clone(&set.name);
         if !merged.merge_function_set(set) {
-            return Err(rustdb_common::Error::catalog(format!(
+            return Err(rustdb_common::Error::catalog(rustdb_common::byte_format!(
                 "Failed to add new function overloads to function \"{name}\": function overload already exists"
             )));
         }
         let mut kind = EntryKind::TableFunction(merged);
-        kind.set_function_catalog(&self.name(), DEFAULT_SCHEMA);
-        let mut entry = CatalogEntry::new(existing.name(), kind);
+        kind.set_function_catalog(self.name(), DEFAULT_SCHEMA);
+        let mut entry = self.new_entry(existing.name(), kind);
         entry.oid = existing.oid;
         entry.internal = true;
         schema.table_functions.replace_committed(entry);
@@ -306,70 +458,91 @@ impl Catalog {
     /// extension patching a built-in function).
     pub fn alter_builtin_scalar_functions(
         &self,
-        name: &str,
+        name: impl AsRef<[u8]>,
         alter: impl FnOnce(&mut ScalarFunctionSet) -> Result<()>,
     ) -> Result<()> {
+        let name = name.as_ref();
+
         let schema = self
             .schema(&Transaction::system(), DEFAULT_SCHEMA)
             .ok_or_else(missing_main)?;
         let schema = schema.as_schema().ok_or_else(missing_main)?;
-        let existing = schema
-            .functions
-            .get_committed(name)
-            .ok_or_else(|| rustdb_common::Error::internal(format!("Function \"{name}\" not found")))?;
+        let existing = schema.functions.get_committed(name).ok_or_else(|| {
+            rustdb_common::Error::internal(rustdb_common::byte_format!("Function \"{name}\" not found"))
+        })?;
         let EntryKind::ScalarFunction(current) = &existing.kind else {
-            return Err(rustdb_common::Error::internal(format!(
+            return Err(rustdb_common::Error::internal(rustdb_common::byte_format!(
                 "\"{name}\" is not a scalar function"
             )));
         };
         let mut altered = current.clone();
         alter(&mut altered)?;
         let mut kind = EntryKind::ScalarFunction(altered);
-        kind.set_function_catalog(&self.name(), DEFAULT_SCHEMA);
-        let mut entry = CatalogEntry::new(existing.name(), kind);
+        kind.set_function_catalog(self.name(), DEFAULT_SCHEMA);
+        let mut entry = self.new_entry(existing.name(), kind);
         entry.oid = existing.oid;
         entry.internal = true;
         schema.functions.replace_committed(entry);
         Ok(())
     }
 
-    /// Registers a built-in collation in `main` (DuckDB's `ExtensionLoader::RegisterCollation`),
+    /// Registers a built-in collation without a separate serialization function
+    /// (`BuiltinFunctions::AddCollation`).
+    pub fn register_builtin_collation(
+        &self,
+        name: impl Into<ByteString>,
+        collation: crate::CollationEntry,
+    ) -> Result<()> {
+        self.register_builtin(name.into(), EntryKind::Collation(collation))
+    }
+
+    /// Registers an extension collation in `main` (`ExtensionLoader::RegisterCollation`),
     /// and its function as a scalar function unless one of that name exists (for
     /// serialization, `IGNORE_ON_CONFLICT`).
-    pub fn register_collation(&self, name: &str, collation: crate::CollationEntry) -> Result<()> {
+    pub fn register_collation(&self, name: impl AsRef<[u8]>, collation: crate::CollationEntry) -> Result<()> {
+        let name = name.as_ref();
+
         let schema = self
             .schema(&Transaction::system(), DEFAULT_SCHEMA)
             .ok_or_else(missing_main)?;
         let schema = schema.as_schema().ok_or_else(missing_main)?;
         let function = collation.function.clone();
-        let mut entry = CatalogEntry::new(name, EntryKind::Collation(collation));
+        let mut entry = self.new_entry(name, EntryKind::Collation(collation));
         entry.internal = true;
-        schema.collations.replace_committed(entry);
-        if schema.functions.get_committed(&function.name).is_none() {
-            let mut set = ScalarFunctionSet::new(Arc::clone(&function.name));
-            set.add(function);
-            self.register_scalar_functions(set)?;
+        if schema.collations.get_committed(name).is_none() {
+            schema.collations.create_committed_chain(entry)?;
+        }
+        let mut set = ScalarFunctionSet::new(function.name.clone());
+        set.add(function);
+        let name = set.name.clone();
+        let mut kind = EntryKind::ScalarFunction(set);
+        kind.set_function_catalog(self.name(), DEFAULT_SCHEMA);
+        let mut entry = self.new_entry(name.clone(), kind);
+        entry.internal = true;
+        if schema.functions.get_committed(name.as_bytes()).is_none() {
+            schema.functions.create_committed_chain(entry)?;
         }
         Ok(())
     }
 
     /// Adds an internal entry to the set of `main` its kind belongs to.
-    fn register_builtin(&self, name: String, mut kind: EntryKind) -> Result<()> {
+    fn register_builtin(&self, name: ByteString, mut kind: EntryKind) -> Result<()> {
         let schema = self
             .schema(&Transaction::system(), DEFAULT_SCHEMA)
             .ok_or_else(missing_main)?;
         let schema = schema.as_schema().ok_or_else(missing_main)?;
-        kind.set_function_catalog(&self.name(), DEFAULT_SCHEMA);
-        let mut entry = CatalogEntry::new(name, kind);
+        kind.set_function_catalog(self.name(), DEFAULT_SCHEMA);
+        let mut entry = self.new_entry(name, kind);
         entry.internal = true;
         let set = match entry.catalog_type() {
             CatalogType::TableFunction => &schema.table_functions,
             CatalogType::Table | CatalogType::View => &schema.tables,
             CatalogType::CopyFunction => &schema.copy_functions,
             CatalogType::PragmaFunction => &schema.pragma_functions,
+            CatalogType::Collation => &schema.collations,
             _ => &schema.functions,
         };
-        set.create_committed(entry)
+        set.create_committed_chain(entry)
     }
 
     /// Looks up an entry of type `ty` in `schema`.
@@ -377,9 +550,12 @@ impl Catalog {
         &self,
         transaction: &Transaction,
         ty: CatalogType,
-        schema: &str,
-        name: &str,
+        schema: impl AsRef<[u8]>,
+        name: impl AsRef<[u8]>,
     ) -> Option<Arc<CatalogEntry>> {
+        let name = name.as_ref();
+        let schema = schema.as_ref();
+
         let schema_entry = self.schema(transaction, schema)?;
         let schema_entry = schema_entry.as_schema()?;
         let set = match ty {
@@ -417,29 +593,35 @@ impl Catalog {
         }
     }
 
-    fn schema_entry(&self, transaction: &Transaction, schema: &str) -> Result<Arc<CatalogEntry>> {
+    fn schema_entry(&self, transaction: &Transaction, schema: impl AsRef<[u8]>) -> Result<Arc<CatalogEntry>> {
+        let schema = schema.as_ref();
+
         self.schema(transaction, schema)
             .ok_or_else(|| missing_entry(CatalogType::Schema, schema))
     }
 
     /// Creates a schema read from a checkpoint, visible to every transaction; an existing
     /// schema is kept (`IGNORE_ON_CONFLICT`).
-    pub fn create_schema_committed(&self, name: &str) -> Result<()> {
+    pub fn create_schema_committed(&self, name: impl AsRef<[u8]>) -> Result<()> {
+        let name = name.as_ref();
+
         if self.schema(&Transaction::system(), name).is_some() {
             return Ok(());
         }
-        let mut entry = CatalogEntry::new(name, EntryKind::Schema(SchemaEntry::new(&self.name, name)));
+        let mut entry = self.new_entry(name, EntryKind::Schema(SchemaEntry::new(&self.name, name)));
         // Every catalog generates these schemas on demand, as internal ones; older files
         // stored them (`DefaultSchemaGenerator`).
         entry.internal = ["information_schema", "pg_catalog"]
             .iter()
-            .any(|schema| schema.eq_ignore_ascii_case(name));
+            .any(|schema| schema.as_bytes().eq_ignore_ascii_case(name));
         self.schemas.create_committed(entry)
     }
 
     /// Adds an entry read from a checkpoint or replayed from the WAL to `schema`, visible
     /// to every transaction.
-    pub fn create_entry_committed(&self, schema: &str, entry: CatalogEntry) -> Result<()> {
+    pub fn create_entry_committed(&self, schema: impl AsRef<[u8]>, entry: CatalogEntry) -> Result<()> {
+        let schema = schema.as_ref();
+
         let schema_entry = self.schema_entry(&Transaction::system(), schema)?;
         let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
         Self::set_for(schema_entry, entry.catalog_type()).create_committed(entry)
@@ -449,10 +631,12 @@ impl Catalog {
     pub fn create_schema(
         &self,
         transaction: &Transaction,
-        name: &str,
+        name: impl AsRef<[u8]>,
         on_conflict: OnCreateConflict,
     ) -> Result<()> {
-        let entry = CatalogEntry::new(name, EntryKind::Schema(SchemaEntry::new(&self.name, name)));
+        let name = name.as_ref();
+
+        let entry = self.new_entry(name, EntryKind::Schema(SchemaEntry::new(&self.name, name)));
         if self.schemas.create(transaction, entry)? {
             return Ok(());
         }
@@ -461,7 +645,7 @@ impl Catalog {
             OnCreateConflict::ReplaceOnConflict => {
                 // Dependent entries make the drop fail (no CASCADE).
                 self.drop_schema(transaction, name, false, false)?;
-                let entry = CatalogEntry::new(name, EntryKind::Schema(SchemaEntry::new(&self.name, name)));
+                let entry = self.new_entry(name, EntryKind::Schema(SchemaEntry::new(&self.name, name)));
                 if !self.schemas.create(transaction, entry)? {
                     return Err(Error::internal(
                         "Failed to create schema entry in CREATE_OR_REPLACE",
@@ -478,15 +662,17 @@ impl Catalog {
     pub fn create_entry(
         &self,
         transaction: &Transaction,
-        schema: &str,
+        schema: impl AsRef<[u8]>,
         entry: CatalogEntry,
         on_conflict: OnCreateConflict,
     ) -> Result<bool> {
+        let schema = schema.as_ref();
+
         let created = self.create_entry_in_schema(transaction, schema, entry, on_conflict)?;
         if created {
             // The entry depends on its schema, which must still exist when it commits.
             transaction.push_catalog_undo(Box::new(crate::transaction::CommitCheck::SubjectExists {
-                name: schema.to_owned(),
+                name: schema.into(),
                 set: Arc::clone(&self.schemas),
             }));
         }
@@ -496,10 +682,12 @@ impl Catalog {
     fn create_entry_in_schema(
         &self,
         transaction: &Transaction,
-        schema: &str,
+        schema: impl AsRef<[u8]>,
         entry: CatalogEntry,
         on_conflict: OnCreateConflict,
     ) -> Result<bool> {
+        let schema = schema.as_ref();
+
         let schema_entry = self.schema_entry(transaction, schema)?;
         let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
         let set = Self::set_for(schema_entry, entry.catalog_type());
@@ -531,7 +719,7 @@ impl Catalog {
                 ));
             }
             if old.catalog_type() != ty {
-                return Err(Error::catalog(format!(
+                return Err(Error::catalog(rustdb_common::byte_format!(
                     "Existing object {name} is of type {}, trying to replace with type {}",
                     old.catalog_type().display_name(),
                     ty.display_name()
@@ -553,11 +741,14 @@ impl Catalog {
     pub fn replace_entry(
         &self,
         transaction: &Transaction,
-        schema: &str,
+        schema: impl AsRef<[u8]>,
         ty: CatalogType,
-        name: &str,
+        name: impl AsRef<[u8]>,
         entry: CatalogEntry,
     ) -> Result<()> {
+        let name = name.as_ref();
+        let schema = schema.as_ref();
+
         let schema_entry = self.schema_entry(transaction, schema)?;
         let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
         let set = Self::set_for(schema_entry, ty);
@@ -574,13 +765,16 @@ impl Catalog {
     pub fn alter_entry(
         &self,
         transaction: &Transaction,
-        schema: &str,
+        schema: impl AsRef<[u8]>,
         ty: CatalogType,
-        name: &str,
+        name: impl AsRef<[u8]>,
         entry: CatalogEntry,
         hook: StorageHook,
         info: Option<rustdb_ast::AlterInfo>,
     ) -> Result<()> {
+        let name = name.as_ref();
+        let schema = schema.as_ref();
+
         let schema_entry = self.schema_entry(transaction, schema)?;
         let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
         let set = Self::set_for(schema_entry, ty);
@@ -596,13 +790,16 @@ impl Catalog {
     pub fn rename_entry(
         &self,
         transaction: &Transaction,
-        schema: &str,
+        schema: impl AsRef<[u8]>,
         ty: CatalogType,
-        name: &str,
+        name: impl AsRef<[u8]>,
         entry: CatalogEntry,
         hook: StorageHook,
         info: Option<rustdb_ast::AlterInfo>,
     ) -> Result<()> {
+        let name = name.as_ref();
+        let schema = schema.as_ref();
+
         let schema_entry = self.schema_entry(transaction, schema)?;
         let schema_entry = schema_entry.as_schema().ok_or_else(missing_main)?;
         let set = Self::set_for(schema_entry, ty);
@@ -615,7 +812,7 @@ impl Catalog {
             return Ok(());
         }
         if set.get(transaction, entry.name()).is_some() {
-            return Err(Error::catalog(format!(
+            return Err(Error::catalog(rustdb_common::byte_format!(
                 "Could not rename \"{name}\" to \"{}\": another entry with this name already exists!",
                 entry.name()
             )));
@@ -630,7 +827,7 @@ impl Catalog {
         if let Some(previous) = previous {
             for (owned_schema, owned) in self.owned_entries(transaction, schema, &previous) {
                 let mut copy = owned
-                    .try_copy()
+                    .try_copy_with_oid(self.name.next_oid())
                     .ok_or_else(|| Error::internal("an owned entry that cannot be copied"))?;
                 copy.owned_by = Some(renamed.clone());
                 self.alter_entry(
@@ -651,9 +848,12 @@ impl Catalog {
     pub fn table_indexes(
         &self,
         transaction: &Transaction,
-        schema: &str,
-        table: &str,
+        schema: impl AsRef<[u8]>,
+        table: impl AsRef<[u8]>,
     ) -> Vec<Arc<CatalogEntry>> {
+        let schema = schema.as_ref();
+        let table = table.as_ref();
+
         let Some(schema_entry) = self.schema(transaction, schema) else {
             return Vec::new();
         };
@@ -675,11 +875,30 @@ impl Catalog {
         &self,
         transaction: &Transaction,
         ty: CatalogType,
-        schema: &str,
-        name: &str,
+        schema: impl AsRef<[u8]>,
+        name: impl AsRef<[u8]>,
         cascade: bool,
         if_exists: bool,
     ) -> Result<()> {
+        self.drop_entry_with_internal(transaction, ty, schema, name, cascade, if_exists, false)
+    }
+
+    /// Client API removal of an internal entry (`DropInfo::allow_drop_internal`).
+    /// SQL DROP continues to reject internal objects through `drop_entry`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn drop_entry_with_internal(
+        &self,
+        transaction: &Transaction,
+        ty: CatalogType,
+        schema: impl AsRef<[u8]>,
+        name: impl AsRef<[u8]>,
+        cascade: bool,
+        if_exists: bool,
+        allow_internal: bool,
+    ) -> Result<()> {
+        let name = name.as_ref();
+        let schema = schema.as_ref();
+
         if ty == CatalogType::Schema {
             return self.drop_schema(transaction, name, cascade, if_exists);
         }
@@ -700,14 +919,14 @@ impl Catalog {
             return Err(missing_entry(ty, name));
         };
         if existing.catalog_type() != ty {
-            return Err(Error::catalog(format!(
+            return Err(Error::catalog(rustdb_common::byte_format!(
                 "Existing object {name} is of type {}, trying to drop type {}",
                 existing.catalog_type().display_name(),
                 ty.display_name()
             )));
         }
-        if existing.internal {
-            return Err(Error::catalog(format!(
+        if existing.internal && !allow_internal {
+            return Err(Error::catalog(rustdb_common::byte_format!(
                 "Cannot drop entry \"{}\" because it is an internal system entry",
                 existing.name()
             )));
@@ -728,7 +947,7 @@ impl Catalog {
                 }
             }
         }
-        set.drop_entry(transaction, name, false)?;
+        set.drop_entry(transaction, name, allow_internal)?;
         // The entries it owns go with it (`DependencyManager::CheckDropDependencies`).
         let schema_name = schema.to_owned();
         for (owned_schema, owned) in self.owned_entries(transaction, &schema_name, &existing) {
@@ -789,9 +1008,11 @@ impl Catalog {
     fn owned_entries(
         &self,
         transaction: &Transaction,
-        schema: &str,
+        schema: impl AsRef<[u8]>,
         entry: &CatalogEntry,
-    ) -> Vec<(String, Arc<CatalogEntry>)> {
+    ) -> Vec<(ByteString, Arc<CatalogEntry>)> {
+        let schema = schema.as_ref();
+
         let mut result = Vec::new();
         for schema_entry in self.schemas.scan(transaction) {
             let Some(contents) = schema_entry.as_schema() else {
@@ -818,13 +1039,17 @@ impl Catalog {
     pub fn change_ownership(
         &self,
         transaction: &Transaction,
-        schema: &str,
+        schema: impl AsRef<[u8]>,
         entry: &CatalogEntry,
-        (owner_schema, owner_name): (&str, &str),
+        (owner_schema, owner_name): (impl AsRef<[u8]>, impl AsRef<[u8]>),
         info: Option<rustdb_ast::AlterInfo>,
     ) -> Result<()> {
+        let schema = schema.as_ref();
+        let owner_schema = owner_schema.as_ref();
+        let owner_name = owner_name.as_ref();
+
         let missing = || {
-            Error::catalog(format!(
+            Error::catalog(rustdb_common::byte_format!(
                 "CatalogElement \"{owner_schema}.{owner_name}\" does not exist!"
             ))
         };
@@ -844,16 +1069,17 @@ impl Catalog {
             .or_else(|| contents.sequences.get(transaction, owner_name))
             .ok_or_else(missing)?;
         let owner_schema = owner_schema_entry.name().to_owned();
-        let dependency_error = |message: String| Error::new(rustdb_common::ErrorKind::Dependency, message);
+        let dependency_error =
+            |message: ByteString| Error::new_bytes(rustdb_common::ErrorKind::Dependency, message);
         if let Some(other) = self.owner(transaction, &owner) {
-            return Err(dependency_error(format!(
+            return Err(dependency_error(rustdb_common::byte_format!(
                 "{} can not become the owner, it is already owned by {}",
                 owner.name(),
                 other.name()
             )));
         }
         if let Some((_, owned)) = self.owned_entries(transaction, schema, entry).first() {
-            return Err(dependency_error(format!(
+            return Err(dependency_error(rustdb_common::byte_format!(
                 "{} already owns {}. Cannot have circular dependencies",
                 entry.name(),
                 owned.name()
@@ -863,14 +1089,14 @@ impl Catalog {
             if Arc::ptr_eq(&other, &owner) {
                 return Ok(());
             }
-            return Err(dependency_error(format!(
+            return Err(dependency_error(rustdb_common::byte_format!(
                 "{} is already owned by {}",
                 entry.name(),
                 other.name()
             )));
         }
         let mut owned = entry
-            .try_copy()
+            .try_copy_with_oid(self.name.next_oid())
             .ok_or_else(|| Error::internal("OWNED BY an entry that cannot be copied"))?;
         owned.owned_by = Some(owner.info(&owner_schema));
         self.alter_entry(
@@ -900,13 +1126,15 @@ impl Catalog {
     pub fn set_comment(
         &self,
         transaction: &Transaction,
-        schema: &str,
+        schema: impl AsRef<[u8]>,
         entry: &CatalogEntry,
         comment: Value,
         info: Option<rustdb_ast::AlterInfo>,
     ) -> Result<()> {
+        let schema = schema.as_ref();
+
         let mut copy = entry
-            .try_copy()
+            .try_copy_with_oid(self.name.next_oid())
             .ok_or_else(|| Error::internal("COMMENT ON an entry that cannot be copied"))?;
         copy.comment = comment;
         self.alter_entry(
@@ -925,13 +1153,16 @@ impl Catalog {
     pub fn set_column_comment(
         &self,
         transaction: &Transaction,
-        schema: &str,
+        schema: impl AsRef<[u8]>,
         entry: &CatalogEntry,
-        (column, comment): (&str, Value),
+        (column, comment): (impl AsRef<[u8]>, Value),
         info: Option<rustdb_ast::AlterInfo>,
     ) -> Result<()> {
+        let schema = schema.as_ref();
+        let column = column.as_ref();
+
         let mut copy = entry
-            .try_copy()
+            .try_copy_with_oid(self.name.next_oid())
             .ok_or_else(|| Error::internal("COMMENT ON COLUMN of an entry that cannot be copied"))?;
         match &mut copy.kind {
             EntryKind::Table(table) => {
@@ -940,7 +1171,7 @@ impl Catalog {
                     .iter_mut()
                     .find(|candidate| candidate.name.eq_ignore_ascii_case(column))
                 else {
-                    return Err(Error::binder(format!(
+                    return Err(Error::binder(rustdb_common::byte_format!(
                         "Table \"{}\" does not have a column with name \"{column}\"",
                         entry.name()
                     )));
@@ -952,17 +1183,17 @@ impl Catalog {
                     view.aliases
                         .get(index)
                         .or_else(|| view.names.get(index))
-                        .is_some_and(|name| name == column)
+                        .is_some_and(|name| name.as_bytes() == column)
                 });
                 if !exists {
-                    return Err(Error::binder(format!(
+                    return Err(Error::binder(rustdb_common::byte_format!(
                         "View \"{}\" does not have a column with name \"{column}\"",
                         entry.name()
                     )));
                 }
                 match view.column_comments.get_mut(column) {
                     Some(existing) => *existing = comment,
-                    None => view.column_comments.push(column.to_owned(), comment),
+                    None => view.column_comments.push(column.into(), comment),
                 }
             }
             _ => return Err(Error::internal("COMMENT ON COLUMN of an unexpected entry")),
@@ -983,9 +1214,11 @@ impl Catalog {
     pub fn dependents(
         &self,
         transaction: &Transaction,
-        schema: &str,
+        schema: impl AsRef<[u8]>,
         entry: &CatalogEntry,
-    ) -> Vec<(String, Arc<CatalogEntry>)> {
+    ) -> Vec<(ByteString, Arc<CatalogEntry>)> {
+        let schema = schema.as_ref();
+
         let mut result = Vec::new();
         for schema_entry in self.schemas.scan(transaction) {
             let Some(contents) = schema_entry.as_schema() else {
@@ -1022,22 +1255,24 @@ impl Catalog {
     fn check_drop_dependencies(
         &self,
         transaction: &Transaction,
-        schema: &str,
+        schema: impl AsRef<[u8]>,
         entry: &CatalogEntry,
         cascade: bool,
     ) -> Result<()> {
+        let schema = schema.as_ref();
+
         let dependents = self.dependents(transaction, schema, entry);
         if dependents.is_empty() {
             return Ok(());
         }
         if !cascade {
-            let mut message = format!(
+            let mut message = rustdb_common::byte_format!(
                 "Cannot drop entry \"{}\" because there are entries that depend on it.\n",
                 entry.name()
             );
             self.collect_dependents(transaction, &dependents, entry, &mut message);
-            message.push_str("Use DROP...CASCADE to drop all dependents.");
-            return Err(Error::new(rustdb_common::ErrorKind::Dependency, message));
+            message.push_bytes("Use DROP...CASCADE to drop all dependents.");
+            return Err(Error::new_bytes(rustdb_common::ErrorKind::Dependency, message));
         }
         for (dependent_schema, dependent) in dependents {
             self.drop_entry(
@@ -1056,14 +1291,14 @@ impl Catalog {
     fn collect_dependents(
         &self,
         transaction: &Transaction,
-        dependents: &[(String, Arc<CatalogEntry>)],
+        dependents: &[(ByteString, Arc<CatalogEntry>)],
         subject: &CatalogEntry,
-        message: &mut String,
+        message: &mut ByteString,
     ) {
         for (schema, dependent) in dependents {
-            let _ = writeln!(
+            let _ = rustdb_common::byte_write!(
                 message,
-                "{} depends on {}.",
+                "{} depends on {}.\n",
                 entry_to_string(dependent),
                 entry_to_string(subject)
             );
@@ -1077,10 +1312,12 @@ impl Catalog {
     fn drop_schema(
         &self,
         transaction: &Transaction,
-        name: &str,
+        name: impl AsRef<[u8]>,
         cascade: bool,
         if_exists: bool,
     ) -> Result<()> {
+        let name = name.as_ref();
+
         let Some(schema) = self.schema(transaction, name) else {
             if if_exists {
                 return Ok(());
@@ -1088,7 +1325,7 @@ impl Catalog {
             return Err(missing_entry(CatalogType::Schema, name));
         };
         if schema.internal {
-            return Err(Error::catalog(format!(
+            return Err(Error::catalog(rustdb_common::byte_format!(
                 "Cannot drop entry \"{}\" because it is an internal system entry",
                 schema.name()
             )));
@@ -1108,21 +1345,21 @@ impl Catalog {
             .filter(|entry| !entry.internal)
             .collect();
         if !dependents.is_empty() && !cascade {
-            let mut message = format!(
+            let mut message = rustdb_common::byte_format!(
                 "Cannot drop entry \"{}\" because there are entries that depend on it.\n",
                 schema.name()
             );
             for entry in dependents.iter().rev() {
-                let _ = writeln!(
+                let _ = rustdb_common::byte_write!(
                     message,
-                    "{} \"{}\" depends on schema \"{}\".",
+                    "{} \"{}\" depends on schema \"{}\".\n",
                     entry.catalog_type().display_name().to_lowercase(),
                     entry.name(),
                     schema.name()
                 );
             }
-            message.push_str("Use DROP...CASCADE to drop all dependents.");
-            return Err(Error::new(rustdb_common::ErrorKind::Dependency, message));
+            message.push_bytes("Use DROP...CASCADE to drop all dependents.");
+            return Err(Error::new_bytes(rustdb_common::ErrorKind::Dependency, message));
         }
         for set in sets {
             for entry in set.scan(transaction) {
@@ -1148,7 +1385,7 @@ impl Catalog {
 }
 
 /// `EntryToString` of the dependency manager (sequences print as indexes, like DuckDB).
-fn entry_to_string(entry: &CatalogEntry) -> String {
+fn entry_to_string(entry: &CatalogEntry) -> ByteString {
     let kind = match entry.catalog_type() {
         CatalogType::Table => "table",
         CatalogType::Schema => "schema",
@@ -1164,18 +1401,23 @@ fn entry_to_string(entry: &CatalogEntry) -> String {
         CatalogType::Macro => "macro function",
         CatalogType::TableMacro => "table macro function",
     };
-    format!("{kind} \"{}\"", entry.name())
+    rustdb_common::byte_format!("{kind} \"{}\"", entry.name())
 }
 
 /// Whether `name` is one of the builtin types every `main` schema holds (DuckDB's
 /// `DefaultTypeGenerator::CreateDefaultEntry`).
-fn is_builtin_type(schema: &str, name: &str) -> bool {
-    schema.eq_ignore_ascii_case(DEFAULT_SCHEMA) && rustdb_types::builtin_type_id(name).is_some()
+fn is_builtin_type(schema: impl AsRef<[u8]>, name: impl AsRef<[u8]>) -> bool {
+    let name = name.as_ref();
+    let schema = schema.as_ref();
+
+    schema.eq_ignore_ascii_case(DEFAULT_SCHEMA.as_bytes()) && rustdb_types::builtin_type_id(name).is_some()
 }
 
 /// DuckDB's error for dropping or replacing an internal entry.
-fn internal_entry_error(name: &str) -> Error {
-    Error::catalog(format!(
+fn internal_entry_error(name: impl AsRef<[u8]>) -> Error {
+    let name = name.as_ref();
+
+    Error::catalog(rustdb_common::byte_format!(
         "Cannot drop entry \"{name}\" because it is an internal system entry"
     ))
 }
@@ -1186,19 +1428,26 @@ fn missing_main() -> Error {
 
 /// `CatalogException::MissingEntry` of a lookup without suggestions, caught into the
 /// lookup's `ErrorData` (the position of the lookup, if any, follows the subtype).
-fn missing_entry(ty: CatalogType, name: &str) -> Error {
-    Error::catalog(format!("{} with name {name} does not exist!", ty.display_name()))
-        .with_subtype("MISSING_ENTRY")
-        .with_extra_info_slot("position")
-        .with_extra_info("name", name)
-        .with_extra_info("type", ty.display_name())
-        .with_extra_info_round_trip()
+fn missing_entry(ty: CatalogType, name: impl AsRef<[u8]>) -> Error {
+    let name = name.as_ref();
+
+    Error::catalog(rustdb_common::byte_format!(
+        "{} with name {name} does not exist!",
+        ty.display_name()
+    ))
+    .with_subtype("MISSING_ENTRY")
+    .with_extra_info_slot("position")
+    .with_extra_info("name", name)
+    .with_extra_info("type", ty.display_name())
+    .with_extra_info_round_trip()
 }
 
 /// `CatalogException::EntryAlreadyExists`, thrown while the statement executes, so that
 /// it is caught into an `ErrorData` and thrown again before the client sees it.
-fn entry_already_exists(ty: CatalogType, name: &str) -> Error {
-    Error::catalog(format!(
+fn entry_already_exists(ty: CatalogType, name: impl AsRef<[u8]>) -> Error {
+    let name = name.as_ref();
+
+    Error::catalog(rustdb_common::byte_format!(
         "{} with name \"{name}\" already exists!",
         ty.display_name()
     ))
@@ -1215,13 +1464,399 @@ mod tests {
     use super::*;
     use crate::{TransactionManager, TypeEntry};
 
-    fn type_entry(name: &str) -> CatalogEntry {
+    #[test]
+    fn collation_entries_keep_their_transform_and_ignore_duplicate_extension_registration() {
+        let catalog = Catalog::new("system").unwrap();
+        let collation = |combinable| crate::CollationEntry {
+            function: rustdb_function::ScalarFunction::new(
+                "test_transform",
+                vec![LogicalType::VARCHAR],
+                LogicalType::VARCHAR,
+                |_, _, _| Ok(()),
+            ),
+            combinable,
+            not_required_for_equality: false,
+        };
+        catalog
+            .register_builtin_collation("builtin_test", collation(true))
+            .unwrap();
+        let schema = catalog.schema(&Transaction::system(), "main").unwrap();
+        let schema = schema.as_schema().unwrap();
+        assert!(schema.collations.get_committed("builtin_test").is_some());
+        assert!(schema.functions.get_committed("test_transform").is_none());
+
+        catalog
+            .register_collation("extension_test", collation(true))
+            .unwrap();
+        let original = schema.collations.get_committed("extension_test").unwrap();
+        let transform = schema.functions.get_committed("test_transform").unwrap();
+        catalog
+            .register_collation("extension_test", collation(false))
+            .unwrap();
+        let repeated = schema.collations.get_committed("extension_test").unwrap();
+        assert!(Arc::ptr_eq(&original, &repeated));
+        let EntryKind::Collation(entry) = &repeated.kind else {
+            panic!("a collation must keep its catalog type");
+        };
+        assert!(entry.combinable);
+        assert!(Arc::ptr_eq(
+            &transform,
+            &schema.functions.get_committed("test_transform").unwrap()
+        ));
+    }
+
+    #[test]
+    fn attached_identity_is_allocated_after_initialization_and_only_once() {
+        let allocator = Arc::new(crate::OidAllocator::default());
+        let catalog = Catalog::unregistered("attached", Arc::clone(&allocator)).unwrap();
+        let provisional = catalog.oid();
+        assert_eq!(provisional, 20_000);
+        let schema = catalog.schema(&Transaction::system(), "main").unwrap();
+        assert!(schema.oid > provisional);
+        assert_eq!(catalog.oid(), provisional);
+        let initialized = catalog.new_entry("loaded", EntryKind::Schema(SchemaEntry::default()));
+        catalog.finalize_registration();
+        assert!(catalog.oid() > initialized.oid);
+        let identity = catalog.oid();
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| catalog.finalize_registration());
+            }
+        });
+        assert_eq!(catalog.oid(), identity);
+        assert_eq!(allocator.next_oid(), identity + 1);
+    }
+
+    #[test]
+    fn default_macro_entries_and_schemas_are_allocated_on_first_lookup() {
+        let catalog = Catalog::new("system").unwrap();
+        let defaults = Arc::downgrade(&catalog.default_entries);
+        catalog.register_default_entry(
+            "pg_catalog",
+            "lazy_macro",
+            EntryKind::Macro(crate::MacroEntry { macros: vec![] }),
+        );
+        assert!(catalog.schemas.get_committed_existing("pg_catalog").is_none());
+        let marker = catalog.new_entry("marker", EntryKind::Schema(SchemaEntry::default()));
+        assert_eq!(
+            marker.oid, 20_002,
+            "registration must consume no object IDs beyond main's chain root"
+        );
+        let schema = catalog.schema(&Transaction::system(), "pg_catalog").unwrap();
+        assert_eq!(schema.oid, marker.oid + 1);
+        let functions = &schema.as_schema().unwrap().functions;
+        assert!(functions.get_committed_existing("lazy_macro").is_none());
+        let entry = functions.get(&Transaction::system(), "lazy_macro").unwrap();
+        assert_eq!(entry.oid, schema.oid + 1);
+        assert!(Arc::ptr_eq(
+            &entry,
+            &functions.get(&Transaction::system(), "lazy_macro").unwrap()
+        ));
+        assert_eq!(functions.scan(&Transaction::system()).len(), 1);
+        drop(schema);
+        drop(catalog);
+        assert!(
+            defaults.upgrade().is_none(),
+            "default factories must not retain the catalog registry"
+        );
+    }
+
+    #[test]
+    fn deferred_default_is_published_once_for_concurrent_lookups() {
+        let catalog = Catalog::new("system").unwrap();
+        catalog.register_default_entry(
+            "main",
+            "lazy_macro",
+            EntryKind::Macro(crate::MacroEntry { macros: vec![] }),
+        );
+        let entries = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        catalog
+                            .get_entry(&Transaction::system(), CatalogType::Macro, "main", "lazy_macro")
+                            .unwrap()
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .map(|worker| worker.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert!(entries.iter().all(|entry| Arc::ptr_eq(entry, &entries[0])));
+        assert_eq!(
+            catalog
+                .new_entry("marker", EntryKind::Schema(SchemaEntry::default()))
+                .oid,
+            20_003
+        );
+    }
+
+    #[test]
+    fn unobserved_default_cannot_be_shadowed_and_survives_rollback() {
+        let catalog = Catalog::new("system").unwrap();
+        catalog.register_default_entry(
+            "main",
+            "lazy_macro",
+            EntryKind::Macro(crate::MacroEntry { macros: vec![] }),
+        );
+        let manager = TransactionManager::default();
+        let transaction = manager.begin();
+        let schema = catalog.schema(&transaction, "main").unwrap();
+        let functions = &schema.as_schema().unwrap().functions;
+        assert!(functions.get_committed_existing("lazy_macro").is_none());
+        let attempted = catalog.new_entry(
+            "lazy_macro",
+            EntryKind::Macro(crate::MacroEntry { macros: vec![] }),
+        );
+        assert!(!functions.create(&transaction, attempted).unwrap());
+        let generated = functions.get(&transaction, "lazy_macro").unwrap();
+        assert!(generated.internal);
+        manager.rollback(&transaction);
+        assert!(Arc::ptr_eq(
+            &generated,
+            &functions.get(&Transaction::system(), "lazy_macro").unwrap()
+        ));
+    }
+
+    #[test]
+    fn transaction_chain_and_successful_drop_nodes_have_instance_owned_ids() {
+        let catalog = Catalog::new("system").unwrap();
+        let manager = TransactionManager::default();
+        let schema = catalog.schema(&Transaction::system(), "main").unwrap();
+        let functions = &schema.as_schema().unwrap().functions;
+        let transaction = manager.begin();
+        let mut entry = catalog.new_entry(
+            "user_macro",
+            EntryKind::Macro(crate::MacroEntry { macros: vec![] }),
+        );
+        entry.temporary = true;
+        let original_oid = entry.oid;
+        assert!(functions.create(&transaction, entry).unwrap());
+        manager.commit(&transaction).unwrap();
+        let marker = catalog.new_entry("marker", EntryKind::Schema(SchemaEntry::default()));
+        assert_eq!(
+            marker.oid,
+            original_oid + 2,
+            "the actual INVALID chain node consumes one ID"
+        );
+        let transaction = manager.begin();
+        assert!(!functions.drop_entry(&transaction, "missing", false).unwrap());
+        assert!(functions.drop_entry(&transaction, "user_macro", false).unwrap());
+        manager.rollback(&transaction);
+        assert_eq!(
+            functions.get(&Transaction::system(), "user_macro").unwrap().oid,
+            original_oid
+        );
+        assert_eq!(
+            catalog
+                .new_entry("after", EntryKind::Schema(SchemaEntry::default()))
+                .oid,
+            marker.oid + 2,
+            "only the actual DELETED node consumes an ID, including after rollback"
+        );
+    }
+
+    #[test]
+    fn rename_nodes_keep_snapshot_visibility_and_rollback_identity() {
+        let catalog = Catalog::new("system").unwrap();
+        let manager = TransactionManager::default();
+        let schema = catalog.schema(&Transaction::system(), "main").unwrap();
+        let set = &schema.as_schema().unwrap().functions;
+        let create = manager.begin();
+        let mut entry = catalog.new_entry("old", EntryKind::Macro(crate::MacroEntry { macros: vec![] }));
+        entry.temporary = true;
+        let oid = entry.oid;
+        assert!(set.create(&create, entry).unwrap());
+        manager.commit(&create).unwrap();
+        let reader = manager.begin();
+        let rename = manager.begin();
+        let renamed = catalog.new_entry("new", EntryKind::Macro(crate::MacroEntry { macros: vec![] }));
+        let allocated_before = renamed.oid;
+        assert!(
+            set.rename(&rename, "old", renamed, StorageHook::None, None)
+                .unwrap()
+        );
+        assert!(set.get(&rename, "old").is_none());
+        assert_eq!(set.get(&rename, "new").unwrap().oid, oid);
+        assert_eq!(set.get(&reader, "old").unwrap().oid, oid);
+        assert!(set.get(&reader, "new").is_none());
+        assert_eq!(
+            catalog
+                .new_entry("marker", EntryKind::Schema(SchemaEntry::default()))
+                .oid,
+            allocated_before + 5,
+            "rename creates three rename/delete nodes plus a new chain root"
+        );
+        manager.rollback(&rename);
+        assert_eq!(set.get(&Transaction::system(), "old").unwrap().oid, oid);
+        assert!(set.get(&Transaction::system(), "new").is_none());
+        manager.rollback(&reader);
+        let rename = manager.begin();
+        let renamed = catalog.new_entry("new", EntryKind::Macro(crate::MacroEntry { macros: vec![] }));
+        assert!(
+            set.rename(&rename, "old", renamed, StorageHook::None, None)
+                .unwrap()
+        );
+        manager.commit(&rename).unwrap();
+        assert!(set.get(&Transaction::system(), "old").is_none());
+        assert_eq!(set.get(&Transaction::system(), "new").unwrap().oid, oid);
+    }
+
+    #[test]
+    fn object_ids_are_owned_by_the_instance_and_shared_with_attached_catalogs() {
+        let left = Catalog::with_oid_allocator("system", Arc::default()).unwrap();
+        let right = Catalog::with_oid_allocator("system", Arc::default()).unwrap();
+        assert_eq!(
+            left.new_entry("a", EntryKind::Schema(SchemaEntry::default())).oid,
+            20_002
+        );
+        assert_eq!(
+            right
+                .new_entry("a", EntryKind::Schema(SchemaEntry::default()))
+                .oid,
+            20_002
+        );
+        let attached = Catalog::with_oid_allocator("attached", left.oid_allocator()).unwrap();
+        let temp = Catalog::with_oid_allocator("temp", left.oid_allocator()).unwrap();
+        let ids = [
+            attached.oid(),
+            attached
+                .schema(&Transaction::system(), DEFAULT_SCHEMA)
+                .unwrap()
+                .oid,
+            temp.oid(),
+            temp.schema(&Transaction::system(), DEFAULT_SCHEMA).unwrap().oid,
+            left.new_entry("b", EntryKind::Schema(SchemaEntry::default())).oid,
+        ];
+        assert_eq!(ids, [20_003, 20_004, 20_006, 20_007, 20_009]);
+        assert_eq!(
+            right
+                .new_entry("b", EntryKind::Schema(SchemaEntry::default()))
+                .oid,
+            20_003
+        );
+    }
+
+    #[test]
+    fn lazy_default_type_generation_uses_its_catalogs_allocator() {
+        let left = Catalog::new("system").unwrap();
+        let right = Catalog::new("system").unwrap();
+        let a = left
+            .get_entry(
+                &Transaction::system(),
+                CatalogType::Type,
+                DEFAULT_SCHEMA,
+                "INTEGER",
+            )
+            .unwrap();
+        let b = right
+            .get_entry(
+                &Transaction::system(),
+                CatalogType::Type,
+                DEFAULT_SCHEMA,
+                "INTEGER",
+            )
+            .unwrap();
+        assert_eq!(a.oid, b.oid);
+        let next = left.new_entry("next", EntryKind::Schema(SchemaEntry::default()));
+        assert!(next.oid > a.oid);
+    }
+
+    fn type_entry(name: impl AsRef<[u8]>) -> CatalogEntry {
+        let name = name.as_ref();
+
         CatalogEntry::new(
             name,
             EntryKind::Type(TypeEntry {
                 user_type: LogicalType::INTEGER,
             }),
         )
+    }
+
+    #[test]
+    fn client_function_removal_is_opt_in_and_transactional() {
+        let catalog = Catalog::new("system").unwrap();
+        let manager = TransactionManager::default();
+        let transaction = manager.begin();
+        let mut entry = CatalogEntry::new(
+            "python_udf",
+            EntryKind::ScalarFunction(rustdb_function::ScalarFunctionSet::new("python_udf")),
+        );
+        entry.internal = true;
+        catalog
+            .create_entry(&transaction, "main", entry, OnCreateConflict::ErrorOnConflict)
+            .unwrap();
+        manager.commit(&transaction).unwrap();
+
+        let transaction = manager.begin();
+        let error = catalog
+            .drop_entry(
+                &transaction,
+                CatalogType::ScalarFunction,
+                "main",
+                "python_udf",
+                false,
+                false,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("internal system entry"));
+        catalog
+            .drop_entry_with_internal(
+                &transaction,
+                CatalogType::ScalarFunction,
+                "main",
+                "python_udf",
+                false,
+                false,
+                true,
+            )
+            .unwrap();
+        assert!(
+            catalog
+                .get_entry(&transaction, CatalogType::ScalarFunction, "main", "python_udf")
+                .is_none()
+        );
+        manager.rollback(&transaction);
+
+        let transaction = manager.begin();
+        assert!(
+            catalog
+                .get_entry(&transaction, CatalogType::ScalarFunction, "main", "python_udf")
+                .is_some()
+        );
+        catalog
+            .drop_entry_with_internal(
+                &transaction,
+                CatalogType::ScalarFunction,
+                "main",
+                "python_udf",
+                false,
+                false,
+                true,
+            )
+            .unwrap();
+        manager.commit(&transaction).unwrap();
+        let transaction = manager.begin();
+        assert!(
+            catalog
+                .get_entry(&transaction, CatalogType::ScalarFunction, "main", "python_udf")
+                .is_none()
+        );
+        assert!(
+            catalog
+                .drop_entry_with_internal(
+                    &transaction,
+                    CatalogType::Type,
+                    "main",
+                    "INTEGER",
+                    false,
+                    false,
+                    true
+                )
+                .is_err()
+        );
     }
 
     #[test]

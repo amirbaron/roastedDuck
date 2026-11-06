@@ -6,13 +6,24 @@ use rustdb_ast::{
     ColumnRefExpression, ExpressionType, OperatorExpression, ParsedExpression, ParsedExpressionKind,
     PositionalReferenceExpression, QualifiedColumnName, StarExpression,
 };
-use rustdb_common::string_util::{candidates_message, similarity_rating, top_n_jaro_winkler, top_n_strings};
-use rustdb_common::{CaseInsensitiveMap, CaseInsensitiveSet, Error, Result};
+use rustdb_common::string_util::{
+    candidates_message_bytes, similarity_rating, top_n_jaro_winkler, top_n_strings,
+};
+use rustdb_common::{
+    ByteString, CaseInsensitiveMap, CaseInsensitiveSet, Error, ErrorKind, Result, byte_format,
+};
 use rustdb_types::{LogicalType, LogicalTypeId};
 
 use super::BindingMode;
 use super::binding::{Binding, BindingAlias, BindingKind};
 use crate::expression::Expression;
+
+fn binder_error(message: impl Into<ByteString>) -> Error {
+    Error::new_bytes(ErrorKind::Binder, message.into().into_bytes())
+}
+fn internal_error(message: impl Into<ByteString>) -> Error {
+    Error::new_bytes(ErrorKind::Internal, message.into().into_bytes())
+}
 
 /// Columns joined with `USING`/`NATURAL` (DuckDB's `UsingColumnSet`).
 #[derive(Clone, Debug, Default)]
@@ -33,38 +44,38 @@ fn lock(set: &UsingSetRef) -> std::sync::MutexGuard<'_, UsingColumnSet> {
 #[derive(Clone, Debug, Default)]
 pub struct BindContext {
     bindings: Vec<Binding>,
-    using_columns: CaseInsensitiveMap<Vec<UsingSetRef>>,
+    using_columns: CaseInsensitiveMap<Vec<UsingSetRef>, ByteString>,
     cte_bindings: Vec<Binding>,
 }
 
 /// `alias`, or `schema.alias`, or the full name: the shortest name telling `alias` apart
 /// from `other` (DuckDB's `MinimumUniqueAlias`).
-fn minimum_unique_alias(alias: &BindingAlias, other: &BindingAlias) -> String {
+fn minimum_unique_alias(alias: &BindingAlias, other: &BindingAlias) -> ByteString {
     if !alias.alias.eq_ignore_ascii_case(&other.alias) {
         return alias.alias.clone();
     }
     if !alias.schema.eq_ignore_ascii_case(&other.schema) {
-        return format!("{}.{}", alias.schema, alias.alias);
+        return byte_format!("{}.{}", alias.schema, alias.alias);
     }
-    alias.to_string()
+    alias.to_bytes()
 }
 
-fn candidate_alias(main: &BindingAlias, new: &BindingAlias) -> String {
-    let mut candidate = String::new();
+fn candidate_alias(main: &BindingAlias, new: &BindingAlias) -> ByteString {
+    let mut candidate = ByteString::new();
     if !main.catalog.is_empty() && !new.catalog.is_empty() {
-        candidate.push_str(&new.catalog);
-        candidate.push('.');
+        candidate.push_bytes(&new.catalog);
+        candidate.push(b'.');
     }
     if !main.schema.is_empty() && !new.schema.is_empty() {
-        candidate.push_str(&new.schema);
-        candidate.push('.');
+        candidate.push_bytes(&new.schema);
+        candidate.push(b'.');
     }
-    candidate.push_str(&new.alias);
+    candidate.push_bytes(&new.alias);
     candidate
 }
 
 /// The alias part of a qualified column reference (DuckDB's `GetBindingAlias(ColumnRefExpression)`).
-pub fn column_ref_binding_alias(names: &[String]) -> BindingAlias {
+pub fn column_ref_binding_alias(names: &[ByteString]) -> BindingAlias {
     match names {
         [catalog, schema, table, _, ..] => BindingAlias::qualified(catalog, schema, table),
         [schema, table, _] => BindingAlias::qualified("", schema, table),
@@ -89,7 +100,12 @@ impl BindContext {
     }
 
     /// The using set joining `column_name` from `binding`, if any.
-    pub fn using_binding_for(&self, column_name: &str, binding: &BindingAlias) -> Option<UsingSetRef> {
+    pub fn using_binding_for(
+        &self,
+        column_name: impl AsRef<[u8]>,
+        binding: &BindingAlias,
+    ) -> Option<UsingSetRef> {
+        let column_name = column_name.as_ref();
         self.using_columns
             .get(column_name)?
             .iter()
@@ -99,32 +115,34 @@ impl BindContext {
 
     /// The using set for `column_name`; an error if several sets claim it
     /// (DuckDB's `GetUsingBinding(column_name)`).
-    pub fn using_binding(&self, column_name: &str) -> Result<Option<UsingSetRef>> {
+    pub fn using_binding(&self, column_name: impl AsRef<[u8]>) -> Result<Option<UsingSetRef>> {
+        let column_name = column_name.as_ref();
         let Some(sets) = self.using_columns.get(column_name) else {
             return Ok(None);
         };
         if sets.len() > 1 {
             let mut error =
-                format!("Ambiguous column reference: column \"{column_name}\" can refer to either:\n");
+                byte_format!("Ambiguous column reference: column \"{column_name}\" can refer to either:\n");
             for set in sets {
                 let set = lock(set);
-                let mut bindings = String::new();
+                let mut bindings = ByteString::new();
                 for alias in &set.bindings {
-                    bindings.push_str(if bindings.is_empty() { "[" } else { ", " });
-                    bindings.push_str(&alias.alias);
-                    bindings.push('.');
-                    bindings.push_str(&self.actual_column_name(alias, column_name)?);
+                    bindings.push_bytes(if bindings.is_empty() { "[" } else { ", " });
+                    bindings.push_bytes(&alias.alias);
+                    bindings.push(b'.');
+                    bindings.push_bytes(&self.actual_column_name(alias, column_name)?);
                 }
-                error.push_str(&bindings);
-                error.push(']');
+                error.push_bytes(&bindings);
+                error.push(b']');
             }
-            return Err(Error::binder(error));
+            return Err(binder_error(error));
         }
         Ok(sets.first().cloned())
     }
 
     /// Registers `set` as joining `column_name`.
-    pub fn add_using_binding(&mut self, column_name: &str, set: UsingSetRef) {
+    pub fn add_using_binding(&mut self, column_name: impl AsRef<[u8]>, set: UsingSetRef) {
+        let column_name = column_name.as_ref();
         match self.using_columns.get_mut(column_name) {
             Some(sets) => {
                 if !sets.iter().any(|existing| Arc::ptr_eq(existing, &set)) {
@@ -132,13 +150,15 @@ impl BindContext {
                 }
             }
             None => {
-                self.using_columns.insert(column_name.to_owned(), vec![set]);
+                self.using_columns
+                    .insert(ByteString::from(column_name), vec![set]);
             }
         }
     }
 
     /// Removes `set` from the sets joining `column_name`.
-    pub fn remove_using_binding(&mut self, column_name: &str, set: &UsingSetRef) {
+    pub fn remove_using_binding(&mut self, column_name: impl AsRef<[u8]>, set: &UsingSetRef) {
+        let column_name = column_name.as_ref();
         if let Some(sets) = self.using_columns.get_mut(column_name) {
             sets.retain(|existing| !Arc::ptr_eq(existing, set));
             if sets.is_empty() {
@@ -148,12 +168,17 @@ impl BindContext {
     }
 
     /// The column name as the binding spells it (DuckDB's `GetActualColumnName`).
-    pub fn actual_column_name(&self, alias: &BindingAlias, column_name: &str) -> Result<String> {
+    pub fn actual_column_name(
+        &self,
+        alias: &BindingAlias,
+        column_name: impl AsRef<[u8]>,
+    ) -> Result<ByteString> {
+        let column_name = column_name.as_ref();
         let binding = self
             .binding(alias)?
-            .ok_or_else(|| Error::internal(format!("No binding with name \"{}\"", alias.alias)))?;
+            .ok_or_else(|| internal_error(byte_format!("No binding with name \"{}\"", alias.alias)))?;
         let index = binding.binding_index(column_name).ok_or_else(|| {
-            Error::internal(format!(
+            internal_error(byte_format!(
                 "Binding with name \"{}\" does not have a column named \"{column_name}\"",
                 binding.alias_name()
             ))
@@ -162,7 +187,8 @@ impl BindContext {
     }
 
     /// The bindings that have a column called `column_name`.
-    pub fn matching_bindings(&self, column_name: &str) -> Vec<&Binding> {
+    pub fn matching_bindings(&self, column_name: impl AsRef<[u8]>) -> Vec<&Binding> {
+        let column_name = column_name.as_ref();
         self.bindings
             .iter()
             .filter(|binding| binding.has_matching_binding(column_name))
@@ -171,7 +197,12 @@ impl BindContext {
 
     /// The single binding with a column `column_name` that is not part of a USING set;
     /// an error if there are several (DuckDB's `GetMatchingBinding`).
-    pub fn matching_binding(&self, column_name: &str, location: Option<u64>) -> Result<Option<&Binding>> {
+    pub fn matching_binding(
+        &self,
+        column_name: impl AsRef<[u8]>,
+        location: Option<u64>,
+    ) -> Result<Option<&Binding>> {
+        let column_name = column_name.as_ref();
         let mut result: Option<&Binding> = None;
         for binding in &self.bindings {
             if self.using_binding_for(column_name, &binding.alias).is_some() {
@@ -179,7 +210,7 @@ impl BindContext {
             }
             if binding.has_matching_binding(column_name) {
                 if let Some(previous) = result {
-                    return Err(Error::binder(format!(
+                    return Err(binder_error(byte_format!(
                         "Ambiguous reference to column name \"{column_name}\" (use: \"{}.{column_name}\" or \
                          \"{}.{column_name}\")",
                         minimum_unique_alias(&previous.alias, &binding.alias),
@@ -195,13 +226,14 @@ impl BindContext {
 
     /// Up to five column names similar to `column_name`, qualified where ambiguous
     /// (DuckDB's `GetSimilarBindings`).
-    pub fn similar_bindings(&self, column_name: &str) -> Vec<String> {
+    pub fn similar_bindings(&self, column_name: impl AsRef<[u8]>) -> Vec<ByteString> {
+        let column_name = column_name.as_ref();
         let mut scores = Vec::new();
         for binding in &self.bindings {
             for name in &binding.names {
                 let score = similarity_rating(name, column_name);
                 if self.matching_bindings(name).len() > 1 {
-                    scores.push((format!("{}.{name}", binding.alias_name()), score));
+                    scores.push((byte_format!("{}.{name}", binding.alias_name()), score));
                 } else {
                     scores.push((name.clone(), score));
                 }
@@ -221,14 +253,15 @@ impl BindContext {
             .map(|(i, _)| i)
             .collect();
         if matching.is_empty() {
-            let candidates: Vec<String> = self
+            let candidates: Vec<ByteString> = self
                 .bindings
                 .iter()
                 .map(|binding| candidate_alias(alias, &binding.alias))
                 .collect();
             let main = candidate_alias(alias, alias);
-            let candidates = candidates_message(&top_n_jaro_winkler(&candidates, &main), "Candidate tables");
-            return Err(Error::binder(format!(
+            let candidates =
+                candidates_message_bytes(&top_n_jaro_winkler(&candidates, &main), b"Candidate tables");
+            return Err(binder_error(byte_format!(
                 "Referenced table \"{main}\" not found!{candidates}"
             )));
         }
@@ -236,14 +269,14 @@ impl BindContext {
     }
 
     /// `(use: a, b or c)` (DuckDB's `AmbiguityException`).
-    fn ambiguity_message(&self, alias: &BindingAlias, matching: &[usize]) -> String {
-        let mut result = String::from("(use: ");
+    fn ambiguity_message(&self, alias: &BindingAlias, matching: &[usize]) -> ByteString {
+        let mut result = ByteString::from("(use: ");
         for (i, &index) in matching.iter().enumerate() {
             if i > 0 {
-                result.push_str(if i + 1 == matching.len() { " or " } else { ", " });
+                result.push_bytes(if i + 1 == matching.len() { " or " } else { ", " });
             }
             let current = &self.bindings[index].alias;
-            let mut minimum = String::new();
+            let mut minimum = ByteString::new();
             let mut duplicate = false;
             for (k, &other_index) in matching.iter().enumerate() {
                 if k == i {
@@ -259,14 +292,14 @@ impl BindContext {
                 }
             }
             if duplicate {
-                result = format!(
+                result = byte_format!(
                     "(duplicate alias \"{alias}\", explicitly alias one of the tables using \"AS my_alias\""
                 );
             } else {
-                result.push_str(&minimum);
+                result.push_bytes(&minimum);
             }
         }
-        result.push(')');
+        result.push(b')');
         result
     }
 
@@ -276,8 +309,9 @@ impl BindContext {
     pub fn binding_with_column(
         &self,
         alias: &BindingAlias,
-        column_name: &str,
+        column_name: impl AsRef<[u8]>,
     ) -> Result<std::result::Result<usize, Error>> {
+        let column_name = column_name.as_ref();
         let matching = match self.bindings_matching(alias) {
             Ok(matching) => matching,
             Err(error) => return Ok(Err(error)),
@@ -288,7 +322,7 @@ impl BindContext {
                 continue;
             }
             if result.is_some() {
-                return Err(Error::binder(format!(
+                return Err(binder_error(byte_format!(
                     "Ambiguous reference to table \"{alias}\" {}",
                     self.ambiguity_message(alias, &matching)
                 )));
@@ -314,7 +348,7 @@ impl BindContext {
             Err(error) => return Ok(Err(error)),
         };
         if matching.len() > 1 {
-            return Err(Error::binder(format!(
+            return Err(binder_error(byte_format!(
                 "Ambiguous reference to table \"{alias}\" {}",
                 self.ambiguity_message(alias, &matching)
             )));
@@ -327,9 +361,10 @@ impl BindContext {
     pub fn bind_column(
         &mut self,
         column: &ColumnRefExpression,
-        alias: &str,
+        alias: impl AsRef<[u8]>,
         depth: u64,
     ) -> Result<std::result::Result<Expression, Error>> {
+        let alias = alias.as_ref();
         let binding_alias = column_ref_binding_alias(&column.column_names);
         let column_name = column.column_names.last().cloned().unwrap_or_default();
         let index = match self.binding_with_column(&binding_alias, &column_name)? {
@@ -343,12 +378,12 @@ impl BindContext {
     pub fn positional_column(
         &self,
         reference: &PositionalReferenceExpression,
-    ) -> std::result::Result<(String, String), String> {
+    ) -> std::result::Result<(ByteString, ByteString), ByteString> {
         let mut total = 0usize;
         let mut position = reference.index.wrapping_sub(1) as usize;
         for binding in &self.bindings {
             if reference.index == 0 {
-                return Ok((binding.alias_name().to_owned(), "rowid".to_owned()));
+                return Ok((binding.alias_name().to_owned(), ByteString::from("rowid")));
             }
             if position < binding.names.len() {
                 return Ok((binding.alias_name().to_owned(), binding.names[position].clone()));
@@ -356,7 +391,7 @@ impl BindContext {
             total += binding.names.len();
             position -= binding.names.len();
         }
-        Err(format!(
+        Err(byte_format!(
             "Positional reference {} out of range (total {total} columns)",
             reference.index
         ))
@@ -364,14 +399,19 @@ impl BindContext {
 
     /// The column a positional reference stands for (DuckDB's `PositionToColumn`).
     pub fn position_to_column(&self, reference: &PositionalReferenceExpression) -> Result<ParsedExpression> {
-        let (table, column) = self.positional_column(reference).map_err(Error::binder)?;
+        let (table, column) = self.positional_column(reference).map_err(binder_error)?;
         Ok(ParsedExpression::column_ref([table, column]))
     }
 
     /// A column reference qualified with `alias` (DuckDB's `CreateColumnReference` with
     /// `EXPAND_GENERATED_COLUMNS`): a generated column of a table becomes its expression
     /// over the table's columns, aliased to the column name.
-    pub fn create_column_reference(&self, alias: &BindingAlias, column_name: &str) -> ParsedExpression {
+    pub fn create_column_reference(
+        &self,
+        alias: &BindingAlias,
+        column_name: impl AsRef<[u8]>,
+    ) -> ParsedExpression {
+        let column_name = column_name.as_ref();
         if let Some(expanded) = self.expand_generated_column(alias, column_name) {
             return expanded;
         }
@@ -380,7 +420,12 @@ impl BindContext {
 
     /// `TableBinding::ExpandGeneratedColumn`: the generated expression with its column
     /// references renamed to the binding's names and qualified with its alias.
-    fn expand_generated_column(&self, alias: &BindingAlias, column_name: &str) -> Option<ParsedExpression> {
+    fn expand_generated_column(
+        &self,
+        alias: &BindingAlias,
+        column_name: impl AsRef<[u8]>,
+    ) -> Option<ParsedExpression> {
+        let column_name = column_name.as_ref();
         let index = self.binding_with_column(alias, column_name).ok()?.ok()?;
         let binding = &self.bindings[index];
         let BindingKind::Table {
@@ -409,7 +454,7 @@ impl BindContext {
             prefix: &prefix,
         };
         rustdb_ast::visit::VisitorMut::visit_expression(&mut qualify, &mut expression);
-        column_name.clone_into(&mut expression.alias);
+        expression.alias = column_name.into();
         Some(expression)
     }
 
@@ -418,8 +463,9 @@ impl BindContext {
     pub fn create_column_reference_unexpanded(
         &self,
         alias: &BindingAlias,
-        column_name: &str,
+        column_name: impl AsRef<[u8]>,
     ) -> ParsedExpression {
+        let column_name = column_name.as_ref();
         let mut names = Vec::new();
         if !alias.catalog.is_empty() {
             names.push(alias.catalog.clone());
@@ -428,13 +474,13 @@ impl BindContext {
             names.push(alias.schema.clone());
         }
         names.push(alias.alias.clone());
-        names.push(column_name.to_owned());
+        names.push(ByteString::from(column_name));
         let mut result = ParsedExpression::column_ref(names);
         if let Ok(Ok(index)) = self.binding_with_column(alias, column_name) {
             let binding = &self.bindings[index];
             if let Some(column_index) = binding.binding_index(column_name)
                 && let Some(actual) = binding.names.get(column_index as usize)
-                && actual != column_name
+                && actual.as_bytes() != column_name
             {
                 result.alias.clone_from(actual);
             }
@@ -451,12 +497,12 @@ impl BindContext {
         mode: BindingMode,
     ) -> Result<Vec<ParsedExpression>> {
         if self.bindings.is_empty() {
-            return Err(Error::binder("* expression without FROM clause!"));
+            return Err(binder_error("* expression without FROM clause!"));
         }
         let mut list = Vec::new();
         let mut excluded_qualified: Vec<QualifiedColumnName> = Vec::new();
-        let mut replaced = CaseInsensitiveSet::default();
-        let mut excluded = CaseInsensitiveSet::default();
+        let mut replaced = CaseInsensitiveSet::<ByteString>::default();
+        let mut excluded = CaseInsensitiveSet::<ByteString>::default();
         let mut check_exclusion = |qualified: &QualifiedColumnName| {
             if star
                 .exclude_list
@@ -545,7 +591,7 @@ impl BindContext {
                 let column_index = binding.binding_index(&star.relation_name).unwrap_or_default() as usize;
                 let column_type = binding.types.get(column_index).cloned().unwrap_or_default();
                 if column_type.id() != LogicalTypeId::Struct {
-                    return Err(Error::binder(format!(
+                    return Err(binder_error(byte_format!(
                         "Cannot extract field from expression \"{star}\" because it is not a struct"
                     )));
                 }
@@ -580,7 +626,7 @@ impl BindContext {
             return Ok(list);
         }
         let location = if star.relation_name.is_empty() {
-            "FROM clause".to_owned()
+            ByteString::from("FROM clause")
         } else {
             star.relation_name.clone()
         };
@@ -589,14 +635,14 @@ impl BindContext {
                 .iter()
                 .any(|seen| qualified_matches(entry, seen))
             {
-                return Err(Error::binder(format!(
+                return Err(binder_error(byte_format!(
                     "Column \"{entry}\" in EXCLUDE list not found in {location}"
                 )));
             }
         }
         for (name, _) in star.replace_list.iter() {
             if !excluded.contains(name) {
-                return Err(Error::binder(format!(
+                return Err(binder_error(byte_format!(
                     "Column \"{name}\" in REPLACE list not found in {location}"
                 )));
             }
@@ -605,7 +651,7 @@ impl BindContext {
     }
 
     /// The names and types of every column in scope (DuckDB's `GetTypesAndNames`).
-    pub fn types_and_names(&self) -> (Vec<String>, Vec<LogicalType>) {
+    pub fn types_and_names(&self) -> (Vec<ByteString>, Vec<LogicalType>) {
         let mut names = Vec::new();
         let mut types = Vec::new();
         for binding in &self.bindings {
@@ -632,10 +678,11 @@ impl BindContext {
     pub fn add_generic_binding(
         &mut self,
         index: u64,
-        alias: &str,
-        names: Vec<String>,
+        alias: impl AsRef<[u8]>,
+        names: Vec<ByteString>,
         types: Vec<LogicalType>,
     ) -> Result<()> {
+        let alias = alias.as_ref();
         self.add_binding(Binding::new(
             BindingKind::Base,
             BindingAlias::new(alias),
@@ -650,11 +697,12 @@ impl BindContext {
     pub fn add_subquery(
         &mut self,
         index: u64,
-        alias: &str,
-        column_aliases: &[String],
-        names: &[String],
+        alias: impl AsRef<[u8]>,
+        column_aliases: &[ByteString],
+        names: &[ByteString],
         types: Vec<LogicalType>,
     ) -> Result<()> {
+        let alias = alias.as_ref();
         let names = alias_column_names(alias, names, column_aliases)?;
         self.add_generic_binding(index, alias, names, types)
     }
@@ -666,7 +714,7 @@ impl BindContext {
             .iter()
             .any(|existing| existing.alias == binding.alias)
         {
-            return Err(Error::binder(format!(
+            return Err(binder_error(byte_format!(
                 "Duplicate CTE binding \"{}\" in query!",
                 binding.alias
             )));
@@ -720,26 +768,28 @@ impl BindContext {
     }
 }
 
-fn qualified_column(alias: &BindingAlias, column: &str) -> QualifiedColumnName {
+fn qualified_column(alias: &BindingAlias, column: impl AsRef<[u8]>) -> QualifiedColumnName {
+    let column = column.as_ref();
     QualifiedColumnName {
         catalog: alias.catalog.clone(),
         schema: alias.schema.clone(),
         table: alias.alias.clone(),
-        column: column.to_owned(),
+        column: ByteString::from(column),
     }
 }
 
 /// DuckDB's `QualifiedColumnEquality`: a prefix comparison, so `tbl.i` and `i` are equal but
 /// `tbl.i` and `tbl2.i` are not.
 pub fn qualified_matches(entry: &QualifiedColumnName, column: &QualifiedColumnName) -> bool {
-    let part_matches = |a: &str, b: &str| a.is_empty() || b.is_empty() || a.eq_ignore_ascii_case(b);
+    let part_matches = |a: &[u8], b: &[u8]| a.is_empty() || b.is_empty() || a.eq_ignore_ascii_case(b);
     entry.column.eq_ignore_ascii_case(&column.column)
         && part_matches(&entry.table, &column.table)
         && part_matches(&entry.schema, &column.schema)
         && part_matches(&entry.catalog, &column.catalog)
 }
 
-fn column_ref_with_alias(alias: &BindingAlias, column: &str) -> ParsedExpression {
+fn column_ref_with_alias(alias: &BindingAlias, column: impl AsRef<[u8]>) -> ParsedExpression {
+    let column = column.as_ref();
     let mut names = Vec::new();
     if !alias.catalog.is_empty() {
         names.push(alias.catalog.clone());
@@ -748,37 +798,38 @@ fn column_ref_with_alias(alias: &BindingAlias, column: &str) -> ParsedExpression
         names.push(alias.schema.clone());
     }
     names.push(alias.alias.clone());
-    names.push(column.to_owned());
+    names.push(ByteString::from(column));
     ParsedExpression::column_ref(names)
 }
 
 /// Applies column aliases to a relation's names, deduplicating with `_1`, `_2` suffixes
 /// (DuckDB's `BindContext::AliasColumnNames`).
 pub fn alias_column_names(
-    table_name: &str,
-    names: &[String],
-    column_aliases: &[String],
-) -> Result<Vec<String>> {
+    table_name: impl AsRef<[u8]>,
+    names: &[ByteString],
+    column_aliases: &[ByteString],
+) -> Result<Vec<ByteString>> {
+    let table_name = table_name.as_ref();
     if column_aliases.len() > names.len() {
-        return Err(Error::binder(format!(
+        return Err(binder_error(byte_format!(
             "table \"{table_name}\" has {} columns available but {} columns specified",
             names.len(),
             column_aliases.len()
         )));
     }
-    let mut seen = CaseInsensitiveSet::default();
-    let mut add = |base: &str| {
-        let mut name = base.to_owned();
+    let mut seen = CaseInsensitiveSet::<ByteString>::default();
+    let mut add = |base: &ByteString| {
+        let mut name = base.clone();
         let mut index = 1;
         while seen.contains(&name) {
-            name = format!("{base}_{index}");
+            name = byte_format!("{base}_{index}");
             index += 1;
         }
         seen.insert(name.clone());
         name
     };
-    let mut result: Vec<String> = column_aliases.iter().map(|alias| add(alias)).collect();
-    result.extend(names[column_aliases.len()..].iter().map(|name| add(name)));
+    let mut result: Vec<ByteString> = column_aliases.iter().map(&mut add).collect();
+    result.extend(names[column_aliases.len()..].iter().map(add));
     Ok(result)
 }
 
@@ -786,8 +837,8 @@ pub fn alias_column_names(
 /// qualifies them with its alias (`ReplaceAliases` + `BakeTableName`).
 struct QualifyGenerated<'a> {
     table: &'a rustdb_catalog::TableEntry,
-    names: &'a [String],
-    prefix: &'a [String],
+    names: &'a [ByteString],
+    prefix: &'a [ByteString],
 }
 
 impl rustdb_ast::visit::VisitorMut for QualifyGenerated<'_> {

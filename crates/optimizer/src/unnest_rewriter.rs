@@ -18,7 +18,7 @@ use crate::column_binding_replacer::{ColumnBindingReplacer, ReplacementBinding};
 struct LhsBinding {
     binding: ColumnBinding,
     ty: LogicalType,
-    alias: String,
+    alias: rustdb_common::ByteString,
 }
 
 /// Rewrites the bindings of column references, each by the first matching replacement
@@ -152,7 +152,7 @@ fn find_candidates(
         return Ok(());
     };
     // With ORDINALITY the delim index would be unnested too.
-    if !is_unnest_function(&get.function.name) || get.ordinality_index.is_some() {
+    if !is_unnest_function(get.function.name.as_bytes()) || get.ordinality_index.is_some() {
         return Ok(());
     }
     let Some(projection) = other.children.first() else {
@@ -345,7 +345,7 @@ impl UnnestRewriter {
                     .map(|expression| expression.alias.clone())
                     .unwrap_or_default()
             } else {
-                String::new()
+                rustdb_common::ByteString::new()
             };
             self.lhs_bindings.push(LhsBinding {
                 binding: *binding,

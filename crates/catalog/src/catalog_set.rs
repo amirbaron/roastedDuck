@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_common::{ByteString, Error, ErrorKind, Result};
 
 use crate::transaction::{StorageHook, TRANSACTION_ID_START, Transaction, TransactionExt};
 use crate::{CatalogEntry, WalRecord};
@@ -16,6 +16,9 @@ pub(crate) struct Version {
     /// `None` is a tombstone (a dropped entry, or the root of a chain created by an
     /// uncommitted transaction).
     entry: Option<Arc<CatalogEntry>>,
+    /// INVALID/DELETED catalog nodes have identities too, although they are not
+    /// visible named entries. Keep that identity with the real version node.
+    _internal_oid: Option<u64>,
 }
 
 impl Version {
@@ -23,6 +26,23 @@ impl Version {
         Arc::new(Self {
             timestamp: AtomicU64::new(timestamp),
             entry,
+            _internal_oid: None,
+        })
+    }
+
+    fn tombstone(timestamp: u64, catalog: &CatalogName) -> Arc<Self> {
+        Arc::new(Self {
+            timestamp: AtomicU64::new(timestamp),
+            entry: None,
+            _internal_oid: Some(catalog.next_oid()),
+        })
+    }
+
+    fn renamed(timestamp: u64, entry: Arc<CatalogEntry>, catalog: &CatalogName) -> Arc<Self> {
+        Arc::new(Self {
+            timestamp: AtomicU64::new(timestamp),
+            entry: Some(entry),
+            _internal_oid: Some(catalog.next_oid()),
         })
     }
 
@@ -61,7 +81,7 @@ pub enum Lookup {
 /// versions are replaced or cleaned up. Suggestions compare that spelling as bytes.
 #[derive(Debug)]
 struct EntryChain {
-    name: String,
+    name: ByteString,
     versions: Vec<Arc<Version>>,
 }
 
@@ -93,39 +113,69 @@ impl DerefMut for EntryChain {
 /// Names are case-insensitive. Each chain is ordered newest first.
 #[derive(Debug, Default)]
 pub struct CatalogSet {
-    chains: Mutex<BTreeMap<String, EntryChain>>,
+    chains: Mutex<BTreeMap<ByteString, EntryChain>>,
     /// The catalog the set belongs to.
     catalog: CatalogName,
     /// The schema the set belongs to (empty for the set of schemas).
-    schema: String,
+    schema: ByteString,
     /// `DefaultTypeGenerator` belongs only to a schema's type set.
     default_types: bool,
     all_default_types: AtomicBool,
+    defaults: Mutex<Vec<DeferredEntry>>,
+}
+
+struct DeferredEntry {
+    name: ByteString,
+    create: Arc<dyn Fn() -> CatalogEntry + Send + Sync>,
+}
+
+impl std::fmt::Debug for DeferredEntry {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("DeferredEntry")
+            .field("name", &self.name)
+            .finish_non_exhaustive()
+    }
 }
 
 /// The name of a catalog, shared by its sets: `ALTER DATABASE ... SET ALIAS TO` renames
 /// the attached database, and DuckDB's catalog name is the attached database's
 /// (`Catalog::GetName`).
 #[derive(Clone, Debug, Default)]
-pub struct CatalogName(Arc<std::sync::RwLock<Arc<str>>>);
+pub struct CatalogName(Arc<std::sync::RwLock<Arc<[u8]>>>, Arc<crate::OidAllocator>);
 
 impl CatalogName {
-    pub fn new(name: &str) -> Self {
-        Self(Arc::new(std::sync::RwLock::new(Arc::from(name))))
+    pub fn new(name: impl AsRef<[u8]>) -> Self {
+        Self::with_oid_allocator(name, Arc::default())
     }
 
-    pub fn get(&self) -> Arc<str> {
+    pub fn with_oid_allocator(name: impl AsRef<[u8]>, allocator: Arc<crate::OidAllocator>) -> Self {
+        let name = name.as_ref();
+        Self(Arc::new(std::sync::RwLock::new(Arc::from(name))), allocator)
+    }
+
+    pub fn next_oid(&self) -> u64 {
+        self.1.next_oid()
+    }
+
+    pub fn oid_allocator(&self) -> Arc<crate::OidAllocator> {
+        Arc::clone(&self.1)
+    }
+
+    pub fn get(&self) -> Arc<[u8]> {
         Arc::clone(&self.0.read().unwrap_or_else(PoisonError::into_inner))
     }
 
     /// Renames the catalog (`AttachedDatabase::SetName`).
-    pub fn set(&self, name: &str) {
+    pub fn set(&self, name: impl AsRef<[u8]>) {
+        let name = name.as_ref();
         *self.0.write().unwrap_or_else(PoisonError::into_inner) = Arc::from(name);
     }
 }
 
-fn key(name: &str) -> String {
-    name.to_lowercase()
+fn key(name: impl AsRef<[u8]>) -> ByteString {
+    let name = name.as_ref();
+    name.as_ref().to_ascii_lowercase().into()
 }
 
 /// We created this version, or it was committed before we started.
@@ -142,39 +192,94 @@ fn conflicts(transaction: &Transaction, timestamp: u64) -> bool {
 
 impl CatalogSet {
     /// An empty set of schema `schema` of catalog `catalog`.
-    pub fn new(catalog: &CatalogName, schema: impl Into<String>) -> Self {
+    pub fn new(catalog: &CatalogName, schema: impl Into<ByteString>) -> Self {
         Self {
             chains: Mutex::default(),
             catalog: catalog.clone(),
             schema: schema.into(),
             default_types: false,
             all_default_types: AtomicBool::new(false),
+            defaults: Mutex::default(),
         }
     }
 
     /// A type set with DuckDB's lazy builtin generator in `main`.
-    pub fn with_default_types(catalog: &CatalogName, schema: &str) -> Self {
+    pub fn with_default_types(catalog: &CatalogName, schema: impl AsRef<[u8]>) -> Self {
+        let schema = schema.as_ref();
+
         Self {
-            default_types: schema == crate::DEFAULT_SCHEMA,
+            default_types: schema == crate::DEFAULT_SCHEMA.as_bytes(),
             ..Self::new(catalog, schema)
         }
     }
 
     /// The name of the catalog the set belongs to.
-    pub fn catalog_name(&self) -> Arc<str> {
+    pub fn catalog_name(&self) -> Arc<[u8]> {
         self.catalog.get()
     }
 
     /// The schema the set belongs to (empty for the set of schemas).
-    pub fn schema_name(&self) -> &str {
+    pub fn schema_name(&self) -> &ByteString {
         &self.schema
     }
 
-    fn lock(&self) -> MutexGuard<'_, BTreeMap<String, EntryChain>> {
+    /// Installs validated default data without constructing an entry or consuming an OID.
+    pub fn register_default(
+        &self,
+        name: impl Into<ByteString>,
+        create: Arc<dyn Fn() -> CatalogEntry + Send + Sync>,
+    ) {
+        self.defaults
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(DeferredEntry {
+                name: name.into(),
+                create,
+            });
+    }
+
+    fn create_default(&self, name: &[u8]) {
+        let factory = self
+            .defaults
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .find(|entry| entry.name.eq_ignore_ascii_case(name))
+            .map(|entry| Arc::clone(&entry.create));
+        if let Some(create) = factory {
+            let mut chains = self.lock();
+            let name = key(name);
+            // The factory clones prevalidated data only. It cannot perform
+            // catalog lookup, parsing or binding while this lock is held.
+            chains
+                .entry(name)
+                .or_insert_with(|| EntryChain::committed(create()));
+        }
+    }
+
+    fn create_defaults(&self) {
+        let names: Vec<_> = self
+            .defaults
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect();
+        for name in names {
+            self.create_default(&name);
+        }
+    }
+
+    fn lock(&self) -> MutexGuard<'_, BTreeMap<ByteString, EntryChain>> {
         self.chains.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn create_default_type(&self, chains: &mut BTreeMap<String, EntryChain>, name: &str, name_key: &str) {
+    fn create_default_type(
+        &self,
+        chains: &mut BTreeMap<ByteString, EntryChain>,
+        name: &[u8],
+        name_key: &ByteString,
+    ) {
         if !self.default_types || chains.contains_key(name_key) {
             return;
         }
@@ -184,21 +289,22 @@ impl CatalogSet {
         if id == rustdb_types::LogicalTypeId::Invalid {
             return;
         }
-        let mut entry = CatalogEntry::new(
+        let mut entry = CatalogEntry::with_oid(
             name,
             crate::EntryKind::Type(crate::TypeEntry {
                 user_type: rustdb_types::LogicalType::simple(id),
             }),
+            self.catalog.next_oid(),
         );
         entry.internal = true;
         entry.temporary = true;
         chains.insert(name_key.to_owned(), EntryChain::committed(entry));
     }
 
-    fn create_default_types(&self, chains: &mut BTreeMap<String, EntryChain>) {
+    fn create_default_types(&self, chains: &mut BTreeMap<ByteString, EntryChain>) {
         if self.default_types && !self.all_default_types.load(Ordering::Relaxed) {
             for name in rustdb_types::builtin_type_names() {
-                self.create_default_type(chains, name, name);
+                self.create_default_type(chains, name.as_bytes(), &key(name));
             }
             self.all_default_types.store(true, Ordering::Relaxed);
         }
@@ -209,12 +315,36 @@ impl CatalogSet {
         let mut chains = self.lock();
         let name = key(entry.name());
         if chains.contains_key(&name) {
-            return Err(Error::internal(format!(
+            return Err(Error::internal(rustdb_common::byte_format!(
                 "Entry with name \"{}\" already exists",
                 entry.name()
             )));
         }
         chains.insert(name, EntryChain::committed(entry));
+        Ok(())
+    }
+
+    /// Bootstrap's ordinary `CreateEntry` has an INVALID chain root too; generated
+    /// defaults and loaded committed entries use `create_committed` directly.
+    pub fn create_committed_chain(&self, entry: CatalogEntry) -> Result<()> {
+        self.create_default(entry.name());
+        let mut chains = self.lock();
+        let name = key(entry.name());
+        if chains.contains_key(&name) {
+            return Err(Error::catalog(rustdb_common::byte_format!(
+                "Entry with name \"{}\" already exists",
+                entry.name()
+            )));
+        }
+        let original_name = entry.name().to_owned();
+        let root = Version::tombstone(0, &self.catalog);
+        chains.insert(
+            name,
+            EntryChain {
+                name: original_name,
+                versions: vec![Version::new(0, Some(Arc::new(entry))), root],
+            },
+        );
         Ok(())
     }
 
@@ -233,7 +363,17 @@ impl CatalogSet {
     }
 
     /// The built-in (committed) entry called `name`, ignoring transactions.
-    pub fn get_committed(&self, name: &str) -> Option<Arc<CatalogEntry>> {
+    pub fn get_committed(&self, name: impl AsRef<[u8]>) -> Option<Arc<CatalogEntry>> {
+        let name = name.as_ref();
+
+        self.create_default(name);
+
+        self.get_committed_existing(name)
+    }
+
+    pub fn get_committed_existing(&self, name: impl AsRef<[u8]>) -> Option<Arc<CatalogEntry>> {
+        let name = name.as_ref();
+
         let chains = self.lock();
         chains
             .get(&key(name))
@@ -260,6 +400,9 @@ impl CatalogSet {
     ) -> Result<bool> {
         let name = key(entry.name());
         let original_name = entry.name().to_owned();
+        // StartChain checks generated defaults before constructing a new root.
+        // A default is committed independently of the user's transaction.
+        self.create_default(&original_name);
         let hook = match &entry.kind {
             crate::EntryKind::Index(index) => index.storage.as_ref().map_or(StorageHook::None, |info| {
                 StorageHook::CreatedIndex(Arc::clone(info), entry.name().to_owned())
@@ -278,16 +421,16 @@ impl CatalogSet {
                         name.clone(),
                         EntryChain {
                             name: original_name,
-                            versions: vec![Arc::clone(&version), Version::new(0, None)],
+                            versions: vec![Arc::clone(&version), Version::tombstone(0, &self.catalog)],
                         },
                     );
                 }
                 Some(chain) => {
                     let head = &chain[0];
                     if conflicts(transaction, head.timestamp()) {
-                        return Err(Error::new(
+                        return Err(Error::new_bytes(
                             ErrorKind::Transaction,
-                            format!(
+                            rustdb_common::byte_format!(
                                 "Catalog write-write conflict on create with \"{}\"",
                                 display_name(head, &name)
                             ),
@@ -309,9 +452,11 @@ impl CatalogSet {
     pub fn alter(
         self: &Arc<Self>,
         transaction: &Transaction,
-        name: &str,
+        name: impl AsRef<[u8]>,
         entry: CatalogEntry,
     ) -> Result<bool> {
+        let name = name.as_ref();
+
         self.alter_with_hook(transaction, name, entry, StorageHook::None, None)
     }
 
@@ -320,23 +465,48 @@ impl CatalogSet {
     pub fn rename(
         self: &Arc<Self>,
         transaction: &Transaction,
-        name: &str,
+        name: impl AsRef<[u8]>,
         mut entry: CatalogEntry,
         hook: StorageHook,
         info: Option<rustdb_ast::AlterInfo>,
     ) -> Result<bool> {
+        let name = name.as_ref();
+
         let old = key(name);
-        let tombstone = Version::new(transaction.transaction_id, None);
+        let new_name = key(entry.name());
+        if old == new_name {
+            return self.alter_with_hook(transaction, name, entry, hook, info);
+        }
+        self.create_default(entry.name());
+        let renamed_old;
+        let tombstone;
+        let renamed_new;
+        let replacement;
         {
             let mut chains = self.lock();
+            if let Some(chain) = chains.get(&new_name) {
+                let head = &chain[0];
+                if conflicts(transaction, head.timestamp()) {
+                    return Err(Error::new(
+                        ErrorKind::Transaction,
+                        "Catalog write-write conflict on rename",
+                    ));
+                }
+                if head.entry.is_some() {
+                    return Err(Error::catalog(rustdb_common::byte_format!(
+                        "Could not rename \"{name}\" to \"{}\": another entry with this name already exists!",
+                        entry.name()
+                    )));
+                }
+            }
             let Some(chain) = chains.get_mut(&old) else {
                 return Ok(false);
             };
             let head = &chain[0];
             if conflicts(transaction, head.timestamp()) {
-                return Err(Error::new(
+                return Err(Error::new_bytes(
                     ErrorKind::Transaction,
-                    format!(
+                    rustdb_common::byte_format!(
                         "Catalog write-write conflict on alter with \"{}\"",
                         display_name(head, &old)
                     ),
@@ -347,13 +517,37 @@ impl CatalogSet {
             };
             // A renamed entry keeps its identity.
             entry.oid = current.oid;
+            renamed_old = Version::renamed(transaction.transaction_id, Arc::clone(current), &self.catalog);
+            tombstone = Version::tombstone(transaction.transaction_id, &self.catalog);
+            chain.insert(0, Arc::clone(&renamed_old));
             chain.insert(0, Arc::clone(&tombstone));
+            let entry = Arc::new(entry);
+            renamed_new = Version::renamed(transaction.transaction_id, Arc::clone(&entry), &self.catalog);
+            let chain = chains.entry(new_name.clone()).or_insert_with(|| EntryChain {
+                name: entry.name().to_owned(),
+                versions: vec![Version::tombstone(0, &self.catalog)],
+            });
+            replacement = Version::new(transaction.transaction_id, Some(entry));
+            chain.insert(0, Arc::clone(&renamed_new));
+            chain.insert(0, Arc::clone(&replacement));
         }
+        transaction.push_catalog_change(
+            Arc::clone(self),
+            old.clone(),
+            renamed_old,
+            StorageHook::None,
+            WalRecord::None,
+        );
         transaction.push_catalog_change(Arc::clone(self), old, tombstone, hook, WalRecord::None);
+        transaction.push_catalog_change(
+            Arc::clone(self),
+            new_name.clone(),
+            renamed_new,
+            StorageHook::None,
+            WalRecord::None,
+        );
         let wal = info.map_or(WalRecord::None, |info| WalRecord::Alter(Box::new(info)));
-        if !self.create_logged(transaction, entry, wal)? {
-            return Err(Error::internal("rename target exists"));
-        }
+        transaction.push_catalog_change(Arc::clone(self), new_name, replacement, StorageHook::None, wal);
         Ok(true)
     }
 
@@ -362,11 +556,13 @@ impl CatalogSet {
     pub fn alter_with_hook(
         self: &Arc<Self>,
         transaction: &Transaction,
-        name: &str,
+        name: impl AsRef<[u8]>,
         entry: CatalogEntry,
         hook: StorageHook,
         info: Option<rustdb_ast::AlterInfo>,
     ) -> Result<bool> {
+        let name = name.as_ref();
+
         let name = key(name);
         let mut entry = entry;
         let version;
@@ -377,9 +573,9 @@ impl CatalogSet {
             };
             let head = &chain[0];
             if conflicts(transaction, head.timestamp()) {
-                return Err(Error::new(
+                return Err(Error::new_bytes(
                     ErrorKind::Transaction,
-                    format!(
+                    rustdb_common::byte_format!(
                         "Catalog write-write conflict on alter with \"{}\"",
                         display_name(head, &name)
                     ),
@@ -402,11 +598,13 @@ impl CatalogSet {
     pub fn drop_entry(
         self: &Arc<Self>,
         transaction: &Transaction,
-        name: &str,
+        name: impl AsRef<[u8]>,
         allow_internal: bool,
     ) -> Result<bool> {
+        let name = name.as_ref();
+
         let name = key(name);
-        let version = Version::new(transaction.transaction_id, None);
+        let version;
         let mut hook = StorageHook::None;
         let dropped;
         {
@@ -416,9 +614,9 @@ impl CatalogSet {
             };
             let head = &chain[0];
             if conflicts(transaction, head.timestamp()) {
-                return Err(Error::new(
+                return Err(Error::new_bytes(
                     ErrorKind::Transaction,
-                    format!(
+                    rustdb_common::byte_format!(
                         "Catalog write-write conflict on alter with \"{}\"",
                         display_name(head, &name)
                     ),
@@ -429,7 +627,7 @@ impl CatalogSet {
             };
             dropped = Arc::clone(entry);
             if entry.internal && !allow_internal {
-                return Err(Error::catalog(format!(
+                return Err(Error::catalog(rustdb_common::byte_format!(
                     "Cannot drop entry \"{}\" because it is an internal system entry",
                     entry.name()
                 )));
@@ -449,6 +647,7 @@ impl CatalogSet {
                 }
                 _ => {}
             }
+            version = Version::tombstone(transaction.transaction_id, &self.catalog);
             chain.insert(0, Arc::clone(&version));
         }
         transaction.push_catalog_change(Arc::clone(self), name, version, hook, WalRecord::Drop(dropped));
@@ -457,15 +656,21 @@ impl CatalogSet {
 
     /// Fails if another transaction made a version of `name` that `transaction` may not
     /// build on (the conflict check of `CatalogSet::GetEntryInternal`).
-    pub(crate) fn check_write_conflict(&self, transaction: &Transaction, name: &str) -> Result<()> {
+    pub(crate) fn check_write_conflict(
+        &self,
+        transaction: &Transaction,
+        name: impl AsRef<[u8]>,
+    ) -> Result<()> {
+        let name = name.as_ref();
+
         let chains = self.lock();
         let Some(head) = chains.get(&key(name)).and_then(|chain| chain.first()) else {
             return Ok(());
         };
         if conflicts(transaction, head.timestamp()) {
-            return Err(Error::new(
+            return Err(Error::new_bytes(
                 ErrorKind::Transaction,
-                format!(
+                rustdb_common::byte_format!(
                     "Catalog write-write conflict on alter with \"{}\"",
                     display_name(head, &key(name))
                 ),
@@ -480,7 +685,7 @@ impl CatalogSet {
         &self,
         start_time: u64,
         filter: impl Fn(&CatalogEntry) -> bool,
-    ) -> Option<String> {
+    ) -> Option<ByteString> {
         self.lock().values().find_map(|chain| {
             let head = chain.first()?;
             let timestamp = head.timestamp();
@@ -491,7 +696,9 @@ impl CatalogSet {
     }
 
     /// Whether another transaction committed a drop of `name` after `start_time`.
-    pub(crate) fn dropped_since(&self, name: &str, start_time: u64) -> bool {
+    pub(crate) fn dropped_since(&self, name: impl AsRef<[u8]>, start_time: u64) -> bool {
+        let name = name.as_ref();
+
         self.lock()
             .get(&key(name))
             .and_then(|chain| chain.first())
@@ -502,7 +709,11 @@ impl CatalogSet {
     }
 
     /// Looks up `name` as seen by `transaction`.
-    pub fn lookup(&self, transaction: &Transaction, name: &str) -> Lookup {
+    pub fn lookup(&self, transaction: &Transaction, name: impl AsRef<[u8]>) -> Lookup {
+        let name = name.as_ref();
+
+        self.create_default(name);
+
         let mut chains = self.lock();
         let name_key = key(name);
         self.create_default_type(&mut chains, name, &name_key);
@@ -518,7 +729,9 @@ impl CatalogSet {
     }
 
     /// The entry called `name`, if visible to `transaction`.
-    pub fn get(&self, transaction: &Transaction, name: &str) -> Option<Arc<CatalogEntry>> {
+    pub fn get(&self, transaction: &Transaction, name: impl AsRef<[u8]>) -> Option<Arc<CatalogEntry>> {
+        let name = name.as_ref();
+
         match self.lookup(transaction, name) {
             Lookup::Found(entry) => Some(entry),
             Lookup::NotPresent | Lookup::Deleted | Lookup::Invisible => None,
@@ -527,6 +740,7 @@ impl CatalogSet {
 
     /// Every entry visible to `transaction`, in name order.
     pub fn scan(&self, transaction: &Transaction) -> Vec<Arc<CatalogEntry>> {
+        self.create_defaults();
         let mut chains = self.lock();
         self.create_default_types(&mut chains);
         chains
@@ -537,10 +751,14 @@ impl CatalogSet {
 
     /// `CatalogSet::SimilarEntry`: materializes defaults and compares map keys,
     /// including keys whose versions are invisible or deleted in this transaction.
-    pub fn similar_entry(&self, name: &str) -> (f64, String) {
+    pub fn similar_entry(&self, name: impl AsRef<[u8]>) -> (f64, ByteString) {
+        let name = name.as_ref();
+
+        self.create_defaults();
+
         let mut chains = self.lock();
         self.create_default_types(&mut chains);
-        let mut best = (0.0, String::new());
+        let mut best = (0.0, ByteString::new());
         for chain in chains.values() {
             let score = rustdb_common::string_util::similarity_rating(&chain.name, name);
             if score > best.0 {
@@ -553,7 +771,8 @@ impl CatalogSet {
     /// Drops the versions older than the committed `version`, which no transaction can
     /// see any more (`CatalogSet::CleanupEntry`); a drop that is the newest version
     /// removes the whole chain. Old versions hold the storage of altered tables.
-    pub(crate) fn cleanup(&self, name: &str, version: &Arc<Version>) {
+    pub(crate) fn cleanup(&self, name: impl AsRef<[u8]>, version: &Arc<Version>) {
+        let name = name.as_ref();
         let mut chains = self.lock();
         let Some(chain) = chains.get_mut(name) else { return };
         let Some(position) = chain.iter().position(|v| Arc::ptr_eq(v, version)) else {
@@ -567,7 +786,8 @@ impl CatalogSet {
     }
 
     /// Removes an uncommitted version (rollback).
-    pub(crate) fn undo(&self, name: &str, version: &Arc<Version>) {
+    pub(crate) fn undo(&self, name: impl AsRef<[u8]>, version: &Arc<Version>) {
+        let name = name.as_ref();
         let mut chains = self.lock();
         let Some(chain) = chains.get_mut(name) else { return };
         chain.retain(|v| !Arc::ptr_eq(v, version));
@@ -594,11 +814,11 @@ fn version_for<'a>(transaction: &Transaction, chain: &'a [Arc<Version>]) -> (&'a
     }
 }
 
-fn display_name(version: &Version, fallback: &str) -> String {
+fn display_name(version: &Version, fallback: &[u8]) -> ByteString {
     version
         .entry
         .as_ref()
-        .map_or_else(|| fallback.to_owned(), |entry| entry.name().to_owned())
+        .map_or_else(|| ByteString::from(fallback), |entry| entry.name().to_owned())
 }
 
 #[cfg(test)]
@@ -606,8 +826,47 @@ mod tests {
     use super::*;
     use crate::{EntryKind, TransactionManager};
 
-    fn entry(name: &str) -> CatalogEntry {
+    fn entry(name: impl AsRef<[u8]>) -> CatalogEntry {
+        let name = name.as_ref();
+
         CatalogEntry::new(name, EntryKind::Schema(crate::SchemaEntry::default()))
+    }
+
+    #[test]
+    fn raw_names_survive_rename_rollback_and_ascii_case_lookup() {
+        for byte in 0..=255 {
+            let manager = TransactionManager::default();
+            let set = Arc::new(CatalogSet::default());
+            let name = ByteString::from(vec![b'N', byte, b'X']);
+            let mut renamed = name.clone();
+            renamed.push_bytes(b"_renamed");
+            let writer = manager.begin();
+            assert!(set.create(&writer, entry(&name)).unwrap());
+            manager.commit(&writer).unwrap();
+            let reader = manager.begin();
+            let changer = manager.begin();
+            assert!(
+                set.rename(&changer, &name, entry(&renamed), StorageHook::None, None)
+                    .unwrap()
+            );
+            assert_eq!(set.get(&reader, name.to_ascii_lowercase()).unwrap().name(), &name);
+            assert!(set.get(&reader, &renamed).is_none());
+            assert_eq!(set.get(&changer, &renamed).unwrap().name(), &renamed);
+            manager.rollback(&changer);
+            let fresh = manager.begin();
+            assert_eq!(set.get(&fresh, &name).unwrap().name(), &name);
+            assert!(set.get(&fresh, &renamed).is_none());
+        }
+    }
+
+    #[test]
+    fn unicode_names_are_distinct_without_unicode_case_folding() {
+        let set = CatalogSet::default();
+        set.create_committed(entry("Å")).unwrap();
+        set.create_committed(entry("å")).unwrap();
+        assert_eq!(set.get_committed("Å").unwrap().name(), "Å");
+        assert_eq!(set.get_committed("å").unwrap().name(), "å");
+        assert_eq!(set.scan(&Transaction::system()).len(), 2);
     }
 
     #[test]
@@ -671,7 +930,7 @@ mod tests {
         assert!(set.scan(&reader).is_empty());
         assert_eq!(set.similar_entry("MixedCas").1, "MixedCase");
         manager.rollback(&writer);
-        assert_eq!(set.similar_entry("MixedCas"), (0.0, String::new()));
+        assert_eq!(set.similar_entry("MixedCas"), (0.0, ByteString::new()));
 
         set.create_committed(entry("MixedCase")).unwrap();
         set.replace_committed(entry("MIXEDCASE"));

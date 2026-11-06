@@ -91,7 +91,7 @@ fn expression_depth_is_limited() {
 #[test]
 fn parameters_are_numbered_per_statement() {
     let statements = parse("SELECT $a, $b; SELECT $c").expect("parses");
-    let names: Vec<Vec<(String, u64)>> = statements
+    let names: Vec<Vec<(rustdb_common::ByteString, u64)>> = statements
         .iter()
         .map(|statement| {
             statement
@@ -102,8 +102,8 @@ fn parameters_are_numbered_per_statement() {
         })
         .collect();
     assert_eq!(names[0].len(), 2);
-    assert!(names[0].contains(&("a".to_owned(), 1)));
-    assert_eq!(names[1], [("c".to_owned(), 1)]);
+    assert!(names[0].contains(&("a".into(), 1)));
+    assert_eq!(names[1], [("c".into(), 1)]);
     assert_eq!(
         error("SELECT $a, ?").raw_message(),
         "Mixing named and positional parameters is not supported yet"
@@ -122,7 +122,7 @@ fn create_table_with_constraints() {
          CHECK (a > 0), FOREIGN KEY (b) REFERENCES u (x))",
     );
     assert_eq!(info.schema, "s");
-    assert_eq!(info.sql, info.sql.trim_start());
+    assert!(!info.sql.as_bytes().first().is_some_and(u8::is_ascii_whitespace));
     let CreateInfoKind::Table(table) = &info.kind else {
         panic!("not a table");
     };
@@ -181,7 +181,7 @@ fn pivot_without_values_creates_an_enum() {
     let CreateInfoKind::Type(type_info) = &info.kind else {
         panic!("not a CREATE TYPE");
     };
-    assert!(type_info.name.starts_with("__pivot_enum_"));
+    assert!(type_info.name.starts_with(b"__pivot_enum_"));
     let query = type_info.query.as_ref().expect("enum query");
     assert!(query.node.cte_map.map.contains_key("c"));
     assert!(matches!(statements[1].kind, SqlStatementKind::Select(_)));
@@ -271,14 +271,40 @@ fn secrets_types_and_sequences() {
 }
 
 #[test]
+fn compression_names_ignore_ascii_case_and_preserve_native_column_names() {
+    for name in ["zstd", "ZSTD", "ZsTd"] {
+        let mut sql = b"CREATE TABLE t (\"col\xff\" JSON USING COMPRESSION '".to_vec();
+        sql.extend_from_slice(name.as_bytes());
+        sql.extend_from_slice(b"')");
+        let mut statements = crate::parse_bytes(&sql).expect("case-insensitive compression name");
+        let SqlStatementKind::Create(info) = statements.remove(0).kind else {
+            panic!("not a CREATE");
+        };
+        let CreateInfoKind::Table(table) = &info.kind else {
+            panic!("not a table");
+        };
+        let column = &table.columns.columns[0];
+        assert_eq!(column.name.as_bytes(), b"col\xff");
+        assert_eq!(
+            column.compression_type,
+            rustdb_ast::CompressionType::CompressionZstd
+        );
+    }
+}
+
+#[test]
 fn drop_and_casts() {
     let SqlStatementKind::Drop(drop) = one("DROP VIEW IF EXISTS c.s.v CASCADE").kind else {
         panic!("not a DROP");
     };
     assert_eq!(drop.catalog_type, CatalogType::ViewEntry);
     assert_eq!(
-        (drop.catalog.as_str(), drop.schema.as_str(), drop.name.as_str()),
-        ("c", "s", "v")
+        (
+            drop.catalog.as_bytes(),
+            drop.schema.as_bytes(),
+            drop.name.as_bytes()
+        ),
+        (b"c".as_slice(), b"s".as_slice(), b"v".as_slice())
     );
     assert!(drop.cascade);
     let SqlStatementKind::Select(select) = one("SELECT x::int4[]").kind else {

@@ -127,7 +127,7 @@ pub(crate) fn get_or_insert_row_id(get: &mut LogicalGet) -> u64 {
 #[derive(Clone, Debug)]
 struct RowIdColumn {
     id: u64,
-    name: String,
+    name: rustdb_common::ByteString,
     ty: LogicalType,
 }
 
@@ -136,7 +136,7 @@ impl RowIdColumn {
     fn table_row_id() -> Self {
         Self {
             id: COLUMN_IDENTIFIER_ROW_ID,
-            name: ROW_ID_NAME.to_owned(),
+            name: rustdb_common::ByteString::from(ROW_ID_NAME),
             ty: LogicalType::BIGINT,
         }
     }
@@ -199,7 +199,7 @@ fn get_expression(op: &LogicalOperator, column_index: u64) -> Result<Expression>
                 .get(column_index as usize)
                 .ok_or_else(|| Error::internal("late materialization: column out of range"))?;
             let name = if column.is_row_id_column() {
-                ROW_ID_NAME.to_owned()
+                rustdb_common::ByteString::from(ROW_ID_NAME)
             } else {
                 get.column_name(column)
             };

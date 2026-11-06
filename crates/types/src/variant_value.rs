@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use rustdb_common::{Error, Result};
+use rustdb_common::{ByteString, Error, Result};
 
 use crate::variant::{
     VariantChild, VariantData, VariantEntry, VariantLogicalType, varint_encode, varint_size,
@@ -20,7 +20,7 @@ pub enum VariantValue {
     /// A scalar; a NULL `Value` of type `"NULL"` is the variant null.
     Primitive(Value),
     /// Fields by name, in byte order of the names.
-    Object(BTreeMap<String, VariantValue>),
+    Object(BTreeMap<ByteString, VariantValue>),
     Array(Vec<VariantValue>),
 }
 
@@ -35,11 +35,15 @@ impl VariantValue {
     }
 
     /// `AddChild`: missing values are left out; the first value of a key wins.
-    pub fn add_child(fields: &mut BTreeMap<String, VariantValue>, key: &str, value: VariantValue) {
+    pub fn add_child(
+        fields: &mut BTreeMap<ByteString, VariantValue>,
+        key: impl AsRef<[u8]>,
+        value: VariantValue,
+    ) {
         if matches!(value, Self::Missing) {
             return;
         }
-        fields.entry(key.to_owned()).or_insert(value);
+        fields.entry(ByteString::from(key.as_ref())).or_insert(value);
     }
 
     /// `SetItems`: missing array items are variant nulls.

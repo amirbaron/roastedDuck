@@ -20,6 +20,13 @@ use crate::temporal::time_tz_normalized_micros;
 struct DecimalScale(f64);
 
 impl FunctionData for DecimalScale {
+    fn equals(&self, other: &dyn FunctionData) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self == other)
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -35,6 +42,15 @@ fn divident(count: u64, input: AggregateInput<'_>) -> f64 {
         Some(scale) => count * scale.0,
         None => count,
     }
+}
+
+/// Match the reference target's long-double intermediate without enlarging the state.
+fn wide_average(sum: i128, count: u64, input: AggregateInput<'_>) -> f64 {
+    let scale = input
+        .bind_data
+        .and_then(|data| data.as_any().downcast_ref::<DecimalScale>())
+        .map(|scale| scale.0);
+    super::avg_precision::average(sum, count, scale)
 }
 
 /// Count and running sum (DuckDB's `AvgState`), at most 8-byte aligned like DuckDB's (see
@@ -134,7 +150,7 @@ impl<I: NativeType + Into<i128>> UnaryAggregate for IntegerAverage<I> {
         if state.count == 0 {
             return Ok(None);
         }
-        Ok(Some(i128_to_f64(state.value) / divident(state.count, input)))
+        Ok(Some(wide_average(state.value, state.count, input)))
     }
 }
 
@@ -173,7 +189,7 @@ impl UnaryAggregate for HugeintAverage {
         if state.count == 0 {
             return Ok(None);
         }
-        Ok(Some(i128_to_f64(state.value) / divident(state.count, input)))
+        Ok(Some(wide_average(state.value, state.count, input)))
     }
 }
 

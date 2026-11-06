@@ -78,9 +78,9 @@ pub fn make_date_functions() -> ScalarFunctionSet {
         },
     ));
     let fields = vec![
-        ("year".to_owned(), LogicalType::BIGINT),
-        ("month".to_owned(), LogicalType::BIGINT),
-        ("day".to_owned(), LogicalType::BIGINT),
+        ("year".into(), LogicalType::BIGINT),
+        ("month".into(), LogicalType::BIGINT),
+        ("day".into(), LogicalType::BIGINT),
     ];
     set.add(ScalarFunction::new(
         "make_date",

@@ -20,10 +20,10 @@ pub struct TableFunctionBindInput<'a> {
     /// The positional arguments, cast to the overload's argument types.
     pub inputs: &'a [Value],
     /// `name := value` arguments, cast to the declared parameter types.
-    pub named_parameters: &'a [(String, Value)],
+    pub named_parameters: &'a [(rustdb_common::ByteString, Value)],
     /// For table-in/table-out functions: the input table's column types and names.
     pub input_table_types: &'a [LogicalType],
-    pub input_table_names: &'a [String],
+    pub input_table_names: &'a [rustdb_common::ByteString],
     /// The binder's client context (the planner's `ClientContext`), for functions that
     /// read the catalog.
     pub binder: Option<&'a dyn std::any::Any>,
@@ -33,7 +33,7 @@ pub struct TableFunctionBindInput<'a> {
 #[derive(Clone, Debug, Default)]
 pub struct TableFunctionBindOutput {
     pub return_types: Vec<LogicalType>,
-    pub names: Vec<String>,
+    pub names: Vec<rustdb_common::ByteString>,
     pub bind_data: Option<Arc<dyn FunctionData>>,
 }
 
@@ -82,11 +82,17 @@ pub type TableFunctionTypePushdown =
 pub type TableFunctionPushdownFilters =
     Arc<dyn Fn(&dyn FunctionData, &[u64], &dyn std::any::Any) -> Result<Arc<dyn FunctionData>> + Send + Sync>;
 
+/// Whether a table function can faithfully apply a filter to an original column.
+/// The erased filter is the storage layer's `TableFilter`, avoiding a dependency cycle.
+pub type TableFunctionFilterSupport =
+    Arc<dyn Fn(&dyn FunctionData, usize, &dyn std::any::Any) -> bool + Send + Sync>;
+
 /// The virtual columns of a call (DuckDB's `table_function_get_virtual_columns_t`):
 /// `(column id, name, type)` for columns such as `filename` that can be selected by name
 /// without being part of the function's columns.
-pub type TableFunctionVirtualColumns =
-    Arc<dyn Fn(Option<&dyn FunctionData>) -> Vec<(u64, String, LogicalType)> + Send + Sync>;
+pub type TableFunctionVirtualColumns = Arc<
+    dyn Fn(Option<&dyn FunctionData>) -> Vec<(u64, rustdb_common::ByteString, LogicalType)> + Send + Sync,
+>;
 
 /// The statistics of column `column` of a call (DuckDB's `table_statistics_t`):
 /// `rustdb_storage::statistics::BaseStatistics`, boxed as `Any`.
@@ -140,11 +146,11 @@ pub type TableFunctionPartitionInfo =
 pub struct FileFilterPushdown {
     /// The scanned files, if their paths determine any column (`hive_partitioning` or
     /// `filename` is set).
-    pub files: Arc<dyn Fn(&dyn FunctionData) -> Option<Vec<String>> + Send + Sync>,
+    pub files: Arc<dyn Fn(&dyn FunctionData) -> Option<Vec<rustdb_common::ByteString>> + Send + Sync>,
     /// The value of the column named `name` (of type `ty`) in the file at `path`, if the
     /// path determines it (`GetKnownColumnValues` + `HivePartitioning::GetValue`).
     pub known_value: Arc<
-        dyn Fn(&dyn FunctionData, &str, &str, &LogicalType) -> Result<Option<rustdb_types::Value>>
+        dyn Fn(&dyn FunctionData, &[u8], &[u8], &LogicalType) -> Result<Option<rustdb_types::Value>>
             + Send
             + Sync,
     >,
@@ -211,7 +217,14 @@ pub struct ParallelTableScan {
     >,
     /// What `EXPLAIN ANALYZE` shows about the finished scan (`dynamic_to_string`).
     pub dynamic_to_string: Option<
-        Arc<dyn Fn(Option<&dyn FunctionData>, &ParallelScanGlobal) -> Vec<(String, String)> + Send + Sync>,
+        Arc<
+            dyn Fn(
+                    Option<&dyn FunctionData>,
+                    &ParallelScanGlobal,
+                ) -> Vec<(rustdb_common::ByteString, rustdb_common::ByteString)>
+                + Send
+                + Sync,
+        >,
     >,
     /// The row groups the thread read and the row groups handed out to all threads
     /// (`get_metrics`: `OPERATOR_ROW_GROUPS_SCANNED`, `OPERATOR_TOTAL_ROW_GROUPS_TO_SCAN`).
@@ -259,15 +272,16 @@ pub struct TableScanState {
 /// `named_parameter_type_map_t` / `named_parameter_map_t` (a `case_insensitive_map_t`
 /// filled in the given order), which `Function::CallToString`, `duckdb_functions()` and
 /// serialized plans list them in.
-pub fn named_parameters_in_map_order<T>(
-    named_parameters: &[(String, T)],
-) -> impl Iterator<Item = &(String, T)> {
-    let mut map = rustdb_common::libcxx::UnorderedOrder::default();
+pub fn named_parameters_in_map_order<T, K: AsRef<[u8]>>(
+    named_parameters: &[(K, T)],
+) -> impl Iterator<Item = &(K, T)> {
+    let mut map = rustdb_common::platform_order::UnorderedOrder::default();
     for (index, (name, _)) in named_parameters.iter().enumerate() {
         map.insert(rustdb_common::libcxx::ci_hash(name), index, |a, b| {
             named_parameters[*a]
                 .0
-                .eq_ignore_ascii_case(&named_parameters[*b].0)
+                .as_ref()
+                .eq_ignore_ascii_case(named_parameters[*b].0.as_ref())
         });
     }
     let indices: Vec<usize> = map.order().into_iter().map(|node| map.keys()[node]).collect();
@@ -316,6 +330,7 @@ pub struct TableFunction {
     /// Hands the filters pushed into the scan to the function (DuckDB's table filters of
     /// a `filter_pushdown` function): returns the bind data that applies them.
     pub pushdown_filters: Option<TableFunctionPushdownFilters>,
+    pub filter_support: Option<TableFunctionFilterSupport>,
     /// The function's virtual columns (`get_virtual_columns`).
     pub get_virtual_columns: Option<TableFunctionVirtualColumns>,
     /// Column statistics (`statistics`).
@@ -336,8 +351,8 @@ pub struct TableFunction {
     pub projected_output: bool,
     /// The catalog and schema of the function's catalog entry (DuckDB's `catalog_name`
     /// and `schema_name`); empty for a function not taken from a catalog.
-    pub catalog_name: Arc<str>,
-    pub schema_name: Arc<str>,
+    pub catalog_name: Arc<[u8]>,
+    pub schema_name: Arc<[u8]>,
     /// Writes the bind data, so that a serialized plan can bind the function again
     /// (DuckDB's `serialize` callback); without it a plan holds the call's arguments.
     pub serialize: Option<TableFunctionSerialize>,
@@ -366,6 +381,7 @@ impl TableFunction {
             cardinality: None,
             empty_column: false,
             pushdown_filters: None,
+            filter_support: None,
             get_virtual_columns: None,
             statistics: None,
             get_partition_stats: None,
@@ -374,15 +390,15 @@ impl TableFunction {
             file_filter_pushdown: None,
             get_row_id_columns: None,
             projected_output: false,
-            catalog_name: Arc::from(""),
-            schema_name: Arc::from(""),
+            catalog_name: Arc::from(b"".as_slice()),
+            schema_name: Arc::from(b"".as_slice()),
             serialize: None,
         }
     }
 
     /// Sets the catalog and schema of the function's catalog entry (see
     /// [`TableFunction::catalog_name`]).
-    pub fn set_catalog_entry(&mut self, catalog: &Arc<str>, schema: &Arc<str>) {
+    pub fn set_catalog_entry(&mut self, catalog: &Arc<[u8]>, schema: &Arc<[u8]>) {
         self.catalog_name = Arc::clone(catalog);
         self.schema_name = Arc::clone(schema);
     }

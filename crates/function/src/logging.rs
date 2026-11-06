@@ -4,7 +4,7 @@
 use std::any::Any;
 use std::fmt;
 
-use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_common::{ByteString, Error, ErrorKind, Result};
 use rustdb_types::LogicalType;
 
 /// The severity of a log entry (DuckDB's `LogLevel`).
@@ -86,7 +86,12 @@ pub trait ClientLogger: Send + Sync + fmt::Debug {
     /// `Logger::ShouldLog`.
     fn should_log(&self, scope: LogScope, log_type: &str, level: LogLevel) -> bool;
     /// `Logger::WriteLog`.
-    fn write_log(&self, scope: LogScope, log_type: &str, level: LogLevel, message: &str) -> Result<()>;
+    fn write_log_bytes(&self, scope: LogScope, log_type: &str, level: LogLevel, message: &[u8])
+    -> Result<()>;
+    /// UTF-8 input forwarded to the native byte logger.
+    fn write_log(&self, scope: LogScope, log_type: &str, level: LogLevel, message: &str) -> Result<()> {
+        self.write_log_bytes(scope, log_type, level, message.as_bytes())
+    }
     /// `LogManager::LookupLogType`.
     fn lookup_log_type(&self, name: &str) -> Option<LogTypeInfo>;
     /// The database's log manager, for its own functions.
@@ -101,7 +106,7 @@ pub trait ClientLogger: Send + Sync + fmt::Debug {
 pub struct OperatorLogger {
     logger: std::sync::Arc<dyn ClientLogger>,
     operator_type: String,
-    parameters: Vec<(String, String)>,
+    parameters: Vec<(ByteString, ByteString)>,
 }
 
 impl fmt::Debug for OperatorLogger {
@@ -125,7 +130,7 @@ impl OperatorLogger {
     pub fn new(
         logger: Option<std::sync::Arc<dyn ClientLogger>>,
         operator_type: &str,
-        parameters: impl FnOnce() -> Vec<(String, String)>,
+        parameters: impl FnOnce() -> Vec<(ByteString, ByteString)>,
     ) -> Option<Self> {
         let logger = logger?;
         if !logger.should_log(LogScope::Connection, Self::NAME, Self::LEVEL) {
@@ -139,12 +144,17 @@ impl OperatorLogger {
     }
 
     /// `DUCKDB_LOG(context, PhysicalOperatorLogType, op, class, event, info)`; a failure to
-    /// log is ignored.
-    pub fn log(&self, class: &str, event: &str, info: &[(&str, String)]) {
-        let message = operator_log_message(&self.operator_type, &self.parameters, class, event, info);
-        let _ = self
-            .logger
-            .write_log(LogScope::Connection, Self::NAME, Self::LEVEL, &message);
+    /// log is propagated.
+    pub fn log(&self, class: &str, event: &str, info: &[(&str, String)]) -> Result<()> {
+        let message = operator_log_message(&self.operator_type, &self.parameters, class, event, info)?;
+        self.logger
+            .write_log_bytes(LogScope::Connection, Self::NAME, Self::LEVEL, &message)
+    }
+    /// Native info values, validated at the same VARCHAR construction as C++ logging.
+    pub fn log_bytes(&self, class: &str, event: &str, info: &[(&str, ByteString)]) -> Result<()> {
+        let message = operator_log_message_bytes(&self.operator_type, &self.parameters, class, event, info)?;
+        self.logger
+            .write_log_bytes(LogScope::Connection, Self::NAME, Self::LEVEL, &message)
     }
 }
 
@@ -152,34 +162,48 @@ impl OperatorLogger {
 /// parameters, the class and event logged and their info, as text.
 pub fn operator_log_message(
     operator_type: &str,
-    parameters: &[(String, String)],
+    parameters: &[(ByteString, ByteString)],
     class: &str,
     event: &str,
     info: &[(&str, String)],
-) -> String {
+) -> Result<ByteString> {
+    let native: Vec<_> = info
+        .iter()
+        .map(|(key, value)| (*key, ByteString::from(value)))
+        .collect();
+    operator_log_message_bytes(operator_type, parameters, class, event, &native)
+}
+
+pub fn operator_log_message_bytes(
+    operator_type: &str,
+    parameters: &[(ByteString, ByteString)],
+    class: &str,
+    event: &str,
+    info: &[(&str, ByteString)],
+) -> Result<ByteString> {
     use rustdb_types::Value;
     // `StringPairIterableToMap`.
     let map = |entries: Vec<(Value, Value)>| Value::map(LogicalType::VARCHAR, LogicalType::VARCHAR, entries);
     let message = Value::struct_value(vec![
-        ("operator_type".to_owned(), Value::varchar(operator_type)),
+        ("operator_type".into(), Value::varchar(operator_type)),
         (
-            "parameters".to_owned(),
+            "parameters".into(),
             map(parameters
                 .iter()
-                .map(|(key, value)| (Value::varchar(key), Value::varchar(value)))
-                .collect()),
+                .map(|(key, value)| Ok((Value::try_varchar(key)?, Value::try_varchar(value)?)))
+                .collect::<Result<Vec<_>>>()?),
         ),
-        ("class".to_owned(), Value::varchar(class)),
-        ("event".to_owned(), Value::varchar(event)),
+        ("class".into(), Value::varchar(class)),
+        ("event".into(), Value::varchar(event)),
         (
-            "info".to_owned(),
+            "info".into(),
             map(info
                 .iter()
-                .map(|(key, value)| (Value::varchar(*key), Value::varchar(value)))
-                .collect()),
+                .map(|(key, value)| Ok((Value::varchar(*key), Value::try_varchar(value)?)))
+                .collect::<Result<_>>()?),
         ),
     ]);
-    message.to_varchar().unwrap_or_default()
+    message.to_varchar_bytes()
 }
 
 /// The `FileSystem` log entries of a local file (DuckDB's `FileSystemLogType` written by
@@ -187,21 +211,21 @@ pub fn operator_log_message(
 #[derive(Debug)]
 pub struct FileSystemLogger {
     logger: std::sync::Arc<dyn ClientLogger>,
-    path: String,
+    path: ByteString,
 }
 
 impl FileSystemLogger {
     /// The logger of a file opened now, if the thread runs a statement; logs `OPEN`.
-    pub fn open(path: &str) -> Option<Self> {
+    pub fn open(path: impl AsRef<[u8]>) -> Option<Self> {
         Self::open_for(crate::file_system::opener().as_deref(), path)
     }
 
     /// The logger of a file opened now for the connection `client` (which may run the
     /// statement on another thread); logs `OPEN`.
-    pub fn open_for(client: Option<&crate::FunctionClient>, path: &str) -> Option<Self> {
+    pub fn open_for(client: Option<&crate::FunctionClient>, path: impl AsRef<[u8]>) -> Option<Self> {
         let logger = Self {
             logger: client?.logger()?,
-            path: path.to_owned(),
+            path: path.as_ref().into(),
         };
         logger.log("OPEN", None);
         Some(logger)
@@ -231,17 +255,17 @@ impl FileSystemLogger {
             return;
         }
         let message = match bytes {
-            Some((bytes, position)) => format!(
+            Some((bytes, position)) => rustdb_common::byte_format!(
                 "{{\"fs\":\"LocalFileSystem\",\"path\":\"{}\",\"op\":\"{op}\",\"bytes\":\"{bytes}\",\"pos\":\"{position}\"}}",
                 self.path
             ),
-            None => format!(
+            None => rustdb_common::byte_format!(
                 "{{\"fs\":\"LocalFileSystem\",\"path\":\"{}\",\"op\":\"{op}\"}}",
                 self.path
             ),
         };
         let _ = self
             .logger
-            .write_log(LogScope::Connection, "FileSystem", LogLevel::Trace, &message);
+            .write_log_bytes(LogScope::Connection, "FileSystem", LogLevel::Trace, &message);
     }
 }

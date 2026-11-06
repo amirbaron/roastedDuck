@@ -49,10 +49,10 @@ impl FunctionData for MetadataBindData {
     }
 }
 
-fn names_types(columns: &[(&str, LogicalType)]) -> (Vec<String>, Vec<LogicalType>) {
+fn names_types(columns: &[(&str, LogicalType)]) -> (Vec<rustdb_common::ByteString>, Vec<LogicalType>) {
     columns
         .iter()
-        .map(|(name, ty)| ((*name).to_owned(), ty.clone()))
+        .map(|(name, ty)| ((*name).into(), ty.clone()))
         .unzip()
 }
 
@@ -60,7 +60,7 @@ fn geo_bbox_type() -> LogicalType {
     LogicalType::struct_type(
         ["xmin", "xmax", "ymin", "ymax", "zmin", "zmax", "mmin", "mmax"]
             .into_iter()
-            .map(|name| (name.to_owned(), LogicalType::DOUBLE))
+            .map(|name| (name.into(), LogicalType::DOUBLE))
             .collect(),
     )
 }
@@ -140,7 +140,7 @@ fn schema_of(kind: MetadataKind) -> Vec<(&'static str, LogicalType)> {
                 T::list(T::struct_type(
                     schema_of(kind)
                         .into_iter()
-                        .map(|(name, ty)| (name.to_owned(), ty))
+                        .map(|(name, ty)| (name.into(), ty))
                         .collect(),
                 ))
             };
@@ -374,14 +374,14 @@ fn row_group_rows(reader: &ParquetReader, data: &MetadataBindData) -> Result<Vec
                 Some(bbox) => {
                     let double = |value: Option<f64>| optional(value, Value::double, &LogicalType::DOUBLE);
                     Value::struct_value(vec![
-                        ("xmin".to_owned(), Value::double(bbox.xmin)),
-                        ("xmax".to_owned(), Value::double(bbox.xmax)),
-                        ("ymin".to_owned(), Value::double(bbox.ymin)),
-                        ("ymax".to_owned(), Value::double(bbox.ymax)),
-                        ("zmin".to_owned(), double(bbox.zmin)),
-                        ("zmax".to_owned(), double(bbox.zmax)),
-                        ("mmin".to_owned(), double(bbox.mmin)),
-                        ("mmax".to_owned(), double(bbox.mmax)),
+                        ("xmin".to_owned().into(), Value::double(bbox.xmin)),
+                        ("xmax".to_owned().into(), Value::double(bbox.xmax)),
+                        ("ymin".to_owned().into(), Value::double(bbox.ymin)),
+                        ("ymax".to_owned().into(), Value::double(bbox.ymax)),
+                        ("zmin".to_owned().into(), double(bbox.zmin)),
+                        ("zmax".to_owned().into(), double(bbox.zmax)),
+                        ("mmin".to_owned().into(), double(bbox.mmin)),
+                        ("mmax".to_owned().into(), double(bbox.mmax)),
                     ])
                 }
             };
@@ -410,7 +410,7 @@ fn row_group_rows(reader: &ParquetReader, data: &MetadataBindData) -> Result<Vec
                 }
             };
             rows.push(vec![
-                Value::varchar(reader.file_name()),
+                Value::try_varchar(reader.file_name())?,
                 Value::bigint(group_index as i64),
                 Value::bigint(group.num_rows),
                 Value::bigint(group.columns.len() as i64),
@@ -418,7 +418,7 @@ fn row_group_rows(reader: &ParquetReader, data: &MetadataBindData) -> Result<Vec
                 Value::bigint(column_index as i64),
                 bigint(group.file_offset.map(|_| column.file_offset)),
                 Value::bigint(meta.num_values),
-                Value::varchar(meta.path_in_schema.join(", ")),
+                Value::try_varchar(&rustdb_common::ByteString::join(&meta.path_in_schema, b", "))?,
                 Value::varchar(enum_text(meta.type_.name(), meta.type_.0)),
                 stats_text(schema, stats.min.as_ref(), &data.casts)?,
                 stats_text(schema, stats.max.as_ref(), &data.casts)?,
@@ -468,8 +468,8 @@ fn schema_rows(reader: &ParquetReader, data: &MetadataBindData) -> Result<Vec<Ve
             None => Value::null(LogicalType::VARCHAR),
         };
         rows.push(vec![
-            Value::varchar(reader.file_name()),
-            Value::varchar(&element.name),
+            Value::try_varchar(reader.file_name())?,
+            Value::try_varchar(&element.name)?,
             varchar(element.type_.map(|ty| enum_text(ty.name(), ty.0))),
             varchar(element.type_length.map(|length| length.to_string())),
             varchar(element.repetition_type.map(|ty| enum_text(ty.name(), ty.0))),
@@ -487,27 +487,27 @@ fn schema_rows(reader: &ParquetReader, data: &MetadataBindData) -> Result<Vec<Ve
 }
 
 /// The rows of `parquet_kv_metadata` for one file.
-fn key_value_rows(reader: &ParquetReader) -> Vec<Vec<Value>> {
+fn key_value_rows(reader: &ParquetReader) -> Result<Vec<Vec<Value>>> {
     reader
         .metadata()
         .key_value_metadata
         .iter()
         .flatten()
         .map(|entry| {
-            vec![
-                Value::varchar(reader.file_name()),
+            Ok(vec![
+                Value::try_varchar(reader.file_name())?,
                 Value::blob(&entry.key),
                 entry
                     .value
                     .as_ref()
                     .map_or_else(|| Value::blob(b""), |value| Value::blob(value)),
-            ]
+            ])
         })
         .collect()
 }
 
 /// The row of `parquet_file_metadata` for one file.
-fn file_rows(reader: &ParquetReader) -> Vec<Vec<Value>> {
+fn file_rows(reader: &ParquetReader) -> Result<Vec<Vec<Value>>> {
     let metadata = reader.metadata();
     let column_orders = match &metadata.column_orders {
         None => Value::null(LogicalType::list(LogicalType::VARCHAR)),
@@ -519,8 +519,8 @@ fn file_rows(reader: &ParquetReader) -> Vec<Vec<Value>> {
                 .collect(),
         ),
     };
-    vec![vec![
-        Value::varchar(reader.file_name()),
+    Ok(vec![vec![
+        Value::try_varchar(reader.file_name())?,
         optional(metadata.created_by.clone(), Value::varchar, &LogicalType::VARCHAR),
         Value::bigint(metadata.num_rows),
         Value::bigint(metadata.row_groups.len() as i64),
@@ -541,7 +541,7 @@ fn file_rows(reader: &ParquetReader) -> Vec<Vec<Value>> {
         Value::ubigint(reader.context.file.size()),
         Value::ubigint(u64::from(reader.footer_len)),
         column_orders,
-    ]]
+    ]])
 }
 
 /// The rows of `parquet_bloom_probe` for one file.
@@ -555,7 +555,7 @@ fn bloom_probe_rows(reader: &ParquetReader, data: &MetadataBindData) -> Result<V
         .iter()
         .position(|definition| &definition.name == column)
     else {
-        return Err(Error::invalid_input(format!(
+        return Err(Error::invalid_input(rustdb_common::byte_format!(
             "Column {column} not found in {}",
             reader.file_name()
         )));
@@ -564,7 +564,12 @@ fn bloom_probe_rows(reader: &ParquetReader, data: &MetadataBindData) -> Result<V
     // `Value::DefaultCastAs`.
     let constant = constant
         .try_cast_as(&data.casts, &column_type, false)
-        .map_err(|error| Error::invalid_input(format!("Failed to cast value: {}", error.raw_message())))?;
+        .map_err(|error| {
+            Error::invalid_input(rustdb_common::byte_format!(
+                "Failed to cast value: {}",
+                error.raw_message()
+            ))
+        })?;
     let mut rows = Vec::new();
     for (group_index, group) in reader.metadata().row_groups.iter().enumerate() {
         let meta = group
@@ -576,7 +581,7 @@ fn bloom_probe_rows(reader: &ParquetReader, data: &MetadataBindData) -> Result<V
             None => false,
         };
         rows.push(vec![
-            Value::varchar(reader.file_name()),
+            Value::try_varchar(reader.file_name())?,
             Value::bigint(group_index as i64),
             Value::boolean(excludes),
         ]);
@@ -666,7 +671,7 @@ fn nested_rows(kind: MetadataKind, rows: Vec<Vec<Value>>) -> Value {
     let struct_type = LogicalType::struct_type(
         fields
             .iter()
-            .map(|(name, ty)| ((*name).to_owned(), ty.clone()))
+            .map(|(name, ty)| ((*name).into(), ty.clone()))
             .collect(),
     );
     Value::list(
@@ -676,7 +681,7 @@ fn nested_rows(kind: MetadataKind, rows: Vec<Vec<Value>>) -> Value {
                 Value::struct_value(
                     fields
                         .iter()
-                        .map(|(name, _)| (*name).to_owned())
+                        .map(|(name, _)| rustdb_common::ByteString::from(*name))
                         .zip(row)
                         .collect(),
                 )
@@ -686,19 +691,19 @@ fn nested_rows(kind: MetadataKind, rows: Vec<Vec<Value>>) -> Value {
 }
 
 /// The rows a function returns for one file.
-fn file_metadata_rows(data: &MetadataBindData, path: &str) -> Result<Vec<Vec<Value>>> {
+fn file_metadata_rows(data: &MetadataBindData, path: &[u8]) -> Result<Vec<Vec<Value>>> {
     let reader = ParquetReader::open(path, data.options.clone())?;
     match data.kind {
         MetadataKind::RowGroups => row_group_rows(&reader, data),
         MetadataKind::Schema => schema_rows(&reader, data),
-        MetadataKind::KeyValue => Ok(key_value_rows(&reader)),
-        MetadataKind::File => Ok(file_rows(&reader)),
+        MetadataKind::KeyValue => key_value_rows(&reader),
+        MetadataKind::File => file_rows(&reader),
         MetadataKind::BloomProbe => bloom_probe_rows(&reader, data),
         MetadataKind::Full => Ok(vec![vec![
-            nested_rows(MetadataKind::File, file_rows(&reader)),
+            nested_rows(MetadataKind::File, file_rows(&reader)?),
             nested_rows(MetadataKind::RowGroups, row_group_rows(&reader, data)?),
             nested_rows(MetadataKind::Schema, schema_rows(&reader, data)?),
-            nested_rows(MetadataKind::KeyValue, key_value_rows(&reader)),
+            nested_rows(MetadataKind::KeyValue, key_value_rows(&reader)?),
         ]]),
     }
 }
@@ -770,10 +775,16 @@ fn context_options(
 ) -> Result<(ParquetOptions, Arc<CastFunctionSet>)> {
     let context = crate::scan::client_context(input)?;
     let mut options = ParquetOptions {
-        binary_as_string: crate::scan::setting_bool(context, "binary_as_string"),
+        binary_as_string: crate::scan::setting_bool_checked(context, "binary_as_string")?,
+        geoparquet_conversion: crate::scan::setting_bool_checked(context, "enable_geoparquet_conversion")?,
+        metadata_cache: if crate::scan::setting_bool_checked(context, "parquet_metadata_cache")? {
+            context.function_client.object_cache()
+        } else {
+            None
+        },
         ..ParquetOptions::default()
     };
-    crate::scan::set_file_cache_options(context, &mut options);
+    crate::scan::set_file_cache_options(context, &mut options)?;
     Ok((options, Arc::clone(&context.casts)))
 }
 

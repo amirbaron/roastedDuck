@@ -14,7 +14,7 @@ use rustdb_ast::{
     SelectStatement, StarExpression, SubqueryRef, TableRef, TableRefKind, UpdateSetInfo,
 };
 use rustdb_catalog::{CatalogEntry, TableEntry};
-use rustdb_common::{CaseInsensitiveMap, Error, Result};
+use rustdb_common::{ByteString, CaseInsensitiveMap, Error, Result};
 use rustdb_types::{LogicalType, Value};
 
 use super::super::query_node::plan_subqueries;
@@ -39,12 +39,12 @@ use crate::operator::{
 use crate::prepared::StatementReturnType;
 
 /// A source column: the alias of its relation and its name.
-type SourceColumn = (BindingAlias, String);
+type SourceColumn = (BindingAlias, ByteString);
 
 /// The bound pieces of the merge the actions share.
 struct MergeTarget<'a> {
     table: &'a TableEntry,
-    table_name: &'a str,
+    table_name: &'a [u8],
     return_chunk: bool,
     proj_index: u64,
 }
@@ -152,7 +152,7 @@ fn bind_merge_action(
                             .map(|(_, _, column)| column.name.clone())
                             .collect();
                         if source.len() != info.columns.len() {
-                            return Err(Error::binder(format!(
+                            return Err(Error::binder(rustdb_common::byte_format!(
                                 "Data provided for UPDATE did not match column count in table - expected {} \
                                  columns but got {}",
                                 info.columns.len(),
@@ -285,7 +285,7 @@ fn join_operator(root: &mut LogicalOperator) -> Result<&mut LogicalOperator> {
         current = &mut current.children[0];
     }
     if current.children.len() != 2 {
-        return Err(Error::not_implemented(format!(
+        return Err(Error::not_implemented(rustdb_common::byte_format!(
             "Expected a join after binding a join operator - but got a {}",
             current.operator_type().name()
         )));
@@ -312,7 +312,7 @@ pub fn bind_merge_into(scope: &mut BindScope<'_>, stmt: &mut MergeIntoStatement)
             get.table_index,
             get.table_schema.clone().unwrap_or_default(),
         ),
-        _ => (None, 0, (String::new(), String::new())),
+        _ => (None, 0, Default::default()),
     };
     let entry: Arc<CatalogEntry> = entry.ok_or_else(|| Error::binder("Can only merge into base tables!"))?;
     let table = table_of(&entry)?;
@@ -474,7 +474,7 @@ pub fn bind_merge_into(scope: &mut BindScope<'_>, stmt: &mut MergeIntoStatement)
             .collect();
         let marker_binding = ColumnBinding::new(new_proj_index, select_list.len() as u64);
         let mut marker = Expression::constant(Value::integer(42));
-        "source_marker".clone_into(&mut marker.alias);
+        marker.alias = "source_marker".into();
         select_list.push(marker);
         let source_op = std::mem::replace(source_plan, LogicalOperator::new(LogicalKind::CrossProduct));
         *source_plan = LogicalOperator::projection(new_proj_index, select_list, source_op);
@@ -496,7 +496,7 @@ pub fn bind_merge_into(scope: &mut BindScope<'_>, stmt: &mut MergeIntoStatement)
         }
         merge.source_marker = Some(projection_expressions.len());
         let mut marker_ref = Expression::column_ref("source_marker", LogicalType::INTEGER, marker_binding, 0);
-        "source_marker".clone_into(&mut marker_ref.alias);
+        marker_ref.alias = "source_marker".into();
         projection_expressions.push(marker_ref);
     }
 
@@ -525,22 +525,25 @@ pub fn bind_merge_into(scope: &mut BindScope<'_>, stmt: &mut MergeIntoStatement)
     scope.with_properties(|properties| properties.return_type = StatementReturnType::ChangedRows);
     Ok(BoundStatement::new(
         plan,
-        vec!["Count".to_owned()],
+        vec!["Count".into()],
         vec![LogicalType::BIGINT],
     ))
 }
 
 /// A parsed `relation.column` reference.
-fn qualified_column(relation: &str, column: &str) -> ParsedExpression {
-    ParsedExpression::column_ref([relation.to_owned(), column.to_owned()])
+fn qualified_column(relation: impl AsRef<[u8]>, column: impl AsRef<[u8]>) -> ParsedExpression {
+    ParsedExpression::column_ref([
+        ByteString::from(relation.as_ref()),
+        ByteString::from(column.as_ref()),
+    ])
 }
 
 /// `DoUpdateSetQualify`: unqualified column references in `DO UPDATE SET` refer to the
 /// target table, so they are qualified with it to avoid ambiguity with `excluded`.
 fn do_update_set_qualify(
     expr: &mut ParsedExpression,
-    table_name: &str,
-    lambda_params: &mut Vec<HashSet<String>>,
+    table_name: &[u8],
+    lambda_params: &mut Vec<HashSet<ByteString>>,
 ) -> Result<()> {
     match &mut expr.kind {
         ParsedExpressionKind::ColumnRef(column) => {
@@ -667,9 +670,10 @@ fn excluded_subquery(
     )
 }
 
-fn subquery_ref(subquery: SelectStatement, column_name_alias: Vec<String>) -> TableRef {
+fn subquery_ref(subquery: SelectStatement, column_name_alias: Vec<ByteString>) -> TableRef {
     TableRef {
-        alias: "excluded".to_owned(),
+        external_dependency: rustdb_ast::ExternalDependency::default(),
+        alias: "excluded".into(),
         sample: None,
         query_location: None,
         kind: TableRefKind::Subquery(SubqueryRef {
@@ -680,7 +684,7 @@ fn subquery_ref(subquery: SelectStatement, column_name_alias: Vec<String>) -> Ta
 }
 
 /// Sets the column aliases of a source table ref (`TableRef::column_name_alias`).
-fn column_name_alias(source: &mut TableRef) -> Option<&mut Vec<String>> {
+fn column_name_alias(source: &mut TableRef) -> Option<&mut Vec<ByteString>> {
     match &mut source.kind {
         TableRefKind::Subquery(subquery) => Some(&mut subquery.column_name_alias),
         TableRefKind::BaseTable(base) => Some(&mut base.column_name_alias),
@@ -692,7 +696,7 @@ fn star() -> ParsedExpression {
     ParsedExpression::new(
         ExpressionType::Star,
         ParsedExpressionKind::Star(Box::new(StarExpression {
-            relation_name: String::new(),
+            relation_name: ByteString::new(),
             exclude_list: Vec::new(),
             replace_list: CaseInsensitiveMap::default(),
             rename_list: rustdb_common::OrderedMap::default(),
@@ -735,7 +739,8 @@ pub fn generate_merge_into(stmt: &mut InsertStatement, entry: &CatalogEntry) -> 
     let target = match stmt.table_ref.take() {
         Some(target) => target,
         None => Box::new(TableRef {
-            alias: String::new(),
+            external_dependency: rustdb_ast::ExternalDependency::default(),
+            alias: ByteString::new(),
             sample: None,
             query_location: None,
             kind: TableRefKind::BaseTable(Box::new(BaseTableRef {
@@ -755,7 +760,7 @@ pub fn generate_merge_into(stmt: &mut InsertStatement, entry: &CatalogEntry) -> 
     let unique = unique_index_columns(table);
 
     // The join between the target and `excluded`.
-    let mut all_distinct_on_columns: Vec<Vec<String>> = Vec::new();
+    let mut all_distinct_on_columns: Vec<Vec<ByteString>> = Vec::new();
     let mut join_condition = None;
     let mut using_columns = Vec::new();
     if on_conflict_info.indexed_columns.is_empty() {
@@ -839,14 +844,15 @@ pub fn generate_merge_into(stmt: &mut InsertStatement, entry: &CatalogEntry) -> 
                 named_column_map.push(logical);
             }
         }
-        expand_default_in_values_list(stmt, table, &stmt.table.clone(), &named_column_map)?;
+        expand_default_in_values_list(stmt, table, stmt.table.clone(), &named_column_map)?;
     }
 
     // The source `excluded`.
     let mut source = match stmt.select_statement.take() {
         Some(select) => subquery_ref(*select, Vec::new()),
         None => TableRef {
-            alias: String::new(),
+            external_dependency: rustdb_ast::ExternalDependency::default(),
+            alias: ByteString::new(),
             sample: None,
             query_location: None,
             kind: TableRefKind::Empty,
@@ -858,10 +864,11 @@ pub fn generate_merge_into(stmt: &mut InsertStatement, entry: &CatalogEntry) -> 
             if let Some(aliases) = column_name_alias(&mut source) {
                 aliases.clone_from(&stmt.columns);
             }
-            let set_columns: HashSet<String> = stmt.columns.iter().map(|c| c.to_lowercase()).collect();
+            let set_columns: HashSet<ByteString> =
+                stmt.columns.iter().map(ByteString::to_ascii_lowercase).collect();
             let mut select_list = Vec::new();
             for (_, _, column) in table.physical_columns() {
-                select_list.push(if set_columns.contains(&column.name.to_lowercase()) {
+                select_list.push(if set_columns.contains(&column.name.to_ascii_lowercase()) {
                     ParsedExpression::column_ref([column.name.clone()])
                 } else {
                     column.default_value.clone().unwrap_or_else(|| {

@@ -121,6 +121,12 @@ pub(crate) fn row_match_finder_supported(strategy: Strategy) -> bool {
     (Greedy..=Lazy2).contains(&strategy)
 }
 
+/// `ZSTD_resolveRowMatchFinderMode` with its automatic platform/window policy.
+pub(crate) fn row_match_finder_used(params: CParams) -> bool {
+    let simd = cfg!(any(target_feature = "sse2", target_feature = "neon"));
+    row_match_finder_supported(params.strategy) && params.window_log > if simd { 14 } else { 17 }
+}
+
 /// `ZSTD_adjustCParams_internal` without a dictionary (`ZSTD_cpm_noAttachDict`), with the
 /// row match finder assumed (`ZSTD_ps_auto`). `src_size` may be `CONTENT_SIZE_UNKNOWN`.
 fn adjust(mut params: CParams, src_size: u64) -> CParams {

@@ -12,7 +12,7 @@ use crate::expression_rewriter::RuleContext;
 use crate::expression_util::constant_or_null;
 
 /// The members of an ENUM type.
-fn enum_values(ty: &LogicalType) -> &[String] {
+fn enum_values(ty: &LogicalType) -> &[rustdb_common::ByteString] {
     match ty.info() {
         Some(TypeInfo::Enum(info)) => &info.values,
         _ => &[],

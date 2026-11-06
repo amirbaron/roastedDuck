@@ -49,7 +49,7 @@ impl<'a> OrderBinder<'a> {
             .as_deref()
             .and_then(|list| list.get(index as usize))
         {
-            Some(entry) => entry.to_string(),
+            Some(entry) => entry.to_sql_bytes(),
             None => expr.alias.clone(),
         };
         let mut result = Expression::constant(Value::ubigint(index)).with_alias(alias);
@@ -138,11 +138,9 @@ impl<'a> OrderBinder<'a> {
                 let Some(index) = self.projection_index(&expr)? else {
                     return Ok(None);
                 };
-                let mut result = Expression::constant(Value::struct_value(vec![(
-                    "index".to_owned(),
-                    Value::ubigint(index),
-                )]))
-                .with_alias(expr.alias.clone());
+                let mut result =
+                    Expression::constant(Value::struct_value(vec![("index".into(), Value::ubigint(index))]))
+                        .with_alias(expr.alias.clone());
                 result.query_location = expr.query_location;
                 return Ok(Some(result));
             }
@@ -162,8 +160,8 @@ impl<'a> OrderBinder<'a> {
                     && let Some(index) = self.projection_index(&collate.child)?
                 {
                     return Ok(Some(Expression::constant(Value::struct_value(vec![
-                        ("index".to_owned(), Value::ubigint(index)),
-                        ("collation".to_owned(), Value::varchar(&collate.collation)),
+                        ("index".into(), Value::ubigint(index)),
+                        ("collation".into(), Value::try_varchar(&collate.collation)?),
                     ]))));
                 }
             }

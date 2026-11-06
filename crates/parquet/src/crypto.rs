@@ -124,187 +124,33 @@ pub fn add_key(cache: &rustdb_function::ObjectCache, name: &str, key: &str) -> R
     Ok(())
 }
 
-/// The AES S-box.
-const SBOX: [u8; 256] = {
-    let mut sbox = [0u8; 256];
-    // Generated from the multiplicative inverse in GF(2^8) and the affine transform.
-    let mut p: u8 = 1;
-    let mut q: u8 = 1;
-    loop {
-        // p * 3
-        p = p ^ (p << 1) ^ if p & 0x80 != 0 { 0x1B } else { 0 };
-        // q / 3
-        q ^= q << 1;
-        q ^= q << 2;
-        q ^= q << 4;
-        if q & 0x80 != 0 {
-            q ^= 0x09;
-        }
-        let x = q ^ q.rotate_left(1) ^ q.rotate_left(2) ^ q.rotate_left(3) ^ q.rotate_left(4);
-        sbox[p as usize] = x ^ 0x63;
-        if p == 1 {
-            break;
-        }
-    }
-    sbox[0] = 0x63;
-    sbox
-};
-
-/// `xtime`: multiplication by x in GF(2^8).
-const fn xtime(byte: u8) -> u8 {
-    (byte << 1) ^ if byte & 0x80 != 0 { 0x1B } else { 0 }
-}
-
-/// An expanded AES key (encryption only: GCM decrypts with the forward cipher).
-struct Aes {
-    round_keys: Vec<[u8; 16]>,
-}
-
-impl Aes {
-    fn new(key: &[u8]) -> Result<Self> {
-        let nk = key.len() / 4;
-        if !valid_key(key) {
-            return Err(Error::invalid_input(
-                "Invalid AES key. Must have a length of 128, 192, or 256 bits (16, 24, or 32 bytes)",
-            ));
-        }
-        let rounds = nk + 6;
-        let mut words: Vec<[u8; 4]> = key
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|word| [word[0], word[1], word[2], word[3]])
-            .collect();
-        let mut rcon: u8 = 1;
-        for index in nk..4 * (rounds + 1) {
-            let mut word = words[index - 1];
-            if index % nk == 0 {
-                word = [
-                    SBOX[word[1] as usize] ^ rcon,
-                    SBOX[word[2] as usize],
-                    SBOX[word[3] as usize],
-                    SBOX[word[0] as usize],
-                ];
-                rcon = xtime(rcon);
-            } else if nk > 6 && index % nk == 4 {
-                word = word.map(|byte| SBOX[byte as usize]);
-            }
-            let previous = words[index - nk];
-            words.push([
-                word[0] ^ previous[0],
-                word[1] ^ previous[1],
-                word[2] ^ previous[2],
-                word[3] ^ previous[3],
-            ]);
-        }
-        let round_keys = words
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|chunk| {
-                let mut round_key = [0u8; 16];
-                for (column, word) in chunk.iter().enumerate() {
-                    round_key[4 * column..4 * column + 4].copy_from_slice(word);
-                }
-                round_key
-            })
-            .collect();
-        Ok(Self { round_keys })
-    }
-
-    /// Encrypts one block.
-    fn encrypt(&self, block: &mut [u8; 16]) {
-        let rounds = self.round_keys.len() - 1;
-        xor_into(block, &self.round_keys[0]);
-        for (round, round_key) in self.round_keys.iter().enumerate().skip(1) {
-            for byte in block.iter_mut() {
-                *byte = SBOX[*byte as usize];
-            }
-            // ShiftRows (column-major state).
-            let state = *block;
-            for column in 0..4 {
-                for row in 0..4 {
-                    block[4 * column + row] = state[4 * ((column + row) % 4) + row];
-                }
-            }
-            if round != rounds {
-                // MixColumns.
-                for column in block.as_chunks_mut::<4>().0 {
-                    let [a0, a1, a2, a3] = [column[0], column[1], column[2], column[3]];
-                    let all = a0 ^ a1 ^ a2 ^ a3;
-                    column[0] ^= all ^ xtime(a0 ^ a1);
-                    column[1] ^= all ^ xtime(a1 ^ a2);
-                    column[2] ^= all ^ xtime(a2 ^ a3);
-                    column[3] ^= all ^ xtime(a3 ^ a0);
-                }
-            }
-            xor_into(block, round_key);
-        }
-    }
-}
-
-fn xor_into(block: &mut [u8; 16], other: &[u8; 16]) {
-    for (byte, other) in block.iter_mut().zip(other) {
-        *byte ^= other;
-    }
-}
-
-/// Multiplication in GF(2^128) with GCM's bit order.
-fn gf_mul(x: u128, y: u128) -> u128 {
-    const R: u128 = 0xE1 << 120;
-    let mut z = 0u128;
-    let mut v = y;
-    for bit in 0..128 {
-        if (x >> (127 - bit)) & 1 == 1 {
-            z ^= v;
-        }
-        v = if v & 1 == 1 { (v >> 1) ^ R } else { v >> 1 };
-    }
-    z
-}
-
-/// GHASH of `aad` and `ciphertext` under `h`.
-fn ghash(h: u128, aad: &[u8], ciphertext: &[u8]) -> u128 {
-    let mut y = 0u128;
-    for data in [aad, ciphertext] {
-        for chunk in data.chunks(16) {
-            let mut block = [0u8; 16];
-            block[..chunk.len()].copy_from_slice(chunk);
-            y = gf_mul(y ^ u128::from_be_bytes(block), h);
-        }
-    }
-    let lengths = (u128::from(aad.len() as u64 * 8) << 64) | u128::from(ciphertext.len() as u64 * 8);
-    gf_mul(y ^ lengths, h)
-}
-
-/// AES-GCM decryption of `ciphertext` with a 12-byte `nonce`, checking `tag`
-/// (`AESStateMBEDTLS` with `FinalizeGCM`).
+/// Authenticated AES-GCM decryption through the shared hardware-backed primitive.
 fn gcm_decrypt(key: &[u8], nonce: &[u8], aad: &[u8], ciphertext: &[u8], tag: &[u8]) -> Result<Vec<u8>> {
-    let aes = Aes::new(key)?;
-    let mut h = [0u8; 16];
-    aes.encrypt(&mut h);
-    let h = u128::from_be_bytes(h);
-    let mut counter = [0u8; 16];
-    counter[..NONCE_BYTES].copy_from_slice(nonce);
-    counter[15] = 1;
-    let mut tag_mask = counter;
-    aes.encrypt(&mut tag_mask);
-    let mut plaintext = Vec::with_capacity(ciphertext.len());
-    let mut block_counter = 1u32;
-    for chunk in ciphertext.chunks(16) {
-        block_counter = block_counter.wrapping_add(1);
-        counter[12..].copy_from_slice(&block_counter.to_be_bytes());
-        let mut keystream = counter;
-        aes.encrypt(&mut keystream);
-        plaintext.extend(chunk.iter().zip(keystream).map(|(byte, key)| byte ^ key));
-    }
-    let computed = (ghash(h, aad, ciphertext) ^ u128::from_be_bytes(tag_mask)).to_be_bytes();
-    if computed[..] != *tag {
-        return Err(Error::invalid_input(
-            "Computed AES tag differs from read AES tag, are you using the right key?",
-        ));
-    }
-    Ok(plaintext)
+    let nonce: &[u8; NONCE_BYTES] = nonce
+        .try_into()
+        .map_err(|_| Error::invalid_input("Invalid AES-GCM nonce length"))?;
+    let tag: &[u8; TAG_BYTES] = tag
+        .try_into()
+        .map_err(|_| Error::invalid_input("Invalid AES-GCM tag length"))?;
+    let mut data = ciphertext.to_vec();
+    rustdb_crypto::aead::decrypt_gcm(key, nonce, aad, &mut data, tag)?;
+    Ok(data)
+}
+
+/// Encrypt one Parquet module: little-endian length, random nonce, ciphertext and tag.
+pub fn encrypt_module(key: &[u8], aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
+    let mut nonce = [0; NONCE_BYTES];
+    rustdb_crypto::generate_random_data(&mut nonce)?;
+    let mut data = plaintext.to_vec();
+    let tag = rustdb_crypto::aead::encrypt_gcm(key, &nonce, aad, &mut data)?;
+    let length = u32::try_from(NONCE_BYTES + data.len() + TAG_BYTES)
+        .map_err(|_| Error::invalid_input("Parquet encrypted module is too large"))?;
+    let mut encoded = Vec::with_capacity(LENGTH_BYTES + length as usize);
+    encoded.extend_from_slice(&length.to_le_bytes());
+    encoded.extend_from_slice(&nonce);
+    encoded.extend_from_slice(&data);
+    encoded.extend_from_slice(&tag);
+    Ok(encoded)
 }
 
 /// The AAD of a module (`ParquetAdditionalAuthenticatedData::WriteParquetAAD`): the file
@@ -389,6 +235,26 @@ pub fn decrypt_data(key: &[u8], aad: &[u8], bytes: &[u8], expected: usize) -> Re
 #[derive(Clone)]
 pub struct FooterKey(pub Arc<[u8]>);
 
+/// The frozen `ParquetEncryptionConfig` object stores the resolved raw footer key.
+/// Its column-key map is empty (unsupported by both implementations) and omitted.
+pub fn serialize_encryption_config(
+    serializer: &mut dyn rustdb_serde::Serializer,
+    key: Option<&FooterKey>,
+) -> Result<()> {
+    let Some(key) = key else {
+        serializer.write_null();
+        return Ok(());
+    };
+    serializer.on_object_begin();
+    serializer.write_property_with_default(
+        100,
+        "footer_key",
+        &rustdb_common::ByteString::from(key.0.as_ref()),
+    )?;
+    serializer.on_object_end();
+    Ok(())
+}
+
 impl std::fmt::Debug for FooterKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FooterKey").finish_non_exhaustive()
@@ -409,31 +275,31 @@ pub fn parse_encryption_config(
     let children = value.children().unwrap_or_default();
     let mut footer_key = Vec::new();
     for ((name, _), child) in names.iter().zip(children) {
-        match name.to_lowercase().as_str() {
-            "footer_key" => {
+        match name.to_ascii_lowercase().as_bytes() {
+            b"footer_key" => {
                 let key_name = child.to_varchar()?;
                 let key = cache
                     .and_then(|cache| ParquetKeys::get(cache).key(&key_name))
                     .ok_or_else(|| {
-                        Error::binder(format!(
+                        Error::binder(rustdb_common::byte_format!(
                             "No key with name \"{key_name}\" exists. Add it with PRAGMA add_parquet_key('<key_name>','<key>');"
                         ))
                     })?;
                 footer_key = key;
             }
-            "footer_key_value" => {
+            b"footer_key_value" => {
                 footer_key = match child.logical_type().id() {
                     rustdb_types::LogicalTypeId::Blob => child.as_bytes().unwrap_or_default().to_vec(),
                     _ => rustdb_common::blob::from_string(child.to_varchar()?.as_bytes())?,
                 };
             }
-            "column_keys" => {
+            b"column_keys" => {
                 return Err(Error::not_implemented(
                     "Parquet encryption_config column_keys not yet implemented",
                 ));
             }
             _ => {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "Unknown key in encryption_config \"{name}\""
                 )));
             }
@@ -468,26 +334,18 @@ mod tests {
     }
 
     #[test]
-    fn aes_known_answers() {
-        // FIPS-197 appendix C.
-        let plain: [u8; 16] = hex("00112233445566778899aabbccddeeff").try_into().unwrap();
-        for (key, expected) in [
-            (
-                "000102030405060708090a0b0c0d0e0f",
-                "69c4e0d86a7b0430d8cdb78070b4c55a",
-            ),
-            (
-                "000102030405060708090a0b0c0d0e0f1011121314151617",
-                "dda97ca4864cdfe06eaf70a0ec0d7191",
-            ),
-            (
-                "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-                "8ea2b7ca516745bfeafc49904b496089",
-            ),
-        ] {
-            let mut block = plain;
-            Aes::new(&hex(key)).unwrap().encrypt(&mut block);
-            assert_eq!(block.to_vec(), hex(expected));
+    fn modules_roundtrip_all_key_sizes_and_authenticate_aad() {
+        for size in [16, 24, 32] {
+            let key = vec![7; size];
+            let first = encrypt_module(&key, b"aad", b"page payload").unwrap();
+            let second = encrypt_module(&key, b"aad", b"page payload").unwrap();
+            assert_ne!(first, second);
+            assert_eq!(
+                decrypt_module(&key, b"aad", &first).unwrap(),
+                (b"page payload".to_vec(), first.len())
+            );
+            assert!(decrypt_module(&key, b"wrong", &first).is_err());
+            assert!(decrypt_module(&key, b"aad", &first[..first.len() - 1]).is_err());
         }
     }
 

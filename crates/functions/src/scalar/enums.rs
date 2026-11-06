@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
+use rustdb_common::{ByteString, Error, Result};
 use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
 use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, PhysicalType, Value, Vector};
 
@@ -23,7 +23,7 @@ fn bind_enum(_: &mut ScalarFunction, input: &BindInput<'_>) -> BindResult {
 }
 
 /// The members of an ENUM type in definition order.
-fn members(ty: &LogicalType) -> Result<&[String]> {
+fn members(ty: &LogicalType) -> Result<&[ByteString]> {
     ty.enum_values()
         .ok_or_else(|| Error::internal("ENUM function on a non-ENUM type"))
 }
@@ -34,19 +34,29 @@ fn constant(result: &mut Vector, value: &Value) -> Result<()> {
     Ok(())
 }
 
-fn varchar_list(values: &[String]) -> Value {
-    Value::list(LogicalType::VARCHAR, values.iter().map(Value::varchar).collect())
+fn varchar_list(values: &[ByteString]) -> Result<Value> {
+    Ok(Value::list(
+        LogicalType::VARCHAR,
+        values
+            .iter()
+            .map(|name| Value::try_varchar(name))
+            .collect::<Result<_>>()?,
+    ))
 }
 
 /// A function over the ENUM type of its single argument whose result is a constant.
-fn type_function(name: &str, return_type: LogicalType, value: fn(&[String]) -> Value) -> ScalarFunctionSet {
+fn type_function(
+    name: &str,
+    return_type: LogicalType,
+    value: fn(&[ByteString]) -> Result<Value>,
+) -> ScalarFunctionSet {
     let mut function = ScalarFunction::new(
         name,
         vec![LogicalType::ANY],
         return_type,
         move |args: &DataChunk, _, result| {
             let values = members(args.column(0).logical_type())?;
-            constant(result, &value(values))
+            constant(result, &value(values)?)
         },
     )
     .with_bind(bind_enum);
@@ -59,18 +69,20 @@ fn type_function(name: &str, return_type: LogicalType, value: fn(&[String]) -> V
 /// `enum_first(enum)`: the first member.
 pub fn enum_first_functions() -> ScalarFunctionSet {
     type_function("enum_first", LogicalType::VARCHAR, |values| {
-        values
-            .first()
-            .map_or_else(|| Value::null(LogicalType::VARCHAR), Value::varchar)
+        values.first().map_or_else(
+            || Ok(Value::null(LogicalType::VARCHAR)),
+            |name| Value::try_varchar(name),
+        )
     })
 }
 
 /// `enum_last(enum)`: the last member.
 pub fn enum_last_functions() -> ScalarFunctionSet {
     type_function("enum_last", LogicalType::VARCHAR, |values| {
-        values
-            .last()
-            .map_or_else(|| Value::null(LogicalType::VARCHAR), Value::varchar)
+        values.last().map_or_else(
+            || Ok(Value::null(LogicalType::VARCHAR)),
+            |name| Value::try_varchar(name),
+        )
     })
 }
 
@@ -165,7 +177,7 @@ fn enum_range_boundary(args: &DataChunk, result: &mut Vector) -> Result<()> {
         None => members(first.logical_type())?.len(),
     };
     let range = values.get(start..end.min(values.len())).unwrap_or_default();
-    constant(result, &varchar_list(range))
+    constant(result, &varchar_list(range)?)
 }
 
 /// `enum_range_boundary(enum, enum)`.

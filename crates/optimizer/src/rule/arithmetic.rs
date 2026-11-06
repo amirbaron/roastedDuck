@@ -32,7 +32,7 @@ pub fn arithmetic_simplification(
         return Ok(RuleOutcome::Unchanged);
     };
     let name = function.function.name.clone();
-    if !matches!(&*name, "+" | "-" | "*" | "//") || function.children.len() != 2 {
+    if !matches!(&*name, b"+" | b"-" | b"*" | b"//") || function.children.len() != 2 {
         return Ok(RuleOutcome::Unchanged);
     }
     // SOME policy: the first integral constant child, then any other integral child.
@@ -56,10 +56,10 @@ pub fn arithmetic_simplification(
     let value = integral(&constant);
     let mut other = || function.children.swap_remove(1 - constant_child);
     let replaced = match &*name {
-        "+" if value == Some(0) => Some(other()),
-        "-" if constant_child == 1 && value == Some(0) => Some(other()),
-        "*" if value == Some(1) => Some(other()),
-        "*" if value == Some(0) => {
+        b"+" if value == Some(0) => Some(other()),
+        b"-" if constant_child == 1 && value == Some(0) => Some(other()),
+        b"*" if value == Some(1) => Some(other()),
+        b"*" if value == Some(0) => {
             let child = other();
             Some(constant_or_null(
                 context.client,
@@ -67,8 +67,8 @@ pub fn arithmetic_simplification(
                 zero_of(&return_type)?,
             )?)
         }
-        "//" if constant_child == 1 && value == Some(1) => Some(other()),
-        "//" if constant_child == 1 && value == Some(0) => {
+        b"//" if constant_child == 1 && value == Some(1) => Some(other()),
+        b"//" if constant_child == 1 && value == Some(0) => {
             Some(Expression::constant(Value::null(return_type)))
         }
         _ => None,

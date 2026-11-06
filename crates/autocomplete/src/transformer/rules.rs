@@ -327,7 +327,7 @@ transform_rules! {
         "Framing" => transform_framing,
         "TrimDirection" => transform_trim_direction,
         "InsertAlias" => transform_insert_alias,
-        "VersionNumber" => transform_version_number,
+
         "SchemaQualification" => transform_schema_qualification,
         "CatalogQualification" => transform_catalog_qualification,
         "ReservedIdentifierOrStringLiteral" => transform_reserved_identifier_or_string_literal,
@@ -475,7 +475,7 @@ transform_rules! {
         "CreateTypeStmt" => transform_create_type_stmt,
         "CreateViewStmt" => transform_create_view_stmt,
     }
-    CaseInsensitiveMap<ParsedExpression> [] {
+    CaseInsensitiveMap<ParsedExpression, rustdb_common::ByteString> [] {
         "WithList" => transform_with_list,
         "RelOptionOrOids" => transform_rel_option_or_oids,
         "RelOptionList" => transform_rel_option_list,
@@ -487,8 +487,11 @@ transform_rules! {
     }
     (String, ParsedExpression) [] {
         "RelOption" => transform_rel_option,
-        "ReplaceEntry" => transform_replace_entry,
+
         "UpdateSetElement" => transform_update_set_element,
+    }
+    (rustdb_common::ByteString, ParsedExpression) [] {
+        "ReplaceEntry" => transform_replace_entry,
     }
     MacroFunction [] {
         "MacroDefinition" => transform_macro_definition,
@@ -861,7 +864,7 @@ transform_rules! {
     CommonTableExpressionMap [] {
         "WithClause" => transform_with_clause,
     }
-    (String, CommonTableExpressionInfo) [] {
+    (rustdb_common::ByteString, CommonTableExpressionInfo) [] {
         "WithStatement" => transform_with_statement,
     }
     SampleOptions [] {

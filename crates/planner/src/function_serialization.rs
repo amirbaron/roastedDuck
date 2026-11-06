@@ -11,11 +11,11 @@ pub(crate) type FunctionDataWriter<'a> = &'a dyn Fn(&mut dyn Serializer) -> Resu
 
 /// The properties of a function call that identify the function.
 pub(crate) struct FunctionProperties<'a> {
-    pub name: &'a str,
+    pub name: rustdb_common::ByteString,
     pub arguments: &'a [LogicalType],
     pub original_arguments: &'a [LogicalType],
-    pub catalog_name: &'a str,
-    pub schema_name: &'a str,
+    pub catalog_name: &'a [u8],
+    pub schema_name: &'a [u8],
 }
 
 impl FunctionProperties<'_> {
@@ -27,12 +27,18 @@ impl FunctionProperties<'_> {
         serializer: &mut dyn Serializer,
         function_data: Option<FunctionDataWriter<'_>>,
     ) -> Result<()> {
-        serializer.write_property(500, "name", self.name)?;
+        serializer.write_property(500, "name", &self.name)?;
         serializer.write_property(501, "arguments", self.arguments)?;
         serializer.write_property(502, "original_arguments", self.original_arguments)?;
         // Written out of numeric order: older databases do not have them.
-        serializer.write_property_with_explicit_default(505, "catalog_name", self.catalog_name, "")?;
-        serializer.write_property_with_explicit_default(506, "schema_name", self.schema_name, "")?;
+        serializer.write_optional_with(505, "catalog_name", self.catalog_name.is_empty(), |s| {
+            s.write_string_bytes(self.catalog_name);
+            Ok(())
+        })?;
+        serializer.write_optional_with(506, "schema_name", self.schema_name.is_empty(), |s| {
+            s.write_string_bytes(self.schema_name);
+            Ok(())
+        })?;
         serializer.write_property(503, "has_serialize", &function_data.is_some())?;
         if let Some(function_data) = function_data {
             serializer.write_object_property(504, "function_data", function_data)?;
@@ -52,7 +58,7 @@ pub(crate) fn serialize_scalar_function(
         .as_ref()
         .map(|serialize| move |serializer: &mut dyn Serializer| serialize(serializer, bind_info, function));
     FunctionProperties {
-        name: &function.name,
+        name: function.name.as_ref().into(),
         arguments: &function.arguments,
         original_arguments: &function.original_arguments,
         catalog_name: &function.catalog_name,
@@ -69,7 +75,7 @@ pub(crate) fn serialize_scalar_function_with(
     function_data: FunctionDataWriter<'_>,
 ) -> Result<()> {
     FunctionProperties {
-        name: &function.name,
+        name: function.name.as_ref().into(),
         arguments: &function.arguments,
         original_arguments: &function.original_arguments,
         catalog_name: &function.catalog_name,
@@ -89,7 +95,7 @@ pub(crate) fn serialize_aggregate_function(
         .as_ref()
         .map(|serialize| move |serializer: &mut dyn Serializer| serialize(serializer, bind_info, function));
     FunctionProperties {
-        name: &function.name,
+        name: function.name.as_ref().into(),
         arguments: &function.arguments,
         original_arguments: &function.original_arguments,
         catalog_name: &function.catalog_name,
@@ -112,7 +118,7 @@ pub(crate) fn serialize_table_function(
         .as_ref()
         .map(|serialize| move |serializer: &mut dyn Serializer| serialize(serializer, bind_data, function));
     let properties = FunctionProperties {
-        name: &function.name,
+        name: function.name.as_ref().into(),
         arguments: &function.arguments,
         original_arguments: &[],
         catalog_name: &function.catalog_name,

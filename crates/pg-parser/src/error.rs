@@ -5,13 +5,14 @@
 //! `position`. Messages are therefore truncated to `BUFSIZ - 1` bytes, and the
 //! position is the number of characters before the offending byte offset.
 
+use rustdb_common::ByteString;
 use rustdb_common::Error;
 
 /// `BUFSIZ` of the reference build (macOS libc), which bounds `errmsg` output.
 const BUFSIZ: usize = 1024;
 
 /// A parser error with an optional byte offset into the scanned text.
-pub(crate) fn parser_error(message: String, text: &[u8], location: Option<usize>) -> Error {
+pub(crate) fn parser_error(message: ByteString, text: &[u8], location: Option<usize>) -> Error {
     let error = Error::parser(truncate_message(message));
     match location {
         Some(loc) => error.with_query_location(char_position(text, loc)),
@@ -26,21 +27,16 @@ pub(crate) fn unimplemented(function: &str) -> Error {
 }
 
 /// An inconsistency in the parser itself (never expected for any input).
-pub(crate) fn internal(message: impl Into<String>) -> Error {
+pub(crate) fn internal(message: impl Into<ByteString>) -> Error {
     Error::internal(message.into())
 }
 
-/// `vsnprintf(buf, BUFSIZ, ...)`: keeps at most `BUFSIZ - 1` bytes (on a character
-/// boundary, since Rust strings must stay valid UTF-8).
-fn truncate_message(mut message: String) -> String {
-    if message.len() >= BUFSIZ {
-        let mut end = BUFSIZ - 1;
-        while !message.is_char_boundary(end) {
-            end -= 1;
-        }
-        message.truncate(end);
-    }
-    message
+/// `vsnprintf(buf, BUFSIZ, ...)`: keeps at most `BUFSIZ - 1` bytes,
+/// including a partial UTF-8 sequence when the buffer ends within a character.
+fn truncate_message(message: ByteString) -> ByteString {
+    let mut bytes = message.into_bytes();
+    bytes.truncate(BUFSIZ - 1);
+    bytes.into()
 }
 
 /// `pg_mbstrlen_with_len(scanbuf, location)`: the number of UTF-8 characters that
@@ -88,9 +84,9 @@ mod tests {
     #[test]
     fn messages_are_truncated_like_vsnprintf() {
         let long = "x".repeat(2000);
-        assert_eq!(truncate_message(long).len(), BUFSIZ - 1);
+        assert_eq!(truncate_message(long.into()).len(), BUFSIZ - 1);
         let accents = "é".repeat(600);
-        let cut = truncate_message(accents);
-        assert!(cut.len() < BUFSIZ && cut.is_char_boundary(cut.len()));
+        let cut = truncate_message(accents.into());
+        assert!(cut.len() == BUFSIZ - 1 && cut.as_bytes().last() == Some(&0xc3));
     }
 }

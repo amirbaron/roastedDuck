@@ -86,10 +86,10 @@ pub(crate) fn pg_timezone_names() -> TableFunctionSet {
                     LogicalType::BOOLEAN,
                 ],
                 names: vec![
-                    "name".to_owned(),
-                    "abbrev".to_owned(),
-                    "utc_offset".to_owned(),
-                    "is_dst".to_owned(),
+                    "name".to_owned().into(),
+                    "abbrev".into(),
+                    "utc_offset".into(),
+                    "is_dst".into(),
                 ],
                 bind_data: None,
             })
@@ -230,7 +230,7 @@ fn bind_cast_from_naive(
             let date = Date(value as i32);
             Timestamp::from_date(date).ok_or_else(|| {
                 Error::invalid_input(format!(
-                    "Type DATE with value {date} can't be cast to the destination type TIMESTAMP"
+                    "Type INT32 with value {date} can't be cast to the destination type INT64"
                 ))
             })
         },

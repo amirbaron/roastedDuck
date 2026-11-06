@@ -22,7 +22,7 @@ use crate::thrift::{FileMetaData, RowGroup};
 #[derive(Debug, Clone)]
 pub struct ReaderContext {
     pub file: Arc<ParquetFile>,
-    pub file_name: Arc<str>,
+    pub file_name: Arc<[u8]>,
     pub metadata: Arc<FileMetaData>,
     /// How to decrypt the pages of an encrypted file.
     pub decryption: Option<Arc<crate::crypto::FileDecryption>>,

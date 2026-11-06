@@ -7,10 +7,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rustdb_ast::keyword::write_optionally_quoted;
+use rustdb_ast::keyword::write_optionally_quoted_bytes;
 use rustdb_catalog::{Catalog, CatalogEntry, CatalogSet, EntryKind, SchemaEntry};
-use rustdb_common::Result;
 use rustdb_common::string_util::{similarity_score, top_n_distances};
+use rustdb_common::{ByteString, Result};
 use rustdb_planner::ClientContext;
 
 use crate::matcher::{
@@ -45,7 +45,7 @@ impl Default for AutoCompleteParameters {
 /// One completion (DuckDB's `AutoCompleteSuggestion`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AutoCompleteSuggestion {
-    pub text: String,
+    pub text: ByteString,
     /// The byte offset in the query the suggestion replaces from.
     pub pos: usize,
     /// The kind of suggestion (`GetSuggestionType`), empty for variables.
@@ -98,6 +98,10 @@ const fn prefer_case_matching(state: SuggestionState) -> bool {
     )
 }
 
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    needle.is_empty() || haystack.windows(needle.len()).any(|part| part == needle)
+}
+
 /// `ComputeSuggestions`: scores the candidates against `prefix` (the word being typed)
 /// and returns the best ones, best first.
 fn compute_suggestions(
@@ -107,16 +111,16 @@ fn compute_suggestions(
 ) -> Vec<AutoCompleteSuggestion> {
     const BASE_SCORE: i32 = 10;
     const SUBSTRING_PENALTY: usize = 10;
-    let mut scores: Vec<(String, usize)> = Vec::with_capacity(available.len());
+    let mut scores: Vec<(ByteString, usize)> = Vec::with_capacity(available.len());
     // The first candidate of every (case-insensitive) text.
-    let mut matches: HashMap<String, usize> = HashMap::new();
+    let mut matches: HashMap<ByteString, usize> = HashMap::new();
     let lower_prefix = prefix.to_ascii_lowercase();
     let prefix_is_lower = prefix == lower_prefix;
     let prefix_is_upper = prefix == prefix.to_ascii_uppercase();
     for (index, suggestion) in available.iter_mut().enumerate() {
         let mut text = suggestion.candidate.clone();
         if let Some(extra_char) = suggestion.extra_char {
-            text.push(extra_char);
+            text.push_bytes(extra_char.to_string());
         }
         let lower_text = text.to_ascii_lowercase();
         if matches.contains_key(&lower_text) {
@@ -130,16 +134,16 @@ fn compute_suggestions(
             similarity_score(compared, prefix.as_bytes())
         };
         let ty = suggestion.suggestion_type;
-        if text.starts_with('.') {
+        if text.starts_with(b".") {
             if matches!(ty, SuggestionState::Directory | SuggestionState::FileName) {
                 score += 1;
             }
         } else if ty == SuggestionState::Directory && score > 0 {
             score -= 1;
         }
-        if !lower_text.contains(&lower_prefix) {
+        if !contains_bytes(&lower_text, lower_prefix.as_bytes()) {
             score += SUBSTRING_PENALTY;
-        } else if prefer_case_matching(ty) && !text.contains(prefix) {
+        } else if prefer_case_matching(ty) && !contains_bytes(&text, prefix.as_bytes()) {
             // A small penalty for not matching the case.
             match_score += 1;
         }
@@ -159,7 +163,7 @@ fn compute_suggestions(
         let lower_result = result.to_ascii_lowercase();
         // DuckDB compares the length of the text here (not the number of results):
         // longer texts are only accepted if they start with the prefix.
-        if result.len() > fuzzy_suggestion_count && !lower_result.starts_with(&lower_prefix) {
+        if result.len() > fuzzy_suggestion_count && !lower_result.starts_with(lower_prefix.as_bytes()) {
             break;
         }
         let Some(&index) = matches.get(&lower_result) else {
@@ -167,16 +171,18 @@ fn compute_suggestions(
         };
         let suggestion = &available[index];
         if suggestion.extra_char.is_some() {
-            result.pop();
+            result = result[..result.len() - 1].into();
         }
         match suggestion.candidate_type {
             CandidateType::Keyword if prefix_is_lower => result = result.to_ascii_lowercase(),
-            CandidateType::Keyword if prefix_is_upper => result = result.to_ascii_uppercase(),
-            CandidateType::Identifier => result = write_optionally_quoted(&result),
+            CandidateType::Keyword if prefix_is_upper => {
+                result = result.as_bytes().to_ascii_uppercase().into();
+            }
+            CandidateType::Identifier => result = write_optionally_quoted_bytes(&result),
             CandidateType::Keyword | CandidateType::Literal => {}
         }
         if let Some(extra_char) = suggestion.extra_char {
-            result.push(extra_char);
+            result.push_bytes(extra_char.to_string());
         }
         results.push(AutoCompleteSuggestion {
             text: result,
@@ -199,14 +205,14 @@ fn visible_catalogs(context: &ClientContext) -> impl Iterator<Item = &Arc<Catalo
 
 /// `Catalog::GetAllSchemas`: the schemas of every visible catalog, ordered by catalog
 /// and schema name.
-fn all_schemas(context: &ClientContext) -> Vec<(String, Arc<CatalogEntry>)> {
-    let mut schemas: Vec<(String, Arc<CatalogEntry>)> = visible_catalogs(context)
+fn all_schemas(context: &ClientContext) -> Vec<(ByteString, Arc<CatalogEntry>)> {
+    let mut schemas: Vec<(ByteString, Arc<CatalogEntry>)> = visible_catalogs(context)
         .flat_map(|catalog| {
             catalog
                 .schemas()
                 .scan(&context.transaction)
                 .into_iter()
-                .map(|schema| (catalog.name().to_string(), schema))
+                .map(|schema| (ByteString::from(&*catalog.name()), schema))
         })
         .collect();
     schemas.sort_by(|(left_catalog, left), (right_catalog, right)| {
@@ -304,7 +310,7 @@ fn suggest_type(context: &ClientContext) -> Vec<AutoCompleteCandidate> {
         let Some(contents) = schema_contents(&schema) else {
             continue;
         };
-        let mut types: Vec<(String, bool)> = contents
+        let mut types: Vec<(ByteString, bool)> = contents
             .types
             .scan(&context.transaction)
             .iter()
@@ -314,7 +320,7 @@ fn suggest_type(context: &ClientContext) -> Vec<AutoCompleteCandidate> {
             types.extend(
                 rustdb_types::builtin_type_names()
                     .filter(|name| rustdb_types::builtin_type_id(name).is_some())
-                    .map(|name| (name.to_ascii_lowercase(), true)),
+                    .map(|name| (ByteString::from(name.to_ascii_lowercase()), true)),
             );
         }
         suggestions.extend(types.into_iter().map(|(name, internal)| {
@@ -333,7 +339,7 @@ fn suggest_type(context: &ClientContext) -> Vec<AutoCompleteCandidate> {
 fn suggest_column_name(context: &ClientContext) -> Vec<AutoCompleteCandidate> {
     let mut suggestions = Vec::new();
     let column =
-        |name: &str, bonus: i32| AutoCompleteCandidate::identifier(name, SuggestionState::ColumnName, bonus);
+        |name: &[u8], bonus: i32| AutoCompleteCandidate::identifier(name, SuggestionState::ColumnName, bonus);
     for entry in all_tables(context, false) {
         match &entry.kind {
             EntryKind::Table(table) => {
@@ -355,7 +361,7 @@ fn suggest_column_name(context: &ClientContext) -> Vec<AutoCompleteCandidate> {
                 }
             }
             _ => {
-                if entry.name().bytes().next().is_some_and(is_string_util_operator) {
+                if entry.name().first().copied().is_some_and(is_string_util_operator) {
                     continue;
                 }
                 let bonus = if entry.internal { 0 } else { 2 };
@@ -368,7 +374,7 @@ fn suggest_column_name(context: &ClientContext) -> Vec<AutoCompleteCandidate> {
 
 /// Candidates of `state` named by `names`.
 fn named_candidates(
-    names: impl IntoIterator<Item = String>,
+    names: impl IntoIterator<Item = impl Into<ByteString>>,
     state: SuggestionState,
 ) -> Vec<AutoCompleteCandidate> {
     names

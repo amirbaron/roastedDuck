@@ -19,3 +19,6 @@ rustdb-storage = { path = "../storage" }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+rustdb-buffer = { path = "../buffer" }

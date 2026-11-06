@@ -158,10 +158,10 @@ fn varchar_to_json_list(
 /// with `ANY` children.
 fn cast_pattern(id: LogicalTypeId) -> LogicalType {
     match id {
-        LogicalTypeId::Struct => LogicalType::struct_type(vec![("any".to_owned(), LogicalType::ANY)]),
+        LogicalTypeId::Struct => LogicalType::struct_type(vec![("any".to_owned().into(), LogicalType::ANY)]),
         LogicalTypeId::List => LogicalType::list(LogicalType::ANY),
         LogicalTypeId::Map => LogicalType::map(LogicalType::ANY, LogicalType::ANY),
-        LogicalTypeId::Union => LogicalType::union_type(vec![("any".to_owned(), LogicalType::ANY)]),
+        LogicalTypeId::Union => LogicalType::union_type(vec![("any".to_owned().into(), LogicalType::ANY)]),
         LogicalTypeId::Array => LogicalType::array(LogicalType::ANY, 0),
         id => LogicalType::simple(id),
     }
@@ -215,7 +215,9 @@ const ALL_TYPES: [LogicalTypeId; 38] = {
 /// Whether `ty` is or contains the JSON type.
 fn contains_json(ty: &LogicalType) -> bool {
     match ty.id() {
-        LogicalTypeId::Varchar => ty.alias() == Some(crate::JSON_TYPE_NAME),
+        LogicalTypeId::Varchar => ty
+            .alias()
+            .is_some_and(|alias| alias.as_bytes() == crate::JSON_TYPE_NAME.as_bytes()),
         LogicalTypeId::List => ty.child_type().is_some_and(contains_json),
         LogicalTypeId::Array => ty.array_child().is_some_and(|(child, _)| contains_json(child)),
         LogicalTypeId::Map => ty
@@ -234,7 +236,13 @@ fn contains_json(ty: &LogicalType) -> bool {
 /// `ty` with every JSON replaced by VARIANT.
 fn json_as_variant(ty: &LogicalType) -> LogicalType {
     match ty.id() {
-        LogicalTypeId::Varchar if ty.alias() == Some(crate::JSON_TYPE_NAME) => LogicalType::variant(),
+        LogicalTypeId::Varchar
+            if ty
+                .alias()
+                .is_some_and(|alias| alias.as_bytes() == crate::JSON_TYPE_NAME.as_bytes()) =>
+        {
+            LogicalType::variant()
+        }
         LogicalTypeId::List => {
             LogicalType::list(json_as_variant(ty.child_type().unwrap_or(&LogicalType::SQLNULL)))
         }
@@ -368,8 +376,10 @@ pub fn register_json_casts(casts: &mut CastFunctionSet) {
     }
 
     // Anything can be cast to JSON.
-    let to_json: BindCastFn =
-        Arc::new(|set: &CastFunctionSet, _: &LogicalType, _: &LogicalType| Ok(Some(any_to_json_cast(set))));
+    let to_json: BindCastFn = Arc::new(|set: &CastFunctionSet, source: &LogicalType, _: &LogicalType| {
+        crate::json_functions::json_create::get_json_type(source)?;
+        Ok(Some(any_to_json_cast(set)))
+    });
     for id in ALL_TYPES {
         if id == LogicalTypeId::Varchar {
             continue;

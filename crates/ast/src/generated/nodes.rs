@@ -4,7 +4,7 @@ use crate::{
     CompressionType, CteMaterialize, OrderByNullType, OrderType, ParsedExpression, SelectStatement,
     TableColumnType,
 };
-use rustdb_common::{CaseInsensitiveMap, OrderedMap};
+use rustdb_common::OrderedMap;
 use rustdb_serde::{DeserializeObject, Deserializer, Result, SerializeObject, Serializer, required};
 use rustdb_types::{LogicalType, Value};
 
@@ -12,7 +12,7 @@ use rustdb_types::{LogicalType, Value};
 #[derive(Clone, Debug, PartialEq)]
 pub struct CommonTableExpressionInfo {
     /// `aliases` (property 100).
-    pub aliases: Vec<String>,
+    pub aliases: Vec<rustdb_common::ByteString>,
     /// `query` (property 101).
     pub query: Box<SelectStatement>,
     /// `materialized` (property 102).
@@ -41,7 +41,8 @@ impl SerializeObject for CommonTableExpressionInfo {
 
 impl DeserializeObject for CommonTableExpressionInfo {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let aliases: Vec<String> = deserializer.read_property_with_default(100, "aliases")?;
+        let aliases: Vec<rustdb_common::ByteString> =
+            deserializer.read_property_with_default(100, "aliases")?;
         let query: Box<SelectStatement> = required(
             deserializer.read_property_with_default(101, "query")?,
             "CommonTableExpressionInfo",
@@ -65,7 +66,7 @@ rustdb_serde::impl_pointee_serde!(CommonTableExpressionInfo);
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct CommonTableExpressionMap {
     /// `map` (property 100).
-    pub map: CaseInsensitiveMap<CommonTableExpressionInfo>,
+    pub map: rustdb_common::CaseInsensitiveMap<CommonTableExpressionInfo, rustdb_common::ByteString>,
 }
 
 impl SerializeObject for CommonTableExpressionMap {
@@ -77,7 +78,7 @@ impl SerializeObject for CommonTableExpressionMap {
 
 impl DeserializeObject for CommonTableExpressionMap {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let map: CaseInsensitiveMap<CommonTableExpressionInfo> =
+        let map: rustdb_common::CaseInsensitiveMap<CommonTableExpressionInfo, rustdb_common::ByteString> =
             deserializer.read_property_with_default(100, "map")?;
         Ok(Self { map })
     }
@@ -165,11 +166,11 @@ pub struct PivotColumn {
     /// `pivot_expressions` (property 100).
     pub pivot_expressions: Vec<ParsedExpression>,
     /// `unpivot_names` (property 101).
-    pub unpivot_names: Vec<String>,
+    pub unpivot_names: Vec<rustdb_common::ByteString>,
     /// `entries` (property 102).
     pub entries: Vec<PivotColumnEntry>,
     /// `pivot_enum` (property 103).
-    pub pivot_enum: String,
+    pub pivot_enum: rustdb_common::ByteString,
     /// `subquery`: the query of `IN (SELECT ...)`, which the binder rejects.
     pub subquery: Option<Box<crate::QueryNode>>,
 }
@@ -192,9 +193,11 @@ impl DeserializeObject for PivotColumn {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
         let pivot_expressions: Vec<ParsedExpression> =
             deserializer.read_property_with_default(100, "pivot_expressions")?;
-        let unpivot_names: Vec<String> = deserializer.read_property_with_default(101, "unpivot_names")?;
+        let unpivot_names: Vec<rustdb_common::ByteString> =
+            deserializer.read_property_with_default(101, "unpivot_names")?;
         let entries: Vec<PivotColumnEntry> = deserializer.read_property_with_default(102, "entries")?;
-        let pivot_enum: String = deserializer.read_property_with_default(103, "pivot_enum")?;
+        let pivot_enum: rustdb_common::ByteString =
+            deserializer.read_property_with_default(103, "pivot_enum")?;
         Ok(Self {
             pivot_expressions,
             unpivot_names,
@@ -215,7 +218,7 @@ pub struct PivotColumnEntry {
     /// `star_expr` (property 101).
     pub star_expr: Option<Box<ParsedExpression>>,
     /// `alias` (property 102).
-    pub alias: String,
+    pub alias: rustdb_common::ByteString,
 }
 
 impl SerializeObject for PivotColumnEntry {
@@ -232,7 +235,7 @@ impl DeserializeObject for PivotColumnEntry {
         let values: Vec<Value> = deserializer.read_property_with_default(100, "values")?;
         let star_expr: Option<Box<ParsedExpression>> =
             deserializer.read_property_with_default(101, "star_expr")?;
-        let alias: String = deserializer.read_property_with_default(102, "alias")?;
+        let alias: rustdb_common::ByteString = deserializer.read_property_with_default(102, "alias")?;
         Ok(Self {
             values,
             star_expr,
@@ -247,7 +250,7 @@ rustdb_serde::impl_object_serde!(PivotColumnEntry);
 #[derive(Clone, Debug, PartialEq)]
 pub struct ColumnDefinition {
     /// `name` (property 100).
-    pub name: String,
+    pub name: rustdb_common::ByteString,
     /// `type` (property 101).
     pub logical_type: LogicalType,
     /// `expression` (property 102).
@@ -277,7 +280,7 @@ impl SerializeObject for ColumnDefinition {
 
 impl DeserializeObject for ColumnDefinition {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let name: String = deserializer.read_property_with_default(100, "name")?;
+        let name: rustdb_common::ByteString = deserializer.read_property_with_default(100, "name")?;
         let logical_type: LogicalType = deserializer.read_property(101, "type")?;
         let expression: Option<Box<ParsedExpression>> =
             deserializer.read_property_with_default(102, "expression")?;
@@ -355,13 +358,13 @@ rustdb_serde::impl_object_serde!(VacuumOptions);
 #[derive(Clone, Debug, PartialEq, Default, Eq, Hash)]
 pub struct QualifiedColumnName {
     /// `catalog` (property 100).
-    pub catalog: String,
+    pub catalog: rustdb_common::ByteString,
     /// `schema` (property 101).
-    pub schema: String,
+    pub schema: rustdb_common::ByteString,
     /// `table` (property 102).
-    pub table: String,
+    pub table: rustdb_common::ByteString,
     /// `column` (property 103).
-    pub column: String,
+    pub column: rustdb_common::ByteString,
 }
 
 impl SerializeObject for QualifiedColumnName {
@@ -376,10 +379,10 @@ impl SerializeObject for QualifiedColumnName {
 
 impl DeserializeObject for QualifiedColumnName {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let catalog: String = deserializer.read_property_with_default(100, "catalog")?;
-        let schema: String = deserializer.read_property_with_default(101, "schema")?;
-        let table: String = deserializer.read_property_with_default(102, "table")?;
-        let column: String = deserializer.read_property_with_default(103, "column")?;
+        let catalog: rustdb_common::ByteString = deserializer.read_property_with_default(100, "catalog")?;
+        let schema: rustdb_common::ByteString = deserializer.read_property_with_default(101, "schema")?;
+        let table: rustdb_common::ByteString = deserializer.read_property_with_default(102, "table")?;
+        let column: rustdb_common::ByteString = deserializer.read_property_with_default(103, "column")?;
         Ok(Self {
             catalog,
             schema,
@@ -418,15 +421,15 @@ rustdb_serde::impl_object_serde!(ExportedTableInfo);
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExportedTableData {
     /// `table_name` (property 1).
-    pub table_name: String,
+    pub table_name: rustdb_common::ByteString,
     /// `schema_name` (property 2).
-    pub schema_name: String,
+    pub schema_name: rustdb_common::ByteString,
     /// `database_name` (property 3).
-    pub database_name: String,
+    pub database_name: rustdb_common::ByteString,
     /// `file_path` (property 4).
-    pub file_path: String,
+    pub file_path: rustdb_common::ByteString,
     /// `not_null_columns` (property 5).
-    pub not_null_columns: Vec<String>,
+    pub not_null_columns: Vec<rustdb_common::ByteString>,
 }
 
 impl SerializeObject for ExportedTableData {
@@ -442,11 +445,15 @@ impl SerializeObject for ExportedTableData {
 
 impl DeserializeObject for ExportedTableData {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let table_name: String = deserializer.read_property_with_default(1, "table_name")?;
-        let schema_name: String = deserializer.read_property_with_default(2, "schema_name")?;
-        let database_name: String = deserializer.read_property_with_default(3, "database_name")?;
-        let file_path: String = deserializer.read_property_with_default(4, "file_path")?;
-        let not_null_columns: Vec<String> = deserializer.read_property_with_default(5, "not_null_columns")?;
+        let table_name: rustdb_common::ByteString =
+            deserializer.read_property_with_default(1, "table_name")?;
+        let schema_name: rustdb_common::ByteString =
+            deserializer.read_property_with_default(2, "schema_name")?;
+        let database_name: rustdb_common::ByteString =
+            deserializer.read_property_with_default(3, "database_name")?;
+        let file_path: rustdb_common::ByteString = deserializer.read_property_with_default(4, "file_path")?;
+        let not_null_columns: Vec<rustdb_common::ByteString> =
+            deserializer.read_property_with_default(5, "not_null_columns")?;
         Ok(Self {
             table_name,
             schema_name,

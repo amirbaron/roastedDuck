@@ -14,7 +14,7 @@ use rustdb_function::{CopyFunction, FunctionData};
 use rustdb_planner::ClientContext;
 use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value};
 
-use crate::scan::{ParquetBindData, bind_files};
+use crate::scan::{ParquetBindData, bind_files_with_client};
 use crate::schema::ParquetOptions;
 use crate::thrift::CompressionCodec;
 use crate::writer::{FieldId, ParquetVersion, ParquetWriter, WriterOptions};
@@ -25,7 +25,7 @@ const DUCKDB_FIELD_ID: &str = "__duckdb_field_id";
 /// The bind data of a Parquet write (`ParquetWriteBindData`).
 #[derive(Debug)]
 pub struct ParquetWriteBindData {
-    pub names: Vec<String>,
+    pub names: Vec<rustdb_common::ByteString>,
     pub types: Vec<LogicalType>,
     pub options: WriterOptions,
 }
@@ -53,27 +53,27 @@ pub struct ParquetWriteGlobal {
     /// Prepares batches without the writer's lock (`prepare_batch`).
     preparer: crate::writer::RowGroupPreparer,
     /// The path of the file.
-    file_name: String,
+    file_name: rustdb_common::ByteString,
     /// The COPY operator's logger, if the query logs it (`op`).
     logger: std::sync::OnceLock<rustdb_function::logging::OperatorLogger>,
 }
 
 impl ParquetWriteGlobal {
     /// `LogFlushingRowGroup`: the row group about to be written and why.
-    fn log_flushing_row_group(&self, buffer: &RowBuffer, reason: &str) {
+    fn log_flushing_row_group(&self, buffer: &RowBuffer, reason: &str) -> Result<()> {
         let Some(logger) = self.logger.get() else {
-            return;
+            return Ok(());
         };
-        logger.log(
+        logger.log_bytes(
             "ParquetWriter",
             "FlushRowGroup",
             &[
                 ("file", self.file_name.clone()),
-                ("rows", buffer.rows.to_string()),
-                ("size", buffer.collection_size_in_bytes().to_string()),
-                ("reason", reason.to_owned()),
+                ("rows", buffer.rows.to_string().into()),
+                ("size", buffer.collection_size_in_bytes().to_string().into()),
+                ("reason", reason.into()),
             ],
-        );
+        )
     }
 }
 
@@ -192,7 +192,9 @@ pub(crate) fn type_id_name(ty: &LogicalType) -> String {
 }
 
 /// The children of a nested type as `FIELD_IDS` sees them (`GetChildNameToTypeMap`).
-fn child_name_to_type(ty: &LogicalType) -> Result<CaseInsensitiveMap<LogicalType>> {
+fn child_name_to_type(
+    ty: &LogicalType,
+) -> Result<CaseInsensitiveMap<LogicalType, rustdb_common::ByteString>> {
     let mut map = CaseInsensitiveMap::default();
     match ty.id() {
         LogicalTypeId::List => {
@@ -210,7 +212,7 @@ fn child_name_to_type(ty: &LogicalType) -> Result<CaseInsensitiveMap<LogicalType
         LogicalTypeId::Struct => {
             for (name, child) in ty.struct_children().unwrap_or_default() {
                 if name == DUCKDB_FIELD_ID {
-                    return Err(Error::binder(format!(
+                    return Err(Error::binder(rustdb_common::byte_format!(
                         "Cannot have column named \"{DUCKDB_FIELD_ID}\" with FIELD_IDS"
                     )));
                 }
@@ -223,20 +225,15 @@ fn child_name_to_type(ty: &LogicalType) -> Result<CaseInsensitiveMap<LogicalType
 }
 
 /// The names and types below a nested type (`GetChildNamesAndTypes`).
-fn child_names_and_types(ty: &LogicalType) -> Vec<(String, LogicalType)> {
+fn child_names_and_types(ty: &LogicalType) -> Vec<(rustdb_common::ByteString, LogicalType)> {
     match ty.id() {
         LogicalTypeId::List => vec![(
-            "element".to_owned(),
+            "element".into(),
             ty.child_type().cloned().unwrap_or(LogicalType::SQLNULL),
         )],
         LogicalTypeId::Map => ty
             .map_key_value()
-            .map(|(key, value)| {
-                vec![
-                    ("key".to_owned(), key.clone()),
-                    ("value".to_owned(), value.clone()),
-                ]
-            })
+            .map(|(key, value)| vec![("key".into(), key.clone()), ("value".into(), value.clone())])
             .unwrap_or_default(),
         LogicalTypeId::Struct => ty.struct_children().map(<[_]>::to_vec).unwrap_or_default(),
         _ => Vec::new(),
@@ -245,9 +242,9 @@ fn child_names_and_types(ty: &LogicalType) -> Vec<(String, LogicalType)> {
 
 /// `FieldID::GenerateFieldIDs`: sequential ids in depth-first order.
 fn generate_field_ids(
-    ids: &mut CaseInsensitiveMap<FieldId>,
+    ids: &mut CaseInsensitiveMap<FieldId, rustdb_common::ByteString>,
     next: &mut i32,
-    columns: &[(String, LogicalType)],
+    columns: &[(rustdb_common::ByteString, LogicalType)],
 ) {
     for (name, ty) in columns {
         let mut field = FieldId {
@@ -269,17 +266,17 @@ fn generate_field_ids(
 fn parse_field_ids(
     context: &ClientContext,
     value: &Value,
-    ids: &mut CaseInsensitiveMap<FieldId>,
+    ids: &mut CaseInsensitiveMap<FieldId, rustdb_common::ByteString>,
     unique: &mut std::collections::HashSet<i32>,
-    name_to_type: &CaseInsensitiveMap<LogicalType>,
+    name_to_type: &CaseInsensitiveMap<LogicalType, rustdb_common::ByteString>,
 ) -> Result<()> {
     let ty = value.logical_type();
     if ty.id() != LogicalTypeId::Struct {
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "Expected FIELD_IDS to be a STRUCT, e.g., {{col1: 42, col2: {{{DUCKDB_FIELD_ID}: 43, nested_col: 44}}, col3: 44}}"
         )));
     }
-    let names: Vec<String> = ty
+    let names: Vec<rustdb_common::ByteString> = ty
         .struct_children()
         .unwrap_or_default()
         .iter()
@@ -287,15 +284,16 @@ fn parse_field_ids(
         .collect();
     let children = value.children().unwrap_or_default();
     for (name, child) in names.iter().zip(children) {
-        let column = name.to_lowercase();
+        let column = name.to_ascii_lowercase();
         if column == DUCKDB_FIELD_ID {
             continue;
         }
         let Some(column_type) = name_to_type.get(&column) else {
-            let available: Vec<&str> = name_to_type.iter().map(|(name, _)| name).collect();
-            return Err(Error::binder(format!(
+            let available: Vec<&rustdb_common::ByteString> =
+                name_to_type.iter().map(|(name, _)| name).collect();
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Column name \"{column}\" specified in FIELD_IDS not found. Consider using WRITE_PARTITION_COLUMNS if this column is a partition column. Available column names: [{}]",
-                available.join(", ")
+                rustdb_common::ByteString::join(&available, b", ")
             )));
         };
         let mut field_id_value = None;
@@ -321,11 +319,14 @@ fn parse_field_ids(
             let id_value = id_value
                 .try_cast_as(&context.casts, &LogicalType::INTEGER, false)
                 .map_err(|error| {
-                    Error::invalid_input(format!("Failed to cast value: {}", error.raw_message()))
+                    Error::invalid_input(rustdb_common::byte_format!(
+                        "Failed to cast value: {}",
+                        error.raw_message()
+                    ))
                 })?;
             let id = id_value.as_i32().unwrap_or(0);
             if !unique.insert(id) {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "Duplicate field_id {id} found in FIELD_IDS"
                 )));
             }
@@ -336,7 +337,7 @@ fn parse_field_ids(
                 column_type.id(),
                 LogicalTypeId::List | LogicalTypeId::Map | LogicalTypeId::Struct
             ) {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "Column \"{column}\" with type \"{}\" cannot have a nested FIELD_IDS specification",
                     type_id_name(column_type)
                 )));
@@ -352,7 +353,7 @@ fn parse_field_ids(
 /// `ParquetWriteBind`.
 fn parquet_write_bind(
     input: &mut CopyFunctionBindInput<'_>,
-    names: &[String],
+    names: &[rustdb_common::ByteString],
     types: &[LogicalType],
 ) -> Result<Arc<dyn FunctionData>> {
     let context = client_context(input.binder)?;
@@ -363,18 +364,18 @@ fn parquet_write_bind(
     let mut row_group_size_bytes_set = false;
     let mut compression_level_set = false;
     for (name, values) in input.options.iter() {
-        let option = name.to_lowercase();
+        let option = name.to_ascii_lowercase();
         let [value] = values.as_slice() else {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "{} requires exactly one argument",
-                option.to_uppercase()
+                option.to_ascii_uppercase()
             )));
         };
-        match option.as_str() {
-            "row_group_size" | "chunk_size" => {
+        match option.as_bytes() {
+            b"row_group_size" | b"chunk_size" => {
                 options.row_group_size = usize::try_from(u64_value(context, value)?).unwrap_or(usize::MAX);
             }
-            "row_group_size_bytes" => {
+            b"row_group_size_bytes" => {
                 let bytes = if value.logical_type().id() == LogicalTypeId::Varchar {
                     rustdb_buffer::parse_memory_limit(&value.to_varchar()?)?
                 } else {
@@ -383,8 +384,8 @@ fn parquet_write_bind(
                 options.row_group_size_bytes = usize::try_from(bytes).unwrap_or(usize::MAX);
                 row_group_size_bytes_set = true;
             }
-            "row_groups_per_file" => options.row_groups_per_file = Some(u64_value(context, value)?),
-            "compression" | "codec" => {
+            b"row_groups_per_file" => options.row_groups_per_file = Some(u64_value(context, value)?),
+            b"compression" | b"codec" => {
                 options.codec = match value.to_varchar()?.to_lowercase().as_str() {
                     "uncompressed" => CompressionCodec::UNCOMPRESSED,
                     "snappy" => CompressionCodec::SNAPPY,
@@ -393,17 +394,17 @@ fn parquet_write_bind(
                     "brotli" => CompressionCodec::BROTLI,
                     "lz4" | "lz4_raw" => CompressionCodec::LZ4_RAW,
                     _ => {
-                        return Err(Error::binder(format!(
+                        return Err(Error::binder(rustdb_common::byte_format!(
                             "Expected {option} argument to be any of [uncompressed, brotli, gzip, snappy, lz4, lz4_raw or zstd]"
                         )));
                     }
                 };
             }
-            "field_ids" => {
+            b"field_ids" => {
                 if value.logical_type().id() == LogicalTypeId::Varchar
                     && value.to_varchar()?.eq_ignore_ascii_case("auto")
                 {
-                    let columns: Vec<(String, LogicalType)> =
+                    let columns: Vec<(rustdb_common::ByteString, LogicalType)> =
                         names.iter().cloned().zip(types.iter().cloned()).collect();
                     let mut next = 0;
                     generate_field_ids(&mut options.field_ids, &mut next, &columns);
@@ -411,7 +412,7 @@ fn parquet_write_bind(
                     let mut name_to_type = CaseInsensitiveMap::default();
                     for (column, ty) in names.iter().zip(types) {
                         if column == DUCKDB_FIELD_ID {
-                            return Err(Error::binder(format!(
+                            return Err(Error::binder(rustdb_common::byte_format!(
                                 "Cannot have a column named \"{DUCKDB_FIELD_ID}\" when writing FIELD_IDS"
                             )));
                         }
@@ -421,7 +422,7 @@ fn parquet_write_bind(
                     parse_field_ids(context, value, &mut options.field_ids, &mut unique, &name_to_type)?;
                 }
             }
-            "shredding" => {
+            b"shredding" => {
                 if value.logical_type().id() == LogicalTypeId::Varchar
                     && value.to_varchar()?.eq_ignore_ascii_case("auto")
                 {
@@ -429,7 +430,7 @@ fn parquet_write_bind(
                         "The 'auto' option is not yet implemented for 'shredding'",
                     ));
                 }
-                let variant_names: Vec<String> = names
+                let variant_names: Vec<rustdb_common::ByteString> = names
                     .iter()
                     .zip(types)
                     .filter(|(_, ty)| ty.id() == LogicalTypeId::Variant)
@@ -442,19 +443,19 @@ fn parquet_write_bind(
                     .to_vec();
                 let children = value.children().unwrap_or_default().to_vec();
                 for ((column, _), child) in fields.iter().zip(children) {
-                    let column = column.to_lowercase();
+                    let column = column.to_ascii_lowercase();
                     if !variant_names
                         .iter()
                         .any(|name| name.eq_ignore_ascii_case(&column))
                     {
                         if variant_names.is_empty() {
-                            return Err(Error::binder(format!(
+                            return Err(Error::binder(rustdb_common::byte_format!(
                                 "VARIANT by name \"{column}\" specified in SHREDDING not found. There are no VARIANT columns present."
                             )));
                         }
-                        return Err(Error::binder(format!(
+                        return Err(Error::binder(rustdb_common::byte_format!(
                             "VARIANT by name \"{column}\" specified in SHREDDING not found. Consider using WRITE_PARTITION_COLUMNS if this column is a partition column. Available names of VARIANT columns: [{}]",
-                            variant_names.join(", ")
+                            rustdb_common::ByteString::join(&variant_names, b", ")
                         )));
                     }
                     if child.logical_type().id() != LogicalTypeId::Varchar {
@@ -473,7 +474,7 @@ fn parquet_write_bind(
                     options.shredding.push((column, ty));
                 }
             }
-            "kv_metadata" => {
+            b"kv_metadata" => {
                 let ty = value.logical_type();
                 if ty.id() != LogicalTypeId::Struct {
                     return Err(Error::binder("Expected kv_metadata argument to be a STRUCT"));
@@ -488,11 +489,12 @@ fn parquet_write_bind(
                     options.kv_metadata.push((key.clone(), bytes));
                 }
             }
-            "encryption_config" => {
-                return Err(Error::not_implemented("Parquet encryption"));
+            b"encryption_config" => {
+                let cache = context.function_client.object_cache();
+                options.encryption = Some(crate::crypto::parse_encryption_config(value, cache.as_deref())?);
             }
-            "dictionary_compression_ratio_threshold" | "debug_use_openssl" => {}
-            "dictionary_size_limit" => {
+            b"dictionary_compression_ratio_threshold" | b"debug_use_openssl" => {}
+            b"dictionary_size_limit" => {
                 let limit = i64_value(context, value)?;
                 if limit < 0 {
                     return Err(Error::binder(
@@ -501,24 +503,24 @@ fn parquet_write_bind(
                 }
                 options.dictionary_size_limit = Some(limit as usize);
             }
-            "string_dictionary_page_size_limit" => {
+            b"string_dictionary_page_size_limit" => {
                 let limit = u64_value(context, value)?;
                 if limit > crate::writer::MAX_UNCOMPRESSED_DICT_PAGE_SIZE as u64 || limit == 0 {
-                    return Err(Error::binder(format!(
+                    return Err(Error::binder(rustdb_common::byte_format!(
                         "string_dictionary_page_size_limit cannot be 0 and must be less than or equal to {}",
                         crate::writer::MAX_UNCOMPRESSED_DICT_PAGE_SIZE
                     )));
                 }
                 options.string_dictionary_page_size_limit = limit as usize;
             }
-            "write_bloom_filter" => {
+            b"write_bloom_filter" => {
                 use rustdb_function::cast::ValueCast as _;
                 options.enable_bloom_filters = value
                     .try_cast_as(&context.casts, &LogicalType::BOOLEAN, false)?
                     .as_bool()
                     .unwrap_or(false);
             }
-            "bloom_filter_false_positive_ratio" => {
+            b"bloom_filter_false_positive_ratio" => {
                 let ratio = f64_value(context, value)?;
                 if ratio <= 0.0 {
                     return Err(Error::binder(
@@ -527,7 +529,7 @@ fn parquet_write_bind(
                 }
                 options.bloom_filter_false_positive_ratio = ratio;
             }
-            "compression_level" => {
+            b"compression_level" => {
                 let level = i64_value(context, value)?;
                 if !(-131_072..=22).contains(&level) {
                     return Err(Error::binder("Compression level must be between -131072 and 22"));
@@ -535,14 +537,14 @@ fn parquet_write_bind(
                 options.compression_level = level;
                 compression_level_set = true;
             }
-            "parquet_version" => {
+            b"parquet_version" => {
                 options.version = match value.to_varchar()?.to_uppercase().as_str() {
                     "V1" => ParquetVersion::V1,
                     "V2" => ParquetVersion::V2,
                     _ => return Err(Error::binder("Expected parquet_version 'V1' or 'V2'")),
                 };
             }
-            "geoparquet_version" => {
+            b"geoparquet_version" => {
                 use crate::geo::GeoParquetVersion;
                 options.geoparquet_version = match value.to_varchar()?.to_uppercase().as_str() {
                     "NONE" => GeoParquetVersion::None,
@@ -557,7 +559,7 @@ fn parquet_write_bind(
                 };
             }
             _ => {
-                return Err(Error::internal(format!(
+                return Err(Error::internal(rustdb_common::byte_format!(
                     "Unrecognized option for PARQUET: {name}"
                 )));
             }
@@ -603,7 +605,7 @@ fn global_state(state: &CopyGlobalState) -> Result<&ParquetWriteGlobal> {
 }
 
 /// `ParquetWriteInitializeGlobal`.
-fn parquet_write_initialize_global(data: &dyn FunctionData, path: &str) -> Result<CopyGlobalState> {
+fn parquet_write_initialize_global(data: &dyn FunctionData, path: &[u8]) -> Result<CopyGlobalState> {
     let data = bind_data(data)?;
     let writer = ParquetWriter::new(path, &data.names, &data.types, data.options.clone())?;
     let preparer = writer.preparer();
@@ -611,7 +613,7 @@ fn parquet_write_initialize_global(data: &dyn FunctionData, path: &str) -> Resul
         inner: Mutex::new((writer, RowBuffer::default())),
         combine_buffer: Mutex::new(None),
         preparer,
-        file_name: path.to_owned(),
+        file_name: path.into(),
         logger: std::sync::OnceLock::new(),
     }))
 }
@@ -665,7 +667,7 @@ fn parquet_write_sink_local(
     buffer.bytes += chunk_size_in_bytes(chunk);
     buffer.chunks.push(chunk.clone());
     if buffer.rows >= data.options.row_group_size || buffer.bytes >= data.options.row_group_size_bytes {
-        global.log_flushing_row_group(buffer, row_group_size_reason(data, buffer));
+        global.log_flushing_row_group(buffer, row_group_size_reason(data, buffer))?;
         flush_rows(global, buffer)?;
         *buffer = RowBuffer::default();
     }
@@ -687,7 +689,7 @@ fn parquet_write_combine(
     let half_rows = data.options.row_group_size / 2;
     let half_bytes = data.options.row_group_size_bytes / 2;
     if buffer.rows >= half_rows || buffer.bytes >= half_bytes {
-        global.log_flushing_row_group(&buffer, "Combine");
+        global.log_flushing_row_group(&buffer, "Combine")?;
         return flush_rows(global, &buffer);
     }
     let mut combine = global
@@ -702,7 +704,7 @@ fn parquet_write_combine(
             if combined.rows >= half_rows || combined.bytes >= half_bytes {
                 let owned = combine.take().unwrap_or_default();
                 drop(combine);
-                global.log_flushing_row_group(&owned, "Combine");
+                global.log_flushing_row_group(&owned, "Combine")?;
                 return flush_rows(global, &owned);
             }
         }
@@ -734,14 +736,13 @@ fn parquet_write_execution_mode(
 }
 
 /// `ParquetWritePrepareBatch`: encodes a row group.
-#[allow(clippy::needless_pass_by_value, reason = "the prepare_batch signature")]
 fn parquet_write_prepare_batch(
     _: &dyn FunctionData,
     state: &CopyGlobalState,
-    chunks: Vec<DataChunk>,
+    batch: &dyn rustdb_function::copy::CopyBatch,
 ) -> Result<rustdb_function::copy::PreparedBatch> {
     let global = global_state(state)?;
-    Ok(Box::new(global.preparer.prepare(&chunks)?))
+    Ok(Box::new(global.preparer.prepare_batch(batch)?))
 }
 
 /// `ParquetWriteFlushBatch`: writes a prepared row group.
@@ -793,7 +794,7 @@ fn parquet_write_sink(data: &dyn FunctionData, state: &CopyGlobalState, chunk: &
     buffer.bytes += chunk_size_in_bytes(chunk);
     buffer.chunks.push(chunk.clone());
     if buffer.rows >= data.options.row_group_size || buffer.bytes >= data.options.row_group_size_bytes {
-        global.log_flushing_row_group(buffer, row_group_size_reason(data, buffer));
+        global.log_flushing_row_group(buffer, row_group_size_reason(data, buffer))?;
         writer.flush(&buffer.chunks)?;
         *buffer = RowBuffer::default();
     }
@@ -811,7 +812,7 @@ fn parquet_write_finalize(data: &dyn FunctionData, state: &CopyGlobalState) -> R
         .unwrap_or_else(PoisonError::into_inner)
         .take();
     if let Some(combined) = combined {
-        global.log_flushing_row_group(&combined, "Finalize");
+        global.log_flushing_row_group(&combined, "Finalize")?;
         flush_rows(global, &combined)?;
     }
     let mut inner = global.inner.lock().unwrap_or_else(PoisonError::into_inner);
@@ -826,7 +827,7 @@ fn parquet_write_finalize(data: &dyn FunctionData, state: &CopyGlobalState) -> R
         } else {
             "Finalize"
         };
-        global.log_flushing_row_group(buffer, reason);
+        global.log_flushing_row_group(buffer, reason)?;
         writer.flush(&buffer.chunks)?;
         *buffer = RowBuffer::default();
     }
@@ -888,18 +889,22 @@ fn parquet_write_rotate_next_file(
 /// `MultiFileBindCopy` for Parquet.
 fn parquet_copy_from_bind(
     input: &CopyFromBindInput<'_>,
-    expected_names: &[String],
+    expected_names: &[rustdb_common::ByteString],
     expected_types: &[LogicalType],
 ) -> Result<Arc<dyn FunctionData>> {
     let context = client_context(input.binder)?;
-    let files = rustdb_csv::multi_file::create_file_list("COPY", &[input.file_path.to_owned()], "parquet")?;
+    let files = rustdb_csv::multi_file::create_file_list(
+        "COPY",
+        &[rustdb_common::ByteString::from(input.file_path)],
+        "parquet",
+    )?;
     let mut options = ParquetOptions {
-        geoparquet_conversion: crate::scan::setting_bool(context, "enable_geoparquet_conversion"),
+        geoparquet_conversion: crate::scan::setting_bool_checked(context, "enable_geoparquet_conversion")?,
         ..ParquetOptions::default()
     };
-    crate::scan::set_file_cache_options(context, &mut options);
+    crate::scan::set_file_cache_options(context, &mut options)?;
     for (name, values) in input.options.iter() {
-        let option = name.to_lowercase();
+        let option = name.to_ascii_lowercase();
         let boolean = || -> Result<bool> {
             use rustdb_function::cast::ValueCast as _;
             let Some(value) = values.first() else {
@@ -909,25 +914,31 @@ fn parquet_copy_from_bind(
                 .try_cast_as(&context.casts, &LogicalType::BOOLEAN, false)
                 .map(|value| value.as_bool().unwrap_or(false))
                 .map_err(|_| {
-                    Error::invalid_input(format!(
+                    Error::invalid_input(rustdb_common::byte_format!(
                         "Unable to cast \"{}\" to BOOLEAN for Parquet option \"{option}\"",
                         value.to_varchar().unwrap_or_default()
                     ))
                 })
         };
-        match option.as_str() {
-            "compression" | "codec" | "row_group_size" | "debug_use_openssl" => {}
-            "binary_as_string" => options.binary_as_string = boolean()?,
-            "file_row_number" => options.file_row_number = boolean()?,
-            "can_have_nan" => {
+        match option.as_bytes() {
+            b"compression" | b"codec" | b"row_group_size" | b"debug_use_openssl" => {}
+            b"binary_as_string" => options.binary_as_string = boolean()?,
+            b"file_row_number" => options.file_row_number = boolean()?,
+            b"can_have_nan" => {
                 if values.len() != 1 {
                     return Err(Error::binder("Parquet can_have_nan cannot be empty!"));
                 }
                 options.can_have_nan = boolean()?;
             }
-            "encryption_config" => return Err(Error::not_implemented("Parquet encryption")),
+            b"encryption_config" => {
+                let value = values
+                    .first()
+                    .ok_or_else(|| Error::binder("Parquet encryption_config cannot be empty"))?;
+                let cache = context.function_client.object_cache();
+                options.encryption = Some(crate::crypto::parse_encryption_config(value, cache.as_deref())?);
+            }
             _ => {
-                return Err(Error::not_implemented(format!(
+                return Err(Error::not_implemented(rustdb_common::byte_format!(
                     "Unsupported option for COPY FROM: {name}"
                 )));
             }
@@ -937,26 +948,27 @@ fn parquet_copy_from_bind(
         auto_detect_hive_partitioning: false,
         ..rustdb_csv::multi_file::MultiFileOptions::default()
     };
-    let mut data: ParquetBindData = bind_files(&context.casts, files, file_options, &options)?;
+    let mut data: ParquetBindData =
+        bind_files_with_client(&context.casts, &context.function_client, files, file_options, &options)?;
     if expected_types.len() != data.types.len() {
-        let table: Vec<String> = expected_names
+        let table: Vec<rustdb_common::ByteString> = expected_names
             .iter()
             .zip(expected_types)
-            .map(|(name, ty)| format!("{name} {ty}"))
+            .map(|(name, ty)| rustdb_common::byte_format!("{name} {ty}"))
             .collect();
-        let parquet: Vec<String> = data
+        let parquet: Vec<rustdb_common::ByteString> = data
             .names
             .iter()
             .zip(&data.types)
-            .map(|(name, ty)| format!("{name} {ty}"))
+            .map(|(name, ty)| rustdb_common::byte_format!("{name} {ty}"))
             .collect();
-        return Err(Error::conversion(format!(
+        return Err(Error::conversion(rustdb_common::byte_format!(
             "Failed to read file(s) \"{}\" - column count mismatch: expected {} columns but found {}\nTable schema: {}\nParquet schema: {}\n\nPossible solutions:\n* Manually specify which columns to insert using \"INSERT INTO tbl SELECT ... FROM read_parquet(...)\"",
             data.files.first_file().unwrap_or_default(),
             expected_types.len(),
             data.types.len(),
-            table.join(", "),
-            parquet.join(", ")
+            rustdb_common::ByteString::join(&table, b", "),
+            rustdb_common::ByteString::join(&parquet, b", ")
         )));
     }
     data.types = expected_types.to_vec();
@@ -1055,7 +1067,9 @@ fn parquet_write_select(input: &CopyToSelectInput<'_>) -> Option<Vec<LogicalType
 /// The `parquet` copy function.
 /// The entries of a `case_insensitive_map_t` filled in `entries`' order, in libc++'s
 /// iteration order.
-fn case_insensitive_map_order<'a, V>(entries: Vec<(&'a str, V)>) -> Vec<(&'a str, V)> {
+fn case_insensitive_map_order<'a, V>(
+    entries: Vec<(&'a rustdb_common::ByteString, V)>,
+) -> Vec<(&'a rustdb_common::ByteString, V)> {
     let mut map = rustdb_common::libcxx::UnorderedOrder::default();
     for (index, (name, _)) in entries.iter().enumerate() {
         map.insert(
@@ -1065,7 +1079,8 @@ fn case_insensitive_map_order<'a, V>(entries: Vec<(&'a str, V)>) -> Vec<(&'a str
         );
     }
     let order: Vec<usize> = map.order().into_iter().map(|node| map.keys()[node]).collect();
-    let mut entries: Vec<Option<(&'a str, V)>> = entries.into_iter().map(Some).collect();
+    let mut entries: Vec<Option<(&'a rustdb_common::ByteString, V)>> =
+        entries.into_iter().map(Some).collect();
     order
         .into_iter()
         .filter_map(|index| entries[index].take())
@@ -1075,7 +1090,7 @@ fn case_insensitive_map_order<'a, V>(entries: Vec<(&'a str, V)>) -> Vec<(&'a str
 /// `ChildFieldIDs::Serialize`.
 fn serialize_child_field_ids(
     serializer: &mut dyn rustdb_serde::Serializer,
-    field_ids: &CaseInsensitiveMap<FieldId>,
+    field_ids: &CaseInsensitiveMap<FieldId, rustdb_common::ByteString>,
 ) -> Result<()> {
     let entries = case_insensitive_map_order(field_ids.iter().collect());
     serializer.write_optional_with(100, "ids", entries.is_empty(), |serializer| {
@@ -1103,7 +1118,7 @@ fn serialize_child_field_ids(
 fn serialize_shredding_type(
     serializer: &mut dyn rustdb_serde::Serializer,
     ty: Option<&LogicalType>,
-    children: Vec<(&str, LogicalType)>,
+    children: &[(rustdb_common::ByteString, LogicalType)],
 ) -> Result<()> {
     let ty = match ty {
         None => LogicalType::INVALID,
@@ -1112,7 +1127,7 @@ fn serialize_shredding_type(
     };
     serializer.write_property_with_default(100, "set", &(ty.id() != LogicalTypeId::Invalid))?;
     serializer.write_property(101, "type", &ty)?;
-    let children = case_insensitive_map_order(children);
+    let children = case_insensitive_map_order(children.iter().map(|(name, ty)| (name, ty.clone())).collect());
     serializer.write_object_property(102, "children", |serializer| {
         // `ChildShreddingTypes::Serialize`.
         serializer.write_optional_with(100, "types", children.is_empty(), |serializer| {
@@ -1120,21 +1135,21 @@ fn serialize_shredding_type(
             for (name, child) in &children {
                 serializer.on_object_begin();
                 serializer.write_property(0, "key", *name)?;
-                let grandchildren: Vec<(&str, LogicalType)> = match child.id() {
+                let grandchildren: Vec<(rustdb_common::ByteString, LogicalType)> = match child.id() {
                     LogicalTypeId::Struct => child
                         .struct_children()
                         .unwrap_or_default()
                         .iter()
-                        .map(|(name, ty)| (name.as_str(), ty.clone()))
+                        .map(|(name, ty)| (name.clone(), ty.clone()))
                         .collect(),
                     LogicalTypeId::List => child
                         .child_type()
-                        .map(|element| vec![("element", element.clone())])
+                        .map(|element| vec![("element".into(), element.clone())])
                         .unwrap_or_default(),
                     _ => Vec::new(),
                 };
                 serializer.write_object_property(1, "value", |serializer| {
-                    serialize_shredding_type(serializer, Some(child), grandchildren)
+                    serialize_shredding_type(serializer, Some(child), &grandchildren)
                 })?;
                 serializer.on_object_end();
             }
@@ -1170,8 +1185,10 @@ fn serialize_parquet_copy(
     serializer.on_list_begin(options.kv_metadata.len());
     for (key, value) in &options.kv_metadata {
         serializer.on_object_begin();
-        serializer.write_property(0, "first", key.as_str())?;
-        serializer.write_property(1, "second", String::from_utf8_lossy(value).as_ref())?;
+        serializer.write_property(0, "first", key)?;
+        serializer.on_property_begin(1, "second");
+        serializer.write_string_bytes(value);
+        serializer.on_property_end();
         serializer.on_object_end();
     }
     serializer.on_list_end();
@@ -1179,10 +1196,12 @@ fn serialize_parquet_copy(
     serializer.write_object_property(106, "field_ids", |serializer| {
         serialize_child_field_ids(serializer, &options.field_ids)
     })?;
-    serializer.write_optional_with(107, "encryption_config", true, |serializer| {
-        serializer.write_null();
-        Ok(())
-    })?;
+    serializer.write_optional_with(
+        107,
+        "encryption_config",
+        options.encryption.is_none(),
+        |serializer| crate::crypto::serialize_encryption_config(serializer, options.encryption.as_ref()),
+    )?;
     // `SerializeCompressionLevel`: a negative level counts down from the largest index.
     let compression_level = if options.compression_level < 0 {
         u64::MAX - options.compression_level.unsigned_abs()
@@ -1242,13 +1261,13 @@ fn serialize_parquet_copy(
         options.geoparquet_version == defaults.geoparquet_version,
         geoparquet_version,
     )?;
-    let shredded: Vec<(&str, LogicalType)> = options
+    let shredded: Vec<(rustdb_common::ByteString, LogicalType)> = options
         .shredding
         .iter()
-        .map(|(column, ty)| (column.as_str(), ty.clone()))
+        .map(|(column, ty)| (column.clone(), ty.clone()))
         .collect();
     serializer.write_optional_with(117, "shredding_types", shredded.is_empty(), |serializer| {
-        serializer.write_object_with(|serializer| serialize_shredding_type(serializer, None, shredded))
+        serializer.write_object_with(|serializer| serialize_shredding_type(serializer, None, &shredded))
     })
 }
 

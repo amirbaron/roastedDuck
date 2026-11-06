@@ -545,3 +545,186 @@ fn unbound_wal_metadata_is_not_published_before_flush_succeeds() {
     assert_eq!(retry.pending, Vec::<Vec<u8>>::new());
     check_one_persisted_key(&info, store);
 }
+
+#[test]
+fn unchanged_deprecated_checkpoint_keeps_buffers_unloaded() {
+    let options = rustdb_common::CaseInsensitiveMap::default();
+    let store = std::sync::Arc::new(CheckpointBuffers::default());
+    let mut writer = DeferredCheckpoint::new(store.clone());
+    let info = one_key_index()
+        .serialize_to_disk(&options, &mut writer, &mut |_| {})
+        .unwrap();
+    let mut restored = art(IndexConstraintType::None, LogicalType::BIGINT);
+    restored.load_from_storage(&info, store.clone()).unwrap();
+    let again = restored
+        .serialize_to_disk(&options, &mut writer, &mut |_| {})
+        .unwrap();
+    assert_eq!(store.reads.load(std::sync::atomic::Ordering::Relaxed), 0);
+    assert_eq!(restored.in_memory_size(), 0);
+    assert_eq!(again.root, info.root);
+    for (a, b) in again.allocator_infos.iter().zip(&info.allocator_infos) {
+        assert_eq!(a.block_pointers, b.block_pointers);
+    }
+    check_one_persisted_key(&again, store);
+}
+
+#[test]
+fn cold_modern_to_deprecated_conversion_still_loads_and_converts_gates() {
+    let store = std::sync::Arc::new(CheckpointBuffers::default());
+    let mut writer = DeferredCheckpoint::new(store.clone());
+    let mut source = art(IndexConstraintType::None, LogicalType::BIGINT);
+    let rows: Vec<i64> = (0..64).collect();
+    source
+        .insert_keys(
+            &vec![Some(row_id_key(42).to_vec()); rows.len()],
+            &rows,
+            &[],
+            IndexAppendMode::Default,
+            None,
+        )
+        .unwrap();
+    let mut modern = rustdb_common::CaseInsensitiveMap::default();
+    modern.insert("v1_0_0_storage", rustdb_types::Value::boolean(false));
+    let info = source
+        .serialize_to_disk(&modern, &mut writer, &mut |_| {})
+        .unwrap();
+    let mut restored = art(IndexConstraintType::None, LogicalType::BIGINT);
+    restored.load_from_storage(&info, store.clone()).unwrap();
+    assert_eq!(store.reads.load(std::sync::atomic::Ordering::Relaxed), 0);
+    let old = restored
+        .serialize_to_disk(
+            &rustdb_common::CaseInsensitiveMap::default(),
+            &mut writer,
+            &mut |_| {},
+        )
+        .unwrap();
+    assert!(store.reads.load(std::sync::atomic::Ordering::Relaxed) > 0);
+    assert_eq!(old.allocator_infos.len(), super::node::DEPRECATED_ALLOCATOR_COUNT);
+    let mut again = art(IndexConstraintType::None, LogicalType::BIGINT);
+    again.load_from_storage(&old, store).unwrap();
+    let mut found = BTreeSet::new();
+    again
+        .search_equal(&row_id_key(42), usize::MAX, &mut found)
+        .unwrap();
+    assert_eq!(found, rows.into_iter().collect());
+}
+
+#[test]
+fn partial_persisted_mutation_converts_new_gates_and_preserves_other_keys() {
+    let store = std::sync::Arc::new(CheckpointBuffers::default());
+    let mut writer = DeferredCheckpoint::new(store.clone());
+    let options = rustdb_common::CaseInsensitiveMap::default();
+    let mut source = art(IndexConstraintType::None, LogicalType::BIGINT);
+    for i in 0..256 {
+        source
+            .insert_keys(
+                &[Some(row_id_key(i).to_vec())],
+                &[i],
+                &[],
+                IndexAppendMode::Default,
+                None,
+            )
+            .unwrap();
+    }
+    let info = source
+        .serialize_to_disk(&options, &mut writer, &mut |_| {})
+        .unwrap();
+    let mut restored = art(IndexConstraintType::None, LogicalType::BIGINT);
+    restored.load_from_storage(&info, store.clone()).unwrap();
+    restored
+        .insert_keys(
+            &[Some(row_id_key(42).to_vec()), Some(row_id_key(42).to_vec())],
+            &[10_000, 10_001],
+            &[],
+            IndexAppendMode::Default,
+            None,
+        )
+        .unwrap();
+    let info = restored
+        .serialize_to_disk(&options, &mut writer, &mut |_| {})
+        .unwrap();
+    let mut again = art(IndexConstraintType::None, LogicalType::BIGINT);
+    again.load_from_storage(&info, store).unwrap();
+    for i in 0..256 {
+        let mut found = BTreeSet::new();
+        again
+            .search_equal(&row_id_key(i), usize::MAX, &mut found)
+            .unwrap();
+        assert_eq!(
+            found,
+            if i == 42 {
+                BTreeSet::from([42, 10_000, 10_001])
+            } else {
+                BTreeSet::from([i])
+            }
+        );
+    }
+}
+
+#[test]
+fn unbound_replays_keep_physical_columns_ownership_order_and_retry_state() {
+    use crate::index::unbound_index::BufferedIndexReplay;
+    use crate::index::{UnboundIndex, UnboundIndexStorage};
+    use rustdb_types::{DataChunk, Value, Vector};
+
+    let unbound = UnboundIndex::new(
+        "idx",
+        "ART",
+        IndexConstraintType::Unique,
+        vec![2],
+        std::sync::Arc::new(()),
+        UnboundIndexStorage::Disk(ArtStorageInfo::default()),
+    );
+    let mut key = Vector::flat(LogicalType::BIGINT, 1);
+    key.set_value(0, &Value::bigint(42)).unwrap();
+    let mut chunk = DataChunk::new(
+        vec![
+            Vector::constant_null(LogicalType::INTEGER),
+            Vector::constant_null(LogicalType::VARCHAR),
+            key,
+        ],
+        1,
+    );
+    for kind in [BufferedIndexReplay::Insert, BufferedIndexReplay::Delete] {
+        unbound.push_replay(unbound.prepare_replay(&chunk, &[17], kind).unwrap());
+    }
+    chunk.column_mut(2).set_value(0, &Value::bigint(43)).unwrap();
+    unbound.push_replay(
+        unbound
+            .prepare_replay(&chunk, &[19], BufferedIndexReplay::Insert)
+            .unwrap(),
+    );
+    chunk.column_mut(2).set_value(0, &Value::bigint(44)).unwrap();
+    drop(chunk);
+    assert!(unbound.has_buffered_replays());
+    let make = || {
+        Art::new(
+            "idx",
+            IndexConstraintType::Unique,
+            vec![2],
+            vec![LogicalType::BIGINT],
+            IndexKeyExpressions::Columns(vec!["key".into()]),
+            BufferManager::new(BufferManagerConfig::default()).unwrap(),
+            262_136,
+        )
+        .unwrap()
+    };
+    assert!(
+        unbound
+            .apply_buffered_replays(&mut make(), &[LogicalType::BIGINT])
+            .is_err()
+    );
+    let types = [LogicalType::INTEGER, LogicalType::VARCHAR, LogicalType::BIGINT];
+    for _ in 0..2 {
+        let mut restored = make();
+        unbound.apply_buffered_replays(&mut restored, &types).unwrap();
+        let mut rows = BTreeSet::new();
+        restored.full_scan(usize::MAX, &mut rows).unwrap();
+        assert_eq!(rows, BTreeSet::from([19]));
+        rows.clear();
+        restored
+            .search_equal(&row_id_key(43), usize::MAX, &mut rows)
+            .unwrap();
+        assert_eq!(rows, BTreeSet::from([19]));
+    }
+}

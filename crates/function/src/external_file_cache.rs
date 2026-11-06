@@ -49,7 +49,8 @@ impl CacheValidationMode {
     }
 
     /// Whether cached data of `path` is checked against the file (`ShouldValidate`).
-    pub fn should_validate(self, path: &str) -> bool {
+    pub fn should_validate(self, path: impl AsRef<[u8]>) -> bool {
+        let path = path.as_ref();
         match self {
             Self::ValidateAll => true,
             Self::ValidateRemote => crate::file_system::is_remote_file(path),
@@ -109,7 +110,7 @@ pub(crate) struct CachedFileState {
 /// The cached ranges of one file (`CachedFile`).
 #[derive(Debug)]
 pub struct CachedFile {
-    pub path: String,
+    pub path: rustdb_common::ByteString,
     /// The cache's generation when the file was created: a file of an older generation
     /// is replaced (the cache was disabled and enabled since).
     pub generation: u64,
@@ -117,9 +118,9 @@ pub struct CachedFile {
 }
 
 impl CachedFile {
-    fn new(path: &str, generation: u64) -> Self {
+    fn new(path: &[u8], generation: u64) -> Self {
         Self {
-            path: path.to_owned(),
+            path: path.into(),
             generation,
             state: RwLock::new(CachedFileState::default()),
         }
@@ -156,7 +157,7 @@ impl CachedFile {
 /// One cached range as `duckdb_external_file_cache()` lists it (`CachedFileInformation`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CachedFileInformation {
-    pub path: String,
+    pub path: rustdb_common::ByteString,
     pub nr_bytes: u64,
     pub location: u64,
     /// Whether the range is in memory (not evicted).
@@ -172,7 +173,7 @@ pub struct ExternalFileCache {
     /// Incremented whenever the cache is enabled or disabled.
     generation: AtomicU64,
     /// The cached files by path (the object cache entries of DuckDB's cache).
-    files: Mutex<HashMap<String, Arc<CachedFile>>>,
+    files: Mutex<HashMap<rustdb_common::ByteString, Arc<CachedFile>>>,
 }
 
 impl ExternalFileCache {
@@ -186,7 +187,7 @@ impl ExternalFileCache {
         }
     }
 
-    fn files(&self) -> MutexGuard<'_, HashMap<String, Arc<CachedFile>>> {
+    fn files(&self) -> MutexGuard<'_, HashMap<rustdb_common::ByteString, Arc<CachedFile>>> {
         self.files.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -248,7 +249,8 @@ impl ExternalFileCache {
 
     /// The shared cached file of `path`, created if needed; a file of its own that no
     /// one else sees while the cache is disabled (`GetOrCreateCachedFile`).
-    pub fn get_or_create_cached_file(&self, path: &str) -> Arc<CachedFile> {
+    pub fn get_or_create_cached_file(&self, path: impl AsRef<[u8]>) -> Arc<CachedFile> {
+        let path = path.as_ref();
         let mut files = self.files();
         let generation = self.generation();
         if !self.is_enabled() {
@@ -260,7 +262,7 @@ impl ExternalFileCache {
             return Arc::clone(file);
         }
         let file = Arc::new(CachedFile::new(path, generation));
-        files.insert(path.to_owned(), Arc::clone(&file));
+        files.insert(path.into(), Arc::clone(&file));
         file
     }
 

@@ -10,7 +10,7 @@
 use std::sync::{Arc, PoisonError};
 
 use rustdb_ast::OnCreateConflict;
-use rustdb_catalog::{Catalog, CatalogEntry, CatalogType, DEFAULT_SCHEMA, EntryKind, Transaction, TypeEntry};
+use rustdb_catalog::{Catalog, CatalogType, DEFAULT_SCHEMA, EntryKind, Transaction, TypeEntry};
 use rustdb_common::{Error, Result};
 use rustdb_function::cast::BoundCastInfo;
 use rustdb_function::{AggregateFunctionSet, CopyFunction, ScalarFunctionSet, TableFunctionSet};
@@ -19,6 +19,55 @@ use rustdb_types::LogicalType;
 use super::Connection;
 
 impl Connection {
+    /// Cancels a streaming query and its transaction before a client registers a UDF
+    /// (`ClientContext::CancelTransaction`).
+    pub fn cancel_registration_transaction(&mut self) -> Result<()> {
+        self.initial_cleanup();
+        Ok(())
+    }
+
+    /// Removes a client-created scalar function, including its internal catalog entry.
+    pub fn remove_scalar_function(&mut self, name: impl AsRef<[u8]>) -> Result<()> {
+        let name = name.as_ref();
+        self.create_in_system_catalog(|transaction, system| {
+            system.drop_entry_with_internal(
+                transaction,
+                CatalogType::ScalarFunction,
+                DEFAULT_SCHEMA,
+                name,
+                false,
+                false,
+                true,
+            )
+        })
+    }
+
+    /// Registers a client UDF (`ClientContext::RegisterFunction`): retain other
+    /// overloads, but a duplicate signature is an error rather than a C API override.
+    pub fn register_scalar_function_set(&mut self, mut set: ScalarFunctionSet) -> Result<()> {
+        self.create_in_system_catalog(|transaction, system| {
+            let name = set.name.clone();
+            if let Some(existing) =
+                system.get_entry(transaction, CatalogType::ScalarFunction, DEFAULT_SCHEMA, &name)
+                && let EntryKind::ScalarFunction(current) = &existing.kind
+                && set.merge_function_set(current.clone(), false)
+            {
+                let mut kind = EntryKind::ScalarFunction(set);
+                kind.set_function_catalog(system.name(), DEFAULT_SCHEMA);
+                let mut entry = system.new_entry(&name, kind);
+                entry.internal = true;
+                return system
+                    .create_entry(
+                        transaction,
+                        DEFAULT_SCHEMA,
+                        entry,
+                        OnCreateConflict::ReplaceOnConflict,
+                    )
+                    .map(drop);
+            }
+            create_function(transaction, system, &name, EntryKind::ScalarFunction(set))
+        })
+    }
     /// Runs `create` against the system catalog in the connection's transaction, which
     /// is started and committed if none is open (`RunFunctionInTransaction`).
     fn create_in_system_catalog(
@@ -28,7 +77,7 @@ impl Connection {
         let transaction = self.transactions.current();
         let system = Arc::clone(&self.database.instance().system_catalog);
         let created = create(&transaction, &system);
-        let ended = self.transactions.end_statement(created.is_ok(), false);
+        let ended = self.end_client_statement(created.is_ok(), false);
         created.and(ended)
     }
 
@@ -38,7 +87,7 @@ impl Connection {
     /// (`ScalarFunctionCatalogEntry::AlterEntry`).
     pub fn create_scalar_function_set(&mut self, set: ScalarFunctionSet) -> Result<()> {
         self.create_in_system_catalog(|transaction, system| {
-            let name = set.name.to_string();
+            let name = set.name.clone();
             let Some(existing) =
                 system.get_entry(transaction, CatalogType::ScalarFunction, DEFAULT_SCHEMA, &name)
             else {
@@ -51,8 +100,8 @@ impl Connection {
             let mut merged = current.clone();
             merged.merge_function_set(set, true);
             let mut kind = EntryKind::ScalarFunction(merged);
-            kind.set_function_catalog(&system.name(), DEFAULT_SCHEMA);
-            let mut entry = CatalogEntry::new(existing.name(), kind);
+            kind.set_function_catalog(system.name(), DEFAULT_SCHEMA);
+            let mut entry = system.new_entry(existing.name(), kind);
             entry.oid = existing.oid;
             entry.internal = existing.internal;
             system.replace_entry(
@@ -99,6 +148,26 @@ impl Connection {
         })
     }
 
+    /// Install a client adapter for an existing table-function ABI. Bound plans
+    /// retain their previous function data; subsequent lookups use this adapter.
+    pub fn replace_table_function_set(&mut self, set: TableFunctionSet) -> Result<()> {
+        self.create_in_system_catalog(|transaction, system| {
+            let name = set.name.clone();
+            let mut kind = EntryKind::TableFunction(set);
+            kind.set_function_catalog(system.name(), DEFAULT_SCHEMA);
+            let mut entry = system.new_entry(name.as_ref(), kind);
+            entry.internal = true;
+            system
+                .create_entry(
+                    transaction,
+                    DEFAULT_SCHEMA,
+                    entry,
+                    OnCreateConflict::ReplaceOnConflict,
+                )
+                .map(drop)
+        })
+    }
+
     /// Adds the COPY format to the system catalog (`CreateCopyFunctionInfo` with
     /// `ALTER_ON_CONFLICT`): when a format of that name exists, nothing is created.
     pub fn create_copy_function(&mut self, function: CopyFunction) -> Result<()> {
@@ -122,9 +191,10 @@ impl Connection {
     /// Creates the type `name` in the system catalog (`CreateTypeInfo`, temporary and
     /// internal, as `duckdb_register_logical_type` makes it); an existing type of that
     /// name is an error.
-    pub fn create_type(&mut self, name: &str, ty: LogicalType) -> Result<()> {
+    pub fn create_type(&mut self, name: impl AsRef<[u8]>, ty: LogicalType) -> Result<()> {
+        let name = name.as_ref();
         self.create_in_system_catalog(|transaction, system| {
-            let mut entry = CatalogEntry::new(name, EntryKind::Type(TypeEntry { user_type: ty }));
+            let mut entry = system.new_entry(name, EntryKind::Type(TypeEntry { user_type: ty }));
             entry.temporary = true;
             entry.internal = true;
             system
@@ -160,11 +230,11 @@ impl Connection {
 fn create_function(
     transaction: &Transaction,
     system: &Catalog,
-    name: &str,
+    name: impl AsRef<[u8]>,
     mut kind: EntryKind,
 ) -> Result<()> {
-    kind.set_function_catalog(&system.name(), DEFAULT_SCHEMA);
-    let mut entry = CatalogEntry::new(name, kind);
+    kind.set_function_catalog(system.name(), DEFAULT_SCHEMA);
+    let mut entry = system.new_entry(name.as_ref(), kind);
     entry.internal = true;
     system
         .create_entry(

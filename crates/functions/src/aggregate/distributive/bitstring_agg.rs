@@ -25,6 +25,20 @@ const MAX_BIT_RANGE: u64 = 1_000_000_000;
 struct Bounds(Option<(Value, Value)>);
 
 impl FunctionData for Bounds {
+    fn equals(&self, other: &dyn FunctionData) -> bool {
+        let Some(other) = other.as_any().downcast_ref::<Self>() else {
+            return false;
+        };
+        match (&self.0, &other.0) {
+            (None, None) => true,
+            (Some((left_min, left_max)), Some((right_min, right_max))) => {
+                rustdb_function::cast::values_not_distinct(left_min, right_min)
+                    && rustdb_function::cast::values_not_distinct(left_max, right_max)
+            }
+            (None, Some((min, max))) | (Some((min, max)), None) => min.is_null() && max.is_null(),
+        }
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

@@ -77,8 +77,8 @@ impl ExpressionBinder for LateralBinder<'_> {
         }
     }
 
-    fn unsupported_aggregate_message(&self) -> String {
-        "LATERAL join cannot contain aggregates!".to_owned()
+    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+        "LATERAL join cannot contain aggregates!".into()
     }
 }
 

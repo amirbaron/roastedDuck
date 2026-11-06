@@ -366,7 +366,7 @@ fn bind_unary_date_part(
     function: &mut ScalarFunction,
     input: &BindInput<'_>,
 ) -> Result<Option<Arc<dyn FunctionData>>> {
-    let part = Part::parse(&function.name)?;
+    let part = Part::parse_bytes(function.name.as_bytes())?;
     let adapter = if part.is_bigint() {
         Adapter::Bigint(part_code_bigint_factory(part)?)
     } else {
@@ -550,7 +550,7 @@ fn bind_struct(
         return Err(rustdb_functions::parameter_not_resolved());
     }
     let not_constant = || {
-        Error::binder(format!(
+        Error::binder(rustdb_common::byte_format!(
             "{} can only take constant lists of part names",
             function.name
         ))
@@ -563,7 +563,7 @@ fn bind_struct(
     }
     let list_children = parts_list.children().unwrap_or_default();
     if list_children.is_empty() {
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "{} requires non-empty lists of part names",
             function.name
         )));
@@ -573,7 +573,7 @@ fn bind_struct(
     let mut struct_children = Vec::with_capacity(list_children.len());
     for part_value in list_children {
         if part_value.is_null() {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "NULL struct entry name in {}",
                 function.name
             )));
@@ -581,7 +581,7 @@ fn bind_struct(
         let part_name = part_value.to_varchar()?;
         let part_code = Part::parse(&part_name)?;
         if names.iter().any(|name| name.eq_ignore_ascii_case(&part_name)) {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Duplicate struct entry name \"{part_name}\" in {}",
                 function.name
             )));
@@ -593,7 +593,7 @@ fn bind_struct(
         } else {
             LogicalType::DOUBLE
         };
-        struct_children.push((part_name, ty));
+        struct_children.push((part_name.into(), ty));
     }
     // The part names are consumed (`EraseArgument`).
     function.erase_argument(0);

@@ -7,7 +7,7 @@ use rustdb_ast::{
     AggregateHandling, ExpressionType, OnCreateConflict, OnEntryNotFound, OrderByNode, OrderByNullType,
     OrderType, ParsedExpression, ParsedExpressionKind, SampleMethod, SampleOptions, SelectNode,
 };
-use rustdb_common::{Error, Result};
+use rustdb_common::{ByteString, Error, Result};
 use rustdb_function::cast::ValueCast;
 use rustdb_pg_parser::nodes::{
     Alias, GroupingSet, GroupingSetKind, List, Node, OnCreateConflict as PgOnCreateConflict, RangeVar,
@@ -26,10 +26,10 @@ const MAX_GROUPING_SETS: usize = 65535;
 
 /// A schema-qualified name (DuckDB's `QualifiedName`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct QualifiedName {
-    pub(crate) catalog: String,
-    pub(crate) schema: String,
-    pub(crate) name: String,
+pub(crate) struct QualifiedName<K = ByteString> {
+    pub(crate) catalog: K,
+    pub(crate) schema: K,
+    pub(crate) name: K,
 }
 
 /// `TransformQualifiedName`.
@@ -45,9 +45,9 @@ pub(crate) fn transform_qualified_name(root: &RangeVar) -> Result<QualifiedName>
 }
 
 /// `TransformAlias`: the alias and its column names.
-pub(crate) fn transform_alias(root: Option<&Alias>) -> Result<(String, Vec<String>)> {
+pub(crate) fn transform_alias(root: Option<&Alias>) -> Result<(ByteString, Vec<ByteString>)> {
     let Some(alias) = root else {
-        return Ok((String::new(), Vec::new()));
+        return Ok((ByteString::new(), Vec::new()));
     };
     Ok((
         alias.aliasname.clone().unwrap_or_default(),
@@ -75,7 +75,7 @@ pub(crate) const fn transform_on_entry_not_found(missing_ok: bool) -> OnEntryNot
 
 fn check_grouping_set_max(count: usize) -> Result<()> {
     if count > MAX_GROUPING_SETS {
-        return Err(Error::parser(format!(
+        return Err(Error::parser(rustdb_common::byte_format!(
             "Maximum grouping set count of {MAX_GROUPING_SETS} exceeded"
         )));
     }
@@ -174,7 +174,7 @@ impl<'a> Transformer<'a> {
     ) -> Result<()> {
         for node in order {
             let Node::SortBy(sort) = node else {
-                return Err(Error::not_implemented(format!(
+                return Err(Error::not_implemented(rustdb_common::byte_format!(
                     "ORDER BY list member type {}\n",
                     super::node_tag(node).0
                 )));
@@ -239,7 +239,7 @@ impl<'a> Transformer<'a> {
         } else {
             let rows = get_value_i64(value)?;
             if rows < 0 || rows as u64 > MAX_SAMPLE_ROWS {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "Sample rows {rows} out of range, must be between 0 and {MAX_SAMPLE_ROWS}"
                 )));
             }
@@ -247,12 +247,12 @@ impl<'a> Transformer<'a> {
             result.method = SampleMethod::ReservoirSample;
         }
         if let Some(method) = &sample_options.method {
-            result.method = match method.to_ascii_lowercase().as_str() {
-                "system" => SampleMethod::SystemSample,
-                "bernoulli" => SampleMethod::BernoulliSample,
-                "reservoir" => SampleMethod::ReservoirSample,
+            result.method = match method.to_ascii_lowercase().as_bytes() {
+                b"system" => SampleMethod::SystemSample,
+                b"bernoulli" => SampleMethod::BernoulliSample,
+                b"reservoir" => SampleMethod::ReservoirSample,
                 _ => {
-                    return Err(Error::parser(format!(
+                    return Err(Error::parser(rustdb_common::byte_format!(
                         "Unrecognized sampling method {method}, expected system, bernoulli or reservoir"
                     )));
                 }
@@ -359,7 +359,7 @@ impl<'a> Transformer<'a> {
                 add_cube_sets(&GroupingSetT::new(), &cube_sets, result_sets, 0)?;
             }
             GroupingSetKind::Simple => {
-                return Err(Error::internal(format!(
+                return Err(Error::internal(rustdb_common::byte_format!(
                     "Unsupported GROUPING SET type {}",
                     grouping_set.kind as i32
                 )));

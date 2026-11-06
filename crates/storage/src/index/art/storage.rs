@@ -9,7 +9,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use rustdb_common::{CaseInsensitiveMap, Error, Result};
+use rustdb_common::{ByteString, CaseInsensitiveMap, Error, Result};
 use rustdb_types::Value;
 
 use super::iterator::{ArtIterator, RowIdSetOutput};
@@ -25,11 +25,90 @@ use crate::index::fixed_size_allocator::{
 /// The serialized form of an ART (DuckDB's `IndexStorageInfo` without the buffers).
 #[derive(Clone, Debug, Default)]
 pub struct ArtStorageInfo {
-    pub name: String,
+    pub name: ByteString,
     /// The root node pointer.
     pub root: u64,
     pub allocator_infos: Vec<FixedSizeAllocatorInfo>,
     pub options: CaseInsensitiveMap<Value>,
+}
+
+/// Decodes the pre-v0.10 root container into the same lazy allocator metadata used
+/// by modern ARTs. Raw `BlockPointer` records occupy 16 bytes (including padding).
+pub fn read_legacy_index_storage(
+    manager: &crate::metadata::MetadataManager,
+    root: crate::checkpoint::pointers::BlockPointer,
+) -> Result<ArtStorageInfo> {
+    fn metadata_pointer(
+        manager: &crate::metadata::MetadataManager,
+        pointer: crate::checkpoint::pointers::BlockPointer,
+    ) -> Result<crate::metadata::MetaBlockPointer> {
+        let size = manager.metadata_block_size();
+        let index = pointer.offset as usize / size;
+        if !pointer.is_valid() || index >= crate::metadata::METADATA_BLOCK_COUNT {
+            return Err(Error::serialization("invalid legacy index metadata pointer"));
+        }
+        Ok(crate::metadata::MetaBlockPointer::new(
+            pointer.block_id as u64 | ((index as u64) << 56),
+            (pointer.offset as usize % size) as u32,
+        ))
+    }
+    fn read_pointer(
+        reader: &mut crate::metadata::MetadataReader<'_>,
+    ) -> Result<crate::checkpoint::pointers::BlockPointer> {
+        let mut bytes = [0; 16];
+        reader.read_data(&mut bytes)?;
+        Ok(crate::checkpoint::pointers::BlockPointer {
+            block_id: i64::from_le_bytes(
+                bytes[..8]
+                    .try_into()
+                    .map_err(|_| Error::serialization("legacy block id"))?,
+            ),
+            offset: u32::from_le_bytes(
+                bytes[8..12]
+                    .try_into()
+                    .map_err(|_| Error::serialization("legacy block offset"))?,
+            ),
+        })
+    }
+    let mut reader = crate::metadata::MetadataReader::new(manager, metadata_pointer(manager, root)?, true)?;
+    let tree = reader.read_u64()?;
+    let mut allocator_infos = Vec::new();
+    for _ in 0..DEPRECATED_ALLOCATOR_COUNT {
+        let pointer = read_pointer(&mut reader)?;
+        let mut allocator =
+            crate::metadata::MetadataReader::new(manager, metadata_pointer(manager, pointer)?, true)?;
+        let segment_size = allocator.read_u64()?;
+        let count = allocator.read_u64()?;
+        let free_count = allocator.read_u64()?;
+        let mut info = FixedSizeAllocatorInfo {
+            segment_size,
+            ..FixedSizeAllocatorInfo::default()
+        };
+        for _ in 0..count {
+            let buffer_id = allocator.read_u64()?;
+            if buffer_id > crate::MAX_ROW_ID {
+                return Err(Error::serialization("invalid legacy index buffer id"));
+            }
+            let pointer = read_pointer(&mut allocator)?;
+            info.buffer_ids.push(buffer_id);
+            info.block_pointers
+                .push(super::super::fixed_size_allocator::BufferPointer {
+                    block_id: pointer.block_id,
+                    offset: pointer.offset,
+                });
+            info.segment_counts.push(allocator.read_u64()?);
+            info.allocation_sizes.push(allocator.read_u64()?);
+        }
+        for _ in 0..free_count {
+            info.buffers_with_free_space.push(allocator.read_u64()?);
+        }
+        allocator_infos.push(info);
+    }
+    Ok(ArtStorageInfo {
+        root: tree,
+        allocator_infos,
+        ..ArtStorageInfo::default()
+    })
 }
 
 /// Whether `options` ask for the v1.0.0 layout (the default when the option is absent).
@@ -58,6 +137,7 @@ impl Art {
             .filter(|&count| count != 0)
             .ok_or_else(|| Error::serialization("invalid prefix size in index storage information"))?;
         self.tree = Node::default();
+        self.persisted_deprecated_layout = false;
         self.buffer_loader = Some(loader);
         self.init_allocators()?;
         for (allocator, stored) in self.allocators.iter_mut().zip(&info.allocator_infos) {
@@ -70,6 +150,8 @@ impl Art {
         }
         self.tree = Node::from_raw(info.root);
         self.storage_version = info.options.get("storage_version").and_then(Value::as_u64);
+        self.persisted_deprecated_layout = info.allocator_infos.len() == DEPRECATED_ALLOCATOR_COUNT
+            && self.prefix_count == DEPRECATED_PREFIX_COUNT;
         Ok(())
     }
 
@@ -122,6 +204,17 @@ impl Art {
             }
             if node.gate_status() == GateStatus::Set {
                 self.leaf_to_deprecated(slot, node)?;
+                continue;
+            }
+            // Like C++'s InMemoryRef/LoadedFromStorage walk: untouched persisted
+            // subtrees are already compatible. Never load them just to checkpoint.
+            // A modern-to-deprecated format change still requires a full traversal.
+            if self.persisted_deprecated_layout
+                && node
+                    .ntype()?
+                    .allocator_index()
+                    .is_some_and(|index| !self.allocators[index].is_loaded(node))
+            {
                 continue;
             }
             match node.ntype()? {
@@ -270,6 +363,7 @@ impl Art {
         // locations until their partial blocks have been flushed (`WritePartialBlocks`).
         writer.flush()?;
         info.allocator_infos = self.allocator_infos(count);
+        self.persisted_deprecated_layout = wants_v1_0_0_storage(options);
         Ok(info)
     }
 

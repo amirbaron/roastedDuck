@@ -42,12 +42,12 @@ impl FunctionData for JsonCreateFunctionData {
 }
 
 /// `GetJSONType`: the type a value is converted to before it is put into JSON.
-pub(crate) fn get_json_type(ty: &LogicalType) -> LogicalType {
+pub(crate) fn get_json_type(ty: &LogicalType) -> Result<LogicalType> {
     use LogicalTypeId as L;
     if is_json_type(ty) {
-        return ty.clone();
+        return Ok(ty.clone());
     }
-    match ty.id() {
+    Ok(match ty.id() {
         L::SqlNull
         | L::Boolean
         | L::TinyInt
@@ -80,31 +80,37 @@ pub(crate) fn get_json_type(ty: &LogicalType) -> LogicalType {
         | L::Bignum
         | L::Decimal => ty.clone(),
         L::IntegerLiteral => ty.integer_literal_type().cloned().unwrap_or(LogicalType::INTEGER),
-        L::List => LogicalType::list(get_json_type(ty.child_type().unwrap_or(&LogicalType::SQLNULL))),
+        L::List => LogicalType::list(get_json_type(ty.child_type().unwrap_or(&LogicalType::SQLNULL))?),
         L::Array => match ty.array_child() {
-            Some((child, size)) => LogicalType::array(get_json_type(child), size),
+            Some((child, size)) => LogicalType::array(get_json_type(child)?, size),
             None => ty.clone(),
         },
         L::Struct => LogicalType::struct_type(
             ty.struct_children()
                 .unwrap_or_default()
                 .iter()
-                .map(|(name, child)| (name.clone(), get_json_type(child)))
-                .collect(),
+                .map(|(name, child)| {
+                    rustdb_types::Value::try_varchar(name)?;
+                    Ok((name.clone(), get_json_type(child)?))
+                })
+                .collect::<Result<_>>()?,
         ),
         L::Map => match ty.map_key_value() {
-            Some((_, value)) => LogicalType::map(LogicalType::VARCHAR, get_json_type(value)),
+            Some((_, value)) => LogicalType::map(LogicalType::VARCHAR, get_json_type(value)?),
             None => ty.clone(),
         },
         L::Union => LogicalType::union_type(
             ty.union_members()
                 .unwrap_or_default()
                 .iter()
-                .map(|(name, member)| (name.clone(), get_json_type(member)))
-                .collect(),
+                .map(|(name, member)| {
+                    rustdb_types::Value::try_varchar(name)?;
+                    Ok((name.clone(), get_json_type(member)?))
+                })
+                .collect::<Result<_>>()?,
         ),
         _ => LogicalType::VARCHAR,
-    }
+    })
 }
 
 /// The casts of the binder's client context, or DuckDB's default casts.
@@ -133,14 +139,17 @@ fn create_bind(
             if !matches!(ty.id(), LogicalTypeId::Varchar | LogicalTypeId::StringLiteral)
                 || ty.alias().is_some()
             {
-                let name = input.names.get(i).map_or("", String::as_str);
-                return Err(Error::binder(format!(
+                let name = input
+                    .names
+                    .get(i)
+                    .map_or(b"".as_slice(), rustdb_common::ByteString::as_bytes);
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "json_object() keys must be VARCHAR, add an explicit cast to argument \"{name}\""
                 )));
             }
             function.arguments.push(LogicalType::VARCHAR);
         } else {
-            function.arguments.push(get_json_type(ty));
+            function.arguments.push(get_json_type(ty)?);
         }
     }
     Ok(Some(Arc::new(JsonCreateFunctionData {
@@ -172,9 +181,9 @@ enum Node {
 }
 
 /// A JSON object key (`"name":`), escaped.
-fn object_key(name: &str) -> Vec<u8> {
+fn object_key(name: &[u8]) -> Vec<u8> {
     let mut key = Vec::with_capacity(name.len() + 3);
-    write_string(&mut key, name.as_bytes());
+    write_string(&mut key, name);
     key.push(b':');
     key
 }
@@ -235,7 +244,7 @@ fn convert(casts: &CastFunctionSet, vector: &Vector, count: usize) -> Result<Nod
         L::Struct => {
             // Field vectors are indexed by the parent's slots: work on a flat parent.
             let vector = flat_parent(vector, count);
-            let names: Vec<String> = ty
+            let names: Vec<rustdb_common::ByteString> = ty
                 .struct_children()
                 .unwrap_or_default()
                 .iter()
@@ -278,7 +287,7 @@ fn convert(casts: &CastFunctionSet, vector: &Vector, count: usize) -> Result<Nod
             Node::Array(flat, size, Box::new(child))
         }
         L::Union => {
-            let names: Vec<String> = ty
+            let names: Vec<rustdb_common::ByteString> = ty
                 .union_members()
                 .unwrap_or_default()
                 .iter()

@@ -1,0 +1,25 @@
+[package]
+name = "rustdb-httpfs"
+description = "HTTP(S) positional filesystem for the DuckDB Rust engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rustdb-common.workspace = true
+rustdb-buffer = { path = "../buffer" }
+rustdb-types.workspace = true
+rustdb-function = { path = "../function" }
+ureq = { version = "=3.5.0", default-features = false, features = ["_tls"] }
+ureq-proto = { version = "=0.6.5", default-features = false }
+httpdate = "1"
+ring = "=0.17.14"
+md-5 = "=0.10.6"
+openssl = { version = "=0.10.81", features = ["vendored"] }
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+security-framework = "=3.7.0"
+
+[lints]
+workspace = true

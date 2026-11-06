@@ -120,7 +120,7 @@ pub(crate) fn get_time_zone_or_message(tz_str: &mut String) -> std::result::Resu
     if let Some(tz) = get_time_zone_internal(tz_str, &mut candidates) {
         return Ok(tz);
     }
-    let candidate_str = candidates_message(&top_n_jaro_winkler(&candidates, tz_str), "Candidate time zones");
+    let candidate_str = candidates_message(&top_n_jaro_winkler(&candidates, &*tz_str), "Candidate time zones");
     Err(format!("Unknown TimeZone '{tz_str}'!\n{candidate_str}"))
 }
 

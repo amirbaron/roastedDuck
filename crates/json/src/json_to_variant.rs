@@ -7,7 +7,9 @@ use rustdb_common::{Error, Result};
 use rustdb_function::cast::text_parse::TextFloat;
 use rustdb_function::cast::{BoundCastInfo, CastParameters};
 use rustdb_types::Vector;
-use rustdb_types::variant::{VariantChild, VariantData, VariantEntry, VariantLogicalType, varint_encode};
+use rustdb_types::variant::{
+    VariantChild, VariantData, VariantEntry, VariantLogicalType, varint_encode, varint_size,
+};
 
 use crate::json_common::read_document;
 use crate::json_executors::{StrInput, addressable};
@@ -36,11 +38,17 @@ impl VariantBuilder {
     }
 
     /// `WriteContainerData` and the reservation of the container's children (and keys).
-    fn container(&mut self, count: usize, keys: Option<Vec<String>>) -> Result<usize> {
+    fn container(&mut self, count: usize, keys: Option<Vec<rustdb_common::ByteString>>) -> Result<usize> {
         let children_offset = self.data.children.len();
         varint_encode(count as u64, &mut self.data.data);
         if count > 0 {
             varint_encode(children_offset as u64, &mut self.data.data);
+        } else {
+            // WriteContainerData reserves the children-offset width even when
+            // an empty container does not write that offset. Keep it initialized.
+            self.data
+                .data
+                .resize(self.data.data.len() + varint_size(children_offset as u64), 0);
         }
         let keys_offset = self.data.keys.len();
         let has_keys = keys.is_some();
@@ -78,7 +86,7 @@ impl VariantBuilder {
                 self.metadata(VariantLogicalType::Object)?;
                 let keys = doc
                     .obj_iter(val)
-                    .map(|(key, _)| String::from_utf8_lossy(doc.str(key)).into_owned())
+                    .map(|(key, _)| rustdb_common::ByteString::from(doc.str(key)))
                     .collect();
                 let start = self.container(doc.len(val), Some(keys))?;
                 for (i, (_, child)) in doc.obj_iter(val).enumerate() {

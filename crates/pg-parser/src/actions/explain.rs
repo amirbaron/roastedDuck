@@ -91,7 +91,7 @@ pub(super) fn non_reserved_word<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> 
     match alt {
         // unreserved_keyword
         // other_keyword
-        1 | 2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
+        1 | 2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.into()))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -121,11 +121,11 @@ pub(super) fn explain_option_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
 pub(super) fn opt_boolean_or_string<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // TRUE_P
-        0 => Ok(SemValue::Str(Some("true".to_owned()))),
+        0 => Ok(SemValue::Str(Some("true".into()))),
         // FALSE_P
-        1 => Ok(SemValue::Str(Some("false".to_owned()))),
+        1 => Ok(SemValue::Str(Some("false".into()))),
         // ON
-        2 => Ok(SemValue::Str(Some("on".to_owned()))),
+        2 => Ok(SemValue::Str(Some("on".into()))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -154,7 +154,7 @@ pub(super) fn explain_option_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
 pub(super) fn explain_option_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // analyze_keyword
-        1 => Ok(SemValue::Str(Some("analyze".to_owned()))),
+        1 => Ok(SemValue::Str(Some("analyze".into()))),
         _ => Err(rhs.bad_alternative()),
     }
 }

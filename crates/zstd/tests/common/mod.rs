@@ -224,8 +224,13 @@ pub fn strings_frame_with(
 
 /// `ZstdStreamWrapper`: `chunk` bytes per `ZSTD_e_continue` call, then `ZSTD_e_end`.
 pub fn stream_frame(data: &[u8], level: i32, chunk: usize) -> Vec<u8> {
-    use rustdb_zstd::{Compressor, EndDirective, compress_bound};
-    let mut compressor = Compressor::new(level);
+    stream_frame_with(&mut rustdb_zstd::Compressor::new(level), data, chunk)
+}
+
+/// Buffered stream with the same context retained across caller-selected levels.
+pub fn stream_frame_with(compressor: &mut rustdb_zstd::Compressor, data: &[u8], chunk: usize) -> Vec<u8> {
+    use rustdb_zstd::{EndDirective, compress_bound};
+    compressor.reset_session();
     let mut result = Vec::new();
     let mut buffer = vec![0u8; compress_bound(1 << 17) + 3 + 4];
     for piece in data.chunks(chunk) {

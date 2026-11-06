@@ -15,7 +15,7 @@ impl PegTransformer {
         let statement: SqlStatement = self.transform_child(list, 4)?;
         self.clear_parameters();
         Ok(SqlStatement::new(SqlStatementKind::Prepare(PrepareStatement {
-            name,
+            name: name.into(),
             statement: Box::new(statement),
         })))
     }

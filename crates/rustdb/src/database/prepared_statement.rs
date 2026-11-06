@@ -20,19 +20,19 @@ use crate::transaction::TransactionContext;
 /// and the statement to bind again with the values of each execution.
 #[derive(Clone, Debug)]
 pub struct PreparedStatement {
-    query: String,
+    query: rustdb_common::ByteString,
     data: Arc<PreparedStatementData>,
 }
 
 impl PreparedStatement {
     /// The statement's text.
-    pub fn query(&self) -> &str {
+    pub fn query(&self) -> &[u8] {
         &self.query
     }
 
     /// The parameters with their 1-based indexes, in DuckDB's order (`named_param_map`):
     /// `?` and `$n` parameters are named by their index, `$name` ones by their name.
-    pub fn named_parameters(&self) -> impl Iterator<Item = (&str, u64)> {
+    pub fn named_parameters(&self) -> impl Iterator<Item = (&rustdb_common::ByteString, u64)> {
         self.data
             .unbound_statement
             .named_param_map
@@ -47,12 +47,12 @@ impl PreparedStatement {
 
     /// The type the parameter `identifier` was bound to, if it could be resolved
     /// (`PreparedStatementData::TryGetType`).
-    pub fn parameter_type(&self, identifier: &str) -> Option<LogicalType> {
+    pub fn parameter_type(&self, identifier: impl AsRef<[u8]>) -> Option<LogicalType> {
         self.data.parameter_type(identifier)
     }
 
     /// The names of the result columns.
-    pub fn names(&self) -> &[String] {
+    pub fn names(&self) -> &[rustdb_common::ByteString] {
         &self.data.names
     }
 
@@ -72,10 +72,145 @@ impl PreparedStatement {
 }
 
 impl Connection {
+    /// Test a relational table lookup without executing a query or closing a stream.
+    /// Views use the Python client's query/replacement-scan fallback instead.
+    pub fn relation_is_base_table(&mut self, catalog: &[u8], schema: &[u8], name: &[u8]) -> Result<bool> {
+        if self.transactions.is_invalidated() {
+            return Err(TransactionContext::aborted_error());
+        }
+        let owns_transaction = !self.transactions.has_current();
+        self.function_client
+            .set_settings(Arc::new(self.settings_snapshot()));
+        let transaction = self.transactions.current();
+        let context = self.client_context(transaction);
+        let outcome = self.in_query_scope(|_| {
+            context
+                .get_entry(catalog, schema, rustdb_catalog::CatalogType::Table, name, true)
+                .map(|entry| {
+                    entry
+                        .is_some_and(|entry| matches!(&entry.entry.kind, rustdb_catalog::EntryKind::Table(_)))
+                })
+        });
+        let invalidates = outcome
+            .as_ref()
+            .is_err_and(|error| super::invalidates_transaction(error.kind()));
+        let ended = if owns_transaction || !self.transactions.is_auto_commit() {
+            self.end_client_statement(outcome.is_ok(), invalidates)
+        } else {
+            Ok(())
+        };
+        outcome.and_then(|found| ended.map(|()| found))
+    }
+
+    /// Resolve a type during a callback on this connection without borrowing its
+    /// already executing mutable connection again. Uses the active transaction's
+    /// immutable binder context; `None` means the caller is outside this query.
+    pub fn type_from_current_query(connection_id: u64, name: &[u8]) -> Option<Result<LogicalType>> {
+        let client = rustdb_function::file_system::opener()?;
+        if client.connection_id() != connection_id {
+            return None;
+        }
+        let context = client
+            .transaction_context()
+            .and_then(|context| context.downcast::<rustdb_planner::ClientContext>().ok());
+        Some(
+            context
+                .ok_or_else(|| Error::internal("Missing active type lookup context"))
+                .and_then(|context| rustdb_csv::read_csv::transform_bytes_to_logical_type(&context, name)),
+        )
+    }
+    /// Bind relational metadata in the current transaction without closing an open
+    /// result (`ClientContext::TryBindRelation`). This does not execute the relation.
+    pub fn relation_columns(
+        &mut self,
+        statement: &mut SqlStatement,
+    ) -> Result<(Vec<rustdb_common::ByteString>, Vec<LogicalType>)> {
+        if self.transactions.is_invalidated() {
+            return Err(TransactionContext::aborted_error());
+        }
+        let owns_transaction = !self.transactions.has_current();
+        self.function_client
+            .set_settings(Arc::new(self.settings_snapshot()));
+        let transaction = self.transactions.current();
+        let planner = Planner::new(self.client_context(transaction));
+        let outcome = self.in_query_scope(|_| {
+            planner
+                .create_relation_plan(statement)
+                .map(|plan| (plan.names, plan.types))
+        });
+        let invalidates = outcome
+            .as_ref()
+            .is_err_and(|error| super::invalidates_transaction(error.kind()));
+        let ended = if owns_transaction || !self.transactions.is_auto_commit() {
+            self.end_client_statement(outcome.is_ok(), invalidates)
+        } else {
+            Ok(())
+        };
+        outcome.and_then(|columns| ended.map(|()| columns))
+    }
+
+    /// Resolve a SQL type name without preparing a query or closing an active result
+    /// (`TransformStringToLogicalType` inside `RunFunctionInTransaction`).
+    pub fn type_from_name(&mut self, name: &str) -> Result<LogicalType> {
+        self.type_from_name_bytes(name.as_bytes())
+    }
+
+    /// Type-name lookup preserving native identifier bytes.
+    pub fn type_from_name_bytes(&mut self, name: &[u8]) -> Result<LogicalType> {
+        if self.transactions.is_invalidated() {
+            return Err(TransactionContext::aborted_error());
+        }
+        let owns_transaction = !self.transactions.has_current();
+        self.function_client
+            .set_settings(Arc::new(self.settings_snapshot()));
+        let transaction = self.transactions.current();
+        let context = self.client_context(transaction);
+        let outcome =
+            self.in_query_scope(|_| rustdb_csv::read_csv::transform_bytes_to_logical_type(&context, name));
+        let invalidates = outcome
+            .as_ref()
+            .is_err_and(|e| super::invalidates_transaction(e.kind()));
+        let ended = if owns_transaction || !self.transactions.is_auto_commit() {
+            self.end_client_statement(outcome.is_ok(), invalidates)
+        } else {
+            Ok(())
+        };
+        outcome.and_then(|kind| ended.map(|()| kind))
+    }
+
+    /// Resolves the native CSV dialect/schema once for a client relation, retaining
+    /// the caller's active stream and explicit transaction during metadata binding.
+    pub fn csv_relation_options(
+        &mut self,
+        paths: &[rustdb_common::ByteString],
+        parameters: &[(rustdb_common::ByteString, Value)],
+    ) -> Result<rustdb_csv::read_csv::CsvRelationOptions> {
+        if self.transactions.is_invalidated() {
+            return Err(TransactionContext::aborted_error());
+        }
+        let owns_transaction = !self.transactions.has_current();
+        self.function_client
+            .set_settings(Arc::new(self.settings_snapshot()));
+        let transaction = self.transactions.current();
+        let context = self.client_context(transaction);
+        let outcome =
+            self.in_query_scope(|_| rustdb_csv::read_csv::relation_options(&context, paths, parameters));
+        let invalidates = outcome
+            .as_ref()
+            .is_err_and(|e| super::invalidates_transaction(e.kind()));
+        let ended = if owns_transaction || !self.transactions.is_auto_commit() {
+            self.end_client_statement(outcome.is_ok(), invalidates)
+        } else {
+            Ok(())
+        };
+        outcome.and_then(|value| ended.map(|()| value))
+    }
+
     /// Prepares the single statement in `query` (DuckDB's `ClientContext::Prepare`).
-    pub fn prepare(&mut self, query: &str) -> Result<PreparedStatement> {
+    pub fn prepare(&mut self, query: impl AsRef<[u8]>) -> Result<PreparedStatement> {
+        let query = query.as_ref();
         self.initial_cleanup();
-        let mut statements = self.parse_statements(query)?;
+        let mut statements = self.parse_statements_bytes(query)?;
         if statements.len() > 1 {
             return Err(Error::invalid_input(
                 "Cannot prepare multiple statements at once!",
@@ -91,16 +226,30 @@ impl Connection {
     /// The tables the single statement in `query` uses, by name or by qualified name
     /// (DuckDB's `ClientContext::GetTableNames`): the statement is bound without being
     /// planned, so tables need not exist.
-    pub fn table_names(&mut self, query: &str, qualified: bool) -> Result<BTreeSet<String>> {
-        let mut statements = self.extract_statements(query)?;
+    pub fn table_names(
+        &mut self,
+        query: impl AsRef<[u8]>,
+        qualified: bool,
+    ) -> Result<BTreeSet<rustdb_common::ByteString>> {
+        let mut statements = self.parse_statements_bytes(query.as_ref())?;
         if statements.len() != 1 {
             return Err(Error::invalid_input("Expected a single statement"));
         }
         let statement = statements.remove(0);
+        if self.transactions.is_invalidated() {
+            return Err(TransactionContext::aborted_error());
+        }
+        let owns_transaction = !self.transactions.has_current();
+        self.function_client
+            .set_settings(Arc::new(self.settings_snapshot()));
         let transaction = self.transactions.current();
         let planner = Planner::new(self.client_context(transaction));
-        let names = planner.table_names(statement, qualified);
-        let ended = self.transactions.end_statement(names.is_ok(), false);
+        let names = self.in_query_scope(|_| planner.table_names(statement, qualified));
+        let ended = if owns_transaction || !self.transactions.is_auto_commit() {
+            self.end_client_statement(names.is_ok(), false)
+        } else {
+            Ok(())
+        };
         names.and_then(|names| ended.map(|()| names))
     }
 
@@ -124,7 +273,7 @@ impl Connection {
         let invalidates = prepared
             .as_ref()
             .is_err_and(|error| super::invalidates_transaction(error.kind()));
-        let ended = self.transactions.end_statement(prepared.is_ok(), invalidates);
+        let ended = self.end_client_statement(prepared.is_ok(), invalidates);
         let prepared = prepared.and_then(|prepared| ended.map(|()| prepared));
         match prepared {
             Ok(data) => Ok(PreparedStatement {
@@ -170,10 +319,10 @@ impl Connection {
     /// Starts the prepared statement with `values` for its parameters, by identifier,
     /// without running its plan (DuckDB's `PreparedStatement::PendingQuery`); the result
     /// streams if `allow_stream` and the statement allows it.
-    pub fn pending_prepared(
+    pub fn pending_prepared<K: AsRef<[u8]>>(
         &mut self,
         prepared: &PreparedStatement,
-        values: &CaseInsensitiveMap<Value>,
+        values: &CaseInsensitiveMap<Value, K>,
         allow_stream: bool,
     ) -> Result<PendingQuery> {
         rustdb_planner::verify_parameters(values, &prepared.data.unbound_statement.named_param_map)?;
@@ -195,10 +344,10 @@ impl Connection {
     }
 
     /// Runs the prepared statement with `values` (DuckDB's `PreparedStatement::Execute`).
-    pub fn execute_prepared(
+    pub fn execute_prepared<K: AsRef<[u8]>>(
         &mut self,
         prepared: &PreparedStatement,
-        values: &CaseInsensitiveMap<Value>,
+        values: &CaseInsensitiveMap<Value, K>,
         allow_stream: bool,
     ) -> Result<QueryResult> {
         let pending = self.pending_prepared(prepared, values, allow_stream)?;
@@ -208,17 +357,20 @@ impl Connection {
     /// Binds the prepared statement again with the values as constants and starts its
     /// plan (`RebindPreparedStatement`, then `PendingPreparedStatementInternal`). A value
     /// is typed like DuckDB's `BoundParameterData(Value)`: strings as string literals.
-    fn start_prepared(
+    fn start_prepared<K: AsRef<[u8]>>(
         &mut self,
         prepared: &PreparedStatementData,
-        values: &CaseInsensitiveMap<Value>,
+        values: &CaseInsensitiveMap<Value, K>,
         mode: RunMode,
     ) -> Result<StatementRun> {
         use rustdb_common::profiling::MetricType;
         prepared.check_parameter_count(values.len())?;
         let mut parameters = CaseInsensitiveMap::default();
-        for (identifier, value) in values.iter() {
-            parameters.insert(identifier.to_owned(), parameter_data(value.clone()));
+        for (identifier, value) in values.iter_keys() {
+            parameters.insert(
+                rustdb_common::ByteString::from(identifier.as_ref()),
+                parameter_data(value.clone()),
+            );
         }
         let transaction = self.transactions.current();
         let planner = Planner::new(self.client_context(transaction));

@@ -313,7 +313,7 @@ pub struct LogicalCteRef<'a> {
     /// `chunk_types` (property 202).
     pub chunk_types: &'a [rustdb_types::LogicalType],
     /// `bound_columns` (property 203).
-    pub bound_columns: &'a [String],
+    pub bound_columns: &'a [rustdb_common::ByteString],
     /// `is_recurring` (property 205).
     pub is_recurring: bool,
 }
@@ -432,7 +432,7 @@ pub struct LogicalRecursiveCte<'a> {
     /// `union_all` (property 200).
     pub union_all: bool,
     /// `ctename` (property 201).
-    pub ctename: &'a str,
+    pub ctename: &'a rustdb_common::ByteString,
     /// `table_index` (property 202).
     pub table_index: u64,
     /// `column_count` (property 203).
@@ -463,7 +463,7 @@ pub struct LogicalMaterializedCte<'a> {
     /// `column_count` (property 201).
     pub column_count: u64,
     /// `ctename` (property 202).
-    pub ctename: &'a str,
+    pub ctename: &'a rustdb_common::ByteString,
     /// `materialize` (property 203).
     pub materialize: rustdb_ast::CteMaterialize,
 }
@@ -738,7 +738,7 @@ impl SerializeObject for LogicalExplain<'_> {
 #[derive(Clone, Copy, Debug)]
 pub struct LogicalSet<'a> {
     /// `name` (property 200).
-    pub name: &'a str,
+    pub name: &'a rustdb_common::ByteString,
     /// `value` (property 201).
     pub value: &'a rustdb_types::Value,
     /// `scope` (property 202).
@@ -758,7 +758,7 @@ impl SerializeObject for LogicalSet<'_> {
 #[derive(Clone, Copy, Debug)]
 pub struct LogicalReset<'a> {
     /// `name` (property 200).
-    pub name: &'a str,
+    pub name: &'a rustdb_common::ByteString,
     /// `scope` (property 201).
     pub scope: rustdb_ast::SetScope,
 }
@@ -857,7 +857,7 @@ impl SerializeObject for LogicalExport<'_> {
 #[derive(Clone, Copy, Debug)]
 pub struct FilenamePattern<'a> {
     /// `base` (property 200).
-    pub base: &'a str,
+    pub base: &'a rustdb_common::ByteString,
     /// `pos` (property 201).
     pub pos: u64,
     /// `uuid` (property 202).
@@ -882,7 +882,7 @@ pub struct FileNameSegment<'a> {
     /// `type` (property 200).
     pub segment_type: crate::FileNameSegmentType,
     /// `data` (property 201).
-    pub data: &'a str,
+    pub data: &'a rustdb_common::ByteString,
 }
 
 impl SerializeObject for FileNameSegment<'_> {

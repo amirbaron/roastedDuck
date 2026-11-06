@@ -2,7 +2,6 @@
 //! `csv_reader_options.hpp/.cpp` and `ParseColumnList` of `bind_helpers.cpp`).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fmt::Write as _;
 
 use rustdb_common::{CaseInsensitiveMap, Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_function::cast::ValueCast;
@@ -302,15 +301,19 @@ impl FileCompressionType {
 
     /// The compression of `path` under `self` (`VirtualFileSystem::OpenFileExtended`).
     #[must_use]
-    pub fn resolve(self, path: &str) -> Self {
+    pub fn resolve(self, path: impl AsRef<[u8]>) -> Self {
         if self != Self::AutoDetect {
             return self;
         }
-        let path = path.split('?').next().unwrap_or(path);
-        let extension = std::path::Path::new(path).extension();
-        if extension.is_some_and(|extension| extension == "gz") {
+        let path = path.as_ref();
+        let path = path.split(|byte| *byte == b'?').next().unwrap_or(path);
+        let extension = path
+            .iter()
+            .rposition(|byte| *byte == b'.')
+            .map(|dot| &path[dot + 1..]);
+        if extension.is_some_and(|extension| extension == b"gz") {
             Self::Gzip
-        } else if extension.is_some_and(|extension| extension == "zst") {
+        } else if extension.is_some_and(|extension| extension == b"zst") {
             Self::Zstd
         } else {
             Self::Uncompressed
@@ -338,29 +341,29 @@ pub struct CsvReaderOptions {
     pub allow_quoted_nulls: bool,
     pub comment: u8,
     pub thousands_separator: u8,
-    pub sql_types_per_column: CaseInsensitiveMap<usize>,
+    pub sql_types_per_column: CaseInsensitiveMap<usize, rustdb_common::ByteString>,
     pub sql_type_list: Vec<LogicalType>,
-    pub name_list: Vec<String>,
+    pub name_list: Vec<rustdb_common::ByteString>,
     pub columns_set: bool,
     pub auto_type_candidates: Vec<LogicalType>,
-    pub sniffer_user_mismatch_error: String,
+    pub sniffer_user_mismatch_error: rustdb_common::ByteString,
     pub was_type_manually_set: Vec<bool>,
     pub maximum_line_size: CsvOption<u64>,
     pub normalize_names: bool,
-    pub force_not_null_names: HashSet<String>,
+    pub force_not_null_names: HashSet<rustdb_common::ByteString>,
     pub force_not_null: Vec<bool>,
     /// -1 means all.
     pub files_to_sniff: i64,
     pub sample_size_chunks: u64,
     pub all_varchar: bool,
     pub auto_detect: bool,
-    pub file_path: String,
+    pub file_path: rustdb_common::ByteString,
     pub buffer_size_option: CsvOption<u64>,
     pub decimal_separator: String,
     pub null_padding: bool,
     pub parallel: bool,
     pub encoding: String,
-    pub user_defined_parameters: BTreeMap<String, String>,
+    pub user_defined_parameters: BTreeMap<String, rustdb_common::ByteString>,
     // Writer options.
     pub force_quote: Vec<bool>,
     pub prefix: String,
@@ -407,7 +410,7 @@ impl Default for CsvReaderOptions {
                 LogicalType::BOOLEAN,
                 LogicalType::SQLNULL,
             ],
-            sniffer_user_mismatch_error: String::new(),
+            sniffer_user_mismatch_error: rustdb_common::ByteString::new(),
             was_type_manually_set: Vec::new(),
             maximum_line_size: CsvOption::new(MAX_LINE_SIZE_DEFAULT),
             normalize_names: false,
@@ -417,7 +420,7 @@ impl Default for CsvReaderOptions {
             sample_size_chunks: 20480 / SNIFF_SIZE,
             all_varchar: false,
             auto_detect: true,
-            file_path: String::new(),
+            file_path: rustdb_common::ByteString::new(),
             buffer_size_option: CsvOption::new(ROWS_PER_BUFFER * MAX_LINE_SIZE_DEFAULT),
             decimal_separator: ".".to_owned(),
             null_padding: false,
@@ -444,20 +447,20 @@ fn list_children(value: &Value) -> &[Value] {
 }
 
 /// `ParseBoolean(vector<Value>)`.
-fn parse_boolean_list(set: &[Value], loption: &str) -> Result<bool> {
+fn parse_boolean_list(set: &[Value], loption: &[u8]) -> Result<bool> {
     match set {
         [] => Ok(true),
         [value] => parse_boolean(value, loption),
-        _ => Err(Error::binder(format!(
+        _ => Err(Error::binder(rustdb_common::byte_format!(
             "\"{loption}\" expects a single argument as a boolean value (e.g. TRUE or 1)"
         ))),
     }
 }
 
 /// `ParseBoolean(Value)`.
-pub(crate) fn parse_boolean(value: &Value, loption: &str) -> Result<bool> {
+pub(crate) fn parse_boolean(value: &Value, loption: &[u8]) -> Result<bool> {
     if value.is_null() {
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "\"{loption}\" expects a non-null boolean value (e.g. TRUE or 1)"
         )));
     }
@@ -468,47 +471,53 @@ pub(crate) fn parse_boolean(value: &Value, loption: &str) -> Result<bool> {
         value.logical_type().id(),
         LogicalTypeId::Float | LogicalTypeId::Double | LogicalTypeId::Decimal
     ) {
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "\"{loption}\" expects a boolean value (e.g. TRUE or 1)"
         )));
     }
     value
         .default_cast_as(&LogicalType::BOOLEAN)?
         .as_bool()
-        .ok_or_else(|| Error::binder(format!("\"{loption}\" expects a boolean value (e.g. TRUE or 1)")))
+        .ok_or_else(|| {
+            Error::binder(rustdb_common::byte_format!(
+                "\"{loption}\" expects a boolean value (e.g. TRUE or 1)"
+            ))
+        })
 }
 
 /// `ParseString`.
-pub(crate) fn parse_string(value: &Value, loption: &str) -> Result<String> {
+pub(crate) fn parse_string(value: &Value, loption: &[u8]) -> Result<String> {
     if value.is_null() {
         return Ok(String::new());
     }
     if is_list(value) {
         let children = list_children(value);
         if children.len() != 1 {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "\"{loption}\" expects a single argument as a string value"
             )));
         }
         return parse_string(&children[0], loption);
     }
     if value.logical_type().id() != LogicalTypeId::Varchar {
-        return Err(Error::binder(format!("\"{loption}\" expects a string argument!")));
+        return Err(Error::binder(rustdb_common::byte_format!(
+            "\"{loption}\" expects a string argument!"
+        )));
     }
     Ok(value.as_str().unwrap_or_default().to_owned())
 }
 
 /// `ParseInteger`.
-pub(crate) fn parse_integer(value: &Value, loption: &str) -> Result<i64> {
+pub(crate) fn parse_integer(value: &Value, loption: &[u8]) -> Result<i64> {
     if value.is_null() {
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "\"{loption}\" expects a non-null integer value"
         )));
     }
     if is_list(value) {
         let children = list_children(value);
         if children.len() != 1 {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "\"{loption}\" expects a single argument as an integer value"
             )));
         }
@@ -521,15 +530,19 @@ pub(crate) fn parse_integer(value: &Value, loption: &str) -> Result<i64> {
 }
 
 /// `ParseColumnList(vector<Value>)`.
-fn parse_column_list_values(set: &[Value], names: &[String], loption: &str) -> Result<Vec<bool>> {
+fn parse_column_list_values(
+    set: &[Value],
+    names: &[rustdb_common::ByteString],
+    loption: &[u8],
+) -> Result<Vec<bool>> {
     if set.is_empty() {
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "\"{loption}\" expects a column list or * as parameter"
         )));
     }
-    let mut option_map: Vec<(String, bool)> = Vec::new();
+    let mut option_map: Vec<(rustdb_common::ByteString, bool)> = Vec::new();
     for value in set {
-        let text = value.to_varchar()?;
+        let text = value.to_varchar_bytes()?;
         if !option_map
             .iter()
             .any(|(name, _)| name.eq_ignore_ascii_case(&text))
@@ -548,7 +561,7 @@ fn parse_column_list_values(set: &[Value], names: &[String], loption: &str) -> R
         }
     }
     if let Some((missing, _)) = option_map.iter().find(|(_, found)| !found) {
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "\"{loption}\" expected to find {missing}, but it was not found in the table"
         )));
     }
@@ -556,17 +569,21 @@ fn parse_column_list_values(set: &[Value], names: &[String], loption: &str) -> R
 }
 
 /// `ParseColumnList(Value)`.
-pub fn parse_column_list(value: &Value, names: &[String], loption: &str) -> Result<Vec<bool>> {
+pub fn parse_column_list(
+    value: &Value,
+    names: &[rustdb_common::ByteString],
+    loption: &[u8],
+) -> Result<Vec<bool>> {
     if !is_list(value) {
         if value.logical_type().id() == LogicalTypeId::Varchar && value.as_str() == Some("*") {
             return Ok(vec![true; names.len()]);
         }
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "\"{loption}\" expects a column list or * as parameter"
         )));
     }
     if value.is_null() {
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "\"{loption}\" expects a column list or * as parameter, it can't be a NULL value"
         )));
     }
@@ -598,7 +615,7 @@ fn candidate_specificity(ty: &LogicalType) -> Result<u8> {
         LogicalTypeId::Boolean => 12,
         LogicalTypeId::SqlNull => 13,
         other => {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Auto Type Candidate of type {} is not accepted as a valid input",
                 other.name()
             )));
@@ -787,13 +804,18 @@ impl CsvReaderOptions {
     }
 
     /// `SetReadOption`.
-    pub fn set_read_option(&mut self, loption: &str, value: &Value, expected_names: &[String]) -> Result<()> {
+    pub fn set_read_option(
+        &mut self,
+        loption: &[u8],
+        value: &Value,
+        expected_names: &[rustdb_common::ByteString],
+    ) -> Result<()> {
         if self.set_base_option(loption, value, false)? {
             return Ok(());
         }
         match loption {
-            "auto_detect" => self.auto_detect = parse_boolean(value, loption)?,
-            "sample_size" => {
+            b"auto_detect" => self.auto_detect = parse_boolean(value, loption)?,
+            b"sample_size" => {
                 let sample_size = parse_integer(value, loption)?;
                 if sample_size < 1 && sample_size != -1 {
                     return Err(Error::binder(
@@ -810,8 +832,8 @@ impl CsvReaderOptions {
                     }
                 }
             }
-            "skip" => self.set_skip_rows(parse_integer(value, loption)?)?,
-            "max_line_size" | "maximum_line_size" => {
+            b"skip" => self.set_skip_rows(parse_integer(value, loption)?)?,
+            b"max_line_size" | b"maximum_line_size" => {
                 let line_size = parse_integer(value, loption)?;
                 if line_size < 0 {
                     return Err(Error::binder(
@@ -822,23 +844,23 @@ impl CsvReaderOptions {
                 if self.buffer_size_option.is_set_by_user()
                     && self.maximum_line_size.value() > self.buffer_size_option.value()
                 {
-                    return Err(Error::invalid_input(format!(
+                    return Err(Error::invalid_input(rustdb_common::byte_format!(
                         "Buffer Size of {} must be a higher value than the maximum line size {}",
                         self.buffer_size_option.value(),
                         self.maximum_line_size.value()
                     )));
                 }
             }
-            "date_format" | "dateformat" => {
+            b"date_format" | b"dateformat" => {
                 let format = parse_string(value, loption)?;
                 self.set_date_format(LogicalTypeId::Date, &format, true)?;
             }
-            "timestamp_format" | "timestampformat" => {
+            b"timestamp_format" | b"timestampformat" => {
                 let format = parse_string(value, loption)?;
                 self.set_date_format(LogicalTypeId::Timestamp, &format, true)?;
             }
-            "ignore_errors" => self.ignore_errors.set(parse_boolean(value, loption)?, true),
-            "buffer_size" => {
+            b"ignore_errors" => self.ignore_errors.set(parse_boolean(value, loption)?, true),
+            b"buffer_size" => {
                 self.buffer_size_option
                     .set(parse_integer(value, loption)? as u64, true);
                 if self.buffer_size_option.value() == 0 {
@@ -847,7 +869,7 @@ impl CsvReaderOptions {
                 if self.maximum_line_size.is_set_by_user()
                     && self.maximum_line_size.value() > self.buffer_size_option.value()
                 {
-                    return Err(Error::invalid_input(format!(
+                    return Err(Error::invalid_input(rustdb_common::byte_format!(
                         "Buffer Size of {} must be a higher value than the maximum line size {}",
                         self.buffer_size_option.value(),
                         self.maximum_line_size.value()
@@ -855,7 +877,7 @@ impl CsvReaderOptions {
                 }
                 self.maximum_line_size.set(self.buffer_size_option.value(), false);
             }
-            "decimal_separator" => {
+            b"decimal_separator" => {
                 self.decimal_separator = parse_string(value, loption)?;
                 if self.decimal_separator != "." && self.decimal_separator != "," {
                     return Err(Error::binder(
@@ -863,23 +885,23 @@ impl CsvReaderOptions {
                     ));
                 }
             }
-            "null_padding" => self.null_padding = parse_boolean(value, loption)?,
-            "parallel" => self.parallel = parse_boolean(value, loption)?,
-            "allow_quoted_nulls" => self.allow_quoted_nulls = parse_boolean(value, loption)?,
-            "store_rejects" => self.store_rejects.set(parse_boolean(value, loption)?, true),
-            "force_not_null" => {
+            b"null_padding" => self.null_padding = parse_boolean(value, loption)?,
+            b"parallel" => self.parallel = parse_boolean(value, loption)?,
+            b"allow_quoted_nulls" => self.allow_quoted_nulls = parse_boolean(value, loption)?,
+            b"store_rejects" => self.store_rejects.set(parse_boolean(value, loption)?, true),
+            b"force_not_null" => {
                 if expected_names.is_empty() {
                     if value.is_null() {
                         return Err(Error::binder("Invalid value for 'force_not_null' paramenter"));
                     }
                     for child in list_children(value) {
-                        self.force_not_null_names.insert(child.to_varchar()?);
+                        self.force_not_null_names.insert(child.to_varchar_bytes()?);
                     }
                 } else {
                     self.force_not_null = parse_column_list(value, expected_names, loption)?;
                 }
             }
-            "rejects_table" => {
+            b"rejects_table" => {
                 let table_name = parse_string(value, loption)?;
                 if table_name.is_empty() {
                     return Err(Error::binder("REJECTS_TABLE option cannot be empty"));
@@ -889,13 +911,13 @@ impl CsvReaderOptions {
                     true,
                     rustdb_ast::keyword::KeywordCategory::None,
                 ) {
-                    return Err(Error::binder(format!(
+                    return Err(Error::binder(rustdb_common::byte_format!(
                         "rejects_scan option: {table_name} requires quotes to be used as an identifier"
                     )));
                 }
                 self.rejects_table_name.set(table_name, true);
             }
-            "rejects_scan" => {
+            b"rejects_scan" => {
                 let table_name = parse_string(value, loption)?;
                 if table_name.is_empty() {
                     return Err(Error::binder("rejects_scan option cannot be empty"));
@@ -905,13 +927,13 @@ impl CsvReaderOptions {
                     true,
                     rustdb_ast::keyword::KeywordCategory::None,
                 ) {
-                    return Err(Error::binder(format!(
+                    return Err(Error::binder(rustdb_common::byte_format!(
                         "rejects_scan option: {table_name} requires quotes to be used as an identifier"
                     )));
                 }
                 self.rejects_scan_name.set(table_name, true);
             }
-            "rejects_limit" => {
+            b"rejects_limit" => {
                 let limit = parse_integer(value, loption)?;
                 if limit < 0 {
                     return Err(Error::binder(
@@ -920,8 +942,8 @@ impl CsvReaderOptions {
                 }
                 self.rejects_limit = limit as u64;
             }
-            "encoding" => self.encoding = parse_string(value, loption)?,
-            "thousands" => {
+            b"encoding" => self.encoding = parse_string(value, loption)?,
+            b"thousands" => {
                 if !value.is_null() {
                     let separator = parse_string(value, loption)?;
                     if separator.len() > 1 {
@@ -935,7 +957,7 @@ impl CsvReaderOptions {
                 }
             }
             _ => {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "Unrecognized option for CSV reader \"{loption}\""
                 )));
             }
@@ -944,8 +966,8 @@ impl CsvReaderOptions {
     }
 
     /// `SetWriteOption`.
-    pub fn set_write_option(&mut self, loption: &str, value: &Value) -> Result<()> {
-        if loption == "new_line" {
+    pub fn set_write_option(&mut self, loption: &[u8], value: &Value) -> Result<()> {
+        if loption == b"new_line" {
             self.write_newline = parse_string(value, loption)?;
             return Ok(());
         }
@@ -953,15 +975,15 @@ impl CsvReaderOptions {
             return Ok(());
         }
         match loption {
-            "force_quote" => {
+            b"force_quote" => {
                 let names = self.name_list.clone();
                 self.force_quote = parse_column_list(value, &names, loption)?;
             }
-            "date_format" | "dateformat" => {
+            b"date_format" | b"dateformat" => {
                 let format = parse_string(value, loption)?;
                 self.set_date_format(LogicalTypeId::Date, &format, false)?;
             }
-            "timestamp_format" | "timestampformat" => {
+            b"timestamp_format" | b"timestampformat" => {
                 let mut format = parse_string(value, loption)?;
                 if format.eq_ignore_ascii_case("iso") {
                     "%Y-%m-%dT%H:%M:%S.%fZ".clone_into(&mut format);
@@ -969,10 +991,10 @@ impl CsvReaderOptions {
                 self.set_date_format(LogicalTypeId::Timestamp, &format, false)?;
                 self.set_date_format(LogicalTypeId::TimestampTz, &format, false)?;
             }
-            "prefix" => self.prefix = parse_string(value, loption)?,
-            "suffix" => self.suffix = parse_string(value, loption)?,
+            b"prefix" => self.prefix = parse_string(value, loption)?,
+            b"suffix" => self.suffix = parse_string(value, loption)?,
             _ => {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "Unrecognized option CSV writer \"{loption}\""
                 )));
             }
@@ -981,24 +1003,24 @@ impl CsvReaderOptions {
     }
 
     /// `SetBaseOption`: options of both the reader and the writer.
-    pub fn set_base_option(&mut self, loption: &str, value: &Value, write_option: bool) -> Result<bool> {
-        if loption.starts_with("delim") || loption.starts_with("sep") {
+    pub fn set_base_option(&mut self, loption: &[u8], value: &Value, write_option: bool) -> Result<bool> {
+        if loption.starts_with(b"delim") || loption.starts_with(b"sep") {
             self.set_delimiter(&parse_string(value, loption)?)?;
-        } else if loption == "quote" {
+        } else if loption == b"quote" {
             self.set_quote(&parse_string(value, loption)?)?;
-        } else if loption == "comment" {
+        } else if loption == b"comment" {
             self.set_comment(&parse_string(value, loption)?)?;
-        } else if loption == "new_line" {
+        } else if loption == b"new_line" {
             self.set_newline(&parse_string(value, loption)?)?;
-        } else if loption == "escape" {
+        } else if loption == b"escape" {
             self.set_escape(&parse_string(value, loption)?)?;
-        } else if loption == "header" {
+        } else if loption == b"header" {
             self.set_header(parse_boolean(value, loption)?);
-        } else if loption == "nullstr" || loption == "null" {
+        } else if loption == b"nullstr" || loption == b"null" {
             self.null_str.clear();
             let ty = value.logical_type();
             if ty.id() != LogicalTypeId::List && ty.id() != LogicalTypeId::Varchar {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "CSV Reader function option {loption} requires a string or a list as input"
                 )));
             }
@@ -1009,19 +1031,19 @@ impl CsvReaderOptions {
                     let grandchild = list_child.child_type().cloned().unwrap_or_default();
                     let outer = list_children(value);
                     if grandchild.id() != LogicalTypeId::Varchar || outer.len() != 1 {
-                        return Err(Error::binder(format!(
+                        return Err(Error::binder(rustdb_common::byte_format!(
                             "CSV Reader function option {loption} requires a non-empty list of possible null strings (varchar) as input"
                         )));
                     }
                     children = list_children(&outer[outer.len() - 1]);
                 } else if list_child.id() != LogicalTypeId::Varchar {
-                    return Err(Error::binder(format!(
+                    return Err(Error::binder(rustdb_common::byte_format!(
                         "CSV Reader function option {loption} requires a non-empty list of possible null strings (varchar) as input"
                     )));
                 }
                 for child in children {
                     if child.is_null() {
-                        return Err(Error::binder(format!(
+                        return Err(Error::binder(rustdb_common::byte_format!(
                             "CSV Reader function option {loption} does not accept NULL values as a valid nullstr option"
                         )));
                     }
@@ -1031,13 +1053,13 @@ impl CsvReaderOptions {
                 self.null_str.push(parse_string(value, loption)?);
             }
             if self.null_str.len() > 1 && write_option {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "CSV Writer function option {loption} only accepts one nullstr value."
                 )));
             }
-        } else if loption == "compression" {
+        } else if loption == b"compression" {
             self.set_compression(&parse_string(value, loption)?)?;
-        } else if loption == "strict_mode" {
+        } else if loption == b"strict_mode" {
             self.set_rfc4180(parse_boolean(value, loption)?);
         } else {
             return Ok(false);
@@ -1051,34 +1073,38 @@ impl CsvReaderOptions {
     }
 
     /// `ToString`: the options shown in error messages.
-    pub fn to_display_string(&self, current_file_path: &str) -> String {
+    pub fn to_display_string(&self, current_file_path: &[u8]) -> rustdb_common::ByteString {
         fn line<T: FormatOption>(name: &str, option: &CsvOption<T>) -> String {
             format!("{name} = {} {}\n  ", option.format_value(), option.format_set())
         }
         let sm = &self.dialect_options.state_machine_options;
-        let mut error = format!("  file = {current_file_path}\n  ");
-        error += &line("delimiter", &sm.delimiter);
-        error += &line("quote", &sm.quote);
-        error += &line("escape", &sm.escape);
-        error += &line("new_line", &sm.new_line);
-        error += &line("header", &self.dialect_options.header);
-        error += &line("skip_rows", &self.dialect_options.skip_rows);
-        error += &line("comment", &sm.comment);
-        error += &line("strict_mode", &sm.strict_mode);
-        error += &line("date_format", self.dialect_options.date_format(FormatType::Date));
-        error += &line(
+        let mut error = rustdb_common::byte_format!("  file = {current_file_path}\n  ");
+        error.push_bytes(line("delimiter", &sm.delimiter));
+        error.push_bytes(line("quote", &sm.quote));
+        error.push_bytes(line("escape", &sm.escape));
+        error.push_bytes(line("new_line", &sm.new_line));
+        error.push_bytes(line("header", &self.dialect_options.header));
+        error.push_bytes(line("skip_rows", &self.dialect_options.skip_rows));
+        error.push_bytes(line("comment", &sm.comment));
+        error.push_bytes(line("strict_mode", &sm.strict_mode));
+        error.push_bytes(line(
+            "date_format",
+            self.dialect_options.date_format(FormatType::Date),
+        ));
+        error.push_bytes(line(
             "timestamp_format",
             self.dialect_options.date_format(FormatType::Timestamp),
-        );
-        let _ = write!(error, "null_padding = {}\n  ", u8::from(self.null_padding));
-        let _ = write!(
+        ));
+        let _ = rustdb_common::byte_write!(error, "null_padding = {}\n  ", u8::from(self.null_padding));
+        let _ = rustdb_common::byte_write!(
             error,
             "sample_size = {}\n  ",
             self.sample_size_chunks.wrapping_mul(STANDARD_VECTOR_SIZE as u64)
         );
-        let _ = write!(error, "ignore_errors = {}\n  ", self.ignore_errors.format_value());
-        let _ = writeln!(error, "all_varchar = {}", u8::from(self.all_varchar));
-        error += &self.sniffer_user_mismatch_error;
+        let _ =
+            rustdb_common::byte_write!(error, "ignore_errors = {}\n  ", self.ignore_errors.format_value());
+        let _ = rustdb_common::byte_write!(error, "all_varchar = {}\n", u8::from(self.all_varchar));
+        error.push_bytes(&self.sniffer_user_mismatch_error);
         error
     }
 
@@ -1203,23 +1229,36 @@ impl CsvReaderOptions {
     }
 
     /// `GetUserDefinedParameters`.
-    pub fn user_defined_parameters_string(&self) -> String {
-        self.user_defined_parameters
-            .iter()
-            .map(|(key, value)| format!("{key}={value}"))
-            .collect::<Vec<_>>()
-            .join(", ")
+    pub fn user_defined_parameters_string(&self) -> rustdb_common::ByteString {
+        rustdb_common::ByteString::join(
+            &self
+                .user_defined_parameters
+                .iter()
+                .map(|(key, value)| rustdb_common::byte_format!("{key}={value}"))
+                .collect::<Vec<_>>(),
+            b", ",
+        )
     }
 
     /// `ParseOption`: one `read_csv` named parameter (multi-file options are handled
     /// before). `parse_type` turns a type name into a type (`TransformStringToLogicalType`).
     pub fn parse_option(
         &mut self,
-        key: &str,
+        key: impl AsRef<[u8]>,
         value: &Value,
         parse_type: &dyn Fn(&str) -> Result<LogicalType>,
     ) -> Result<()> {
-        let loption = key.to_lowercase();
+        let key = key.as_ref();
+        let key = std::str::from_utf8(key)
+            .ok()
+            .filter(|key| key.is_ascii())
+            .ok_or_else(|| {
+                Error::binder(rustdb_common::byte_format!(
+                    "Unrecognized option for CSV reader \"{}\"",
+                    key.to_ascii_lowercase()
+                ))
+            })?;
+        let loption = key.to_ascii_lowercase();
         if store_user_defined_parameter(&loption) {
             self.user_defined_parameters
                 .insert(loption.clone(), rustdb_ast::value_to_sql_string(value));
@@ -1297,17 +1336,17 @@ impl CsvReaderOptions {
                             "read_csv {key} parameter cannot have a NULL value"
                         )));
                     }
-                    self.name_list.push(child.as_str().unwrap_or_default().to_owned());
+                    self.name_list.push(child.to_varchar_bytes()?);
                 }
                 let mut seen = HashSet::new();
                 for name in &self.name_list {
-                    if name.bytes().all(|byte| byte.is_ascii_whitespace()) {
+                    if name.iter().all(u8::is_ascii_whitespace) {
                         return Err(Error::binder(format!(
                             "read_csv {key} cannot have empty (or all whitespace) value"
                         )));
                     }
                     if !seen.insert(name.clone()) {
-                        return Err(Error::binder(format!(
+                        return Err(Error::binder(rustdb_common::byte_format!(
                             "read_csv {key} must have unique values. \"{name}\" is repeated."
                         )));
                     }
@@ -1359,26 +1398,26 @@ impl CsvReaderOptions {
                     self.sql_type_list.push(ty);
                 }
             }
-            "all_varchar" => self.all_varchar = boolean_value(&loption, value)?,
+            "all_varchar" => self.all_varchar = boolean_value(loption.as_bytes(), value)?,
             "files_to_sniff" => {
-                self.files_to_sniff = parse_integer(value, &loption)?;
+                self.files_to_sniff = parse_integer(value, loption.as_bytes())?;
                 if self.files_to_sniff < 1 && self.files_to_sniff != -1 {
                     return Err(Error::binder(
                         "Unsupported parameter for files_to_sniff: value must be -1 for all files or higher than one.",
                     ));
                 }
             }
-            "normalize_names" => self.normalize_names = boolean_value(&loption, value)?,
+            "normalize_names" => self.normalize_names = boolean_value(loption.as_bytes(), value)?,
             _ => {
                 let names = self.name_list.clone();
-                self.set_read_option(&loption, value, &names)?;
+                self.set_read_option(loption.as_bytes(), value, &names)?;
             }
         }
         Ok(())
     }
 
     /// `ToNamedParameters`: the options the sniffer settled on, as `read_csv` parameters.
-    pub fn to_named_parameters(&self) -> Vec<(String, Value)> {
+    pub fn to_named_parameters(&self) -> Result<Vec<(String, Value)>> {
         let sm = &self.dialect_options.state_machine_options;
         let mut params: Vec<(String, Value)> = Vec::new();
         let mut set = |name: &str, value: Value| {
@@ -1432,23 +1471,30 @@ impl CsvReaderOptions {
                 "column_names",
                 Value::list(
                     LogicalType::VARCHAR,
-                    self.name_list.iter().map(Value::varchar).collect(),
+                    self.name_list
+                        .iter()
+                        .map(|name| Value::try_varchar(name))
+                        .collect::<Result<_>>()?,
                 ),
             );
         }
         set("all_varchar", Value::boolean(self.all_varchar));
-        params
+        Ok(params)
     }
 }
 
 /// `GetBooleanValue`.
-fn boolean_value(loption: &str, value: &Value) -> Result<bool> {
+fn boolean_value(loption: &[u8], value: &Value) -> Result<bool> {
     if value.is_null() {
-        return Err(Error::binder(format!("read_csv {loption} cannot be NULL")));
+        return Err(Error::binder(rustdb_common::byte_format!(
+            "read_csv {loption} cannot be NULL"
+        )));
     }
-    value
-        .as_bool()
-        .ok_or_else(|| Error::binder(format!("read_csv {loption} expects a boolean")))
+    value.as_bool().ok_or_else(|| {
+        Error::binder(rustdb_common::byte_format!(
+            "read_csv {loption} expects a boolean"
+        ))
+    })
 }
 
 /// A single-byte option (`SetQuote`, `SetEscape`, `SetComment`): empty means none.

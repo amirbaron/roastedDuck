@@ -38,6 +38,13 @@ struct ArgMinMaxData {
 }
 
 impl FunctionData for ArgMinMaxData {
+    fn equals(&self, other: &dyn FunctionData) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self == other)
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

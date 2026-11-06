@@ -38,14 +38,42 @@ use crate::{
     Transaction, TypeEntry, ViewEntry,
 };
 
-pub(crate) fn base_info(catalog: &str, schema: &str, temporary: bool, kind: CreateInfoKind) -> CreateInfo {
+/// Whether a checkpoint needs a connection to apply deferred expression-index keys.
+/// Automatic checkpoints without a binder must retain the recoverable WAL instead.
+pub fn has_pending_index_replays(catalog: &Catalog) -> bool {
+    let transaction = Transaction::system();
+    catalog.schemas().scan(&transaction).iter().any(|schema| {
+        schema.as_schema().is_some_and(|schema| {
+            schema.tables.scan(&transaction).iter().any(|entry| {
+                if let EntryKind::Table(table) = &entry.kind {
+                    table.storage.as_ref().is_some_and(|storage| {
+                        storage.info().indexes().slots().iter().any(
+                            |slot| matches!(slot, IndexSlot::Unbound(index) if index.has_buffered_replays()),
+                        )
+                    })
+                } else {
+                    false
+                }
+            })
+        })
+    })
+}
+
+pub(crate) fn base_info(
+    catalog: impl AsRef<[u8]>,
+    schema: impl AsRef<[u8]>,
+    temporary: bool,
+    kind: CreateInfoKind,
+) -> CreateInfo {
+    let catalog = catalog.as_ref();
+    let schema = schema.as_ref();
     CreateInfo {
-        catalog: catalog.to_owned(),
-        schema: schema.to_owned(),
+        catalog: catalog.into(),
+        schema: schema.into(),
         temporary,
         internal: false,
         on_conflict: OnCreateConflict::ErrorOnConflict,
-        sql: String::new(),
+        sql: rustdb_common::ByteString::new(),
         comment: Value::default(),
         tags: CaseInsensitiveMap::default(),
         dependencies: LogicalDependencyList::default(),
@@ -54,18 +82,22 @@ pub(crate) fn base_info(catalog: &str, schema: &str, temporary: bool, kind: Crea
 }
 
 /// The `CreateInfo` of schema `schema` (`SchemaCatalogEntry::GetInfo`).
-pub fn schema_create_info(catalog: &str, schema: &str) -> CreateInfo {
+pub fn schema_create_info(catalog: impl AsRef<[u8]>, schema: impl AsRef<[u8]>) -> CreateInfo {
+    let catalog = catalog.as_ref();
+    let schema = schema.as_ref();
     base_info(catalog, schema, false, CreateInfoKind::Schema)
 }
 
 /// [`base_info`] carrying the dependencies `entry` records.
 fn entry_info(
-    catalog: &str,
-    schema: &str,
+    catalog: impl AsRef<[u8]>,
+    schema: impl AsRef<[u8]>,
     entry: &CatalogEntry,
     temporary: bool,
     kind: CreateInfoKind,
 ) -> CreateInfo {
+    let catalog = catalog.as_ref();
+    let schema = schema.as_ref();
     let mut info = base_info(catalog, schema, temporary, kind);
     info.dependencies.set.clone_from(&entry.dependencies);
     info.comment.clone_from(&entry.comment);
@@ -74,11 +106,13 @@ fn entry_info(
 
 /// `TableCatalogEntry::GetInfo`.
 pub fn table_create_info(
-    catalog: &str,
-    schema: &str,
+    catalog: impl AsRef<[u8]>,
+    schema: impl AsRef<[u8]>,
     entry: &CatalogEntry,
     table: &TableEntry,
 ) -> CreateInfo {
+    let catalog = catalog.as_ref();
+    let schema = schema.as_ref();
     let columns = table
         .columns
         .iter()
@@ -117,11 +151,13 @@ pub fn table_create_info(
 
 /// `ViewCatalogEntry::GetInfo`.
 pub(crate) fn view_create_info(
-    catalog: &str,
-    schema: &str,
+    catalog: impl AsRef<[u8]>,
+    schema: impl AsRef<[u8]>,
     entry: &CatalogEntry,
     view: &ViewEntry,
 ) -> CreateInfo {
+    let catalog = catalog.as_ref();
+    let schema = schema.as_ref();
     entry_info(
         catalog,
         schema,
@@ -140,11 +176,13 @@ pub(crate) fn view_create_info(
 
 /// `SequenceCatalogEntry::GetInfo`: the counter is stored as the start value.
 pub fn sequence_create_info(
-    catalog: &str,
-    schema: &str,
+    catalog: impl AsRef<[u8]>,
+    schema: impl AsRef<[u8]>,
     entry: &CatalogEntry,
     sequence: &SequenceEntry,
 ) -> CreateInfo {
+    let catalog = catalog.as_ref();
+    let schema = schema.as_ref();
     let data = sequence.data();
     entry_info(
         catalog,
@@ -165,11 +203,13 @@ pub fn sequence_create_info(
 
 /// `TypeCatalogEntry::GetInfo`.
 pub(crate) fn type_create_info(
-    catalog: &str,
-    schema: &str,
+    catalog: impl AsRef<[u8]>,
+    schema: impl AsRef<[u8]>,
     entry: &CatalogEntry,
     ty: &TypeEntry,
 ) -> CreateInfo {
+    let catalog = catalog.as_ref();
+    let schema = schema.as_ref();
     entry_info(
         catalog,
         schema,
@@ -184,7 +224,13 @@ pub(crate) fn type_create_info(
 }
 
 /// `MacroCatalogEntry::GetInfo` (the entry's temporary flag is not part of it).
-pub(crate) fn macro_create_info(catalog: &str, schema: &str, entry: &CatalogEntry) -> Option<CreateInfo> {
+pub(crate) fn macro_create_info(
+    catalog: impl AsRef<[u8]>,
+    schema: impl AsRef<[u8]>,
+    entry: &CatalogEntry,
+) -> Option<CreateInfo> {
+    let catalog = catalog.as_ref();
+    let schema = schema.as_ref();
     let (macros, table) = match &entry.kind {
         EntryKind::Macro(function) => (function, false),
         EntryKind::TableMacro(function) => (function, true),
@@ -204,21 +250,21 @@ pub(crate) fn macro_create_info(catalog: &str, schema: &str, entry: &CatalogEntr
 
 /// The catalog entry a `CREATE TYPE` or `CREATE MACRO` info describes (DuckDB's
 /// `TypeCatalogEntry` / `MacroCatalogEntry` constructors).
-pub fn entry_from_create_info(info: &CreateInfo) -> Result<CatalogEntry> {
+pub fn entry_from_create_info(catalog: &Catalog, info: &CreateInfo) -> Result<CatalogEntry> {
     let mut entry = match &info.kind {
-        CreateInfoKind::Type(ty) => CatalogEntry::new(
+        CreateInfoKind::Type(ty) => catalog.new_entry(
             ty.name.clone(),
             EntryKind::Type(TypeEntry {
                 user_type: ty.logical_type.clone(),
             }),
         ),
-        CreateInfoKind::Macro(function) => CatalogEntry::new(
+        CreateInfoKind::Macro(function) => catalog.new_entry(
             function.name.clone(),
             EntryKind::Macro(MacroEntry {
                 macros: function.macros.clone(),
             }),
         ),
-        CreateInfoKind::TableMacro(function) => CatalogEntry::new(
+        CreateInfoKind::TableMacro(function) => catalog.new_entry(
             function.name.clone(),
             EntryKind::TableMacro(MacroEntry {
                 macros: function.macros.clone(),
@@ -284,7 +330,7 @@ fn reorder_tables(tables: Vec<Arc<CatalogEntry>>) -> Vec<Arc<CatalogEntry>> {
 
 /// `ReorderTableEntries`: tables referenced by foreign keys first.
 pub fn reorder_table_entries<T>(tables: Vec<(T, Arc<CatalogEntry>)>) -> Vec<(T, Arc<CatalogEntry>)> {
-    let references = |entry: &CatalogEntry| -> Vec<String> {
+    let references = |entry: &CatalogEntry| -> Vec<rustdb_common::ByteString> {
         let EntryKind::Table(table) = &entry.kind else {
             return Vec::new();
         };
@@ -419,7 +465,7 @@ pub fn export_create_infos(catalog: &Catalog, transaction: &Transaction) -> Vec<
 }
 
 /// The name of the entry `info` creates.
-fn create_info_name(info: &CreateInfo) -> &str {
+fn create_info_name(info: &CreateInfo) -> &[u8] {
     match &info.kind {
         CreateInfoKind::Schema => &info.schema,
         CreateInfoKind::Table(table) => &table.table,
@@ -428,7 +474,7 @@ fn create_info_name(info: &CreateInfo) -> &str {
         CreateInfoKind::Type(ty) => &ty.name,
         CreateInfoKind::Macro(function) | CreateInfoKind::TableMacro(function) => &function.name,
         CreateInfoKind::Index(index) => &index.name,
-        CreateInfoKind::Secret(_) => "",
+        CreateInfoKind::Secret(_) => b"",
     }
 }
 
@@ -443,7 +489,7 @@ fn reorder_by_dependencies(infos: Vec<CreateInfo>) -> Vec<CreateInfo> {
             let found = infos.iter().position(|info| {
                 info.kind.catalog_type() == dependency.entry.catalog_type
                     && info.schema.eq_ignore_ascii_case(&dependency.entry.schema)
-                    && create_info_name(info).eq_ignore_ascii_case(&dependency.entry.name)
+                    && create_info_name(info).eq_ignore_ascii_case(dependency.entry.name.as_bytes())
             });
             if let Some(found) = found {
                 visit(found, infos, visited, order);
@@ -500,7 +546,7 @@ pub fn write_checkpoint(
     let mut persisted = Vec::new();
 
     // `GetCatalogEntries`.
-    let mut entries: Vec<(String, Arc<CatalogEntry>)> = Vec::new();
+    let mut entries: Vec<(rustdb_common::ByteString, Arc<CatalogEntry>)> = Vec::new();
     for schema in catalog.schemas().scan(transaction) {
         let Some(schema_entry) = schema.as_schema() else {
             continue;
@@ -809,6 +855,11 @@ fn serialize_indexes(
                     .serialize_to_disk(&index_options, &mut index_blocks, &mut |block| kept.push(block))?
             }
             IndexSlot::Unbound(index) => {
+                if index.has_buffered_replays() {
+                    return Err(Error::internal(
+                        "checkpoint requires binding pending index replays",
+                    ));
+                }
                 index.serialize_to_disk(&mut index_blocks, &mut |block| kept.push(block))?
             }
         };
@@ -861,18 +912,18 @@ pub fn read_create_info_property(
 ) -> Result<CreateInfo> {
     deserializer.on_property_begin(field, tag)?;
     if !deserializer.on_nullable_begin()? {
-        return Err(Error::new(
+        return Err(Error::new_bytes(
             rustdb_common::ErrorKind::Io,
-            format!("corrupt database file - {tag} entry without create info"),
+            rustdb_common::byte_format!("corrupt database file - {tag} entry without create info"),
         ));
     }
     let info: CreateInfo = deserializer.read_object()?;
     deserializer.on_nullable_end()?;
     deserializer.on_property_end()?;
     if info.catalog_type() != expected {
-        return Err(Error::new(
+        return Err(Error::new_bytes(
             rustdb_common::ErrorKind::Io,
-            format!("corrupt database file - catalog entry type mismatch for {tag}"),
+            rustdb_common::byte_format!("corrupt database file - catalog entry type mismatch for {tag}"),
         ));
     }
     Ok(info)
@@ -889,7 +940,11 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
     let transaction = Transaction::system();
     // The stored index data per table, taken by the index entries that follow
     // (`DataTableInfo::ExtractIndexStorageInfo`).
-    let mut index_storage: Vec<(String, String, Vec<ArtStorageInfo>)> = Vec::new();
+    let mut index_storage: Vec<(
+        rustdb_common::ByteString,
+        rustdb_common::ByteString,
+        Vec<ArtStorageInfo>,
+    )> = Vec::new();
     let mut reader = MetadataReader::new(metadata, meta_block, true)?;
     let mut deserializer = StreamDeserializer::new(&mut reader);
     deserializer.begin()?;
@@ -911,14 +966,14 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
                     _ => "table_macro",
                 };
                 let info = read_create_info(d, ty, tag)?;
-                catalog.create_entry_committed(&info.schema, entry_from_create_info(&info)?)?;
+                catalog.create_entry_committed(&info.schema, entry_from_create_info(catalog, &info)?)?;
             }
             AstCatalogType::SequenceEntry => {
                 let info = read_create_info(d, ty, "sequence")?;
                 let CreateInfoKind::Sequence(sequence) = &info.kind else {
                     return Err(Error::internal("expected a sequence"));
                 };
-                let mut entry = CatalogEntry::new(
+                let mut entry = catalog.new_entry(
                     sequence.name.clone(),
                     EntryKind::Sequence(SequenceEntry::new(sequence)),
                 );
@@ -932,13 +987,17 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
                     d.read_object_property(101, "table_pointer", deserialize_meta_block_pointer)?;
                 let total_rows: u64 = d.read_property(102, "total_rows")?;
                 // Files of DuckDB versions before v0.10 point to each index's root
-                // (`index_pointers`, with deprecated storage); the indexes are rebuilt
-                // from the table.
-                read_block_pointer_list(d, 103, "index_pointers")?;
+                // (`index_pointers`, with deprecated storage). Decode their allocator
+                // metadata so the buffers can still be loaded lazily.
+                let legacy_pointers = read_block_pointer_list(d, 103, "index_pointers")?.unwrap_or_default();
                 let mut index_versions = std::collections::HashMap::new();
-                let mut stored_indexes = Vec::new();
+                let mut stored_indexes = legacy_pointers
+                    .into_iter()
+                    .filter(rustdb_storage::checkpoint::pointers::BlockPointer::is_valid)
+                    .map(|pointer| rustdb_storage::index::art::read_legacy_index_storage(metadata, pointer))
+                    .collect::<Result<Vec<_>>>()?;
                 if d.on_optional_property_begin(104, "index_storage_infos")? {
-                    // The indexes are rebuilt from the table below.
+                    // Modern checkpoints embed the allocator metadata directly.
                     let stored = d.on_list_begin()?;
                     for _ in 0..stored {
                         d.on_object_begin()?;
@@ -1017,7 +1076,7 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
                 if !stored_indexes.is_empty() {
                     index_storage.push((info.schema.clone(), create.table.clone(), stored_indexes));
                 }
-                let mut catalog_entry = CatalogEntry::new(create.table.clone(), EntryKind::Table(entry));
+                let mut catalog_entry = catalog.new_entry(create.table.clone(), EntryKind::Table(entry));
                 catalog_entry.temporary = info.temporary;
                 catalog_entry.dependencies.clone_from(&info.dependencies.set);
                 catalog_entry.comment.clone_from(&info.comment);
@@ -1028,7 +1087,7 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
                 let CreateInfoKind::View(view) = &info.kind else {
                     return Err(Error::internal("expected a view"));
                 };
-                let mut entry = CatalogEntry::new(
+                let mut entry = catalog.new_entry(
                     view.view_name.clone(),
                     EntryKind::View(ViewEntry {
                         query: (*view.query).clone(),
@@ -1057,16 +1116,18 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
                     None
                 };
                 let stored = match root {
-                    Some(_) => UnboundIndexStorage::Deprecated,
+                    Some(pointer) => UnboundIndexStorage::Disk(
+                        rustdb_storage::index::art::read_legacy_index_storage(metadata, pointer)?,
+                    ),
                     None => UnboundIndexStorage::Disk(extract_index_storage(&mut index_storage, &info)),
                 };
                 load_index(catalog, &transaction, &info, stored)?;
             }
             other => {
                 let _ = other;
-                return Err(Error::new(
+                return Err(Error::new_bytes(
                     rustdb_common::ErrorKind::Io,
-                    "corrupt database file - unrecognized catalog type in checkpoint",
+                    b"corrupt database file - unrecognized catalog type in checkpoint".as_slice(),
                 ));
             }
         }
@@ -1101,7 +1162,11 @@ fn read_block_pointer_list(
 /// (`DataTableInfo::ExtractIndexStorageInfo`); an index without one gets an empty
 /// description.
 fn extract_index_storage(
-    index_storage: &mut [(String, String, Vec<ArtStorageInfo>)],
+    index_storage: &mut [(
+        rustdb_common::ByteString,
+        rustdb_common::ByteString,
+        Vec<ArtStorageInfo>,
+    )],
     info: &CreateInfo,
 ) -> ArtStorageInfo {
     let CreateInfoKind::Index(index) = &info.kind else {
@@ -1122,8 +1187,8 @@ fn extract_index_storage(
         })
 }
 
-/// Matches constraint storage by its generated name (or the unnamed legacy ordering)
-/// and restores it without the table scan used for older checkpoint descriptions.
+/// Constraint buffers precede explicit indexes, in constraint order, as in C++.
+/// ALTER/rename can preserve names different from the current generated ordinal.
 fn restore_constraint_index(
     table: &DataTable,
     kind: IndexConstraintType,
@@ -1131,16 +1196,17 @@ fn restore_constraint_index(
     index: usize,
     stored: &mut Vec<ArtStorageInfo>,
 ) -> Result<()> {
-    let name = format!("{}_{}_{index}", kind.name(), table.name());
+    let name = rustdb_common::byte_format!("{}_{}_{index}", kind.name(), table.name());
     let position = stored
         .iter()
         .position(|info| info.name.eq_ignore_ascii_case(&name))
-        .or_else(|| stored.iter().position(|info| info.name.is_empty()));
-    if let Some(position) = position
-        && table.restore_constraint_index(kind, columns, index, &stored[position])?
-    {
-        stored.remove(position);
-        return Ok(());
+        .or_else(|| stored.iter().position(|info| info.name.is_empty()))
+        .or_else(|| (!stored.is_empty()).then_some(0));
+    if let Some(position) = position {
+        let info = stored.remove(position);
+        if table.restore_constraint_index(kind, columns, index, &info)? {
+            return Ok(());
+        }
     }
     table.load_constraint_index(kind, columns, index)
 }
@@ -1173,9 +1239,9 @@ fn build_index_entry(
     let table_entry = catalog
         .get_entry(transaction, CatalogType::Table, &info.schema, &index.table)
         .ok_or_else(|| {
-            Error::new(
+            Error::new_bytes(
                 rustdb_common::ErrorKind::Io,
-                "corrupt database file - index entry without table entry",
+                b"corrupt database file - index entry without table entry".as_slice(),
             )
         })?;
     let EntryKind::Table(table) = &table_entry.kind else {
@@ -1208,7 +1274,10 @@ fn build_index_entry(
             let mut art = storage.new_art(&index.name, constraint, &columns)?;
             let restored = match &stored {
                 UnboundIndexStorage::Disk(info) => storage.restore_index(&mut art, info)?,
-                _ => false,
+                UnboundIndexStorage::Wal(info, buffers) => {
+                    storage.restore_wal_index(&mut art, info, buffers)?
+                }
+                UnboundIndexStorage::Deprecated => false,
             };
             if !restored {
                 storage.build_index(transaction, &mut art, false)?;
@@ -1224,9 +1293,9 @@ fn build_index_entry(
                 })
                 .collect::<Result<Vec<_>>>()?;
             let index_type = if index.index_type_name.is_empty() {
-                "ART"
+                b"ART".as_slice()
             } else {
-                index.index_type_name.as_str()
+                index.index_type_name.as_bytes()
             };
             storage.add_unbound_index(UnboundIndex::new(
                 index.name.clone(),
@@ -1238,7 +1307,7 @@ fn build_index_entry(
             ))?;
         }
     }
-    let mut entry = CatalogEntry::new(
+    let mut entry = catalog.new_entry(
         index.name.clone(),
         EntryKind::Index(IndexEntry {
             info: (**index).clone(),
@@ -1250,27 +1319,25 @@ fn build_index_entry(
     Ok((entry, storage))
 }
 
-/// Recreates an index of a WAL in `transaction` (`ReplayCreateIndex`): an index over plain
-/// columns is rebuilt from its table, one over expressions stays unbound with the
-/// `stored` description and buffers of the WAL entry.
+/// Recreates the catalog entry but returns its native index staged until commit.
+/// The stored tree already includes rows inserted by its creating transaction.
 pub fn replay_create_index(
     catalog: &Catalog,
     transaction: &Transaction,
     info: &CreateInfo,
     stored: UnboundIndexStorage,
-) -> Result<()> {
+) -> Result<(Arc<rustdb_storage::DataTableInfo>, IndexSlot)> {
     let (entry, storage) = build_index_entry(catalog, transaction, info, stored)?;
     let name = entry.name().to_owned();
-    match catalog.create_entry(
+    let index = storage
+        .indexes()
+        .take_for_replay(&name)
+        .ok_or_else(|| Error::internal("replayed index missing from table"))?;
+    catalog.create_entry(
         transaction,
         &info.schema,
         entry,
         OnCreateConflict::ErrorOnConflict,
-    ) {
-        Ok(_) => Ok(()),
-        Err(error) => {
-            storage.indexes().remove(&name);
-            Err(error)
-        }
-    }
+    )?;
+    Ok((Arc::clone(storage.info()), index))
 }

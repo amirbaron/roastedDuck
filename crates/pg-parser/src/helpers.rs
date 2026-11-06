@@ -2,6 +2,7 @@
 //! `libpg_query`'s `makefuncs.cpp` and of the helper functions at the end of
 //! `gram.y` (`makeColumnRef`, `doNegate`, `insertSelectOptions`, ...).
 
+use rustdb_common::ByteString;
 use rustdb_common::{Error, Result};
 
 use crate::error::{internal, unimplemented};
@@ -66,7 +67,13 @@ pub(crate) fn null_error() -> Error {
 
 /// `(PGFoo *) node` for a node that must be present.
 pub(crate) fn downcast<T: NodeStruct>(node: Node) -> Result<Box<T>> {
-    T::from_node(node).map_err(|node| internal(format!("expected {}, found {}", T::NAME, node.name())))
+    T::from_node(node).map_err(|node| {
+        internal(rustdb_common::byte_format!(
+            "expected {}, found {}",
+            T::NAME,
+            node.name()
+        ))
+    })
 }
 
 /// `(PGFoo *) node` for a nullable node.
@@ -76,19 +83,27 @@ pub(crate) fn downcast_opt<T: NodeStruct>(node: Option<Node>) -> Result<Option<B
 
 /// `(PGList *) node`.
 pub(crate) fn into_list(node: Option<Node>) -> Result<List> {
-    Node::into_list(node).map_err(|node| internal(format!("expected a list, found {}", node.name())))
+    Node::into_list(node).map_err(|node| {
+        internal(rustdb_common::byte_format!(
+            "expected a list, found {}",
+            node.name()
+        ))
+    })
 }
 
 /// `strVal(node)`.
-pub(crate) fn str_val(node: &Node) -> Result<String> {
-    node.str_val()
-        .map(str::to_owned)
-        .ok_or_else(|| internal(format!("expected a string, found {}", node.name())))
+pub(crate) fn str_val(node: &Node) -> Result<rustdb_common::ByteString> {
+    node.str_val().map(ByteString::from).ok_or_else(|| {
+        internal(rustdb_common::byte_format!(
+            "expected a string, found {}",
+            node.name()
+        ))
+    })
 }
 
 /// `printf("%s", s)` of a possibly-NULL C string.
-pub(crate) fn c_str(s: Option<&str>) -> &str {
-    s.unwrap_or("(null)")
+pub(crate) fn c_str(s: Option<&[u8]>) -> &[u8] {
+    s.unwrap_or(b"(null)")
 }
 
 // ---------------------------------------------------------------------------------------
@@ -115,7 +130,7 @@ pub(crate) fn make_a_expr(
 /// `makeSimpleAExpr`: an operator expression with an unqualified operator name.
 pub(crate) fn make_simple_a_expr(
     kind: AExprKind,
-    name: impl Into<String>,
+    name: impl Into<ByteString>,
     lexpr: Option<Node>,
     rexpr: Option<Node>,
     location: i32,
@@ -133,7 +148,7 @@ pub(crate) fn make_bool_expr(boolop: BoolExprType, args: List, location: i32) ->
 }
 
 /// `makeAlias`.
-pub(crate) fn make_alias(aliasname: impl Into<String>, colnames: List) -> Alias {
+pub(crate) fn make_alias(aliasname: impl Into<ByteString>, colnames: List) -> Alias {
     Alias {
         aliasname: Some(aliasname.into()),
         colnames,
@@ -141,7 +156,11 @@ pub(crate) fn make_alias(aliasname: impl Into<String>, colnames: List) -> Alias 
 }
 
 /// `makeRangeVar`.
-pub(crate) fn make_range_var(schemaname: Option<String>, relname: Option<String>, location: i32) -> RangeVar {
+pub(crate) fn make_range_var(
+    schemaname: Option<ByteString>,
+    relname: Option<ByteString>,
+    location: i32,
+) -> RangeVar {
     RangeVar {
         schemaname,
         relname,
@@ -153,7 +172,7 @@ pub(crate) fn make_range_var(schemaname: Option<String>, relname: Option<String>
 }
 
 /// `makeTypeName`.
-pub(crate) fn make_type_name(name: impl Into<String>) -> TypeName {
+pub(crate) fn make_type_name(name: impl Into<ByteString>) -> TypeName {
     make_type_name_from_name_list(vec![Node::string(name)])
 }
 
@@ -167,7 +186,7 @@ pub(crate) fn make_type_name_from_name_list(names: List) -> TypeName {
 }
 
 /// `makeDefElem`.
-pub(crate) fn make_def_elem(name: impl Into<String>, arg: Option<Node>, location: i32) -> DefElem {
+pub(crate) fn make_def_elem(name: impl Into<ByteString>, arg: Option<Node>, location: i32) -> DefElem {
     DefElem {
         defnamespace: None,
         defname: Some(name.into()),
@@ -179,8 +198,8 @@ pub(crate) fn make_def_elem(name: impl Into<String>, arg: Option<Node>, location
 
 /// `makeDefElemExtended`.
 pub(crate) fn make_def_elem_extended(
-    namespace: Option<String>,
-    name: impl Into<String>,
+    namespace: Option<ByteString>,
+    name: impl Into<ByteString>,
     arg: Option<Node>,
     defaction: DefElemAction,
     location: i32,
@@ -237,7 +256,7 @@ pub(crate) fn update_raw_stmt_end(stmt: &mut RawStmt, end_location: i32) {
 /// `makeColumnRef`: a column reference, wrapped in an `AIndirection` if the
 /// indirection contains subscripts.
 pub(crate) fn make_column_ref(
-    colname: impl Into<String>,
+    colname: impl Into<ByteString>,
     indirection: List,
     location: i32,
     scanner: &Scanner<'_>,
@@ -291,7 +310,7 @@ pub(crate) fn make_type_cast(
 }
 
 /// `makeStringConst`.
-pub(crate) fn make_string_const(s: impl Into<String>, location: i32) -> Node {
+pub(crate) fn make_string_const(s: impl Into<ByteString>, location: i32) -> Node {
     AConst {
         val: Value::String(s.into()),
         location,
@@ -301,7 +320,7 @@ pub(crate) fn make_string_const(s: impl Into<String>, location: i32) -> Node {
 
 /// `makeStringConstCast`.
 pub(crate) fn make_string_const_cast(
-    s: impl Into<String>,
+    s: impl Into<ByteString>,
     location: i32,
     type_name: Option<Box<TypeName>>,
 ) -> Node {
@@ -312,7 +331,7 @@ pub(crate) fn make_string_const_cast(
 /// integer or an expression).
 pub(crate) enum IntervalValue {
     /// `INTERVAL '1 day'`
-    String(String),
+    String(ByteString),
     /// `INTERVAL 1 DAY`
     Integer(i32),
     /// `INTERVAL (expr) DAY`
@@ -363,7 +382,7 @@ pub(crate) fn make_sample_size(sample_size: Option<Node>, is_percentage: bool) -
 /// `makeSampleOptions`.
 pub(crate) fn make_sample_options(
     sample_size: Option<Node>,
-    method: Option<String>,
+    method: Option<ByteString>,
     seed: Option<i32>,
     location: i32,
 ) -> Node {
@@ -392,7 +411,7 @@ pub(crate) fn make_int_const(val: i32, location: i32) -> Node {
 }
 
 /// `makeFloatConst`.
-pub(crate) fn make_float_const(s: impl Into<String>, location: i32) -> Node {
+pub(crate) fn make_float_const(s: impl Into<ByteString>, location: i32) -> Node {
     AConst {
         val: Value::Float(s.into()),
         location,
@@ -401,7 +420,7 @@ pub(crate) fn make_float_const(s: impl Into<String>, location: i32) -> Node {
 }
 
 /// `makeBitStringConst`.
-pub(crate) fn make_bit_string_const(s: impl Into<String>, location: i32) -> Node {
+pub(crate) fn make_bit_string_const(s: impl Into<ByteString>, location: i32) -> Node {
     AConst {
         val: Value::BitString(s.into()),
         location,
@@ -430,7 +449,7 @@ pub(crate) fn make_a_const(value: Value, location: i32) -> Node {
         Value::String(s) => make_string_const(s, location),
         // C reads `val.str` regardless of the tag for the remaining kinds
         other => AConst {
-            val: Value::String(other.as_str().unwrap_or_default().to_owned()),
+            val: Value::String(other.as_bytes().unwrap_or_default().into()),
             location,
         }
         .into(),
@@ -482,7 +501,7 @@ pub(crate) fn make_param_ref(number: i32, location: i32) -> Node {
 }
 
 /// `makeNamedParamRef`.
-pub(crate) fn make_named_param_ref(name: impl Into<String>, location: i32) -> Node {
+pub(crate) fn make_named_param_ref(name: impl Into<ByteString>, location: i32) -> Node {
     ParamRef {
         number: 0,
         location,
@@ -542,11 +561,14 @@ pub(crate) fn partition_and_sort_lists(options: List) -> Result<(List, List)> {
     let mut sort_list = List::new();
     for option in options {
         let Node::DefElem(def) = option else {
-            return Err(internal(format!("expected DefElem, found {}", option.name())));
+            return Err(internal(rustdb_common::byte_format!(
+                "expected DefElem, found {}",
+                option.name()
+            )));
         };
         match def.defname.as_deref() {
-            Some("partitioned_by") => partition_list = into_list(def.arg)?,
-            Some("sorted_by") => sort_list = into_list(def.arg)?,
+            Some(b"partitioned_by") => partition_list = into_list(def.arg)?,
+            Some(b"sorted_by") => sort_list = into_list(def.arg)?,
             _ => {}
         }
     }
@@ -566,7 +588,7 @@ pub(crate) fn make_set_op(op: SetOperation, all: bool, larg: Option<Node>, rarg:
 }
 
 /// `SystemFuncName`: `main.<name>`.
-pub(crate) fn system_func_name(name: &str) -> List {
+pub(crate) fn system_func_name(name: impl Into<ByteString>) -> List {
     vec![Node::string(DEFAULT_SCHEMA), Node::string(name)]
 }
 
@@ -601,10 +623,10 @@ pub(crate) fn do_negate(node: Option<Node>, location: i32) -> Node {
 /// `doNegateFloat`: toggles the sign of a float literal's text.
 pub(crate) fn do_negate_float(value: &mut Value) {
     if let Value::Float(text) = value {
-        let unsigned = text.strip_prefix('+').unwrap_or(text);
-        *text = match unsigned.strip_prefix('-') {
-            Some(positive) => positive.to_owned(),
-            None => format!("-{unsigned}"),
+        let unsigned = text.strip_prefix(b"+").unwrap_or(text);
+        *text = match unsigned.strip_prefix(b"-") {
+            Some(positive) => positive.into(),
+            None => rustdb_common::byte_format!("-{unsigned}"),
         };
     }
 }
@@ -699,7 +721,7 @@ pub(crate) fn process_cas_bits(
     }
     let unsupported = |what: &str| {
         scanner.error_at(
-            format!("{constr_type} constraints cannot be marked {what}"),
+            rustdb_common::byte_format!("{constr_type} constraints cannot be marked {what}"),
             location,
         )
     };
@@ -721,7 +743,7 @@ pub(crate) fn process_cas_bits(
 /// `makeRecursiveViewSelect`: rewrites `CREATE RECURSIVE VIEW v (cols) AS q` into
 /// `WITH RECURSIVE v (cols) AS (q) SELECT cols FROM v`.
 pub(crate) fn make_recursive_view_select(
-    relname: impl Into<String>,
+    relname: impl Into<ByteString>,
     aliases: List,
     query: Option<Node>,
 ) -> Result<Node> {

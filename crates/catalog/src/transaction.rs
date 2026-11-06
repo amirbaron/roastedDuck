@@ -23,24 +23,24 @@ pub enum StorageHook {
     AlteredTable(Arc<rustdb_storage::DataTable>),
     /// A renamed table's storage and its old name, restored on rollback
     /// (`DuckTableEntry::UndoAlter`).
-    RenamedTable(Arc<rustdb_storage::DataTableInfo>, String),
+    RenamedTable(Arc<rustdb_storage::DataTableInfo>, rustdb_common::ByteString),
     /// The storage of a dropped table, restored as the main table on rollback
     /// (`DuckTableEntry::OnDrop` / `SetAsRoot`).
     DroppedTable(Arc<rustdb_storage::DataTable>),
     /// A created index, removed from its table on rollback (`DuckIndexEntry::Rollback`).
-    CreatedIndex(Arc<rustdb_storage::DataTableInfo>, String),
+    CreatedIndex(Arc<rustdb_storage::DataTableInfo>, rustdb_common::ByteString),
     /// The previous storage of a table given a primary key and the key's index: the
     /// storage is made the main table again and the index removed on rollback.
-    AddedPrimaryKey(Arc<rustdb_storage::DataTable>, String),
+    AddedPrimaryKey(Arc<rustdb_storage::DataTable>, rustdb_common::ByteString),
     /// A dropped index, removed from its table on commit (`DuckIndexEntry::CommitDrop`).
-    DroppedIndex(Arc<rustdb_storage::DataTableInfo>, String),
+    DroppedIndex(Arc<rustdb_storage::DataTableInfo>, rustdb_common::ByteString),
 }
 
 /// A created or dropped catalog entry version, as an undo-log entry.
 #[derive(Debug)]
 struct CatalogChange {
     set: Arc<CatalogSet>,
-    name: String,
+    name: rustdb_common::ByteString,
     version: Arc<Version>,
     hook: StorageHook,
     wal: WalRecord,
@@ -128,7 +128,7 @@ pub(crate) enum CommitCheck {
     /// A dropped schema: no other transaction may have created entries in it since this
     /// one started (`VerifyCommitDrop`; DuckDB's entries depend on their schema).
     SchemaDropped {
-        name: String,
+        name: rustdb_common::ByteString,
         sets: Vec<Arc<CatalogSet>>,
     },
     /// A dropped entry: no other transaction may have committed an entry depending on
@@ -140,7 +140,10 @@ pub(crate) enum CommitCheck {
     /// An entry created in a schema, or an entry given an owner: no other transaction
     /// may have dropped the schema or the owner `name` of `set` since
     /// (`VerifyExistence`).
-    SubjectExists { name: String, set: Arc<CatalogSet> },
+    SubjectExists {
+        name: rustdb_common::ByteString,
+        set: Arc<CatalogSet>,
+    },
 }
 
 impl CatalogUndo for CommitCheck {
@@ -155,9 +158,9 @@ impl CatalogUndo for CommitCheck {
                     .iter()
                     .any(|set| set.created_since(start_time, |_| true).is_some())
                 {
-                    return Err(rustdb_common::Error::new(
+                    return Err(rustdb_common::Error::new_bytes(
                         rustdb_common::ErrorKind::Dependency,
-                        format!(
+                        rustdb_common::byte_format!(
                             "Could not commit DROP of \"{name}\" because a dependency was created after the transaction started"
                         ),
                     ));
@@ -178,9 +181,9 @@ impl CatalogUndo for CommitCheck {
                     .iter()
                     .any(|set| set.created_since(start_time, refers).is_some())
                 {
-                    return Err(rustdb_common::Error::new(
+                    return Err(rustdb_common::Error::new_bytes(
                         rustdb_common::ErrorKind::Dependency,
-                        format!(
+                        rustdb_common::byte_format!(
                             "Could not commit DROP of \"{}\" because a dependency was created after the transaction started",
                             entry.name
                         ),
@@ -189,9 +192,9 @@ impl CatalogUndo for CommitCheck {
             }
             Self::SubjectExists { name, set } => {
                 if set.dropped_since(name, start_time) {
-                    return Err(rustdb_common::Error::new(
+                    return Err(rustdb_common::Error::new_bytes(
                         rustdb_common::ErrorKind::Dependency,
-                        format!(
+                        rustdb_common::byte_format!(
                             "Could not commit creation of dependency, subject \"{name}\" has been deleted"
                         ),
                     ));
@@ -207,7 +210,7 @@ pub(crate) trait TransactionExt {
     fn push_catalog_change(
         &self,
         set: Arc<CatalogSet>,
-        name: String,
+        name: rustdb_common::ByteString,
         version: Arc<Version>,
         hook: StorageHook,
         wal: WalRecord,
@@ -218,7 +221,7 @@ impl TransactionExt for Transaction {
     fn push_catalog_change(
         &self,
         set: Arc<CatalogSet>,
-        name: String,
+        name: rustdb_common::ByteString,
         version: Arc<Version>,
         hook: StorageHook,
         wal: WalRecord,

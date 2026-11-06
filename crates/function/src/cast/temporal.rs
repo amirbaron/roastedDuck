@@ -252,6 +252,9 @@ pub(super) fn from_string(target: &LogicalType) -> Option<BoundCastInfo> {
         }),
         L::Interval => parse_kernel::<Interval>(|text, _| {
             Interval::parse_detailed(text).map_err(|error| match error {
+                IntervalParseError::Reported(error) => {
+                    RowError::InvalidBytes(error.raw_message_bytes().to_vec())
+                }
                 IntervalParseError::Cast(error) => RowError::Error(error),
                 IntervalParseError::Unconditional(error) => RowError::Fatal(error),
             })

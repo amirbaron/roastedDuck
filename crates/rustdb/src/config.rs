@@ -54,6 +54,75 @@ impl Default for Config {
     }
 }
 
+/// A database configuration together with the extension option registry and its
+/// global values (`DBConfig::options` and `DBConfig::user_settings`).
+#[derive(Clone, Debug)]
+pub struct ConfigurationSnapshot {
+    pub(crate) config: Config,
+    pub(crate) extensions: Vec<(rustdb_function::ExtensionOption, Value)>,
+    /// Already validated `DBConfig` option state, not fresh setter invocations.
+    pub(crate) database_options: Vec<(String, Value)>,
+}
+
+impl From<Config> for ConfigurationSnapshot {
+    fn from(config: Config) -> Self {
+        Self {
+            config,
+            extensions: Vec::new(),
+            database_options: Vec::new(),
+        }
+    }
+}
+
+impl ConfigurationSnapshot {
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    pub fn config_mut(&mut self) -> &mut Config {
+        &mut self.config
+    }
+
+    /// Values assigned to already registered options do not become unknown startup
+    /// parameters and do not require an extension to be autoloaded.
+    pub(crate) fn prepare(&self) -> Result<Self> {
+        use rustdb_function::cast::ValueCast;
+
+        let mut result = self.clone();
+        let mut apply = |name: &str, value: &Value| -> Result<bool> {
+            if crate::settings::canonical_option(name).is_some() {
+                return Ok(false);
+            }
+            let Some((option, current)) = result
+                .extensions
+                .iter_mut()
+                .find(|(option, _)| option.name.eq_ignore_ascii_case(name))
+            else {
+                return Ok(false);
+            };
+            *current = value.default_cast_as(&option.input_type).map_err(|error| {
+                Error::invalid_input(format!("Failed to cast value: {}", error.raw_message()))
+            })?;
+            Ok(true)
+        };
+        let mut options = Vec::new();
+        for (name, value) in &self.config.options {
+            if !apply(name, value)? {
+                options.push((name.clone(), value.clone()));
+            }
+        }
+        let mut unknown = Vec::new();
+        for (name, value) in &self.config.unrecognized_options {
+            if !apply(name, value)? {
+                unknown.push((name.clone(), value.clone()));
+            }
+        }
+        result.config.options = options;
+        result.config.unrecognized_options = unknown;
+        Ok(result)
+    }
+}
+
 impl Config {
     #[must_use]
     pub fn with_option(mut self, name: impl Into<String>, value: Value) -> Self {
@@ -65,7 +134,38 @@ impl Config {
     /// option. A name that neither an option nor a known extension has is kept as
     /// unrecognized, and the database fails to open.
     pub fn set_option_by_name(&mut self, name: &str, value: Value) -> Result<()> {
-        match crate::settings::canonical_option(name) {
+        let option = crate::settings::canonical_option(name);
+        if let Some(option) = option {
+            check_startup_assignment(option)?;
+        }
+        // config.cpp's DUCKDB_LOCAL custom options have no SetGlobal callback.
+        // This is distinct from a generic setting whose default scope is LOCAL:
+        // DBConfig can still set those generic defaults before a connection exists.
+        if let Some(option) = option
+            && matches!(
+                option,
+                "custom_profiling_settings"
+                    | "debug_force_external"
+                    | "enable_caching_operators"
+                    | "enable_http_logging"
+                    | "enable_profiling"
+                    | "enable_progress_bar"
+                    | "enable_progress_bar_print"
+                    | "http_logging_output"
+                    | "profile_output"
+                    | "profiling_coverage"
+                    | "profiling_mode"
+                    | "progress_bar_time"
+                    | "schema"
+                    | "search_path"
+                    | "streaming_buffer_size"
+            )
+        {
+            return Err(Error::invalid_input(format!(
+                "Could not set option \"{option}\" as a global option"
+            )));
+        }
+        match option {
             Some("access_mode") => self.access_mode = AccessMode::parse(&value)?,
             Some(option) => {
                 crate::settings::check_value(option, &value)?;
@@ -74,7 +174,15 @@ impl Config {
                 self.options.push((name.to_owned(), value));
             }
             None if find_extension(name, EXTENSION_SETTINGS).is_some() => {
-                self.options.push((name.to_owned(), value));
+                if let Some((_, existing)) = self
+                    .options
+                    .iter_mut()
+                    .find(|(existing, _)| existing.eq_ignore_ascii_case(name))
+                {
+                    *existing = value;
+                } else {
+                    self.options.push((name.to_owned(), value));
+                }
             }
             None => {
                 self.unrecognized_options
@@ -87,6 +195,11 @@ impl Config {
 
     /// The error for the unrecognized options, if any (`ThrowExtensionSetUnrecognizedOptions`).
     pub(crate) fn check_recognized(&self) -> Result<()> {
+        for (name, _) in &self.options {
+            if let Some(option) = crate::settings::canonical_option(name) {
+                check_startup_assignment(option)?;
+            }
+        }
         if self.unrecognized_options.is_empty() {
             return Ok(());
         }
@@ -99,6 +212,47 @@ impl Config {
             "The following options were not recognized: {}",
             names.join(", ")
         )))
+    }
+}
+
+/// Custom setters that need an initialized DatabaseInstance/FileSystem.
+pub(crate) fn requires_database(option: &str) -> bool {
+    matches!(
+        option,
+        "disabled_filesystems"
+            | "enable_logging"
+            | "logging_mode"
+            | "logging_level"
+            | "logging_storage"
+            | "enabled_log_types"
+            | "disabled_log_types"
+            | "allowed_paths"
+            | "allowed_directories"
+            | "current_transaction_invalidation_policy"
+    )
+}
+
+/// Validated values that survive a `DBConfig` copy without replaying setter callbacks;
+/// filesystem registries and the log manager belong to the old instance instead.
+pub(crate) fn retained_database_option(option: &str) -> bool {
+    matches!(
+        option,
+        "allowed_paths" | "allowed_directories" | "current_transaction_invalidation_policy"
+    )
+}
+
+fn check_startup_assignment(option: &str) -> Result<()> {
+    if option == "current_transaction_invalidation_policy" {
+        return Err(Error::invalid_input(
+            "current_transaction_invalidaton_policy can only be set when there is an active client context",
+        ));
+    }
+    if requires_database(option) {
+        Err(Error::invalid_input(format!(
+            "Cannot change/set {option} before the database is started"
+        )))
+    } else {
+        Ok(())
     }
 }
 

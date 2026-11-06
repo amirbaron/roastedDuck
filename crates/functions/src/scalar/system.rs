@@ -42,12 +42,12 @@ fn client(state: &FunctionState) -> Result<Arc<FunctionClient>> {
 
 /// The `(database, schema)` entries of the default search path (DuckDB's
 /// `CatalogSearchPath::Get`).
-fn search_path(database: &str) -> Vec<(String, String)> {
+fn search_path(database: &[u8]) -> Vec<(rustdb_common::ByteString, rustdb_common::ByteString)> {
     vec![
-        ("temp".to_owned(), "main".to_owned()),
-        (database.to_owned(), "main".to_owned()),
-        ("system".to_owned(), "main".to_owned()),
-        ("system".to_owned(), "pg_catalog".to_owned()),
+        ("temp".into(), "main".into()),
+        (database.into(), "main".into()),
+        ("system".into(), "main".into()),
+        ("system".into(), "pg_catalog".into()),
     ]
 }
 
@@ -56,7 +56,7 @@ fn connection_function(
     name: &str,
     return_type: LogicalType,
     stability: Stability,
-    value: fn(&FunctionClient) -> Value,
+    value: fn(&FunctionClient) -> Result<Value>,
 ) -> ScalarFunctionSet {
     let mut function = ScalarFunction::new(
         name,
@@ -64,7 +64,7 @@ fn connection_function(
         return_type,
         move |_: &DataChunk, state: &mut FunctionState, result: &mut Vector| {
             let client = client(state)?;
-            *result = Vector::constant(&value(&client))?;
+            *result = Vector::constant(&value(&client)?)?;
             Ok(())
         },
     )
@@ -132,14 +132,17 @@ fn current_schemas_functions() -> ScalarFunctionSet {
                     let mut paths = search_path(&client.database());
                     let set = set_path_schemas(&client);
                     let tail = paths.split_off(1);
-                    paths.extend(set.into_iter().map(|schema| (String::new(), schema)));
+                    paths.extend(
+                        set.into_iter()
+                            .map(|schema| (rustdb_common::ByteString::new(), schema.into())),
+                    );
                     paths.extend(tail);
                     Value::list(
                         LogicalType::VARCHAR,
                         paths
                             .into_iter()
-                            .map(|(_, schema)| Value::varchar(schema))
-                            .collect(),
+                            .map(|(_, schema)| Value::try_varchar(&schema))
+                            .collect::<Result<_>>()?,
                     )
                 }
             };
@@ -174,32 +177,66 @@ pub fn system_functions() -> Vec<ScalarFunctionSet> {
             "current_query",
             LogicalType::VARCHAR,
             Stability::Volatile,
-            |client| Value::varchar(client.query()),
+            |client| Value::try_varchar(&client.query()),
         ),
         current_schemas_functions(),
         connection_function(
             "txid_current",
             LogicalType::UBIGINT,
             Stability::ConsistentWithinQuery,
-            |client| Value::ubigint(client.transaction_id()),
+            |client| Ok(Value::ubigint(client.transaction_id())),
         ),
         connection_function(
             "current_connection_id",
             LogicalType::UBIGINT,
             Stability::Volatile,
-            |client| Value::ubigint(client.connection_id()),
+            |client| Ok(Value::ubigint(client.connection_id())),
         ),
         connection_function(
             "current_transaction_id",
             LogicalType::UBIGINT,
             Stability::Volatile,
-            |client| Value::ubigint(client.transaction_id()),
+            |client| Ok(Value::ubigint(client.transaction_id())),
         ),
         connection_function(
             "current_query_id",
             LogicalType::UBIGINT,
             Stability::Volatile,
-            |client| Value::ubigint(client.query_id()),
+            |client| Ok(Value::ubigint(client.query_id())),
         ),
     ]
+}
+
+#[cfg(test)]
+mod native_query_tests {
+    use super::*;
+    #[test]
+    fn query_storage_preserves_bytes_and_current_query_validates_values() {
+        let client = Arc::new(FunctionClient::default());
+        let function = &system_functions()[0].functions[0];
+        for query in [
+            b"SELECT 42".as_slice(),
+            "SELECT '雪'".as_bytes(),
+            b"a\0b",
+            b"SELECT \xff",
+            b"\xed\xa0\x80",
+        ] {
+            client.set_query(query);
+            assert_eq!(client.query().as_bytes(), query);
+            let mut state = FunctionState {
+                bind_data: Some(Arc::new(Client(Arc::clone(&client)))),
+                ..FunctionState::default()
+            };
+            let mut result = Vector::constant_null(LogicalType::VARCHAR);
+            let actual = (function.kernel)(&DataChunk::default(), &mut state, &mut result);
+            match Value::try_varchar(query) {
+                Ok(expected) => {
+                    actual.unwrap();
+                    assert_eq!(result.get_value(0), expected);
+                }
+                Err(expected) => assert_eq!(actual.unwrap_err(), expected),
+            }
+        }
+        assert_eq!(client.query_id(), 5);
+    }
 }

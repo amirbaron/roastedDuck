@@ -14,7 +14,7 @@ impl PegTransformer {
         let if_not_exists = list.has(1)?;
         let qualified_name: QualifiedName = self.transform_child(list, 2)?;
         let (catalog, schema) = if qualified_name.schema.is_empty() {
-            (String::new(), qualified_name.catalog)
+            (ByteString::new(), qualified_name.catalog)
         } else {
             (qualified_name.catalog, qualified_name.schema)
         };

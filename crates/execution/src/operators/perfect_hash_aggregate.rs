@@ -504,8 +504,11 @@ impl PhysicalOperator for PhysicalPerfectHashAggregate {
     /// DuckDB's `PhysicalPerfectHashAggregate::ParamsToString` (no cardinality).
     fn params_to_string(&self, _: u64) -> RenderParams {
         let mut result = RenderParams::new();
-        let groups: Vec<String> = self.groups.iter().map(Expression::name).collect();
-        result.insert("Groups".to_owned(), groups.join("\n"));
+        let groups: Vec<rustdb_common::ByteString> = self.groups.iter().map(Expression::name).collect();
+        result.insert(
+            "Groups".to_owned(),
+            rustdb_common::ByteString::join(&groups, b"\n"),
+        );
         result.insert("Aggregates".to_owned(), aggregate_names(&self.aggregates));
         result
     }

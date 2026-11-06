@@ -146,8 +146,12 @@ impl<E: Engine> Runner<'_, E> {
                     .loop_replacement(&file, &ctx.running_loops)
                     .map_err(|failure| failure.message)?;
                 let names: Vec<String> = (0..column_count)
-                    .map(|c| result.column_name(c).to_owned())
-                    .collect();
+                    .map(|c| {
+                        std::str::from_utf8(result.column_name(c))
+                            .map(str::to_owned)
+                            .map_err(|_| "Result-file SQL requires a UTF-8 column name".to_owned())
+                    })
+                    .collect::<Result<_, _>>()?;
                 let (values, columns) = self.engine.load_result_file(context, &file, &names)?;
                 expected_column_count = columns;
                 values
@@ -273,7 +277,7 @@ impl<E: Engine> Runner<'_, E> {
                     "Wrong result in query! Mismatch on row {}, column {}(index {})\n{actual_value} <> \
                      {expected_value}\nActual result:\n{}",
                     index / columns + 1,
-                    result.column_name(column),
+                    String::from_utf8_lossy(result.column_name(column)),
                     column + 1,
                     describe_values(actual, columns)
                 ));

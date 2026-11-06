@@ -143,10 +143,10 @@ impl CTableFunction {
     }
 
     /// The declared type of the named parameter `name` (case-insensitive).
-    pub(crate) fn named_parameter(&self, name: &str) -> Option<&LogicalType> {
+    pub(crate) fn named_parameter(&self, name: impl AsRef<[u8]>) -> Option<&LogicalType> {
         self.named_parameters
             .iter()
-            .find(|(parameter, _)| parameter.eq_ignore_ascii_case(name))
+            .find(|(parameter, _)| parameter.as_bytes().eq_ignore_ascii_case(name.as_ref()))
             .map(|(_, ty)| ty)
     }
 }
@@ -181,7 +181,7 @@ fn c_table_bind_data(bind_data: Option<&dyn FunctionData>) -> Result<&CTableBind
 struct CTableInternalBindInfo<'a> {
     client: Option<&'a Arc<FunctionClient>>,
     parameters: &'a [Value],
-    named_parameters: &'a CaseInsensitiveMap<Value>,
+    named_parameters: &'a CaseInsensitiveMap<Value, rustdb_common::ByteString>,
     return_types: Vec<LogicalType>,
     names: Vec<CString>,
     bind_data: UserData,
@@ -207,10 +207,10 @@ pub(crate) fn c_table_bind(
     info: &Arc<CTableFunctionInfo>,
     client: Option<&Arc<FunctionClient>>,
     parameters: &[Value],
-    named_parameters: &CaseInsensitiveMap<Value>,
+    named_parameters: &CaseInsensitiveMap<Value, rustdb_common::ByteString>,
     return_types: Vec<LogicalType>,
-    names: &[String],
-) -> Result<(CTableBindData, Vec<String>)> {
+    names: &[rustdb_common::ByteString],
+) -> Result<(CTableBindData, Vec<rustdb_common::ByteString>)> {
     let callbacks = info.callbacks();
     let Some(bind) = callbacks.bind else {
         return Err(Error::internal("C API table function without a bind callback"));
@@ -234,7 +234,7 @@ pub(crate) fn c_table_bind(
     let names = bind_info
         .names
         .iter()
-        .map(|name| name.to_string_lossy().into_owned())
+        .map(|name| rustdb_common::ByteString::from(name.as_bytes()))
         .collect();
     Ok((
         CTableBindData {
@@ -256,10 +256,10 @@ fn c_table_function_bind(
         .binder
         .and_then(|binder| binder.downcast_ref::<BinderContext>())
         .map(|binder| &binder.function_client);
-    let named_parameters: CaseInsensitiveMap<Value> = input
+    let named_parameters: CaseInsensitiveMap<Value, rustdb_common::ByteString> = input
         .named_parameters
         .iter()
-        .map(|(name, value)| (name.as_str(), value.clone()))
+        .map(|(name, value)| (name.clone(), value.clone()))
         .collect();
     let (bind_data, names) = c_table_bind(info, client, input.inputs, &named_parameters, Vec::new(), &[])?;
     Ok(TableFunctionBindOutput {
@@ -725,7 +725,9 @@ pub unsafe extern "C" fn duckdb_bind_get_named_parameter(
 ) -> DuckdbValue {
     // SAFETY: `info` is NULL or the info of a running bind callback; `name` is NULL or a C
     // string.
-    let (Some(info), Some(name)) = (unsafe { bind_info(info) }, unsafe { opt_str(name) }) else {
+    let (Some(info), Some(name)) = (unsafe { bind_info(info) }, unsafe {
+        crate::helper::opt_bytes(name)
+    }) else {
         return std::ptr::null_mut();
     };
     info.named_parameters

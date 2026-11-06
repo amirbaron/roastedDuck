@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGua
 
 use rustdb_ast::{AttachInfo, OnCreateConflict};
 use rustdb_catalog::Catalog;
-use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_common::{ByteString, Error, ErrorKind, Result, byte_format};
 use rustdb_storage::storage_manager::{InMemoryStorageManager, StorageManager};
 use rustdb_types::{LogicalTypeId, Value};
 
@@ -16,18 +16,18 @@ use crate::storage::{database_name, open_storage};
 /// `ValidChecker`): invalidated, with the reason, after a failure it cannot recover from.
 #[derive(Debug, Default)]
 pub(crate) struct ValidChecker {
-    message: Mutex<Option<String>>,
+    message: Mutex<Option<ByteString>>,
 }
 
 impl ValidChecker {
     /// `Invalidate`.
-    pub fn invalidate(&self, message: String) {
-        *self.message.lock().unwrap_or_else(PoisonError::into_inner) = Some(message);
+    pub fn invalidate(&self, message: impl Into<ByteString>) {
+        *self.message.lock().unwrap_or_else(PoisonError::into_inner) = Some(message.into());
     }
 
     /// The reason the object was invalidated, if it was (`IsInvalidated` and
     /// `InvalidatedMessage`).
-    pub fn invalidated(&self) -> Option<String> {
+    pub fn invalidated(&self) -> Option<ByteString> {
         self.message
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -124,7 +124,7 @@ pub(crate) enum CloseAction {
 #[derive(Debug)]
 pub(crate) struct AttachedDatabase {
     /// The file, or `""` for an in-memory database.
-    pub path: String,
+    pub path: ByteString,
     pub catalog: Arc<Catalog>,
     pub storage: DatabaseStorage,
     pub read_only: bool,
@@ -145,7 +145,7 @@ pub(crate) struct AttachedDatabase {
 
 impl AttachedDatabase {
     /// The database's name, which is its catalog's (`AttachedDatabase::GetName`).
-    pub fn name(&self) -> Arc<str> {
+    pub fn name(&self) -> Arc<[u8]> {
         self.catalog.name()
     }
 
@@ -163,19 +163,19 @@ impl AttachedDatabase {
     /// `MetaTransaction::GetTransaction`).
     pub fn check_valid(&self) -> Result<()> {
         match self.validity.invalidated() {
-            Some(message) => Err(Error::new(ErrorKind::Io, message)),
+            Some(message) => Err(Error::new_bytes(ErrorKind::Io, message)),
             None => Ok(()),
         }
     }
 
     /// `AttachedDatabase::Invalidate` after a failed checkpoint.
-    fn invalidate(&self, reason: &str) {
+    fn invalidate(&self, reason: &[u8]) {
         let recovery = if matches!(self.storage, DatabaseStorage::InMemory(_)) {
             "It is an in-memory database, so its data cannot be recovered."
         } else {
             "Detach and reattach it before using it again."
         };
-        self.validity.invalidate(format!(
+        self.validity.invalidate(byte_format!(
             "Database \"{}\" has been invalidated because checkpointing failed. {recovery} Original error: {reason}",
             self.name()
         ));
@@ -185,18 +185,18 @@ impl AttachedDatabase {
     /// instance (initial database) or this database (the `catch` of
     /// `SingleFileStorageManager::CreateCheckpoint`).
     pub fn checkpoint_failed(&self, error: &Error) -> Error {
-        let reason = error.raw_message();
+        let reason = error.raw_message_bytes();
         if self.is_initial() {
-            self.instance_validity.invalidate(reason.clone().into_owned());
-            return Error::new(
+            self.instance_validity.invalidate(reason);
+            return Error::new_bytes(
                 ErrorKind::Fatal,
-                format!("Failed to create checkpoint because of error: {reason}"),
+                byte_format!("Failed to create checkpoint because of error: {reason}"),
             );
         }
-        self.invalidate(&reason);
-        Error::new(
+        self.invalidate(reason);
+        Error::new_bytes(
             ErrorKind::Io,
-            format!(
+            byte_format!(
                 "Checkpoint failed for database \"{}\". The database has been invalidated. Original error: {reason}",
                 self.name()
             ),
@@ -205,14 +205,14 @@ impl AttachedDatabase {
 
     /// The error message of using the database once a failed checkpoint invalidated it or
     /// the instance (`MetaTransaction::GetTransaction`, `ValidChecker`).
-    fn invalidated_message(&self) -> String {
+    fn invalidated_message(&self) -> ByteString {
         match self.validity.invalidated() {
             Some(message) => message,
             None => crate::database::invalidated_database_error(
                 &self.instance_validity.invalidated().unwrap_or_default(),
             )
-            .raw_message()
-            .into_owned(),
+            .raw_message_bytes()
+            .into(),
         }
     }
 
@@ -302,19 +302,19 @@ impl AttachedDatabase {
                 self.log_manager.log_global(
                     "",
                     rustdb_function::logging::LogLevel::Error,
-                    &format!(
+                    &byte_format!(
                         "Silent exception in AttachedDatabase::Close():\t{}",
-                        error.raw_message()
+                        error.raw_message_bytes()
                     ),
                 );
                 Ok(())
             }
-            Err(error) => Err(Error::new(
+            Err(error) => Err(Error::new_bytes(
                 error.kind(),
-                format!(
+                byte_format!(
                     "Detached database '{}', but CHECKPOINT during DETACH failed. \n{}",
                     self.name(),
-                    error.raw_message()
+                    error.raw_message_bytes()
                 ),
             )),
         }
@@ -341,14 +341,14 @@ pub(crate) struct AttachOptions {
     pub row_group_size: Option<Value>,
     /// The options `AttachOptions` does not consume itself, in order
     /// (`AttachOptions::options`), shown by `duckdb_databases()`.
-    pub kept: Vec<(String, Value)>,
+    pub kept: Vec<(rustdb_common::ByteString, Value)>,
     /// `DEFAULT_TABLE`: the (schema, name) the database's name refers to.
     pub default_table: Option<(String, String)>,
     /// `RECOVERY_MODE NO_WAL_WRITES`: commits are not written to the WAL.
     pub no_wal_writes: bool,
     /// `TYPE`: the storage type, lowercase (`AttachOptions::db_type`); `None` for DuckDB
     /// files.
-    pub db_type: Option<String>,
+    pub db_type: Option<ByteString>,
     /// `COMPRESS`: whether checkpoints of an in-memory database compress its tables;
     /// `None` when not given (`CompressInMemory::AUTOMATIC`).
     pub compress: Option<bool>,
@@ -377,32 +377,32 @@ impl AttachOptions {
             ..Self::default()
         };
         for (name, value) in info.options.iter() {
-            match name.to_lowercase().as_str() {
-                "readonly" | "read_only" => {
+            match name.to_ascii_lowercase().as_bytes() {
+                b"readonly" | b"read_only" => {
                     options.access = if value_as_bool(value)? {
                         AccessMode::ReadOnly
                     } else {
                         AccessMode::ReadWrite
                     };
                 }
-                "readwrite" | "read_write" => {
+                b"readwrite" | b"read_write" => {
                     options.access = if value_as_bool(value)? {
                         AccessMode::ReadWrite
                     } else {
                         AccessMode::ReadOnly
                     };
                 }
-                "type" => {
-                    let ty = value.to_varchar()?.to_lowercase();
+                b"type" => {
+                    let ty = value.to_varchar_bytes()?.to_ascii_lowercase();
                     options.db_type = (!ty.is_empty()).then_some(ty);
                 }
-                "hidden" => options.hidden = value_as_bool(value)?,
-                "default_table" => {
+                b"hidden" => options.hidden = value_as_bool(value)?,
+                b"default_table" => {
                     // `QualifiedName::Parse`.
                     let (_, schema, name) = crate::sequence::parse_qualified_name(&value.to_varchar()?)?;
                     options.default_table = Some((schema, name));
                 }
-                "recovery_mode" => {
+                b"recovery_mode" => {
                     // `EnumUtil::FromString<RecoveryMode>`.
                     let mode = value.to_varchar()?;
                     options.no_wal_writes = match mode.to_ascii_uppercase().as_str() {
@@ -417,7 +417,7 @@ impl AttachOptions {
                         }
                     };
                 }
-                "vacuum_rebuild_indexes" => {
+                b"vacuum_rebuild_indexes" => {
                     use rustdb_function::cast::ValueCast;
                     let threshold = value
                         .default_cast_as(&rustdb_types::LogicalType::UBIGINT)?
@@ -425,33 +425,33 @@ impl AttachOptions {
                         .unwrap_or(0);
                     // An `optional_idx` cannot hold the largest value.
                     if threshold == u64::MAX {
-                        return Err(Error::invalid_input(format!(
+                        return Err(Error::invalid_input(byte_format!(
                             "Invalid setting for vacuum_rebuild_indexes: {threshold} (valid range is 0 - {})",
                             u64::MAX - 1
                         )));
                     }
                     options.vacuum_rebuild_indexes = Some(threshold);
                 }
-                "compress" => {
+                b"compress" => {
                     options.compress = Some(value_as_bool(value)?);
-                    options.kept.push((name.to_lowercase(), value.clone()));
+                    options.kept.push((name.to_ascii_lowercase(), value.clone()));
                 }
-                "storage_version" => {
+                b"storage_version" => {
                     options.storage_version = Some(value.clone());
-                    options.kept.push((name.to_lowercase(), value.clone()));
+                    options.kept.push((name.to_ascii_lowercase(), value.clone()));
                 }
-                "block_size" => {
+                b"block_size" => {
                     options.block_size = Some(value.clone());
-                    options.kept.push((name.to_lowercase(), value.clone()));
+                    options.kept.push((name.to_ascii_lowercase(), value.clone()));
                 }
-                "row_group_size" => {
+                b"row_group_size" => {
                     options.row_group_size = Some(value.clone());
-                    options.kept.push((name.to_lowercase(), value.clone()));
+                    options.kept.push((name.to_ascii_lowercase(), value.clone()));
                 }
-                "encryption_key" => {
+                b"encryption_key" => {
                     // `StorageOptions::Initialize` checks the key before anything is opened.
                     if value.logical_type().id() != LogicalTypeId::Varchar {
-                        return Err(Error::binder(format!(
+                        return Err(Error::binder(byte_format!(
                             "\"{}\" is not a valid key. A key must be of type VARCHAR",
                             value.to_varchar()?
                         )));
@@ -466,7 +466,7 @@ impl AttachOptions {
                     let key = blob.as_bytes().unwrap_or_default().to_vec();
                     options.encryption_key = Some(rustdb_crypto::UserKey::new(key));
                 }
-                "encryption_cipher" => {
+                b"encryption_cipher" => {
                     // `EncryptionTypes::StringToCipher`.
                     let name = value.to_varchar()?;
                     let cipher = rustdb_crypto::CipherType::from_name(&name)?;
@@ -474,19 +474,19 @@ impl AttachOptions {
                         cipher,
                         rustdb_crypto::CipherType::Gcm | rustdb_crypto::CipherType::Ctr
                     ) {
-                        return Err(Error::binder(format!(
+                        return Err(Error::binder(byte_format!(
                             "\"{name}\" is not a valid cipher. Try 'GCM' or 'CTR'."
                         )));
                     }
                     options.encryption_cipher = cipher;
                 }
-                "debug_encryption_version" => {
+                b"debug_encryption_version" => {
                     options.encryption_version =
                         rustdb_crypto::EncryptionVersion::from_name(&value.to_varchar()?)?;
-                    options.kept.push((name.to_lowercase(), value.clone()));
+                    options.kept.push((name.to_ascii_lowercase(), value.clone()));
                 }
                 other => {
-                    return Err(Error::binder(format!(
+                    return Err(Error::binder(byte_format!(
                         "Unrecognized option for attach \"{other}\""
                     )));
                 }
@@ -499,16 +499,16 @@ impl AttachOptions {
 /// The database type an `ATTACH` path names with a `type:` prefix
 /// (`ExtensionHelper::ExtractExtensionPrefixFromPath`): at least two alphanumeric
 /// characters (a single one is a Windows drive) before a colon not starting `://`.
-pub(crate) fn extension_prefix(path: &str) -> Option<&str> {
-    let first_colon = path.find(':')?;
-    if first_colon < 2 || path[first_colon..].starts_with("://") {
+pub(crate) fn extension_prefix(path: &[u8]) -> Option<&[u8]> {
+    let colon = path.iter().position(|byte| *byte == b':')?;
+    if colon < 2 || path[colon..].starts_with(b"://") {
         return None;
     }
-    let extension = &path[..first_colon];
-    extension
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-        .then_some(extension)
+    let prefix = &path[..colon];
+    prefix
+        .iter()
+        .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        .then_some(prefix)
 }
 
 /// Whether `ATTACH` opens the file at `path` as a file to query rather than a database
@@ -519,17 +519,35 @@ pub(crate) fn extension_prefix(path: &str) -> Option<&str> {
     clippy::case_sensitive_file_extension_comparisons,
     reason = "the name is lowercased"
 )]
-pub(crate) fn is_open_file(path: &str) -> Result<bool> {
+pub(crate) fn is_open_file(path: &[u8]) -> Result<bool> {
     use std::io::Read as _;
     // `MagicBytes::CheckMagicBytes`: a file that does not exist is a new database; one
     // that cannot be opened or read (a directory) is an error.
-    let mut file = match std::fs::File::open(path) {
+    let file_system = rustdb_storage::file_system::DatabaseFileSystem::for_path(path);
+    if file_system.is_registered() {
+        rustdb_function::file_system::verify_can_access_file(path)?;
+        if !file_system.exists(path)? {
+            return Ok(false);
+        }
+    }
+    let mut file = match file_system.open(
+        path,
+        rustdb_function::registered_files::OpenFlags {
+            read: true,
+            write: false,
+            create: false,
+            truncate: false,
+        },
+    ) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => {
-            return Err(Error::new(
+            if let Some(callback) = rustdb_storage::file_system::callback_error(&error) {
+                return Err(callback);
+            }
+            return Err(Error::new_bytes(
                 ErrorKind::Io,
-                format!(
+                byte_format!(
                     "Cannot open file \"{path}\": {}",
                     rustdb_common::os_error_text(&error)
                 ),
@@ -543,9 +561,12 @@ pub(crate) fn is_open_file(path: &str) -> Result<bool> {
             Ok(0) => break,
             Ok(count) => read += count,
             Err(error) => {
-                return Err(Error::new(
+                if let Some(callback) = rustdb_storage::file_system::callback_error(&error) {
+                    return Err(callback);
+                }
+                return Err(Error::new_bytes(
                     ErrorKind::Io,
-                    format!(
+                    byte_format!(
                         "Could not read from file \"{path}\": {}",
                         rustdb_common::os_error_text(&error)
                     ),
@@ -561,16 +582,19 @@ pub(crate) fn is_open_file(path: &str) -> Result<bool> {
     {
         return Ok(false);
     }
-    let mut lower_name = path.to_lowercase();
-    if lower_name.ends_with(".gz") {
+    let mut lower_name = path.to_ascii_lowercase();
+    if lower_name.ends_with(b".gz") {
         lower_name.truncate(lower_name.len() - 3);
-    } else if lower_name.ends_with(".zst") {
+    } else if lower_name.ends_with(b".zst") {
         lower_name.truncate(lower_name.len() - 4);
     }
     Ok(["parquet", "csv", "tsv", "json", "jsonl", "ndjson"]
         .iter()
         .any(|suffix| {
-            lower_name.ends_with(&format!(".{suffix}")) || lower_name.contains(&format!(".{suffix}?"))
+            lower_name.ends_with(format!(".{suffix}").as_bytes())
+                || lower_name
+                    .windows(suffix.len() + 2)
+                    .any(|part| part == format!(".{suffix}?").as_bytes())
         }))
 }
 
@@ -586,9 +610,9 @@ fn value_as_bool(value: &Value) -> Result<bool> {
     match text.as_str() {
         "true" | "t" | "1" => Ok(true),
         "false" | "f" | "0" => Ok(false),
-        _ => Err(Error::new(
+        _ => Err(Error::new_bytes(
             ErrorKind::Conversion,
-            format!("Could not convert string '{text}' to BOOL"),
+            byte_format!("Could not convert string '{text}' to BOOL"),
         )),
     }
 }
@@ -596,6 +620,7 @@ fn value_as_bool(value: &Value) -> Result<bool> {
 /// The attached databases of an instance, in attach order.
 #[derive(Debug)]
 pub(crate) struct DatabaseManager {
+    oid_allocator: Arc<rustdb_catalog::OidAllocator>,
     databases: RwLock<Vec<Arc<AttachedDatabase>>>,
     /// Serializes attaching and detaching, so that a file is never opened while another
     /// attach or detach of it is under way (DuckDB reserves the path in its
@@ -610,12 +635,16 @@ pub(crate) struct DatabaseManager {
 }
 
 impl DatabaseManager {
-    pub(crate) fn new(log_manager: Arc<crate::logging::LogManager>) -> Self {
+    pub(crate) fn new(
+        log_manager: Arc<crate::logging::LogManager>,
+        oid_allocator: Arc<rustdb_catalog::OidAllocator>,
+    ) -> Self {
         Self {
             databases: RwLock::default(),
             attach_lock: Mutex::default(),
             detached: Mutex::default(),
             log_manager,
+            oid_allocator,
         }
     }
 
@@ -628,10 +657,10 @@ impl DatabaseManager {
     }
 
     /// The database called `name` (case-insensitive).
-    pub fn get(&self, name: &str) -> Option<Arc<AttachedDatabase>> {
+    pub fn get(&self, name: impl AsRef<[u8]>) -> Option<Arc<AttachedDatabase>> {
         self.read()
             .iter()
-            .find(|database| database.name().eq_ignore_ascii_case(name))
+            .find(|database| database.name().eq_ignore_ascii_case(name.as_ref()))
             .cloned()
     }
 
@@ -643,7 +672,7 @@ impl DatabaseManager {
     /// Detaches the database called `name`: removes it and closes it once no transaction
     /// uses it any more, writing a checkpoint if `checkpoint` (`checkpoint_on_shutdown`) is
     /// on (`DatabaseManager::DetachDatabase`). `None` if there is no such database.
-    pub fn detach(&self, name: &str, checkpoint: bool) -> Option<Result<()>> {
+    pub fn detach(&self, name: impl AsRef<[u8]>, checkpoint: bool) -> Option<Result<()>> {
         let _guard = self.attach_lock.lock().unwrap_or_else(PoisonError::into_inner);
         let database = self.remove(name)?;
         let result = AttachedDatabase::close_if_last_reference(&database, checkpoint);
@@ -682,9 +711,9 @@ impl DatabaseManager {
     /// Detaches `database` if it is still attached (`ptr_eq`) under its name.
     pub fn detach_if_current(&self, database: &Arc<AttachedDatabase>, checkpoint: bool) {
         let _guard = self.attach_lock.lock().unwrap_or_else(PoisonError::into_inner);
-        let current = self.get(&database.name());
+        let current = self.get(database.name());
         if current.is_some_and(|current| Arc::ptr_eq(&current, database))
-            && let Some(removed) = self.remove(&database.name())
+            && let Some(removed) = self.remove(database.name())
         {
             let _ = removed.close(checkpoint, CloseAction::TryCheckpoint);
         }
@@ -692,9 +721,9 @@ impl DatabaseManager {
 
     /// Renames the database called `name` to `new_name` (`DatabaseManager::RenameDatabase`).
     /// `Ok(false)` if there is no such database.
-    pub fn rename(&self, name: &str, new_name: &str) -> Result<bool> {
+    pub fn rename(&self, name: &[u8], new_name: &[u8]) -> Result<bool> {
         if is_reserved_name(new_name) {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(byte_format!(
                 "Database name \"{new_name}\" cannot be used because it is a reserved name"
             )));
         }
@@ -703,7 +732,7 @@ impl DatabaseManager {
             return Ok(false);
         };
         if self.get(new_name).is_some() {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(byte_format!(
                 "Failed to rename database \"{name}\" to \"{new_name}\": database with new name already exists"
             )));
         }
@@ -712,11 +741,11 @@ impl DatabaseManager {
     }
 
     /// Removes the database called `name`.
-    pub fn remove(&self, name: &str) -> Option<Arc<AttachedDatabase>> {
+    pub fn remove(&self, name: impl AsRef<[u8]>) -> Option<Arc<AttachedDatabase>> {
         let mut databases = self.write();
         let position = databases
             .iter()
-            .position(|database| database.name().eq_ignore_ascii_case(name))?;
+            .position(|database| database.name().eq_ignore_ascii_case(name.as_ref()))?;
         Some(databases.remove(position))
     }
 
@@ -725,27 +754,27 @@ impl DatabaseManager {
     /// `IF NOT EXISTS` found the name taken.
     pub fn attach(
         &self,
-        name: &str,
-        path: &str,
+        name: &[u8],
+        path: &[u8],
         options: &AttachOptions,
         on_conflict: OnCreateConflict,
         buffer_manager: &rustdb_buffer::BufferManager,
         instance_validity: &Arc<ValidChecker>,
     ) -> Result<Option<Arc<AttachedDatabase>>> {
         let _guard = self.attach_lock.lock().unwrap_or_else(PoisonError::into_inner);
-        let path = if path == ":memory:" {
-            String::new()
+        let path = if path == b":memory:" {
+            ByteString::new()
         } else {
             // `FileSystem::ExpandPath`: `~` (with `home_directory`) and `file:` URLs.
-            rustdb_function::file_system::expand_path(path)
+            rustdb_function::file_system::expand_path_bytes(path)
         };
         let name = if name.is_empty() {
             database_name(&path)
         } else {
-            name.to_owned()
+            ByteString::from(name)
         };
         if is_reserved_name(&name) {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(byte_format!(
                 "Attached database name \"{name}\" cannot be used because it is a reserved name"
             )));
         }
@@ -766,7 +795,7 @@ impl DatabaseManager {
                 };
                 if conflicting {
                     let mode = |read_only: bool| if read_only { "READ_ONLY" } else { "READ_WRITE" };
-                    return Err(Error::binder(format!(
+                    return Err(Error::binder(byte_format!(
                         "Database \"{name}\" is already attached in {} mode, cannot re-attach in {} mode",
                         mode(existing.read_only),
                         mode(options.read_only())
@@ -782,7 +811,7 @@ impl DatabaseManager {
             {
                 let previous = existing.storage.vacuum_rebuild_index_threshold();
                 if previous != new {
-                    return Err(Error::binder(format!(
+                    return Err(Error::binder(byte_format!(
                         "Cannot re-attach with a different vacuum_rebuild_indexes setting (previous: {previous}, new: {new})"
                     )));
                 }
@@ -809,35 +838,38 @@ impl DatabaseManager {
                     canonical_path(&database.path) == canonical_path(&path)
                         && !(database.read_only && options.read_only())
                         && !(on_conflict == OnCreateConflict::ReplaceOnConflict
-                            && database.name().eq_ignore_ascii_case(&name))
+                            && database.name().eq_ignore_ascii_case(name.as_bytes()))
                 })
         {
             // `DatabaseFilePathManager::InsertDatabasePath`: the same name with IF NOT
             // EXISTS finds the file still held by the detached database.
             if on_conflict == OnCreateConflict::IgnoreOnConflict
-                && existing.name().eq_ignore_ascii_case(&name)
+                && existing.name().eq_ignore_ascii_case(name.as_bytes())
                 && !existing.is_closed()
                 && self
                     .get(&name)
                     .is_none_or(|current| !Arc::ptr_eq(&current, existing))
             {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(byte_format!(
                     "Unique file handle conflict: Cannot attach \"{name}\" - the database file \"{path}\" is in the \
                      process of being detached"
                 )));
             }
-            return Err(Error::binder(format!(
+            return Err(Error::binder(byte_format!(
                 "Unique file handle conflict: Cannot attach \"{name}\" - the database file \"{path}\" is already \
                  attached by database \"{}\"",
                 existing.name()
             )));
         }
         if let Some(existing) = name_taken {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(byte_format!(
                 "Failed to attach database: database with name \"{existing}\" already exists"
             )));
         }
-        let catalog = Arc::new(Catalog::new(name.clone())?);
+        let catalog = Arc::new(Catalog::unregistered(
+            name.clone(),
+            Arc::clone(&self.oid_allocator),
+        )?);
         let storage = if path.is_empty() {
             let storage = Arc::new(InMemoryStorageManager::new(
                 buffer_manager.clone(),
@@ -891,11 +923,12 @@ impl DatabaseManager {
             options: options
                 .kept
                 .iter()
-                .map(|(name, value)| Ok((name.clone(), value.to_varchar()?)))
+                .map(|(name, value)| Ok((name.clone(), value.to_varchar_bytes()?)))
                 .collect::<Result<_>>()?,
             tags,
             cipher,
         });
+        catalog.finalize_registration();
         let database = Arc::new(AttachedDatabase {
             path,
             catalog,
@@ -911,7 +944,7 @@ impl DatabaseManager {
         let mut databases = self.write();
         if let Some(position) = databases
             .iter()
-            .position(|existing| existing.name().eq_ignore_ascii_case(&name))
+            .position(|existing| existing.name().eq_ignore_ascii_case(name.as_bytes()))
         {
             // `ATTACH OR REPLACE`.
             let old = databases.remove(position);
@@ -924,10 +957,15 @@ impl DatabaseManager {
 
 /// The absolute form of a database path, for recognising the same file under different
 /// names (the parent directory resolved, the file itself may not exist yet).
-fn canonical_path(path: &str) -> String {
-    let path = std::path::Path::new(path);
-    if let Ok(resolved) = std::fs::canonicalize(path) {
-        return resolved.to_string_lossy().into_owned();
+fn canonical_path(path: &[u8]) -> ByteString {
+    if rustdb_function::file_system::is_remote_file(path) {
+        return rustdb_function::file_system::canonicalize_path_bytes(path);
+    }
+    let Ok(path) = rustdb_common::native_file_path(path) else {
+        return path.into();
+    };
+    if let Ok(resolved) = std::fs::canonicalize(&path) {
+        return resolved.as_os_str().as_encoded_bytes().into();
     }
     match (path.parent(), path.file_name()) {
         (Some(parent), Some(file)) => {
@@ -937,17 +975,17 @@ fn canonical_path(path: &str) -> String {
                 parent
             };
             std::fs::canonicalize(parent).map_or_else(
-                |_| path.to_string_lossy().into_owned(),
-                |parent| parent.join(file).to_string_lossy().into_owned(),
+                |_| path.as_os_str().as_encoded_bytes().into(),
+                |parent| parent.join(file).as_os_str().as_encoded_bytes().into(),
             )
         }
-        _ => path.to_string_lossy().into_owned(),
+        _ => path.as_os_str().as_encoded_bytes().into(),
     }
 }
 
 /// Names attached databases cannot have (`DatabaseManager::CheckReservedName`).
-fn is_reserved_name(name: &str) -> bool {
+fn is_reserved_name(name: impl AsRef<[u8]>) -> bool {
     ["system", "temp", "main"]
         .iter()
-        .any(|reserved| reserved.eq_ignore_ascii_case(name))
+        .any(|reserved| reserved.as_bytes().eq_ignore_ascii_case(name.as_ref()))
 }

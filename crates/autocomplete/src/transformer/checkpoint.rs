@@ -17,8 +17,8 @@ impl PegTransformer {
         };
         let mut function = ParsedExpression::function(checkpoint_name, Vec::new());
         if let ParsedExpressionKind::Function(function) = &mut function.kind {
-            "system".clone_into(&mut function.catalog);
-            "main".clone_into(&mut function.schema);
+            function.catalog = "system".into();
+            function.schema = "main".into();
             if let Some(catalog_name) = list.optional(2)? {
                 function.children.push(ParsedExpression::constant(Value::varchar(
                     catalog_name.identifier()?,

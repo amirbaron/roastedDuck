@@ -175,7 +175,7 @@ fn stats_kind(ty: &LogicalType) -> StatsKind {
 #[derive(Debug)]
 #[allow(clippy::struct_excessive_bools, reason = "DuckDB's ColumnStatsUnifier flags")]
 struct Unifier {
-    column_name: String,
+    column_name: rustdb_common::ByteString,
     kind: StatsKind,
     global_min: Option<Vec<u8>>,
     global_max: Option<Vec<u8>>,
@@ -193,7 +193,7 @@ struct Unifier {
 }
 
 impl Unifier {
-    fn new(column_name: String, kind: StatsKind) -> Self {
+    fn new(column_name: rustdb_common::ByteString, kind: StatsKind) -> Self {
         Self {
             column_name,
             kind,
@@ -304,19 +304,31 @@ impl Unifier {
 }
 
 /// `KeywordHelper::WriteQuoted(name, '"')`.
-fn quoted(name: &str) -> String {
-    format!("\"{}\"", name.replace('"', "\"\""))
+fn quoted(name: &[u8]) -> rustdb_common::ByteString {
+    let mut out = rustdb_common::ByteString::from(b"\"");
+    for &byte in name {
+        if byte == b'"' {
+            out.push(byte);
+        }
+        out.push(byte);
+    }
+    out.push(b'"');
+    out
 }
 
 /// `GetStatsUnifier`: one unifier per leaf, named by the quoted path without the
 /// repeated groups.
-fn collect_unifiers(writer: &ColumnWriter, mut base_name: String, unifiers: &mut Vec<Unifier>) {
+fn collect_unifiers(
+    writer: &ColumnWriter,
+    mut base_name: rustdb_common::ByteString,
+    unifiers: &mut Vec<Unifier>,
+) {
     let schema = writer.schema();
     if schema.repetition != FieldRepetitionType::REPEATED {
         if !base_name.is_empty() {
-            base_name.push('.');
+            base_name.push(b'.');
         }
-        base_name.push_str(&quoted(&schema.name));
+        base_name.push_bytes(quoted(&schema.name));
     }
     match writer {
         ColumnWriter::Primitive(primitive) => {
@@ -358,7 +370,7 @@ pub fn gather(
 ) -> CopyFunctionFileStatistics {
     let mut unifiers = Vec::new();
     for column in columns {
-        collect_unifiers(column, String::new(), &mut unifiers);
+        collect_unifiers(column, rustdb_common::ByteString::new(), &mut unifiers);
     }
     // `FlushColumnStats` for every column chunk.
     for (group_index, group) in metadata.row_groups.iter().enumerate() {

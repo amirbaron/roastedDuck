@@ -71,6 +71,7 @@ pub struct ColumnDataAllocator {
     /// without the block header).
     block_size: usize,
     blocks: Mutex<Vec<BlockMetaData>>,
+    partition_index: Option<usize>,
 }
 
 impl ColumnDataAllocator {
@@ -80,7 +81,18 @@ impl ColumnDataAllocator {
             buffer_manager,
             tag,
             blocks: Mutex::new(Vec::new()),
+            partition_index: None,
         }
+    }
+
+    pub fn set_partition_index(&mut self, index: usize) -> Result<()> {
+        if self.partition_index.is_some() || !lock(&self.blocks).is_empty() {
+            return Err(Error::internal(
+                "ColumnDataAllocator partition must be set once before allocating",
+            ));
+        }
+        self.partition_index = Some(index);
+        Ok(())
     }
 
     /// The usable size of a block.
@@ -123,6 +135,9 @@ impl ColumnDataAllocator {
     fn allocate_block(&self, blocks: &mut Vec<BlockMetaData>, size: usize) -> Result<BufferHandle> {
         let max_size = size.max(self.block_size());
         let pin = self.buffer_manager.allocate(self.tag, max_size, false)?;
+        if let Some(index) = self.partition_index {
+            pin.block().set_eviction_queue_index(index.bit_width() as usize);
+        }
         let capacity = u32::try_from(max_size)
             .map_err(|_| Error::internal("ColumnDataAllocator: block larger than 4 GiB"))?;
         blocks.push(BlockMetaData {

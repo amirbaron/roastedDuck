@@ -12,9 +12,16 @@ pub(super) fn alter_database_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
         // ALTER DATABASE ColId SET IDENT TO ColId
         0 => {
             let ident = rhs.str(5)?;
-            if !ident.as_deref().unwrap_or_default().eq_ignore_ascii_case("alias") {
+            if !ident
+                .as_deref()
+                .unwrap_or_default()
+                .eq_ignore_ascii_case(b"alias")
+            {
                 return Err(rhs.error_at(
-                    format!("expected SET ALIAS TO, got SET {} TO", c_str(ident.as_deref())),
+                    rustdb_common::byte_format!(
+                        "expected SET ALIAS TO, got SET {} TO",
+                        c_str(ident.as_deref())
+                    ),
                     rhs.loc(5),
                 ));
             }
@@ -29,9 +36,16 @@ pub(super) fn alter_database_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
         // ALTER DATABASE IF_P EXISTS ColId SET IDENT TO ColId
         1 => {
             let ident = rhs.str(7)?;
-            if !ident.as_deref().unwrap_or_default().eq_ignore_ascii_case("alias") {
+            if !ident
+                .as_deref()
+                .unwrap_or_default()
+                .eq_ignore_ascii_case(b"alias")
+            {
                 return Err(rhs.error_at(
-                    format!("expected SET ALIAS TO, got SET {} TO", c_str(ident.as_deref())),
+                    rustdb_common::byte_format!(
+                        "expected SET ALIAS TO, got SET {} TO",
+                        c_str(ident.as_deref())
+                    ),
                     rhs.loc(7),
                 ));
             }

@@ -167,8 +167,7 @@ impl BatchInsertGlobal {
         self.result.add_count(total_rows);
         let unflushed_memory = if flushed { 0 } else { collection.allocation_size() };
         if !flushed {
-            self.memory_manager
-                .increase_unflushed_memory(unflushed_memory);
+            self.memory_manager.increase_unflushed_memory(unflushed_memory);
         }
         let position = state
             .entries

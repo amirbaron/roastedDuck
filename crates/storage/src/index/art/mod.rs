@@ -23,7 +23,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use rustdb_buffer::BufferManager;
-use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_common::{ByteString, Error, ErrorKind, Result};
 use rustdb_types::{DataChunk, LogicalType, Value};
 
 pub use iterator::{ArtIterator, RowIdSetOutput, ScanOutput, ScanResult};
@@ -31,7 +31,7 @@ pub use key::{
     ArtKey, ROW_ID_SIZE, create_key, decode_row_id, generate_keys, is_supported_key_type, row_id_key,
 };
 pub use node::{GateStatus, NType, Node, Slot};
-pub use storage::ArtStorageInfo;
+pub use storage::{ArtStorageInfo, read_legacy_index_storage};
 
 use self::node::{ALLOCATOR_COUNT, read_node, write_node};
 use super::conflict_manager::ConflictManager;
@@ -51,7 +51,7 @@ pub trait IndexKeyExecutor: Send + Sync + fmt::Debug {
     /// The key columns of the rows of `table_chunk`, which holds every table column.
     fn execute(&self, table_chunk: &DataChunk) -> Result<DataChunk>;
     /// The display names of the key expressions (`Expression::GetName`).
-    fn names(&self) -> &[String];
+    fn names(&self) -> &[rustdb_common::ByteString];
 
     /// The predicates an index scan answers for the pushed-down `filter` on the one column
     /// the key expression reads, if it compares the key expression with a constant
@@ -67,7 +67,7 @@ pub trait IndexKeyExecutor: Send + Sync + fmt::Debug {
 pub enum IndexKeyExpressions {
     /// Plain column references: key column `i` is table column `column_ids[i]`, displayed
     /// as `names[i]`.
-    Columns(Vec<String>),
+    Columns(Vec<rustdb_common::ByteString>),
     /// Arbitrary expressions.
     Custom(Arc<dyn IndexKeyExecutor>),
 }
@@ -85,7 +85,7 @@ const GEOMETRY_KEY_STORAGE_VERSION: u64 = 7;
 /// An adaptive radix tree index.
 #[derive(Debug)]
 pub struct Art {
-    name: String,
+    name: ByteString,
     constraint: IndexConstraintType,
     column_ids: Vec<usize>,
     key_types: Vec<LogicalType>,
@@ -97,13 +97,16 @@ pub struct Art {
     buffer_manager: BufferManager,
     block_size: usize,
     buffer_loader: Option<Arc<dyn BufferLoader>>,
+    /// Unloaded buffers already use the deprecated layout; only resident nodes
+    /// can require conversion before writing that same layout again.
+    persisted_deprecated_layout: bool,
 }
 
 impl Art {
     /// An empty ART over the key columns `column_ids` (physical table columns) with key
     /// types `key_types`.
     pub fn new(
-        name: impl Into<String>,
+        name: impl Into<ByteString>,
         constraint: IndexConstraintType,
         column_ids: Vec<usize>,
         key_types: Vec<LogicalType>,
@@ -131,6 +134,7 @@ impl Art {
             buffer_manager,
             block_size,
             buffer_loader: None,
+            persisted_deprecated_layout: false,
         };
         art.init_allocators()?;
         Ok(art)
@@ -152,6 +156,7 @@ impl Art {
             buffer_manager: self.buffer_manager.clone(),
             block_size: self.block_size,
             buffer_loader: self.buffer_loader.clone(),
+            persisted_deprecated_layout: false,
         };
         art.init_allocators()?;
         Ok(art)
@@ -227,7 +232,7 @@ impl Art {
         self.buffer_loader = Some(loader);
     }
 
-    pub fn name(&self) -> &str {
+    pub fn name(&self) -> &ByteString {
         &self.name
     }
 
@@ -300,6 +305,7 @@ impl Art {
             allocator.reset();
         }
         self.tree.clear();
+        self.persisted_deprecated_layout = false;
     }
 
     /// The serialization information of the allocators.
@@ -406,10 +412,10 @@ impl Art {
     }
 
     /// The display names of the key expressions.
-    pub fn expression_names(&self) -> Vec<String> {
+    pub fn expression_names(&self) -> Vec<rustdb_common::ByteString> {
         match &self.expressions {
             IndexKeyExpressions::Columns(names) => names.clone(),
-            IndexKeyExpressions::Custom(executor) => executor.names().to_vec(),
+            IndexKeyExpressions::Custom(executor) => executor.names().iter().map(Into::into).collect(),
         }
     }
 
@@ -651,9 +657,10 @@ impl Art {
             return Ok(());
         };
         let key_name = self.error_key_name(&key_chunk, conflict);
-        Err(Error::new(
+        Err(Error::new_bytes(
             ErrorKind::Constraint,
-            self.constraint_error_message(manager.verify_type(), &key_name),
+            self.constraint_error_message(manager.verify_type(), &key_name)
+                .into_bytes(),
         ))
     }
 
@@ -720,38 +727,47 @@ impl Art {
     }
 
     /// `"<name>: <value>, ..."` for row `row` of the key chunk (`GenerateErrorKeyName`).
-    fn error_key_name(&self, key_chunk: &DataChunk, row: usize) -> String {
+    fn error_key_name(&self, key_chunk: &DataChunk, row: usize) -> rustdb_common::ByteString {
         let names = self.expression_names();
-        key_chunk
-            .columns()
-            .iter()
-            .enumerate()
-            .map(|(k, column)| {
-                let name = names.get(k).map_or("", String::as_str);
-                format!("{name}: {}", value_to_string(&column.get_value(row)))
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
+        let mut out = rustdb_common::ByteString::new();
+        for (k, column) in key_chunk.columns().iter().enumerate() {
+            if k > 0 {
+                out.push_bytes(", ");
+            }
+            if let Some(name) = names.get(k) {
+                out.push_bytes(name);
+            }
+            out.push_bytes(": ");
+            out.push_bytes(value_to_string(&column.get_value(row)));
+        }
+        out
     }
 
     /// `ART::GenerateConstraintErrorMessage`.
-    fn constraint_error_message(&self, verify_type: VerifyExistenceType, key_name: &str) -> String {
-        match verify_type {
-            VerifyExistenceType::Append => {
-                let kind = if self.is_primary() {
-                    "primary key"
+    fn constraint_error_message(
+        &self,
+        verify_type: VerifyExistenceType,
+        key_name: &[u8],
+    ) -> rustdb_common::ByteString {
+        let (prefix, suffix) = match verify_type {
+            VerifyExistenceType::Append => (
+                "Duplicate key \"",
+                if self.is_primary() {
+                    "\" violates primary key constraint."
                 } else {
-                    "unique"
-                };
-                format!("Duplicate key \"{key_name}\" violates {kind} constraint.")
-            }
-            VerifyExistenceType::AppendFk => format!(
-                "Violates foreign key constraint because key \"{key_name}\" does not exist in the referenced table"
+                    "\" violates unique constraint."
+                },
             ),
-            VerifyExistenceType::DeleteFk => format!(
-                "Violates foreign key constraint because key \"{key_name}\" is still referenced by a foreign key in a different table. If this is an unexpected constraint violation, please refer to our foreign key limitations in the documentation"
+            VerifyExistenceType::AppendFk => (
+                "Violates foreign key constraint because key \"",
+                "\" does not exist in the referenced table",
             ),
-        }
+            VerifyExistenceType::DeleteFk => (
+                "Violates foreign key constraint because key \"",
+                "\" is still referenced by a foreign key in a different table. If this is an unexpected constraint violation, please refer to our foreign key limitations in the documentation",
+            ),
+        };
+        [prefix.as_bytes(), key_name, suffix.as_bytes()].concat().into()
     }
 
     /// The constraint violation message for row `failed_index` of `table_chunk`
@@ -761,7 +777,7 @@ impl Art {
         verify_type: VerifyExistenceType,
         failed_index: usize,
         table_chunk: &DataChunk,
-    ) -> Result<String> {
+    ) -> Result<rustdb_common::ByteString> {
         let key_chunk = self.execute_expressions(table_chunk)?;
         let key_name = self.error_key_name(&key_chunk, failed_index);
         Ok(self.constraint_error_message(verify_type, &key_name))

@@ -33,12 +33,12 @@ const ROOT_COLUMN: u64 = (1 << 63) + 1;
 const EMPTY_COLUMN: u64 = u64::MAX - 1;
 const ROW_ID_COLUMN: u64 = u64::MAX;
 
-fn virtual_columns(_: Option<&dyn FunctionData>) -> Vec<(u64, String, LogicalType)> {
+fn virtual_columns(_: Option<&dyn FunctionData>) -> Vec<(u64, rustdb_common::ByteString, LogicalType)> {
     vec![
-        (JSON_COLUMN, "json".to_owned(), json_type()),
-        (ROOT_COLUMN, "root".to_owned(), LogicalType::VARCHAR),
-        (EMPTY_COLUMN, String::new(), LogicalType::BOOLEAN),
-        (ROW_ID_COLUMN, "rowid".to_owned(), LogicalType::BIGINT),
+        (JSON_COLUMN, "json".to_owned().into(), json_type()),
+        (ROOT_COLUMN, "root".to_owned().into(), LogicalType::VARCHAR),
+        (EMPTY_COLUMN, String::new().into(), LogicalType::BOOLEAN),
+        (ROW_ID_COLUMN, "rowid".to_owned().into(), LogicalType::BIGINT),
     ]
 }
 
@@ -69,7 +69,7 @@ fn in_out_bind(kind: InOutType, input: &TableFunctionBindInput<'_>) -> TableFunc
     ];
     TableFunctionBindOutput {
         return_types: schema.iter().map(|(_, ty)| ty.clone()).collect(),
-        names: schema.iter().map(|(name, _)| (*name).to_owned()).collect(),
+        names: schema.iter().map(|(name, _)| (*name).into()).collect(),
         bind_data: Some(Arc::new(InOutData {
             kind,
             constant_row: (!input.inputs.is_empty()).then(|| input.inputs.to_vec()),

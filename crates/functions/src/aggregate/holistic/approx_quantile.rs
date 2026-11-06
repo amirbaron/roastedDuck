@@ -17,10 +17,17 @@ use super::tdigest::TDigest;
 use crate::aggregate::nested::list::append_list;
 
 /// The requested quantiles (DuckDB's `ApproximateQuantileBindData`; stored as FLOAT).
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Quantiles(Vec<f32>);
 
 impl FunctionData for Quantiles {
+    fn equals(&self, other: &dyn FunctionData) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self == other)
+    }
+
     fn as_any(&self) -> &dyn Any {
         self
     }

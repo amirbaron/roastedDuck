@@ -95,7 +95,7 @@ pub(crate) struct PegTransformer {
     pub prepared_statement_parameter_index: u64,
     pub last_param_type: PreparedParamType,
     /// `WINDOW name AS (...)` definitions (`window_clauses`).
-    pub window_clauses: CaseInsensitiveMap<WindowExpr>,
+    pub window_clauses: CaseInsensitiveMap<WindowExpr, rustdb_common::ByteString>,
     /// The enum types `PIVOT`s without `IN` lists need (`pivot_entries`).
     pub pivot_entries: Vec<CreatePivotEntry>,
     /// The CTEs of the enclosing `WITH` clauses, outermost first (`stored_cte_map`).
@@ -294,10 +294,10 @@ impl PegTransformer {
         let list = parse_result.list()?;
         let mut statement: SqlStatement = self.transform(list.choice(0)?)?;
         if !self.named_parameter_map.is_empty() {
-            let map: CaseInsensitiveMap<u64> = self
+            let map: CaseInsensitiveMap<u64, rustdb_common::ByteString> = self
                 .named_parameter_map
                 .iter()
-                .map(|(name, index)| (name, *index))
+                .map(|(name, index)| (rustdb_common::ByteString::from(name.as_bytes()), *index))
                 .collect();
             if let SqlStatementKind::Select(select) = &mut statement.kind {
                 select.named_param_map = map.clone();
@@ -388,7 +388,7 @@ pub fn parse_query(query: &str, options: ParserOptions) -> Result<Vec<SqlStateme
         let end = start
             .saturating_add(usize::try_from(statement.length).unwrap_or(usize::MAX))
             .min(query.len());
-        statement.query = String::from_utf8_lossy(&query.as_bytes()[start..end]).into_owned();
+        statement.query = query.as_bytes()[start..end].into();
         statement.location = 0;
         statement.length = statement.query.len() as u64;
         if let SqlStatementKind::Create(info) = &mut statement.kind {
@@ -396,4 +396,35 @@ pub fn parse_query(query: &str, options: ParserOptions) -> Result<Vec<SqlStateme
         }
     }
     Ok(statements)
+}
+
+// PEG token strings are Unicode text today. Encode them when a rule feeds a native
+// AST name field; catalog names must never pass through this text-only transformer.
+impl TransformResult for rustdb_common::ByteString {
+    fn transform_function(rule: &str) -> Option<TransformFunction<Self>> {
+        if rule == "VersionNumber" {
+            Some(PegTransformer::transform_version_number)
+        } else {
+            String::transform_function(rule).map(|_| encode_token_name as TransformFunction<Self>)
+        }
+    }
+}
+fn encode_token_name(
+    transformer: &mut PegTransformer,
+    result: &ParseResult,
+) -> Result<rustdb_common::ByteString> {
+    transformer.transform::<String>(result).map(Into::into)
+}
+impl TransformResult for Vec<rustdb_common::ByteString> {
+    fn transform_function(rule: &str) -> Option<TransformFunction<Self>> {
+        Vec::<String>::transform_function(rule).map(|_| encode_token_names as TransformFunction<Self>)
+    }
+}
+fn encode_token_names(
+    transformer: &mut PegTransformer,
+    result: &ParseResult,
+) -> Result<Vec<rustdb_common::ByteString>> {
+    transformer
+        .transform::<Vec<String>>(result)
+        .map(|names| names.into_iter().map(Into::into).collect())
 }

@@ -40,6 +40,9 @@ impl PhysicalOperator for PhysicalProjection {
     fn children(&self) -> &[PhysicalRef] {
         &self.children
     }
+    fn preallocate_output(&self) -> bool {
+        false
+    }
     fn as_operator(&self) -> Option<&dyn ErasedOperator> {
         Some(self)
     }

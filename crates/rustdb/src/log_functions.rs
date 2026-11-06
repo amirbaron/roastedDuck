@@ -95,7 +95,7 @@ fn duckdb_logs() -> TableFunctionSet {
             Ok(TableFunctionBindOutput {
                 return_types: types.clone(),
                 names: ["context_id", "timestamp", "type", "log_level", "message"]
-                    .map(str::to_owned)
+                    .map(rustdb_common::ByteString::from)
                     .to_vec(),
                 bind_data: Some(Arc::new(LogRows { types, rows })),
             })
@@ -167,7 +167,7 @@ fn duckdb_log_contexts() -> TableFunctionSet {
                     "query_id",
                     "thread_id",
                 ]
-                .map(str::to_owned)
+                .map(rustdb_common::ByteString::from)
                 .to_vec(),
                 bind_data: Some(Arc::new(LogRows { types, rows })),
             })
@@ -193,7 +193,7 @@ enum LogAction {
     Enable {
         config: LogConfig,
         log_types: Vec<String>,
-        storage_config: Vec<(String, Value)>,
+        storage_config: Vec<(rustdb_common::ByteString, Value)>,
     },
     Disable,
     Truncate,
@@ -264,7 +264,7 @@ fn run_action(
 fn success_output(bind_data: LogActionData) -> TableFunctionBindOutput {
     TableFunctionBindOutput {
         return_types: vec![LogicalType::BOOLEAN],
-        names: vec!["Success".to_owned()],
+        names: vec!["Success".to_owned().into()],
         bind_data: Some(Arc::new(bind_data)),
     }
 }
@@ -276,23 +276,23 @@ fn bind_enable_logging(input: &TableFunctionBindInput<'_>) -> Result<TableFuncti
     }
     let (manager, logger) = log_manager(input)?;
     let mut config = LogConfig::default();
-    let mut storage_config: Vec<(String, Value)> = Vec::new();
-    let mut set_config = |key: &str, value: &Value| match storage_config
+    let mut storage_config: Vec<(rustdb_common::ByteString, Value)> = Vec::new();
+    let mut set_config = |key: &[u8], value: &Value| match storage_config
         .iter_mut()
         .find(|(name, _)| name.eq_ignore_ascii_case(key))
     {
         Some(entry) => entry.1 = value.clone(),
-        None => storage_config.push((key.to_owned(), value.clone())),
+        None => storage_config.push((key.into(), value.clone())),
     };
     let mut storage_set = false;
     for (name, value) in input.named_parameters {
-        match name.to_lowercase().as_str() {
-            "level" => config.level = LogLevel::parse(&value.to_varchar()?)?,
-            "storage" => {
+        match name.to_ascii_lowercase().as_bytes() {
+            b"level" => config.level = LogLevel::parse(&value.to_varchar()?)?,
+            b"storage" => {
                 storage_set = true;
                 config.storage = value.to_varchar()?;
             }
-            "storage_config" => {
+            b"storage_config" => {
                 if value.logical_type().id() != rustdb_types::LogicalTypeId::Struct {
                     return Err(Error::invalid_input(
                         "EnableLogging: storage_config must be a struct",
@@ -303,11 +303,11 @@ fn bind_enable_logging(input: &TableFunctionBindInput<'_>) -> Result<TableFuncti
                     set_config(field, child);
                 }
             }
-            "storage_path" => set_config("path", value),
-            "storage_normalize" => set_config("normalize", value),
-            "storage_buffer_size" => set_config("buffer_size", value),
+            b"storage_path" => set_config(b"path", value),
+            b"storage_normalize" => set_config(b"normalize", value),
+            b"storage_buffer_size" => set_config(b"buffer_size", value),
             _ => {
-                return Err(Error::invalid_input(format!(
+                return Err(Error::invalid_input(rustdb_common::byte_format!(
                     "EnableLogging: unknown named parameter: {name}"
                 )));
             }

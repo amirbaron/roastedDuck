@@ -46,26 +46,28 @@ pub const MAX_UNCOMPRESSED_DICT_PAGE_SIZE: usize = 1_073_741_824;
 #[derive(Clone, Debug, Default)]
 pub struct FieldId {
     pub field_id: Option<i32>,
-    pub children: CaseInsensitiveMap<FieldId>,
+    pub children: CaseInsensitiveMap<FieldId, rustdb_common::ByteString>,
 }
 
 /// The options of a Parquet write (`ParquetWriteBindData`).
 #[derive(Clone, Debug)]
 pub struct WriterOptions {
+    /// Raw footer key; its Debug implementation deliberately omits key bytes.
+    pub encryption: Option<crate::crypto::FooterKey>,
     pub codec: CompressionCodec,
     pub compression_level: i64,
     pub row_group_size: usize,
     pub row_group_size_bytes: usize,
     pub row_groups_per_file: Option<u64>,
-    pub kv_metadata: Vec<(String, Vec<u8>)>,
-    pub field_ids: CaseInsensitiveMap<FieldId>,
+    pub kv_metadata: Vec<(rustdb_common::ByteString, Vec<u8>)>,
+    pub field_ids: CaseInsensitiveMap<FieldId, rustdb_common::ByteString>,
     pub dictionary_size_limit: Option<usize>,
     pub string_dictionary_page_size_limit: usize,
     pub enable_bloom_filters: bool,
     pub bloom_filter_false_positive_ratio: f64,
     pub version: ParquetVersion,
     /// The shredding types of VARIANT columns (`SHREDDING`), by column name.
-    pub shredding: Vec<(String, LogicalType)>,
+    pub shredding: Vec<(rustdb_common::ByteString, LogicalType)>,
     /// The `GeoParquet` metadata and geometry types written (`GEOPARQUET_VERSION`).
     pub geoparquet_version: crate::geo::GeoParquetVersion,
     /// Whether `GeoParquet` metadata is written at all (`enable_geoparquet_conversion`).
@@ -75,6 +77,7 @@ pub struct WriterOptions {
 impl Default for WriterOptions {
     fn default() -> Self {
         Self {
+            encryption: None,
             codec: CompressionCodec::SNAPPY,
             compression_level: 3,
             row_group_size: DEFAULT_ROW_GROUP_SIZE,
@@ -97,24 +100,31 @@ impl Default for WriterOptions {
 /// The output file with the number of bytes written (`BufferedFileWriter`).
 #[derive(Debug)]
 pub struct FileSink {
-    out: BufWriter<File>,
+    out: BufWriter<rustdb_function::registered_files::Output>,
     written: u64,
-    path: String,
+    path: rustdb_common::ByteString,
+    encryption: Option<crate::crypto::FooterKey>,
 }
 
 impl FileSink {
-    fn create(path: &str) -> Result<Self> {
+    fn create(path: &[u8]) -> Result<Self> {
         rustdb_function::file_system::verify_can_write(path)?;
-        let file = File::create(path).map_err(|error| {
-            Error::new(
-                ErrorKind::Io,
-                format!("Cannot open file \"{path}\": {}", io_reason(&error)),
-            )
-        })?;
+        let file = if rustdb_function::registered_files::lookup(path).is_some() {
+            rustdb_function::registered_files::Output::create(path)?
+        } else {
+            let file = File::create(rustdb_function::file_system::native_path(path)?).map_err(|error| {
+                Error::new_bytes(
+                    ErrorKind::Io,
+                    rustdb_common::byte_format!("Cannot open file \"{path}\": {}", io_reason(&error)),
+                )
+            })?;
+            rustdb_function::registered_files::Output::Local(file)
+        };
         Ok(Self {
             out: BufWriter::with_capacity(1 << 20, file),
             written: 0,
-            path: path.to_owned(),
+            path: path.into(),
+            encryption: None,
         })
     }
 
@@ -125,10 +135,16 @@ impl FileSink {
 
     pub fn write_all(&mut self, bytes: &[u8]) -> Result<()> {
         self.out.write_all(bytes).map_err(|error| {
-            Error::new(
-                ErrorKind::Io,
-                format!("Could not write file \"{}\": {}", self.path, io_reason(&error)),
-            )
+            rustdb_function::registered_files::callback_error(&error).unwrap_or_else(|| {
+                Error::new_bytes(
+                    ErrorKind::Io,
+                    rustdb_common::byte_format!(
+                        "Could not write file \"{}\": {}",
+                        self.path,
+                        io_reason(&error)
+                    ),
+                )
+            })
         })?;
         self.written += bytes.len() as u64;
         Ok(())
@@ -137,17 +153,37 @@ impl FileSink {
     /// Writes a Thrift structure; returns its size.
     pub fn write_thrift<T: ThriftValue>(&mut self, value: &T) -> Result<u64> {
         let bytes = crate::thrift::write_to_vec(value);
-        self.write_all(&bytes)?;
-        Ok(bytes.len() as u64)
+        self.write_data(&bytes)
+    }
+
+    /// A page payload or Thrift module, encrypted as one independent module.
+    pub fn write_data(&mut self, bytes: &[u8]) -> Result<u64> {
+        let start = self.written();
+        if let Some(key) = &self.encryption {
+            let encoded = crate::crypto::encrypt_module(&key.0, &[], bytes)?;
+            self.write_all(&encoded)?;
+        } else {
+            self.write_all(bytes)?;
+        }
+        Ok(self.written() - start)
     }
 
     fn close(mut self) -> Result<()> {
-        self.out.flush().map_err(|error| {
-            Error::new(
-                ErrorKind::Io,
-                format!("Could not write file \"{}\": {}", self.path, io_reason(&error)),
-            )
-        })
+        self.out
+            .flush()
+            .and_then(|()| self.out.get_mut().close())
+            .map_err(|error| {
+                rustdb_function::registered_files::callback_error(&error).unwrap_or_else(|| {
+                    Error::new_bytes(
+                        ErrorKind::Io,
+                        rustdb_common::byte_format!(
+                            "Could not write file \"{}\": {}",
+                            self.path,
+                            io_reason(&error)
+                        ),
+                    )
+                })
+            })
     }
 }
 
@@ -180,7 +216,7 @@ struct PendingBloomFilter {
 pub struct ParquetWriter {
     sink: Option<FileSink>,
     options: WriterOptions,
-    names: Vec<String>,
+    names: Vec<rustdb_common::ByteString>,
     types: Vec<LogicalType>,
     columns: Vec<ColumnWriter>,
     metadata: FileMetaData,
@@ -199,12 +235,46 @@ pub struct ParquetWriter {
 /// batches at once (`ParquetWritePrepareBatch`).
 #[derive(Debug, Clone)]
 pub struct RowGroupPreparer {
-    names: Vec<String>,
+    names: Vec<rustdb_common::ByteString>,
     types: Vec<LogicalType>,
     options: WriterOptions,
 }
 
 impl RowGroupPreparer {
+    /// Encode a buffer-managed batch column by column, replaying it for each
+    /// writer phase instead of flattening the complete batch into heap vectors.
+    pub fn prepare_batch(&self, batch: &dyn rustdb_function::copy::CopyBatch) -> Result<PreparedRowGroup> {
+        let num_rows = batch.count();
+        let mut columns = self.fresh_columns()?;
+        let mut row_group = RowGroup {
+            num_rows: num_rows as i64,
+            file_offset: Some(0),
+            ..RowGroup::default()
+        };
+        if num_rows != 0 {
+            for (index, column) in columns.iter_mut().enumerate() {
+                column.initialize_write(&mut row_group.columns, num_rows, &self.options);
+                if column.has_analyze() {
+                    batch.scan(Some(index), &mut |chunk| {
+                        let vector = deep_flatten(&chunk.columns()[0], chunk.len())?;
+                        column.analyze(None, &vector, chunk.len())
+                    })?;
+                    column.finalize_analyze(&self.options);
+                }
+                batch.scan(Some(index), &mut |chunk| {
+                    let vector = deep_flatten(&chunk.columns()[0], chunk.len())?;
+                    column.prepare(None, &vector, chunk.len(), true)
+                })?;
+                column.begin_write(&self.options)?;
+                batch.scan(Some(index), &mut |chunk| {
+                    let vector = deep_flatten(&chunk.columns()[0], chunk.len())?;
+                    column.write(&vector, chunk.len(), &self.options)
+                })?;
+            }
+        }
+        Ok(PreparedRowGroup { row_group, columns })
+    }
+
     /// Column writers like the file writer's own.
     fn fresh_columns(&self) -> Result<Vec<ColumnWriter>> {
         let mut columns = Vec::with_capacity(self.types.len());
@@ -250,16 +320,17 @@ pub struct PreparedRowGroup {
 
 /// `ColumnWriter::CreateWriterRecursive`.
 fn create_writer(
-    path: &[String],
+    path: &[rustdb_common::ByteString],
     ty: &LogicalType,
-    name: &str,
-    field_ids: Option<&CaseInsensitiveMap<FieldId>>,
+    name: impl AsRef<[u8]>,
+    field_ids: Option<&CaseInsensitiveMap<FieldId, rustdb_common::ByteString>>,
     max_repeat: u16,
     mut max_define: u16,
     can_have_nulls: bool,
 ) -> Result<ColumnWriter> {
+    let name = name.as_ref();
     let mut path = path.to_vec();
-    path.push(name.to_owned());
+    path.push(name.into());
     if !can_have_nulls {
         max_define -= 1;
     }
@@ -271,7 +342,7 @@ fn create_writer(
     let field_id = field_ids.and_then(|ids| ids.get(name));
     let child_ids = field_id.map(|id| &id.children);
     let schema = WriterSchema {
-        name: name.to_owned(),
+        name: name.into(),
         logical_type: ty.clone(),
         max_define,
         max_repeat,
@@ -307,7 +378,7 @@ fn create_writer(
                 ty.array_child().map(|(child, _)| child.clone())
             }
             .ok_or_else(|| Error::internal("LIST type without a child"))?;
-            path.push("list".to_owned());
+            path.push("list".into());
             let child = create_writer(
                 &path,
                 &child_type,
@@ -322,7 +393,7 @@ fn create_writer(
             ))))
         }
         LogicalTypeId::Map => {
-            path.push("key_value".to_owned());
+            path.push("key_value".into());
             let (key, value) = ty
                 .map_key_value()
                 .ok_or_else(|| Error::internal("MAP type without key/value"))?;
@@ -344,12 +415,10 @@ fn create_writer(
                 max_define + 2,
                 true,
             )?;
-            let key_value_type = LogicalType::struct_type(vec![
-                ("key".to_owned(), key.clone()),
-                ("value".to_owned(), value.clone()),
-            ]);
+            let key_value_type =
+                LogicalType::struct_type(vec![("key".into(), key.clone()), ("value".into(), value.clone())]);
             let key_value_schema = WriterSchema {
-                name: "key_value".to_owned(),
+                name: "key_value".into(),
                 logical_type: key_value_type,
                 max_define: max_define + 1,
                 max_repeat: max_repeat + 1,
@@ -372,7 +441,7 @@ fn create_writer(
                 schema,
                 inner: ColumnWriter::Struct(StructWriter::new(
                     WriterSchema {
-                        name: String::new(),
+                        name: String::new().into(),
                         logical_type: LogicalType::INVALID,
                         max_define: 0,
                         max_repeat: 0,
@@ -403,7 +472,7 @@ fn build_variant_children(writer: &mut VariantWriter, shredding: Option<&Logical
     let schema = &writer.schema;
     let path = schema.path.clone();
     let parent_path = &path[..path.len().saturating_sub(1)];
-    let column_path: Vec<String> = path.clone();
+    let column_path: Vec<rustdb_common::ByteString> = path.clone();
     let _ = parent_path;
     let typed = shredding
         .filter(|ty| !matches!(ty.id(), LogicalTypeId::Any | LogicalTypeId::Variant))
@@ -432,8 +501,8 @@ fn build_variant_children(writer: &mut VariantWriter, shredding: Option<&Logical
         )?,
     ];
     let mut fields = vec![
-        ("metadata".to_owned(), LogicalType::BLOB),
-        ("value".to_owned(), LogicalType::BLOB),
+        ("metadata".into(), LogicalType::BLOB),
+        ("value".into(), LogicalType::BLOB),
     ];
     if let Some(typed) = &typed {
         children.push(create_writer(
@@ -445,7 +514,7 @@ fn build_variant_children(writer: &mut VariantWriter, shredding: Option<&Logical
             child_define,
             true,
         )?);
-        fields.push(("typed_value".to_owned(), typed.clone()));
+        fields.push(("typed_value".into(), typed.clone()));
     }
     let inner_schema = WriterSchema {
         logical_type: LogicalType::struct_type(fields),
@@ -476,7 +545,7 @@ fn transform_variant_columns(
             let vector = &vectors[index];
             let mut chunk_rows = Vec::with_capacity(*count);
             for row in 0..*count {
-                chunk_rows.push(VariantData::from_value(&vector.get_value(row))?);
+                chunk_rows.push(VariantData::from_vector(vector, row)?);
             }
             rows.push(chunk_rows);
         }
@@ -509,7 +578,11 @@ fn transform_variant_columns(
 }
 
 /// Applies the `SHREDDING` types of the top-level VARIANT columns.
-fn apply_shredding(columns: &mut [ColumnWriter], names: &[String], options: &WriterOptions) -> Result<()> {
+fn apply_shredding(
+    columns: &mut [ColumnWriter],
+    names: &[rustdb_common::ByteString],
+    options: &WriterOptions,
+) -> Result<()> {
     for (column, name) in columns.iter_mut().zip(names) {
         if let ColumnWriter::Variant(writer) = column
             && let Some((_, ty)) = options
@@ -573,7 +646,7 @@ fn primitive_values(ty: &LogicalType) -> Result<Box<dyn ValueWriter>> {
         L::Interval => standard::<IntervalType>(false),
         L::Enum => Box::new(EnumWriter::new(ty.enum_values().unwrap_or_default().to_vec())),
         _ => {
-            return Err(Error::internal(format!(
+            return Err(Error::internal(rustdb_common::byte_format!(
                 "Unsupported type \"{ty}\" in Parquet writer"
             )));
         }
@@ -582,9 +655,20 @@ fn primitive_values(ty: &LogicalType) -> Result<Box<dyn ValueWriter>> {
 
 impl ParquetWriter {
     /// Creates `path` and prepares the column writers (`ParquetWriter::ParquetWriter`).
-    pub fn new(path: &str, names: &[String], types: &[LogicalType], options: WriterOptions) -> Result<Self> {
+    pub fn new(
+        path: &[u8],
+        names: &[rustdb_common::ByteString],
+        types: &[LogicalType],
+        mut options: WriterOptions,
+    ) -> Result<Self> {
         let mut sink = FileSink::create(path)?;
-        sink.write_all(b"PAR1")?;
+        if options.encryption.is_some() {
+            options.enable_bloom_filters = false;
+            sink.write_all(b"PARE")?;
+        } else {
+            sink.write_all(b"PAR1")?;
+        }
+        sink.encryption.clone_from(&options.encryption);
         let mut columns = Vec::with_capacity(types.len());
         for (name, ty) in names.iter().zip(types) {
             columns.push(create_writer(
@@ -616,6 +700,13 @@ impl ParquetWriter {
             num_rows: 0,
             created_by: Some(created_by()),
             key_value_metadata,
+            encryption_algorithm: options
+                .encryption
+                .as_ref()
+                .map(|_| crate::thrift::EncryptionAlgorithm {
+                    aes_gcm_v1: Some(crate::thrift::AesGcmV1::default()),
+                    ..crate::thrift::EncryptionAlgorithm::default()
+                }),
             ..FileMetaData::default()
         };
         Ok(Self {
@@ -672,7 +763,7 @@ impl ParquetWriter {
             return Ok(());
         }
         let mut schema = vec![SchemaElement {
-            name: "duckdb_schema".to_owned(),
+            name: "duckdb_schema".to_owned().into(),
             num_children: Some(self.types.len() as i32),
             repetition_type: Some(FieldRepetitionType::REQUIRED),
             ..SchemaElement::default()
@@ -807,6 +898,11 @@ impl ParquetWriter {
         row_group.total_byte_size = total_byte_size;
         row_group.total_compressed_size = Some((sink.written() - file_offset) as i64);
         let row_group_index = self.metadata.row_groups.len();
+        if options.encryption.is_some() {
+            row_group.ordinal = Some(i16::try_from(row_group_index).map_err(|_| {
+                Error::invalid_input("RowGroup ordinal exceeds 32767 when encryption enabled")
+            })?);
+        }
         if options.geoparquet_version.json() {
             for column in &finished {
                 if let Some((name, ty, stats)) = &column.geo {
@@ -878,10 +974,22 @@ impl ParquetWriter {
                 });
         }
         let metadata_start = sink.written();
+        if let Some(algorithm) = &self.metadata.encryption_algorithm {
+            let crypto = crate::thrift::FileCryptoMetaData {
+                encryption_algorithm: algorithm.clone(),
+                key_metadata: None,
+            };
+            // FileCryptoMetaData is the sole unencrypted Thrift module in this footer.
+            sink.write_all(&crate::thrift::write_to_vec(&crypto))?;
+        }
         sink.write_thrift(&self.metadata)?;
         let footer_size = sink.written() - metadata_start;
         sink.write_all(&(footer_size as u32).to_le_bytes())?;
-        sink.write_all(b"PAR1")?;
+        sink.write_all(if self.options.encryption.is_some() {
+            b"PARE"
+        } else {
+            b"PAR1"
+        })?;
         self.footer_size = Some(footer_size);
         self.final_size = sink.written();
         sink.close()

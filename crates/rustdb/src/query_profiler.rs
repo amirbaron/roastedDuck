@@ -15,7 +15,7 @@ use std::time::Instant;
 
 use rustdb_common::profiling::{MetricGroup, MetricType, QueryMetrics};
 use rustdb_common::tree_renderer::{RenderParams, RenderSource, RenderTree, RenderTreeNode, RendererKind};
-use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_common::{ByteString, Error, ErrorKind, Result};
 use rustdb_execution::{PhysicalOperator, PhysicalRef, operator_key};
 use rustdb_function::logging::{ClientLogger, LogLevel, LogScope};
 use rustdb_optimizer::OptimizerType;
@@ -58,7 +58,7 @@ impl ProfilerPrintFormat {
     }
 
     /// `EnumUtil::FromString<ProfilerPrintFormat>` (case-insensitive).
-    fn from_name(name: &str) -> Option<Self> {
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
         Self::ALL
             .iter()
             .find(|(_, candidate)| candidate.eq_ignore_ascii_case(name))
@@ -334,7 +334,7 @@ impl ProfilerConfig {
                 .children()
                 .unwrap_or_default()
                 .iter()
-                .map(Value::to_varchar)
+                .map(Value::to_varchar_bytes)
                 .collect::<Result<Vec<_>>>()?;
             (names, MetricsInputType::List)
         } else if ty.id() == LogicalTypeId::Struct {
@@ -352,7 +352,13 @@ impl ProfilerConfig {
             }
             (names, MetricsInputType::Struct)
         } else if ty.id() == LogicalTypeId::Varchar {
-            (parse_metrics_json(&value.to_varchar()?)?, MetricsInputType::Json)
+            (
+                parse_metrics_json(&value.to_varchar()?)?
+                    .into_iter()
+                    .map(ByteString::from)
+                    .collect(),
+                MetricsInputType::Json,
+            )
         } else {
             return Err(Error::parser(format!(
                 "Invalid custom profiler settings type \"{ty}\", expected LIST(VARCHAR) or JSON"
@@ -366,10 +372,26 @@ impl ProfilerConfig {
             }
         };
         for name in names {
-            let upper = name.to_uppercase();
-            if let Some(metric) = MetricType::from_name(&upper) {
+            let upper = name.as_bytes().to_ascii_uppercase();
+            if let Some(metric) = MetricType::ALL
+                .iter()
+                .copied()
+                .find(|metric| metric.name().as_bytes() == upper)
+            {
                 insert_if_enabled(metric);
-            } else if let Some(group) = MetricGroup::from_name(&upper) {
+            } else if let Some(group) = [
+                ("ALL", MetricGroup::All),
+                ("CORE", MetricGroup::Core),
+                ("DEFAULT", MetricGroup::Default),
+                ("EXECUTION", MetricGroup::Execution),
+                ("FILE", MetricGroup::File),
+                ("OPERATOR", MetricGroup::Operator),
+                ("OPTIMIZER", MetricGroup::Optimizer),
+                ("PHASE_TIMING", MetricGroup::PhaseTiming),
+            ]
+            .into_iter()
+            .find_map(|(label, group)| (label.as_bytes() == upper).then_some(group))
+            {
                 for metric in group.metrics() {
                     insert_if_enabled(metric);
                 }
@@ -378,9 +400,12 @@ impl ProfilerConfig {
             }
         }
         if !invalid.is_empty() {
-            return Err(Error::new(
+            return Err(Error::new_bytes(
                 ErrorKind::Io,
-                format!("Invalid custom profiler settings: \"{}\"", invalid.join(", ")),
+                rustdb_common::byte_format!(
+                    "Invalid custom profiler settings: \"{}\"",
+                    ByteString::join(&invalid, b", ")
+                ),
             ));
         }
         // `AddOptimizerMetrics`.
@@ -418,7 +443,7 @@ impl ProfilerConfig {
             MetricsInputType::Struct => Value::struct_value(
                 names
                     .iter()
-                    .map(|name| ((*name).to_owned(), Value::boolean(true)))
+                    .map(|name| ((*name).into(), Value::boolean(true)))
                     .collect(),
             ),
             MetricsInputType::List => {
@@ -645,6 +670,8 @@ impl ProfilingInfo {
                     entries
                         .into_iter()
                         .map(|(key, value)| {
+                            // These private map entries are checked VARCHAR Values. JSON needs text here.
+
                             let lines: Vec<&str> = value.split('\n').collect();
                             let value = if lines.len() > 1 {
                                 JsonValue::Array(
@@ -792,7 +819,7 @@ impl RenderSource for &ProfilingNode {
             && let MetricValue::Map(entries) = info.get(MetricType::ExtraInfo)
         {
             for (key, value) in entries {
-                extra_text.insert(key, value);
+                extra_text.insert(key.as_bytes(), value.as_bytes());
             }
         }
         let name = if self.depth > 0 {
@@ -888,7 +915,7 @@ pub(crate) struct QueryProfiler {
     is_explain_analyze: bool,
     query_requires_profiling: bool,
     metrics_finalized: bool,
-    query_name: String,
+    query_name: ByteString,
     latency: Option<Instant>,
     /// The counters the storage records into while the query runs.
     query_metrics: Arc<QueryMetrics>,
@@ -901,6 +928,8 @@ pub(crate) struct QueryProfiler {
     root: Option<ProfilingNode>,
     /// The finished profile of the latest query, as clients read it.
     tree: Option<Arc<ProfilingTree>>,
+    /// HTTP state captured with this profile, independent of later queries.
+    http_stats: rustdb_function::client::HttpStats,
 }
 
 impl QueryProfiler {
@@ -938,6 +967,7 @@ impl QueryProfiler {
     pub fn reset(&mut self) {
         self.root = None;
         self.tree = None;
+        self.http_stats = rustdb_function::client::HttpStats::default();
         self.phase_timings.clear();
         self.phase_stack.clear();
         self.running = false;
@@ -960,7 +990,13 @@ impl QueryProfiler {
     }
 
     /// `QueryProfiler::StartQuery`.
-    pub fn start_query(&mut self, config: &ProfilerConfig, query: &str, is_explain_analyze: bool) {
+    pub fn start_query(
+        &mut self,
+        config: &ProfilerConfig,
+        query: impl AsRef<[u8]>,
+        is_explain_analyze: bool,
+    ) {
+        let query = query.as_ref();
         if is_explain_analyze {
             self.is_explain_analyze = true;
         }
@@ -976,7 +1012,7 @@ impl QueryProfiler {
         self.query_metrics = Arc::new(QueryMetrics::default());
         self.metrics_finalized = false;
         self.running = true;
-        query.clone_into(&mut self.query_name);
+        self.query_name = query.into();
         self.latency = Some(Instant::now());
     }
 
@@ -1022,20 +1058,26 @@ impl QueryProfiler {
 
     /// `QueryProfiler::Initialize`: the profile of the physical plan rooted at `root`;
     /// a plan without an operator that requires profiling is not profiled.
-    pub fn initialize(&mut self, config: &ProfilerConfig, root: &PhysicalRef) {
+    pub fn initialize(
+        &mut self,
+        config: &ProfilerConfig,
+        root: &PhysicalRef,
+        estimates: &rustdb_execution::CardinalityEstimates,
+    ) -> Result<()> {
         if !self.is_enabled(config) || !self.running {
-            return;
+            return Ok(());
         }
         self.query_requires_profiling = false;
-        let tree = self.create_tree(config, root.as_ref(), &config.metrics, 0);
+        let tree = self.create_tree(config, root.as_ref(), &config.metrics, 0, estimates)?;
         self.finish_initialize(tree);
+        Ok(())
     }
 
     /// [`Self::initialize`] for a statement the connection runs itself: the result
     /// collector over the statement's operator, of type `operator_type`.
-    pub fn initialize_statement(&mut self, config: &ProfilerConfig, operator_type: &str) {
+    pub fn initialize_statement(&mut self, config: &ProfilerConfig, operator_type: &str) -> Result<()> {
         if !self.is_enabled(config) || !self.running {
-            return;
+            return Ok(());
         }
         self.query_requires_profiling = config.coverage == ProfilingCoverage::All;
         let mut root = Self::node(
@@ -1045,7 +1087,7 @@ impl QueryProfiler {
             "RESULT_COLLECTOR",
             "RESULT_COLLECTOR",
             &RenderParams::new(),
-        );
+        )?;
         let child_settings = erase_query_root_settings(&config.metrics);
         root.children.push(Self::node(
             &child_settings,
@@ -1054,8 +1096,9 @@ impl QueryProfiler {
             operator_type,
             operator_type,
             &RenderParams::new(),
-        ));
+        )?);
         self.finish_initialize(root);
+        Ok(())
     }
 
     fn finish_initialize(&mut self, root: ProfilingNode) {
@@ -1078,7 +1121,7 @@ impl QueryProfiler {
         name: &str,
         operator_type: &str,
         params: &RenderParams,
-    ) -> ProfilingNode {
+    ) -> Result<ProfilingNode> {
         let mut info = ProfilingInfo::new(settings, depth);
         if depth != 0 {
             info.metrics
@@ -1089,21 +1132,24 @@ impl QueryProfiler {
             );
         }
         if info.shows(MetricType::ExtraInfo) {
-            // The estimated cardinality is not known to the physical operators.
             let entries = params
                 .iter()
-                .filter(|(key, _)| key.as_str() != RenderTreeNode::ESTIMATED_CARDINALITY)
-                .map(|(key, value)| (key.clone(), value.clone()))
-                .collect();
+                .map(|(key, value)| {
+                    Ok((
+                        Value::try_varchar(key)?.to_varchar()?,
+                        Value::try_varchar(value)?.to_varchar()?,
+                    ))
+                })
+                .collect::<Result<_>>()?;
             info.metrics
                 .insert(MetricType::ExtraInfo, MetricValue::Map(entries));
         }
-        ProfilingNode {
+        Ok(ProfilingNode {
             info,
             depth,
             operator,
             children: Vec::new(),
-        }
+        })
     }
 
     /// `QueryProfiler::CreateTree`.
@@ -1113,7 +1159,8 @@ impl QueryProfiler {
         op: &dyn PhysicalOperator,
         settings: &BTreeSet<MetricType>,
         depth: usize,
-    ) -> ProfilingNode {
+        estimates: &rustdb_execution::CardinalityEstimates,
+    ) -> Result<ProfilingNode> {
         let operator_type = op.profiler_name();
         if config.coverage == ProfilingCoverage::All || operator_requires_profiling(&operator_type) {
             self.query_requires_profiling = true;
@@ -1129,22 +1176,26 @@ impl QueryProfiler {
             Some(operator_key(op)),
             &op.explain_name(),
             &operator_type,
-            &op.params_to_string(0),
-        );
+            &op.params_to_string(estimates.get_by_key(operator_key(op))),
+        )?;
         for child in op.children() {
-            let child = self.create_tree(config, child.as_ref(), &child_settings, depth + 1);
+            let child = self.create_tree(config, child.as_ref(), &child_settings, depth + 1, estimates)?;
             node.children.push(child);
         }
-        node
+        Ok(node)
     }
 
     /// `QueryProfiler::Flush`: adds what the operators did to their nodes.
-    pub fn flush(&mut self, config: &ProfilerConfig, profiler: &rustdb_execution::QueryProfiler) {
+    pub fn flush(
+        &mut self,
+        config: &ProfilerConfig,
+        profiler: &rustdb_execution::QueryProfiler,
+    ) -> Result<()> {
         if !self.is_enabled(config) || !self.running {
-            return;
+            return Ok(());
         }
         let Some(root) = &mut self.root else {
-            return;
+            return Ok(());
         };
         for (metric, value) in [
             (MetricType::SystemPeakBufferMemory, profiler.peak_memory()),
@@ -1158,13 +1209,18 @@ impl QueryProfiler {
         let mut stack = vec![root];
         while let Some(node) = stack.pop() {
             if let Some(key) = node.operator {
-                Self::flush_node(&mut node.info, key, profiler);
+                Self::flush_node(&mut node.info, key, profiler)?;
             }
             stack.extend(node.children.iter_mut());
         }
+        Ok(())
     }
 
-    fn flush_node(info: &mut ProfilingInfo, key: usize, profiler: &rustdb_execution::QueryProfiler) {
+    fn flush_node(
+        info: &mut ProfilingInfo,
+        key: usize,
+        profiler: &rustdb_execution::QueryProfiler,
+    ) -> Result<()> {
         let profile = profiler.profile_by_key(key);
         if info.collects(MetricType::OperatorTiming) {
             info.add_f64(MetricType::OperatorTiming, profile.time.as_secs_f64());
@@ -1202,6 +1258,8 @@ impl QueryProfiler {
             {
                 // `MergeOperatorExtraInfo`.
                 for (name, value) in reported {
+                    let name = Value::try_varchar(name.as_bytes())?.to_varchar()?;
+                    let value = Value::try_varchar(value.as_bytes())?.to_varchar()?;
                     match entries.iter_mut().find(|(existing, _)| *existing == name) {
                         Some(entry) => entry.1 = value,
                         None => entries.push((name, value)),
@@ -1209,6 +1267,7 @@ impl QueryProfiler {
                 }
             }
         }
+        Ok(())
     }
 
     /// `QueryProfiler::SetBlockedTime`: our tasks never block, so threads spent no time
@@ -1224,9 +1283,9 @@ impl QueryProfiler {
     }
 
     /// `QueryProfiler::FinalizeMetricsInternal`: the query-wide metrics of the root.
-    fn finalize_metrics(&mut self, config: &ProfilerConfig) {
+    fn finalize_metrics(&mut self, config: &ProfilerConfig) -> Result<()> {
         if self.metrics_finalized || !self.is_enabled(config) || self.root.is_none() {
-            return;
+            return Ok(());
         }
         let latency = self.latency.take().map_or(0, |start| {
             u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX)
@@ -1234,7 +1293,7 @@ impl QueryProfiler {
         self.query_metrics.update(MetricType::Latency, latency);
         self.set_blocked_time();
         let Some(root) = &mut self.root else {
-            return;
+            return Ok(());
         };
         if root.info.collects(MetricType::OperatorCardinality)
             && let Some(child) = root.children.first_mut()
@@ -1260,33 +1319,51 @@ impl QueryProfiler {
             if !root.info.collects(metric) {
                 continue;
             }
-            Self::collect_metric(metric, &self.query_metrics, &self.query_name, root, &child_info);
+            Self::collect_metric(metric, &self.query_metrics, &self.query_name, root, &child_info)?;
         }
         self.metrics_finalized = true;
+        Ok(())
     }
 
     /// `ProfilingUtils::CollectMetrics`.
     fn collect_metric(
         metric: MetricType,
         query_metrics: &QueryMetrics,
-        query_name: &str,
+        query_name: &[u8],
         root: &mut ProfilingNode,
         child_info: &ProfilingInfo,
-    ) {
+    ) -> Result<()> {
         use MetricType as M;
         let value = match metric {
-            M::CpuTime => return root.cumulative(M::CpuTime, M::OperatorTiming),
+            M::CpuTime => {
+                return {
+                    root.cumulative(M::CpuTime, M::OperatorTiming);
+                    Ok(())
+                };
+            }
             M::CumulativeCardinality => {
-                return root.cumulative(M::CumulativeCardinality, M::OperatorCardinality);
+                return {
+                    root.cumulative(M::CumulativeCardinality, M::OperatorCardinality);
+                    Ok(())
+                };
             }
             M::CumulativeRowsScanned => {
-                return root.cumulative(M::CumulativeRowsScanned, M::OperatorRowsScanned);
+                return {
+                    root.cumulative(M::CumulativeRowsScanned, M::OperatorRowsScanned);
+                    Ok(())
+                };
             }
             M::CumulativeRowGroupsScanned => {
-                return root.cumulative(M::CumulativeRowGroupsScanned, M::OperatorRowGroupsScanned);
+                return {
+                    root.cumulative(M::CumulativeRowGroupsScanned, M::OperatorRowGroupsScanned);
+                    Ok(())
+                };
             }
             M::CumulativeTotalRowGroupsToScan => {
-                return root.cumulative(M::CumulativeTotalRowGroupsToScan, M::OperatorTotalRowGroupsToScan);
+                return {
+                    root.cumulative(M::CumulativeTotalRowGroupsToScan, M::OperatorTotalRowGroupsToScan);
+                    Ok(())
+                };
             }
             M::AttachLoadStorageLatency
             | M::AttachReplayWalLatency
@@ -1299,7 +1376,7 @@ impl QueryProfiler {
             M::TotalBytesRead | M::TotalBytesWritten | M::TotalMemoryAllocated | M::WalReplayEntryCount => {
                 MetricValue::UBigint(query_metrics.value(metric))
             }
-            M::QueryName => MetricValue::Text(query_name.to_owned()),
+            M::QueryName => MetricValue::Text(Value::try_varchar(query_name)?.to_varchar()?),
             M::ResultSetSize => child_info.get(M::ResultSetSize),
             M::RowsReturned => child_info.get(M::OperatorCardinality),
             M::CumulativeOptimizerTiming => MetricValue::Double(
@@ -1310,9 +1387,10 @@ impl QueryProfiler {
                     .map(|(_, value)| value.as_f64())
                     .sum(),
             ),
-            _ => return,
+            _ => return Ok(()),
         };
         root.info.metrics.insert(metric, value);
+        Ok(())
     }
 
     /// The profile in the default explain format, for `EXPLAIN ANALYZE`'s default.
@@ -1322,11 +1400,17 @@ impl QueryProfiler {
 
     /// `QueryProfiler::EndQuery`: finalizes the profile, logs its metrics and writes it
     /// (`EXPLAIN ANALYZE` renders its own).
-    pub fn end_query(&mut self, config: &ProfilerConfig, logger: &dyn ClientLogger) -> Result<()> {
+    pub fn end_query(
+        &mut self,
+        config: &ProfilerConfig,
+        logger: &dyn ClientLogger,
+        http_stats: rustdb_function::client::HttpStats,
+    ) -> Result<()> {
         if !self.is_enabled(config) || !self.running {
             return Ok(());
         }
-        self.finalize_metrics(config);
+        self.finalize_metrics(config)?;
+        self.http_stats = http_stats;
         self.running = false;
         self.tree = self.root.as_ref().map(|root| Arc::new(ProfilingTree::of(root)));
         let emit_output = !self.is_explain_analyze && config.emit_output;
@@ -1338,10 +1422,19 @@ impl QueryProfiler {
         self.is_explain_analyze = false;
         self.to_log(logger);
         if emit_output {
-            let tree = self.to_string(config);
+            let tree = self.to_string(config)?;
             if save_location.is_empty() {
                 // `Printer::Print` writes to the terminal's error stream.
-                eprintln!("{tree}\n");
+                {
+                    use std::io::Write;
+                    let mut stderr = std::io::stderr().lock();
+                    stderr
+                        .write_all(&tree)
+                        .map_err(|error| Error::new(ErrorKind::Io, error.to_string()))?;
+                    stderr
+                        .write_all(b"\n")
+                        .map_err(|error| Error::new(ErrorKind::Io, error.to_string()))?;
+                }
             } else {
                 // `WriteToFile`: the file is created anew.
                 std::fs::write(&save_location, tree).map_err(|error| {
@@ -1365,9 +1458,9 @@ impl QueryProfiler {
         }
         for &metric in &root.info.settings {
             let entry = Value::struct_value(vec![
-                ("metric".to_owned(), Value::varchar(metric.name())),
+                ("metric".to_owned().into(), Value::varchar(metric.name())),
                 (
-                    "value".to_owned(),
+                    "value".to_owned().into(),
                     Value::varchar(root.info.get(metric).to_value().to_varchar().unwrap_or_default()),
                 ),
             ]);
@@ -1377,20 +1470,55 @@ impl QueryProfiler {
         }
     }
 
-    /// `QueryProfiler::ToString` in the configured format.
-    fn to_string(&self, config: &ProfilerConfig) -> String {
-        match Self::print_format(config) {
+    pub(crate) fn information(
+        &self,
+        config: &ProfilerConfig,
+        format: ProfilerPrintFormat,
+    ) -> Result<ByteString> {
+        if !self.is_enabled(config) {
+            return Ok(match format {
+                ProfilerPrintFormat::Json => ByteString::from(
+                    r#"{
+    "result": "disabled"
+}"#,
+                ),
+                ProfilerPrintFormat::QueryTree | ProfilerPrintFormat::QueryTreeOptimizer => ByteString::from(
+                    "Query profiling is disabled. Use 'PRAGMA enable_profiling;' to enable profiling!",
+                ),
+                ProfilerPrintFormat::NoOutput => ByteString::new(),
+                ProfilerPrintFormat::Html => ByteString::from(
+                    r#"
+				<!DOCTYPE html>
+                <html lang="en"><head/><body>
+                  Query profiling is disabled. Use 'PRAGMA enable_profiling;' to enable profiling!
+                </body></html>
+			"#,
+                ),
+                ProfilerPrintFormat::Graphviz => ByteString::from(
+                    r#"
+				digraph G {
+				    node [shape=box, style=rounded, fontname="Courier New", fontsize=10];
+				    node_0_0 [label="Query profiling is disabled. Use 'PRAGMA enable_profiling;' to enable profiling!"];
+				}
+			"#,
+                ),
+                ProfilerPrintFormat::Mermaid => ByteString::from(
+                    "flowchart TD\n    node_0_0[\"`**DISABLED**\nQuery profiling is disabled.\nUse 'PRAGMA enable_profiling;' to enable profiling!`\"]\n",
+                ),
+            });
+        }
+        match format {
             ProfilerPrintFormat::QueryTree | ProfilerPrintFormat::QueryTreeOptimizer => {
                 self.query_tree(config)
             }
-            ProfilerPrintFormat::Json => self.to_json(),
-            ProfilerPrintFormat::NoOutput => String::new(),
+            ProfilerPrintFormat::Json => Ok(self.to_json().into()),
+            ProfilerPrintFormat::NoOutput => Ok(ByteString::new()),
             format => {
                 let Some(root) = &self.root else {
-                    return String::new();
+                    return Ok(ByteString::new());
                 };
                 if self.query_name.is_empty() {
-                    return String::new();
+                    return Ok(ByteString::new());
                 }
                 let kind = match format {
                     ProfilerPrintFormat::Html => RendererKind::Html,
@@ -1400,6 +1528,11 @@ impl QueryProfiler {
                 rustdb_common::tree_renderer::render(kind, RenderTree::create(&root))
             }
         }
+    }
+
+    /// `QueryProfiler::ToString` in the configured format.
+    fn to_string(&self, config: &ProfilerConfig) -> Result<ByteString> {
+        self.information(config, Self::print_format(config))
     }
 
     /// `QueryProfiler::ToJSON`.
@@ -1426,45 +1559,58 @@ impl QueryProfiler {
     }
 
     /// `QueryProfiler::QueryTreeToStream`.
-    fn query_tree(&self, config: &ProfilerConfig) -> String {
+    fn query_tree(&self, config: &ProfilerConfig) -> Result<ByteString> {
         const TOTAL_BOX_WIDTH: usize = 50;
-        let mut out = String::new();
+        let mut out = ByteString::new();
         let show_query_name = self
             .root
             .as_ref()
             .is_some_and(|root| root.info.shows(MetricType::QueryName));
-        out.push_str("┌─────────────────────────────────────┐\n");
-        out.push_str("│┌───────────────────────────────────┐│\n");
-        out.push_str("││    Query Profiling Information    ││\n");
-        out.push_str("│└───────────────────────────────────┘│\n");
-        out.push_str("└─────────────────────────────────────┘\n");
+        out.push_bytes("┌─────────────────────────────────────┐\n");
+        out.push_bytes("│┌───────────────────────────────────┐│\n");
+        out.push_bytes("││    Query Profiling Information    ││\n");
+        out.push_bytes("│└───────────────────────────────────┘│\n");
+        out.push_bytes("└─────────────────────────────────────┘\n");
         if show_query_name {
-            out.push_str(&self.query_name.replace('\n', " "));
+            out.push_bytes(ByteString::from(
+                self.query_name
+                    .iter()
+                    .map(|byte| if *byte == b'\n' { b' ' } else { *byte })
+                    .collect::<Vec<_>>(),
+            ));
         }
-        out.push('\n');
+        out.push(b'\n');
         if self.query_name.is_empty() && self.root.is_none() {
-            return out;
+            return Ok(out);
         }
-        out.push_str("┌────────────────────────────────────────────────┐\n");
-        out.push_str("│┌──────────────────────────────────────────────┐│\n");
+        out.push_bytes("┌────────────────────────────────────────────────┐\n");
+        out.push_bytes("│┌──────────────────────────────────────────────┐│\n");
         let total_time = format!(
             "Total Time: {}",
             render_timing(self.query_metrics.seconds(MetricType::Latency))
         );
-        let _ = writeln!(out, "││{}││", draw_padded(&total_time, TOTAL_BOX_WIDTH - 4));
-        out.push_str("│└──────────────────────────────────────────────┘│\n");
-        out.push_str("└────────────────────────────────────────────────┘\n");
+        out.push_bytes(rustdb_common::byte_format!(
+            "││{}││\n",
+            draw_padded(&total_time, TOTAL_BOX_WIDTH - 4)
+        ));
+        out.push_bytes("│└──────────────────────────────────────────────┘│\n");
+        out.push_bytes("└────────────────────────────────────────────────┘\n");
+        out.push_bytes(self.http_stats.render());
         if let Some(root) = &self.root {
             if self.print_optimizer_output(config) {
-                print_phase_timings(&mut out, &root.info, TOTAL_BOX_WIDTH);
+                let mut phases = String::new();
+                print_phase_timings(&mut phases, &root.info, TOTAL_BOX_WIDTH);
+                out.push_bytes(phases);
             }
             let mut renderer = rustdb_common::tree_renderer::TextTreeRenderer::default();
             if self.is_detailed_enabled(config) {
                 renderer.max_extra_lines = 1000;
             }
-            out.push_str(&renderer.render(&RenderTree::create(&root)));
+            let mut bytes = out;
+            bytes.push_bytes(renderer.render(&RenderTree::create(&root))?);
+            return Ok(bytes);
         }
-        out
+        Ok(out)
     }
 }
 
@@ -1679,11 +1825,11 @@ fn bind_enable_profiling(
         || Error::invalid_input("EnableProfiling: metrics must be a list of strings or a JSON string");
     let (mut format, mut coverage, mut save_location, mut mode, mut metrics) = (None, None, None, None, None);
     for (name, value) in input.named_parameters {
-        match name.to_ascii_lowercase().as_str() {
-            "format" => format = Some(value.to_varchar()?.to_lowercase()),
-            "coverage" => coverage = Some(value.to_varchar()?.to_lowercase()),
-            "save_location" => save_location = Some(value.to_varchar()?),
-            "mode" => mode = Some(value.to_varchar()?.to_lowercase()),
+        match name.to_ascii_lowercase().as_bytes() {
+            b"format" => format = Some(value.to_varchar()?.to_lowercase()),
+            b"coverage" => coverage = Some(value.to_varchar()?.to_lowercase()),
+            b"save_location" => save_location = Some(value.to_varchar()?),
+            b"mode" => mode = Some(value.to_varchar()?.to_lowercase()),
             _ => {
                 if !is_metrics_value(value) {
                     return Err(metrics_error());
@@ -1705,7 +1851,7 @@ fn bind_enable_profiling(
     }
     Ok(rustdb_function::TableFunctionBindOutput {
         return_types: vec![LogicalType::BOOLEAN],
-        names: vec!["Success".to_owned()],
+        names: vec!["Success".to_owned().into()],
         bind_data: Some(Arc::new(ProfilingCallData {
             client: function_client(input)?,
             request: rustdb_function::ClientRequest::EnableProfiling {
@@ -1757,7 +1903,7 @@ pub(crate) fn profiling_functions() -> Vec<rustdb_function::TableFunctionSet> {
         .with_bind(|input| {
             Ok(rustdb_function::TableFunctionBindOutput {
                 return_types: vec![LogicalType::BOOLEAN],
-                names: vec!["Success".to_owned()],
+                names: vec!["Success".to_owned().into()],
                 bind_data: Some(Arc::new(ProfilingCallData {
                     client: function_client(input)?,
                     request: rustdb_function::ClientRequest::DisableProfiling,

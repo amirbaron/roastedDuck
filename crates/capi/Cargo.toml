@@ -10,7 +10,14 @@ rust-version.workspace = true
 name = "duckdb"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
+[features]
+# Exposes the native connection only to the upstream ADBC test harness. Never enabled for shipping artifacts.
+adbc-test-api = []
+
 [dependencies]
+libloading = "0.8"
+rsa = { version = "=0.9.10", features = ["sha2"] }
+sha2 = { version = "0.11", default-features = false }
 libc = "0.2"
 rustdb.workspace = true
 rustdb-arrow = { path = "../arrow" }

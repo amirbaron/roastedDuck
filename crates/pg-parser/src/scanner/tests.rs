@@ -43,9 +43,9 @@ fn scan_with(sql: &str, preserve_identifier_case: bool) -> Vec<String> {
             YYTNAME[symbol].to_owned()
         };
         let value = match tok.value {
-            SemValue::Str(Some(s)) => format!("({s})"),
+            SemValue::Str(Some(s)) => format!("({})", s.to_str().expect("UTF-8 test input")),
             SemValue::Int(i) => format!("({i})"),
-            SemValue::Keyword(k) => format!("({k})"),
+            SemValue::Keyword(k) => format!("({})", std::str::from_utf8(k).expect("ASCII keyword")),
             _ => String::new(),
         };
         out.push(format!("{name}{value}@{}", tok.loc));

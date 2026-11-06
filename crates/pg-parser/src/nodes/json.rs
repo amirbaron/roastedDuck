@@ -5,6 +5,7 @@
 //! Nodes render as objects whose first key is `"node"`; enums and C `char` fields
 //! render as their integer codes; absent pointers as `null`.
 
+use rustdb_common::ByteString;
 use std::fmt::Write as _;
 
 use super::{List, Node, Value};
@@ -13,58 +14,58 @@ use crate::RawStmt;
 /// Accumulates JSON text.
 #[derive(Debug, Default)]
 pub struct JsonWriter {
-    out: String,
+    out: ByteString,
     first: bool,
 }
 
 impl JsonWriter {
     fn separator(&mut self) {
         if !self.first {
-            self.out.push(',');
+            self.out.push(b',');
         }
         self.first = false;
     }
 
     pub(crate) fn begin_node(&mut self, name: &str) {
-        self.out.push_str("{\"node\":");
+        self.out.push_bytes("{\"node\":");
         self.string(name);
         self.first = false;
     }
 
     pub(crate) fn end_node(&mut self) {
-        self.out.push('}');
+        self.out.push(b'}');
         self.first = false;
     }
 
     pub(crate) fn field(&mut self, name: &str, value: &dyn WriteJson) {
         self.separator();
         self.string(name);
-        self.out.push(':');
+        self.out.push(b':');
         self.first = true;
         value.write_json(self);
         self.first = false;
     }
 
-    pub(crate) fn string(&mut self, s: &str) {
-        self.out.push('"');
-        for c in s.chars() {
-            match c {
-                '"' => self.out.push_str("\\\""),
-                '\\' => self.out.push_str("\\\\"),
-                '\n' => self.out.push_str("\\n"),
-                '\r' => self.out.push_str("\\r"),
-                '\t' => self.out.push_str("\\t"),
-                c if (c as u32) < 0x20 => {
-                    let _ = write!(self.out, "\\u{:04x}", c as u32);
+    pub(crate) fn string(&mut self, s: impl AsRef<[u8]>) {
+        self.out.push(b'"');
+        for &byte in s.as_ref() {
+            match byte {
+                b'"' => self.out.push_bytes(b"\\\""),
+                b'\\' => self.out.push_bytes(b"\\\\"),
+                b'\n' => self.out.push_bytes(b"\\n"),
+                b'\r' => self.out.push_bytes(b"\\r"),
+                b'\t' => self.out.push_bytes(b"\\t"),
+                byte if byte < 0x20 => {
+                    let _ = write!(self.out, "\\u{byte:04x}");
                 }
-                c => self.out.push(c),
+                byte => self.out.push(byte),
             }
         }
-        self.out.push('"');
+        self.out.push(b'"');
     }
 
     fn raw(&mut self, text: &str) {
-        self.out.push_str(text);
+        self.out.push_bytes(text);
     }
 }
 
@@ -108,7 +109,7 @@ impl WriteJson for List {
     }
 }
 
-impl WriteJson for String {
+impl WriteJson for ByteString {
     fn write_json(&self, out: &mut JsonWriter) {
         out.string(self);
     }
@@ -197,9 +198,9 @@ write_json_enums!(
 );
 
 /// Renders parsed statements as canonical JSON (an array of `RawStmt` objects).
-pub fn to_json(stmts: &[RawStmt]) -> String {
+pub fn to_json(stmts: &[RawStmt]) -> ByteString {
     let mut out = JsonWriter {
-        out: String::new(),
+        out: ByteString::new(),
         first: true,
     };
     out.raw("[");

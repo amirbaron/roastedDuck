@@ -538,12 +538,16 @@ pub struct StringDecoder {
     /// The length of `FIXED_LEN_BYTE_ARRAY` values; 0 for length-prefixed ones.
     pub fixed_length: usize,
     pub kind: StringKind,
-    pub file_name: Arc<str>,
+    pub file_name: Arc<[u8]>,
 }
 
 impl StringDecoder {
-    pub fn new(schema: &ColumnSchema, file_name: Arc<str>) -> Self {
-        let kind = if schema.logical_type.alias() == Some("JSON") {
+    pub fn new(schema: &ColumnSchema, file_name: Arc<[u8]>) -> Self {
+        let kind = if schema
+            .logical_type
+            .alias()
+            .is_some_and(|alias| alias.as_bytes() == b"JSON")
+        {
             StringKind::Json
         } else if schema.logical_type.id() == LogicalTypeId::Varchar {
             StringKind::Varchar
@@ -582,11 +586,11 @@ impl StringDecoder {
 }
 
 /// Fails unless `bytes` is valid UTF-8 (`Utf8Proc::Analyze`).
-pub fn verify_utf8(bytes: &[u8], file_name: &str) -> Result<()> {
+pub fn verify_utf8(bytes: &[u8], file_name: &[u8]) -> Result<()> {
     if std::str::from_utf8(bytes).is_ok() {
         return Ok(());
     }
-    Err(Error::invalid_input(format!(
+    Err(Error::invalid_input(rustdb_common::byte_format!(
         "Invalid string encoding found in Parquet file \"{file_name}\": value \"{}\" is not valid UTF8!",
         blob_text(bytes)
     )))
@@ -907,11 +911,11 @@ fn decimal_bytes(schema: &ColumnSchema) -> Result<Box<dyn PlainDecoder>> {
 }
 
 fn type_info_error(what: &str) -> Error {
-    Error::internal(format!("{what} requires type info"))
+    Error::internal(rustdb_common::byte_format!("{what} requires type info"))
 }
 
 /// The plain decoder of a leaf (`ColumnReader::CreateReader`).
-pub fn create_decoder(schema: &ColumnSchema, file_name: &Arc<str>) -> Result<Box<dyn PlainDecoder>> {
+pub fn create_decoder(schema: &ColumnSchema, file_name: &Arc<[u8]>) -> Result<Box<dyn PlainDecoder>> {
     use LogicalTypeId as L;
     let info = schema.type_info;
     let ty: &LogicalType = &schema.logical_type;

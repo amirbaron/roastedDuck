@@ -193,9 +193,14 @@ pub(crate) struct MatchState {
     pub window: Window,
     pub params: CParams,
     pub hash_table: Vec<u32>,
+    pub hash_table3: Vec<u32>,
+    pub hash3_log: u32,
+    pub opt: Option<Box<crate::opt::OptState>>,
+    pub ldm_sequences: Vec<crate::ldm::RawSeq>,
     /// The chain table, or for dfast the table of short hashes.
     pub chain_table: Vec<u32>,
     pub next_to_update: u32,
+    pub row: crate::row::RowState,
     /// The tables hold indexes of this window (`ZSTD_CCtx::initialized`).
     initialized: bool,
 }
@@ -206,8 +211,13 @@ impl MatchState {
             window: Window::new(),
             params,
             hash_table: Vec::new(),
+            hash_table3: Vec::new(),
+            hash3_log: 0,
+            opt: None,
+            ldm_sequences: Vec::new(),
             chain_table: Vec::new(),
             next_to_update: 0,
+            row: crate::row::RowState::default(),
             initialized: false,
         }
     }
@@ -216,8 +226,27 @@ impl MatchState {
     /// (the tables keep their stale entries) or starting a new window with clean tables.
     pub(crate) fn reset(&mut self, params: CParams, chain_table: bool) {
         self.params = params;
+        self.hash3_log = if params.min_match == 3 {
+            params.window_log.min(17)
+        } else {
+            0
+        };
+        let hash3_size = if self.hash3_log == 0 {
+            0
+        } else {
+            1usize << self.hash3_log
+        };
+        if params.strategy >= Strategy::BtOpt {
+            self.opt
+                .get_or_insert_with(|| Box::new(crate::opt::OptState::new()))
+                .reset();
+        }
+        let row = crate::params::row_match_finder_used(params);
+        if row {
+            self.row.reset(params);
+        }
         let hash_size = 1usize << params.hash_log;
-        let chain_size = if chain_table {
+        let chain_size = if chain_table && !row {
             1usize << params.chain_log
         } else {
             0
@@ -226,6 +255,7 @@ impl MatchState {
             && !self.window.index_too_close_to_max()
             && self.hash_table.len() == hash_size
             && self.chain_table.len() == chain_size
+            && self.hash_table3.len() == hash3_size
         {
             // `ZSTDirp_continue`: the indexes go on from the previous frame, so the
             // tables' entries all lie below the new window and need no clearing
@@ -240,6 +270,8 @@ impl MatchState {
         self.hash_table.resize(hash_size, 0);
         self.chain_table.clear();
         self.chain_table.resize(chain_size, 0);
+        self.hash_table3.clear();
+        self.hash_table3.resize(hash3_size, 0);
         self.initialized = true;
     }
 
@@ -254,19 +286,30 @@ impl MatchState {
         let cycle_log = self.params.chain_log - u32::from(self.params.strategy >= Strategy::BtLazy2);
         let max_dist = 1u32 << self.params.window_log;
         let correction = self.window.correct_overflow(cycle_log, max_dist, start);
-        reduce_table(&mut self.hash_table, correction);
-        reduce_table(&mut self.chain_table, correction);
+        reduce_table::<false>(&mut self.hash_table, correction);
+        reduce_table::<false>(&mut self.hash_table3, correction);
+        if self.params.strategy == Strategy::BtLazy2 {
+            reduce_table::<true>(&mut self.chain_table, correction);
+        } else {
+            reduce_table::<false>(&mut self.chain_table, correction);
+        }
         self.next_to_update = self.next_to_update.saturating_sub(correction);
     }
 }
 
 /// `ZSTD_reduceTable`: entries below the correction (and the reserved indexes above it)
 /// become 0, the others move down.
-fn reduce_table(table: &mut [u32], reducer: u32) {
+fn reduce_table<const PRESERVE_MARK: bool>(table: &mut [u32], reducer: u32) {
     debug_assert!(table.len().is_multiple_of(ROW_SIZE));
     let threshold = reducer + WINDOW_START_INDEX;
     for entry in table {
-        *entry = if *entry < threshold { 0 } else { *entry - reducer };
+        *entry = if PRESERVE_MARK && *entry == 1 {
+            1
+        } else if *entry < threshold {
+            0
+        } else {
+            *entry - reducer
+        };
     }
 }
 
@@ -423,4 +466,60 @@ pub(crate) fn count_2segments(
         return length;
     }
     length + count(mem.cur, ip + length, i_start, i_end)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reduce_table;
+
+    #[test]
+    fn binary_tree_unsorted_marks_survive_index_reduction() {
+        // Frozen ZSTD_reduceTable_internal: indexes below reducer+2 disappear;
+        // the btlazy2 chain's reserved unsorted marker survives unchanged.
+        let original = [
+            0,
+            1,
+            2,
+            99,
+            100,
+            101,
+            102,
+            103,
+            150,
+            199,
+            200,
+            201,
+            202,
+            300,
+            400,
+            u32::MAX,
+        ];
+        let mut tree = original;
+        reduce_table::<true>(&mut tree, 100);
+        assert_eq!(
+            tree,
+            [
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                2,
+                3,
+                50,
+                99,
+                100,
+                101,
+                102,
+                200,
+                300,
+                u32::MAX - 100
+            ]
+        );
+        let mut plain = original;
+        reduce_table::<false>(&mut plain, 100);
+        tree[1] = 0;
+        assert_eq!(plain, tree);
+    }
 }

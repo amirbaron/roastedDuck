@@ -322,6 +322,110 @@ fn foreign_keys() {
 }
 
 #[test]
+fn create_index_keeps_concurrent_append_visible_in_index() {
+    use rustdb_storage::index::IndexKeyExpressions;
+    use rustdb_storage::index::art::{IndexKeyExecutor, create_key};
+    use std::collections::BTreeSet;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Mutex, mpsc};
+    use std::time::Duration;
+
+    #[derive(Debug)]
+    struct PausedKeys {
+        names: Vec<rustdb_common::ByteString>,
+        first: AtomicBool,
+        started: mpsc::Sender<()>,
+        resume: Mutex<mpsc::Receiver<()>>,
+    }
+
+    impl IndexKeyExecutor for PausedKeys {
+        fn execute(&self, data: &DataChunk) -> rustdb_common::Result<DataChunk> {
+            if self.first.swap(false, Ordering::AcqRel) {
+                self.started.send(()).unwrap();
+                self.resume.lock().unwrap().recv().unwrap();
+            }
+            Ok(DataChunk::new(vec![data.column(0).clone()], data.len()))
+        }
+
+        fn names(&self) -> &[rustdb_common::ByteString] {
+            &self.names
+        }
+    }
+
+    let manager = Arc::new(TransactionManager::default());
+    let t = table(&io(), "concurrent_index");
+    let setup = manager.begin();
+    insert(&t, &setup, &[1]).unwrap();
+    manager.commit(&setup).unwrap();
+
+    let (started, building) = mpsc::channel();
+    let (resume, paused) = mpsc::channel();
+    let art = t
+        .new_art_with_expressions(
+            "idx",
+            IndexConstraintType::None,
+            &[0],
+            vec![LogicalType::INTEGER],
+            IndexKeyExpressions::Custom(Arc::new(PausedKeys {
+                names: vec!["i".into()],
+                first: AtomicBool::new(true),
+                started,
+                resume: Mutex::new(paused),
+            })),
+        )
+        .unwrap();
+    let builder_table = Arc::clone(&t);
+    let builder_manager = Arc::clone(&manager);
+    let builder_transaction = manager.begin();
+    let builder = std::thread::spawn(move || {
+        builder_table
+            .create_index(&builder_transaction, art, true)
+            .unwrap();
+        builder_manager.commit(&builder_transaction).unwrap();
+    });
+    building.recv_timeout(Duration::from_secs(10)).unwrap();
+
+    let (committing, attempted) = mpsc::channel();
+    let (committed, done) = mpsc::channel();
+    let writer_table = Arc::clone(&t);
+    let writer_manager = Arc::clone(&manager);
+    let writer = std::thread::spawn(move || {
+        let transaction = writer_manager.begin();
+        insert(&writer_table, &transaction, &[1]).unwrap();
+        committing.send(()).unwrap();
+        writer_manager.commit(&transaction).unwrap();
+        committed.send(()).unwrap();
+    });
+    attempted.recv_timeout(Duration::from_secs(10)).unwrap();
+    // Give the append a chance to commit while the build is paused. A correct
+    // build may instead keep it waiting until the index has been published.
+    let _ = done.recv_timeout(Duration::from_millis(250));
+    resume.send(()).unwrap();
+    builder.join().unwrap();
+    writer.join().unwrap();
+
+    let reader = manager.begin();
+    assert_eq!(values(&t, &reader), vec![1, 1]);
+    let mut indexed = BTreeSet::new();
+    let key = create_key(&Value::integer(1)).unwrap();
+    assert!(
+        t.indexes()
+            .find("idx")
+            .unwrap()
+            .lock()
+            .index
+            .search_equal(&key, usize::MAX, &mut indexed)
+            .unwrap()
+    );
+    let expected: BTreeSet<_> = scan(&t, &reader, None).into_iter().map(|(id, _)| id).collect();
+    assert_eq!(
+        indexed, expected,
+        "published index must include the concurrent committed row"
+    );
+    manager.commit(&reader).unwrap();
+}
+
+#[test]
 fn create_index_on_existing_data() {
     let io = io();
     let manager = TransactionManager::default();

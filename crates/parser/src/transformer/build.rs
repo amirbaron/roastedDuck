@@ -29,15 +29,20 @@ pub fn constant(value: Value) -> ParsedExpression {
 }
 
 /// `ColumnRefExpression(names)`.
-pub fn column_ref(names: Vec<String>) -> ParsedExpression {
+pub fn column_ref<K: Into<rustdb_common::ByteString>>(names: Vec<K>) -> ParsedExpression {
     ParsedExpression::new(
         ExpressionType::ColumnRef,
-        ParsedExpressionKind::ColumnRef(ColumnRefExpression { column_names: names }),
+        ParsedExpressionKind::ColumnRef(ColumnRefExpression {
+            column_names: names.into_iter().map(Into::into).collect(),
+        }),
     )
 }
 
 /// `ColumnRefExpression(column_name, table_name)`.
-pub fn qualified_column_ref(column: String, table: String) -> ParsedExpression {
+pub fn qualified_column_ref(
+    column: rustdb_common::ByteString,
+    table: rustdb_common::ByteString,
+) -> ParsedExpression {
     if table.is_empty() {
         column_ref(vec![column])
     } else {
@@ -46,9 +51,9 @@ pub fn qualified_column_ref(column: String, table: String) -> ParsedExpression {
 }
 
 /// `StarExpression()` / `StarExpression(relation_name)`.
-pub fn star_expression(relation_name: String) -> StarExpression {
+pub fn star_expression(relation_name: impl Into<rustdb_common::ByteString>) -> StarExpression {
     StarExpression {
-        relation_name,
+        relation_name: relation_name.into(),
         exclude_list: Vec::new(),
         replace_list: CaseInsensitiveMap::default(),
         rename_list: OrderedMap::default(),
@@ -69,9 +74,9 @@ pub fn star() -> ParsedExpression {
 /// is_operator, export_state)`; the name is lower-cased like DuckDB does.
 #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
 pub fn function_full(
-    catalog: String,
-    schema: String,
-    name: &str,
+    catalog: impl Into<rustdb_common::ByteString>,
+    schema: impl Into<rustdb_common::ByteString>,
+    name: impl AsRef<[u8]>,
     children: Vec<ParsedExpression>,
     filter: Option<Box<ParsedExpression>>,
     order_bys: OrderModifier,
@@ -82,21 +87,21 @@ pub fn function_full(
     ParsedExpression::new(
         ExpressionType::Function,
         ParsedExpressionKind::Function(Box::new(FunctionExpression {
-            function_name: name.to_ascii_lowercase(),
-            schema,
+            function_name: name.as_ref().to_ascii_lowercase().into(),
+            schema: schema.into(),
             children,
             filter,
             order_bys,
             distinct,
             is_operator,
             export_state,
-            catalog,
+            catalog: catalog.into(),
         })),
     )
 }
 
 /// `FunctionExpression(name, children)`.
-pub fn function(name: &str, children: Vec<ParsedExpression>) -> ParsedExpression {
+pub fn function(name: impl AsRef<[u8]>, children: Vec<ParsedExpression>) -> ParsedExpression {
     function_full(
         String::new(),
         String::new(),
@@ -190,7 +195,8 @@ pub fn positional_reference(index: u64) -> ParsedExpression {
 /// A table ref with no alias, sample or location.
 pub fn table_ref(kind: TableRefKind) -> TableRef {
     TableRef {
-        alias: String::new(),
+        external_dependency: rustdb_ast::ExternalDependency::default(),
+        alias: String::new().into(),
         sample: None,
         query_location: None,
         kind,
@@ -247,6 +253,11 @@ pub fn varchar_constant(text: &str) -> ParsedExpression {
     constant(Value::varchar(text))
 }
 
+/// Native `ConstantExpression(Value(bytes))`; validation matches C++'s Value constructor.
+pub fn try_varchar_constant(bytes: impl AsRef<[u8]>) -> rustdb_common::Result<ParsedExpression> {
+    Ok(constant(Value::try_varchar(bytes.as_ref())?))
+}
+
 /// `UUID::ToString(UUID::GenerateRandomUUID())`: a random version-4 UUID (the names of
 /// the enum types PIVOT statements create).
 pub fn random_uuid() -> String {
@@ -279,4 +290,9 @@ pub fn random_uuid() -> String {
         &hex[16..20],
         &hex[20..32]
     )
+}
+
+/// Converts name bytes into a SQL value at DuckDB's checked VARCHAR boundary.
+pub fn varchar_constant_bytes(text: &[u8]) -> rustdb_common::Result<ParsedExpression> {
+    Ok(constant(Value::try_varchar(text)?))
 }

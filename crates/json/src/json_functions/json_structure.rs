@@ -566,13 +566,13 @@ fn type_similarity(merged: &LogicalType, ty: &LogicalType, max_depth: u64, depth
                 return -1.0;
             }
             let merged_children = merged.struct_children().unwrap_or_default();
-            let lookup: HashMap<&str, &LogicalType> = merged_children
+            let lookup: HashMap<&[u8], &LogicalType> = merged_children
                 .iter()
-                .map(|(name, child)| (name.as_str(), child))
+                .map(|(name, child)| (name.as_bytes(), child))
                 .collect();
             let mut total = 0.0;
             for (name, child) in ty.struct_children().unwrap_or_default() {
-                let Some(merged_child) = lookup.get(name.as_str()) else {
+                let Some(merged_child) = lookup.get(name.as_bytes()) else {
                     return -1.0;
                 };
                 let similarity = type_similarity(merged_child, child, max_depth, depth + 1);
@@ -700,7 +700,12 @@ fn structure_to_type_object(
             return LogicalType::map(LogicalType::VARCHAR, map_value_type);
         }
     }
-    LogicalType::struct_type(child_types)
+    LogicalType::struct_type(
+        child_types
+            .into_iter()
+            .map(|(name, ty)| (name.into(), ty))
+            .collect(),
+    )
 }
 
 /// The logical type of a candidate type id.

@@ -3,11 +3,12 @@
 //! `.databases` and `DESCRIBE`, grouped by database and schema, with small tables placed
 //! side by side.
 
+use rustdb_common::ByteString;
 use std::collections::{BTreeMap, HashSet};
 
 use crate::box_renderer::{
     DOTDOTDOT, DOTDOTDOT_LENGTH, HORIZONTAL, LDCORNER, LTCORNER, RDCORNER, RTCORNER, VERTICAL,
-    truncate_value, try_format_large_number,
+    try_format_large_number,
 };
 use crate::highlight::{HighlightElementType, ShellHighlight};
 use crate::output::PrintOutput;
@@ -16,13 +17,14 @@ use crate::state::{ShellState, ShellTableInfo};
 /// A piece of a column line: its name, type or constraints (`RenderComponent`).
 #[derive(Clone, Debug)]
 struct RenderComponent {
-    text: String,
+    text: ByteString,
     render_width: usize,
     element_type: HighlightElementType,
 }
 
 impl RenderComponent {
-    fn new(text: String, element_type: HighlightElementType) -> Self {
+    fn new(text: impl Into<ByteString>, element_type: HighlightElementType) -> Self {
+        let text = text.into();
         Self {
             render_width: ShellState::render_length(&text),
             text,
@@ -45,7 +47,7 @@ struct ShellTableRenderInfo {
     table_name_length: usize,
     render_width: usize,
     max_component_widths: Vec<usize>,
-    estimated_size_text: String,
+    estimated_size_text: ByteString,
     estimated_size_length: Option<usize>,
     column_renders: Vec<ColumnRenderRow>,
 }
@@ -116,18 +118,18 @@ impl ShellTableRenderInfo {
             table_name_length,
             render_width: 0,
             max_component_widths,
-            estimated_size_text: String::new(),
+            estimated_size_text: ByteString::new(),
             estimated_size_length: None,
             column_renders: vec![render_row],
         };
         info.render_width = (table_name_length + 4).max(info.per_column_width());
         if let Some(estimated_size) = info.table.estimated_size {
-            let mut text = estimated_size.to_string();
+            let mut text = ByteString::from(estimated_size.to_string());
             let formatted = try_format_large_number(&text, decimal_sep);
             if !formatted.is_empty() {
                 text = formatted;
             }
-            text.push_str(" rows");
+            text.push_bytes(" rows");
             let length = ShellState::render_length(&text);
             info.estimated_size_text = text;
             info.estimated_size_length = Some(length);
@@ -156,18 +158,23 @@ impl ShellTableRenderInfo {
     }
 
     /// `TruncateValueIfRequired`.
-    fn truncate_value_if_required(value: &mut String, render_length: &mut usize, max_render_width: usize) {
+    fn truncate_value_if_required(
+        value: &mut ByteString,
+        render_length: &mut usize,
+        max_render_width: usize,
+    ) {
         if *render_length <= max_render_width {
             return;
         }
         let mut pos = 0;
         let mut value_render_width = 0;
-        *value = truncate_value(
+        *value = crate::box_renderer::truncate_value_bytes(
             value,
             max_render_width - DOTDOTDOT_LENGTH,
             &mut pos,
             &mut value_render_width,
-        ) + DOTDOTDOT;
+        );
+        value.push_bytes(DOTDOTDOT);
         *render_length = value_render_width + DOTDOTDOT_LENGTH;
     }
 
@@ -240,7 +247,8 @@ impl TableMetadataLine {
         mut line_idx: usize,
         last_line: bool,
     ) {
-        let print = |text: &str, element_type| highlight.print_text(text, PrintOutput::Stdout, element_type);
+        let print =
+            |text: &[u8], element_type| highlight.print_bytes(text, PrintOutput::Stdout, element_type);
         // The table this line belongs to.
         let Some(&table_index) = self.tables.iter().find(|&&table| {
             let line_count = table_list[table].line_count();
@@ -252,7 +260,10 @@ impl TableMetadataLine {
         }) else {
             // No table: spaces, unless this is the last line.
             if !last_line {
-                print(&" ".repeat(self.render_width), HighlightElementType::Layout);
+                print(
+                    " ".repeat(self.render_width).as_bytes(),
+                    HighlightElementType::Layout,
+                );
             }
             return;
         };
@@ -266,7 +277,7 @@ impl TableMetadataLine {
         let render_width = self.render_width;
         if line_idx == 0 {
             print(
-                &format!("{LTCORNER}{}{RTCORNER}", HORIZONTAL.repeat(render_width - 2)),
+                &rustdb_common::byte_format!("{LTCORNER}{}{RTCORNER}", HORIZONTAL.repeat(render_width - 2)),
                 layout_type,
             );
             return;
@@ -276,9 +287,15 @@ impl TableMetadataLine {
             let space_count = render_width - render_table.table_name_length - 2;
             let lspace = space_count / 2;
             let rspace = space_count - lspace;
-            print(&format!("{VERTICAL}{}", " ".repeat(lspace)), layout_type);
+            print(
+                &rustdb_common::byte_format!("{VERTICAL}{}", " ".repeat(lspace)),
+                layout_type,
+            );
             print(&table.table_name, HighlightElementType::TableName);
-            print(&format!("{}{VERTICAL}", " ".repeat(rspace)), layout_type);
+            print(
+                &rustdb_common::byte_format!("{}{VERTICAL}", " ".repeat(rspace)),
+                layout_type,
+            );
             return;
         }
         if line_idx > 2 && line_idx < render_table.column_lines() + 3 {
@@ -297,7 +314,7 @@ impl TableMetadataLine {
                 };
                 if let Some(column) = column_render.get(column_idx) {
                     column_line.push(' ');
-                    print(&column_line, layout_type);
+                    print(column_line.as_bytes(), layout_type);
                     for (component_idx, component) in column.iter().enumerate() {
                         print(&component.text, component.element_type);
                         // Padding between the components.
@@ -314,21 +331,21 @@ impl TableMetadataLine {
                             padding += &" ".repeat(render_count);
                             extra_render_width -= render_count;
                         }
-                        print(&padding, layout_type);
+                        print(padding.as_bytes(), layout_type);
                     }
                 } else {
                     // This column of column lines has no more columns.
                     column_line = " ".repeat(per_column_render_width - 1);
-                    print(&column_line, layout_type);
+                    print(column_line.as_bytes(), layout_type);
                 }
-                print(if is_last { VERTICAL } else { " " }, layout_type);
+                print(if is_last { VERTICAL.as_bytes() } else { b" " }, layout_type);
             }
             return;
         }
         if line_idx == 2 || (table.estimated_size.is_some() && line_idx == render_table.column_lines() + 3) {
             // A blank line after the table name, and before the row count.
             print(
-                &format!("{VERTICAL}{}{VERTICAL}", " ".repeat(render_width - 2)),
+                &rustdb_common::byte_format!("{VERTICAL}{}{VERTICAL}", " ".repeat(render_width - 2)),
                 layout_type,
             );
             return;
@@ -339,14 +356,23 @@ impl TableMetadataLine {
             let space_count = render_width - estimated_size_length - 2;
             let lspace = space_count / 2;
             let rspace = space_count - lspace;
-            print(&format!("{VERTICAL}{}", " ".repeat(lspace)), layout_type);
-            print(&render_table.estimated_size_text, HighlightElementType::Comment);
-            print(&format!("{}{VERTICAL}", " ".repeat(rspace)), layout_type);
+            print(
+                &rustdb_common::byte_format!("{VERTICAL}{}", " ".repeat(lspace)),
+                layout_type,
+            );
+            print(
+                render_table.estimated_size_text.as_bytes(),
+                HighlightElementType::Comment,
+            );
+            print(
+                &rustdb_common::byte_format!("{}{VERTICAL}", " ".repeat(rspace)),
+                layout_type,
+            );
             return;
         }
         // The bottom line.
         print(
-            &format!("{LDCORNER}{}{RDCORNER}", HORIZONTAL.repeat(render_width - 2)),
+            &rustdb_common::byte_format!("{LDCORNER}{}{RDCORNER}", HORIZONTAL.repeat(render_width - 2)),
             layout_type,
         );
     }
@@ -355,8 +381,8 @@ impl TableMetadataLine {
 /// The tables of one database and schema rendered together (`TableMetadataDisplayInfo`).
 #[derive(Clone, Debug, Default)]
 struct TableMetadataDisplayInfo {
-    database_name: String,
-    schema_name: String,
+    database_name: ByteString,
+    schema_name: ByteString,
     render_height: usize,
     render_width: usize,
     display_lines: Vec<TableMetadataLine>,
@@ -365,22 +391,22 @@ struct TableMetadataDisplayInfo {
 /// `RenderLineDisplay`: a database or schema name between horizontal lines.
 fn render_line_display(
     highlight: &ShellHighlight<'_>,
-    text: &str,
+    text: &[u8],
     total_render_width: usize,
     element_type: HighlightElementType,
 ) {
-    let mut text = text.to_owned();
+    let mut text = ByteString::from(text);
     let mut render_size = ShellState::render_length(&text);
     ShellTableRenderInfo::truncate_value_if_required(&mut text, &mut render_size, total_render_width - 4);
     let total_lines = total_render_width - render_size - 4;
     let lline = total_lines / 2;
     let rline = total_lines - lline;
-    let line = format!(
+    let line = rustdb_common::byte_format!(
         " {} {text} {} \n",
         HORIZONTAL.repeat(lline),
         HORIZONTAL.repeat(rline)
     );
-    highlight.print_text(&line, PrintOutput::Stdout, element_type);
+    highlight.print_bytes(&line, PrintOutput::Stdout, element_type);
 }
 
 impl ShellState {
@@ -421,7 +447,7 @@ impl ShellState {
         }
 
         // Group the tables by database and schema.
-        let mut grouped_tables: BTreeMap<String, BTreeMap<String, Vec<ShellTableRenderInfo>>> =
+        let mut grouped_tables: BTreeMap<ByteString, BTreeMap<ByteString, Vec<ShellTableRenderInfo>>> =
             BTreeMap::new();
         for entry in table_list {
             grouped_tables
@@ -537,8 +563,8 @@ impl ShellState {
             metadata_render_width = metadata_render_width.max(size).max(metadata_display.render_width);
         }
         let highlight = ShellHighlight::new(&self.out);
-        let mut last_displayed_database = String::new();
-        let mut last_displayed_schema = String::new();
+        let mut last_displayed_database = ByteString::new();
+        let mut last_displayed_schema = ByteString::new();
         for metadata_display in &metadata_displays {
             // The database and schema names, when they change.
             if !metadata_display.database_name.is_empty()

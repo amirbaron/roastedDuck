@@ -13,7 +13,9 @@ use rustdb_storage::statistics::BaseStatistics;
 use rustdb_types::{DataChunk, LogicalType, Value, Vector};
 
 use super::radix_sink::{RadixMemory, RadixSinkConfig, RadixSinkTable, initial_radix_bits};
-use crate::aggregate_hashtable::{AggregateObject, GroupedAggregateHashTable, capacity_for_count, initial_capacity};
+use crate::aggregate_hashtable::{
+    AggregateObject, GroupedAggregateHashTable, capacity_for_count, initial_capacity,
+};
 use crate::operator::{
     ErasedSink, ErasedSource, OrderPreservationType, PhysicalOperator, PhysicalRef, SinkState,
 };
@@ -301,7 +303,11 @@ impl Sink for PhysicalHashAggregate {
                             return Ok(None);
                         }
                         let table = self.distinct_table(ctx, set, aggregate, initial_capacity(), 0)?;
-                        Ok(Some(RadixSinkConfig::new(ctx, table.layout().row_width(), external_bits)))
+                        Ok(Some(RadixSinkConfig::new(
+                            ctx,
+                            table.layout().row_width(),
+                            external_bits,
+                        )))
                     })
                     .collect::<Result<Vec<_>>>()
             })
@@ -693,7 +699,11 @@ impl PhysicalHashAggregate {
                     continue;
                 }
                 let memory = RadixMemory::unreserved(ctx);
-                memory.finalize(taken.iter().map(|data| (partition_bytes(data), partition_rows(data), unique)));
+                memory.finalize(
+                    taken
+                        .iter()
+                        .map(|data| (partition_bytes(data), partition_rows(data), unique)),
+                );
                 global.distinct_memory.push(memory);
                 let memory = global.distinct_memory.len() - 1;
                 units.extend(taken.into_iter().map(|data| DistinctUnit {
@@ -948,7 +958,8 @@ impl PhysicalHashAggregate {
                             return Ok(None);
                         };
                         let radix_bits = config.radix_bits.load(Ordering::Acquire);
-                        let table = self.distinct_table(ctx, set, aggregate, config.sink_capacity, radix_bits)?;
+                        let table =
+                            self.distinct_table(ctx, set, aggregate, config.sink_capacity, radix_bits)?;
                         Ok(Some(RadixSinkTable::new(config, table)))
                     })
                     .collect()

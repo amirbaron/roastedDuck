@@ -1,6 +1,7 @@
 //! Semantic actions for the rules in `grammar/statements/drop_secret.y`.
 
 use super::prelude::*;
+use rustdb_common::ByteString;
 
 /// ```text
 /// DropSecretStmt:
@@ -44,7 +45,7 @@ pub(super) fn opt_storage_drop_specifier<'a>(
 ) -> Result<SemValue<'a>> {
     match alt {
         // /* empty */
-        0 => Ok(SemValue::Str(Some(String::new()))),
+        0 => Ok(SemValue::Str(Some(ByteString::new()))),
         _ => Err(rhs.bad_alternative()),
     }
 }

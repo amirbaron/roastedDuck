@@ -40,7 +40,7 @@ pub struct JsonReaderOptions {
     /// Objects with at least this many similar fields become MAPs.
     pub map_inference_threshold: u64,
     /// `columns`: the names and types.
-    pub name_list: Vec<String>,
+    pub name_list: Vec<rustdb_common::ByteString>,
     pub sql_type_list: Vec<LogicalType>,
     pub date_format: String,
     pub timestamp_format: String,
@@ -51,10 +51,10 @@ pub struct JsonReaderOptions {
 
 /// The contents of piped files, by path.
 #[derive(Clone, Debug, Default)]
-pub struct PipeContents(pub Arc<HashMap<String, Arc<[u8]>>>);
+pub struct PipeContents(pub Arc<HashMap<rustdb_common::ByteString, Arc<[u8]>>>);
 
 impl PipeContents {
-    pub(crate) fn get(&self, path: &str) -> Option<Arc<[u8]>> {
+    pub(crate) fn get(&self, path: &[u8]) -> Option<Arc<[u8]>> {
         self.0.get(path).cloned()
     }
 }
@@ -119,19 +119,22 @@ impl JsonReaderOptions {
     pub fn parse_option(
         &mut self,
         context: Option<&ClientContext>,
-        key: &str,
+        key: impl AsRef<[u8]>,
         value: &Value,
     ) -> Result<bool> {
+        let key = key.as_ref();
         if value.is_null() {
-            return Err(Error::binder(format!("Cannot use NULL as argument to key {key}")));
+            return Err(Error::binder(rustdb_common::byte_format!(
+                "Cannot use NULL as argument to key {key}"
+            )));
         }
-        match key.to_lowercase().as_str() {
-            "ignore_errors" => self.ignore_errors = as_bool(value),
-            "maximum_object_size" => {
+        match key.to_ascii_lowercase().as_slice() {
+            b"ignore_errors" => self.ignore_errors = as_bool(value),
+            b"maximum_object_size" => {
                 let size = value.as_i128().map_or(0, |v| v as u64);
                 self.maximum_object_size = size.max(self.maximum_object_size);
             }
-            "format" => {
+            b"format" => {
                 let arg = as_text(value)?.to_lowercase();
                 self.format = match arg.as_str() {
                     "auto" => JsonFormat::AutoDetect,
@@ -145,15 +148,15 @@ impl JsonReaderOptions {
                     }
                 };
             }
-            "compression" => self.compression = parse_compression(&as_text(value)?)?,
-            "columns" => {
+            b"compression" => self.compression = parse_compression(&as_text(value)?)?,
+            b"columns" => {
                 let ty = value.logical_type();
                 if ty.id() != LogicalTypeId::Struct {
                     return Err(Error::binder(
                         "read_json \"columns\" parameter requires a struct as input.",
                     ));
                 }
-                let names: Vec<String> = ty
+                let names: Vec<rustdb_common::ByteString> = ty
                     .struct_children()
                     .unwrap_or_default()
                     .iter()
@@ -180,8 +183,8 @@ impl JsonReaderOptions {
                     ));
                 }
             }
-            "auto_detect" => self.auto_detect = as_bool(value),
-            "sample_size" => {
+            b"auto_detect" => self.auto_detect = as_bool(value),
+            b"sample_size" => {
                 let arg = as_i64(value);
                 if arg == -1 {
                     self.sample_size = u64::MAX;
@@ -193,11 +196,11 @@ impl JsonReaderOptions {
                     ));
                 }
             }
-            "maximum_depth" => {
+            b"maximum_depth" => {
                 let arg = as_i64(value);
                 self.max_depth = if arg == -1 { u64::MAX } else { arg as u64 };
             }
-            "field_appearance_threshold" => {
+            b"field_appearance_threshold" => {
                 let arg = value.as_f64().unwrap_or(0.0);
                 if !(0.0..=1.0).contains(&arg) {
                     return Err(Error::binder(
@@ -206,7 +209,7 @@ impl JsonReaderOptions {
                 }
                 self.field_appearance_threshold = arg;
             }
-            "map_inference_threshold" => {
+            b"map_inference_threshold" => {
                 let arg = as_i64(value);
                 if arg == -1 {
                     self.map_inference_threshold = u64::MAX;
@@ -218,7 +221,7 @@ impl JsonReaderOptions {
                     ));
                 }
             }
-            "dateformat" | "date_format" => {
+            b"dateformat" | b"date_format" => {
                 let mut format = as_text(value)?;
                 if format.eq_ignore_ascii_case("iso") {
                     "%Y-%m-%d".clone_into(&mut format);
@@ -230,7 +233,7 @@ impl JsonReaderOptions {
                 }
                 self.date_format = format;
             }
-            "timestampformat" | "timestamp_format" => {
+            b"timestampformat" | b"timestamp_format" => {
                 let mut format = as_text(value)?;
                 if format.eq_ignore_ascii_case("iso") {
                     "%Y-%m-%dT%H:%M:%S.%fZ".clone_into(&mut format);
@@ -242,7 +245,7 @@ impl JsonReaderOptions {
                 }
                 self.timestamp_format = format;
             }
-            "records" => {
+            b"records" => {
                 self.record_type = match as_text(value)?.as_str() {
                     "auto" => JsonRecordType::AutoDetect,
                     "true" => JsonRecordType::Records,
@@ -254,7 +257,7 @@ impl JsonReaderOptions {
                     }
                 };
             }
-            "maximum_sample_files" => {
+            b"maximum_sample_files" => {
                 let arg = as_i64(value);
                 if arg == -1 {
                     self.maximum_sample_files = u64::MAX;
@@ -266,18 +269,18 @@ impl JsonReaderOptions {
                     ));
                 }
             }
-            "convert_strings_to_integers" => self.convert_strings_to_integers = as_bool(value),
+            b"convert_strings_to_integers" => self.convert_strings_to_integers = as_bool(value),
             _ => return Ok(false),
         }
         Ok(true)
     }
 
     /// `JSONMultiFileInfo::ParseCopyOption`: whether `key` is a `COPY ... FROM` option.
-    pub fn parse_copy_option(&mut self, key: &str, values: &[Value]) -> Result<bool> {
+    pub fn parse_copy_option(&mut self, key: &[u8], values: &[Value]) -> Result<bool> {
         let single = |values: &[Value]| -> Result<Value> {
             match values {
                 [value] => Ok(value.clone()),
-                _ => Err(Error::binder(format!(
+                _ => Err(Error::binder(rustdb_common::byte_format!(
                     "COPY (FORMAT JSON) parameter {key} expects a single argument."
                 ))),
             }
@@ -289,10 +292,10 @@ impl JsonReaderOptions {
                 .as_bool()
                 .unwrap_or(false))
         };
-        match key.to_lowercase().as_str() {
-            "dateformat" | "date_format" => self.date_format = as_text(&single(values)?)?,
-            "timestampformat" | "timestamp_format" => self.timestamp_format = as_text(&single(values)?)?,
-            "auto_detect" => {
+        match key.to_ascii_lowercase().as_slice() {
+            b"dateformat" | b"date_format" => self.date_format = as_text(&single(values)?)?,
+            b"timestampformat" | b"timestamp_format" => self.timestamp_format = as_text(&single(values)?)?,
+            b"auto_detect" => {
                 if values.is_empty() {
                     self.auto_detect = true;
                 } else {
@@ -302,8 +305,8 @@ impl JsonReaderOptions {
                     }
                 }
             }
-            "compression" => self.compression = parse_compression(&as_text(&single(values)?)?)?,
-            "array" => {
+            b"compression" => self.compression = parse_compression(&as_text(&single(values)?)?)?,
+            b"array" => {
                 if values.is_empty() || to_bool(&single(values)?)? {
                     self.format = JsonFormat::Array;
                 } else {

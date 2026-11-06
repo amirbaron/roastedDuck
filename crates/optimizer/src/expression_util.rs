@@ -339,12 +339,12 @@ pub fn can_throw(expression: &Expression) -> bool {
 
 /// Whether a type is `JSON` (VARCHAR aliased as JSON, DuckDB's `IsJSONType`).
 fn is_json(ty: &LogicalType) -> bool {
-    ty.id() == LogicalTypeId::Varchar && ty.alias() == Some("JSON")
+    ty.id() == LogicalTypeId::Varchar && ty.alias().is_some_and(|alias| alias == "JSON")
 }
 
 fn function_can_throw(function: &BoundFunctionExpression) -> bool {
     FALLIBLE_FUNCTIONS
-        .binary_search(&&*function.function.name)
+        .binary_search_by(|name| name.as_bytes().cmp(function.function.name.as_bytes()))
         .is_ok()
 }
 

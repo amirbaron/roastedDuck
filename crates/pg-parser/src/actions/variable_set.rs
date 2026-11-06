@@ -69,7 +69,7 @@ pub(super) fn set_rest<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Se
             let zone_value = rhs.node(3)?;
             let mut n = VariableSetStmt {
                 kind: VariableSetKind::Value,
-                name: Some("timezone".to_owned()),
+                name: Some("timezone".into()),
                 ..Default::default()
             };
             match zone_value {
@@ -82,7 +82,7 @@ pub(super) fn set_rest<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Se
         3 => {
             let n = VariableSetStmt {
                 kind: VariableSetKind::Value,
-                name: Some("search_path".to_owned()),
+                name: Some("search_path".into()),
                 args: vec![make_string_const(rhs.string(2)?, rhs.loc(2))],
                 ..Default::default()
             };

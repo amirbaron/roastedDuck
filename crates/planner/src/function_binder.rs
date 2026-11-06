@@ -3,7 +3,6 @@
 //! (`BoundCastExpression::AddCastToType`), comparison types
 //! (`BoundComparisonExpression::TryBindComparison`) and type unification.
 
-use std::fmt::Write as _;
 use std::sync::{Arc, PoisonError};
 
 use rustdb_ast::ExpressionType;
@@ -99,7 +98,7 @@ pub fn normalize_type(ty: &LogicalType) -> Result<LogicalType> {
 /// `ScalarFunction::rewrite_expression`, which holds it type-erased).
 pub struct RewriteExpression(
     #[allow(clippy::type_complexity, reason = "a callback signature")]
-    pub Box<dyn Fn(&ClientContext, Expression) -> Result<Expression> + Send + Sync>,
+    pub  Box<dyn Fn(&ClientContext, Expression) -> Result<Expression> + Send + Sync>,
 );
 
 impl std::fmt::Debug for RewriteExpression {
@@ -118,7 +117,11 @@ impl RewriteExpression {
 }
 
 /// The common type of two types, or a Not implemented error (DuckDB's `MaxLogicalType`).
-pub fn max_logical_type(context: &ClientContext, left: &LogicalType, right: &LogicalType) -> Result<LogicalType> {
+pub fn max_logical_type(
+    context: &ClientContext,
+    left: &LogicalType,
+    right: &LogicalType,
+) -> Result<LogicalType> {
     context.try_max_logical_type(left, right).ok_or_else(|| {
         Error::not_implemented(format!(
             "Cannot combine types {left} and {right} - an explicit cast is required"
@@ -231,17 +234,17 @@ fn requires_collation_propagation(ty: &LogicalType) -> bool {
 }
 
 /// The collation of a VARCHAR type, empty without one (`StringType::GetCollation`).
-fn collation_of(ty: &LogicalType) -> &str {
-    collation(ty).unwrap_or("")
+fn collation_of(ty: &LogicalType) -> &[u8] {
+    collation(ty).unwrap_or(b"")
 }
 
 /// A function signature for overload resolution (DuckDB's `SimpleFunction`).
 pub trait FunctionSignature {
-    fn name(&self) -> &str;
+    fn name(&self) -> &[u8];
     fn arguments(&self) -> &[LogicalType];
     fn varargs(&self) -> Option<&LogicalType>;
     /// How the overload prints in error messages (DuckDB's `ToString`).
-    fn signature(&self) -> String;
+    fn signature(&self) -> rustdb_common::ByteString;
 }
 
 /// `name(A, B[, [C...]])` (DuckDB's `Function::CallToString`).
@@ -255,9 +258,26 @@ pub fn call_to_string(name: &str, arguments: &[LogicalType], varargs: Option<&Lo
     format!("{name}({})", parts.join(", "))
 }
 
+/// Native byte-preserving call rendering for catalog names and diagnostics.
+pub fn call_to_bytes(
+    name: impl AsRef<[u8]>,
+    arguments: &[LogicalType],
+    varargs: Option<&LogicalType>,
+) -> rustdb_common::ByteString {
+    let mut parts: Vec<_> = arguments.iter().map(LogicalType::to_bytes).collect();
+    if let Some(varargs) = varargs.filter(|ty| ty.id() != LogicalTypeId::Invalid) {
+        parts.push(rustdb_common::byte_format!("[{}...]", varargs.to_bytes()));
+    }
+    rustdb_common::byte_format!(
+        "{}({})",
+        name.as_ref(),
+        rustdb_common::ByteString::join(&parts, b", ")
+    )
+}
+
 impl FunctionSignature for ScalarFunction {
-    fn name(&self) -> &str {
-        &self.name
+    fn name(&self) -> &[u8] {
+        self.name.as_bytes()
     }
 
     fn arguments(&self) -> &[LogicalType] {
@@ -268,18 +288,18 @@ impl FunctionSignature for ScalarFunction {
         self.varargs.as_ref()
     }
 
-    fn signature(&self) -> String {
-        format!(
+    fn signature(&self) -> rustdb_common::ByteString {
+        rustdb_common::byte_format!(
             "{} -> {}",
-            call_to_string(&self.name, &self.arguments, self.varargs.as_ref()),
+            call_to_bytes(self.name.as_bytes(), &self.arguments, self.varargs.as_ref()),
             self.return_type
         )
     }
 }
 
 impl FunctionSignature for AggregateFunction {
-    fn name(&self) -> &str {
-        &self.name
+    fn name(&self) -> &[u8] {
+        self.name.as_bytes()
     }
 
     fn arguments(&self) -> &[LogicalType] {
@@ -290,18 +310,18 @@ impl FunctionSignature for AggregateFunction {
         self.varargs.as_ref()
     }
 
-    fn signature(&self) -> String {
-        format!(
+    fn signature(&self) -> rustdb_common::ByteString {
+        rustdb_common::byte_format!(
             "{} -> {}",
-            call_to_string(&self.name, &self.arguments, self.varargs.as_ref()),
+            call_to_bytes(self.name.as_bytes(), &self.arguments, self.varargs.as_ref()),
             self.return_type
         )
     }
 }
 
 impl FunctionSignature for TableFunction {
-    fn name(&self) -> &str {
-        &self.name
+    fn name(&self) -> &[u8] {
+        self.name.as_bytes()
     }
 
     fn arguments(&self) -> &[LogicalType] {
@@ -312,18 +332,18 @@ impl FunctionSignature for TableFunction {
         self.varargs.as_ref()
     }
 
-    fn signature(&self) -> String {
+    fn signature(&self) -> rustdb_common::ByteString {
         let mut parts: Vec<String> = self.arguments.iter().map(ToString::to_string).collect();
         parts.extend(
             named_parameters_in_map_order(&self.named_parameters).map(|(name, ty)| format!("{name} : {ty}")),
         );
-        format!("{}({})", self.name, parts.join(", "))
+        rustdb_common::byte_format!("{}({})", self.name.as_bytes(), parts.join(", "))
     }
 }
 
 impl FunctionSignature for rustdb_function::PragmaFunction {
-    fn name(&self) -> &str {
-        &self.name
+    fn name(&self) -> &[u8] {
+        self.name.as_bytes()
     }
 
     fn arguments(&self) -> &[LogicalType] {
@@ -335,16 +355,18 @@ impl FunctionSignature for rustdb_function::PragmaFunction {
     }
 
     /// `PragmaFunction::ToString`.
-    fn signature(&self) -> String {
+    fn signature(&self) -> rustdb_common::ByteString {
         match self.pragma_type {
-            rustdb_function::PragmaType::Statement => format!("PRAGMA {}", self.name),
+            rustdb_function::PragmaType::Statement => {
+                rustdb_common::byte_format!("PRAGMA {}", self.name.as_bytes())
+            }
             rustdb_function::PragmaType::Call => {
                 let mut parts: Vec<String> = self.arguments.iter().map(ToString::to_string).collect();
                 parts.extend(
                     named_parameters_in_map_order(&self.named_parameters)
                         .map(|(name, ty)| format!("{name} : {ty}")),
                 );
-                format!("PRAGMA {}({})", self.name, parts.join(", "))
+                rustdb_common::byte_format!("PRAGMA {}({})", self.name.as_bytes(), parts.join(", "))
             }
         }
     }
@@ -443,10 +465,11 @@ impl<'a> FunctionBinder<'a> {
     /// is a soft "no function matches"/"could not choose" error.
     pub fn bind_function<F: FunctionSignature>(
         &self,
-        name: &str,
+        name: impl AsRef<[u8]>,
         functions: &[F],
         arguments: &[LogicalType],
     ) -> Result<std::result::Result<usize, Error>> {
+        let name = name.as_ref();
         let mut lowest_cost = u64::MAX;
         let mut candidates: Vec<usize> = Vec::new();
         let mut best = None;
@@ -466,15 +489,18 @@ impl<'a> FunctionBinder<'a> {
             best = Some(index);
         }
         let Some(best) = best else {
-            let call = call_to_string(name, arguments, None);
-            let signatures: Vec<String> = functions.iter().map(FunctionSignature::signature).collect();
-            let list = signatures.iter().fold(String::new(), |mut list, signature| {
-                let _ = writeln!(list, "\t{signature}");
-                list
-            });
+            let call = call_to_bytes(name, arguments, None);
+            let signatures: Vec<rustdb_common::ByteString> =
+                functions.iter().map(FunctionSignature::signature).collect();
+            let list = signatures
+                .iter()
+                .fold(rustdb_common::ByteString::new(), |mut list, signature| {
+                    list.push_bytes(rustdb_common::byte_format!("\t{signature}\n"));
+                    list
+                });
             // `BinderException::NoMatchingFunction`, caught into the binder's `ErrorData`;
             // every function set lives in the system catalog's main schema.
-            return Ok(Err(Error::binder(format!(
+            return Ok(Err(Error::binder(rustdb_common::byte_format!(
                 "No function matches the given name and argument types '{call}'. You might need to add \
                  explicit type casts.\n\tCandidate functions:\n{list}"
             ))
@@ -483,7 +509,7 @@ impl<'a> FunctionBinder<'a> {
             .with_extra_info("catalog", "system")
             .with_extra_info("schema", "main")
             .with_extra_info("call", call)
-            .with_extra_info("candidates", signatures.join(","))
+            .with_extra_info("candidates", rustdb_common::ByteString::join(&signatures, b","))
             .with_extra_info_round_trip()));
         };
         candidates.push(best);
@@ -494,12 +520,17 @@ impl<'a> FunctionBinder<'a> {
             {
                 return Err(parameter_not_resolved());
             }
-            let call = call_to_string(name, arguments, None);
-            let list = candidates.iter().fold(String::new(), |mut list, &index| {
-                let _ = writeln!(list, "\t{}", functions[index].signature());
-                list
-            });
-            return Ok(Err(Error::binder(format!(
+            let call = call_to_bytes(name, arguments, None);
+            let list = candidates
+                .iter()
+                .fold(rustdb_common::ByteString::new(), |mut list, &index| {
+                    list.push_bytes(rustdb_common::byte_format!(
+                        "\t{}\n",
+                        functions[index].signature()
+                    ));
+                    list
+                });
+            return Ok(Err(Error::binder(rustdb_common::byte_format!(
                 "Could not choose a best candidate function for the function call \"{call}\". In order to select \
                  one, please add explicit type casts.\n\tCandidate functions:\n{list}"
             ))));
@@ -530,11 +561,12 @@ impl<'a> FunctionBinder<'a> {
     /// Casts `children` to the overload's argument types (DuckDB's `CastToFunctionArguments`).
     fn cast_to_arguments(
         &self,
-        name: &str,
+        name: impl AsRef<[u8]>,
         arguments: &mut [LogicalType],
         varargs: &mut Option<LogicalType>,
         children: Vec<Expression>,
     ) -> Result<Vec<Expression>> {
+        let name = name.as_ref();
         for argument in arguments.iter_mut().chain(varargs.iter_mut()) {
             prepare_type_for_cast(argument);
         }
@@ -545,7 +577,7 @@ impl<'a> FunctionBinder<'a> {
                 target.id(),
                 LogicalTypeId::StringLiteral | LogicalTypeId::IntegerLiteral
             ) {
-                return Err(Error::internal(format!(
+                return Err(Error::internal(rustdb_common::byte_format!(
                     "Function {name} returned a STRING_LITERAL or INTEGER_LITERAL type - return an explicit type \
                      instead"
                 )));
@@ -569,7 +601,7 @@ impl<'a> FunctionBinder<'a> {
         is_operator: bool,
     ) -> Result<std::result::Result<Expression, BindError>> {
         let types = Self::argument_types(&children);
-        let index = match self.bind_function(&functions.name, &functions.functions, &types)? {
+        let index = match self.bind_function(&*functions.name, &functions.functions, &types)? {
             Ok(index) => index,
             Err(error) => return Ok(Err(error.into())),
         };
@@ -608,15 +640,15 @@ impl<'a> FunctionBinder<'a> {
             return Ok(children);
         }
         // `ExtractCollation`.
-        let mut collation = String::new();
+        let mut collation = rustdb_common::ByteString::new();
         for child in &children {
             if !requires_collation_propagation(&child.return_type) {
                 continue;
             }
             let child_collation = collation_of(&child.return_type);
             if collation.is_empty() {
-                child_collation.clone_into(&mut collation);
-            } else if !child_collation.is_empty() && collation != child_collation {
+                collation = child_collation.into();
+            } else if !child_collation.is_empty() && collation.as_bytes() != child_collation {
                 return Err(Error::binder("Cannot combine types with different collation!"));
             }
         }
@@ -659,7 +691,7 @@ impl<'a> FunctionBinder<'a> {
         is_operator: bool,
     ) -> Result<Expression> {
         resolve_template_types(
-            &function.name,
+            function.name.as_bytes(),
             &mut function.arguments,
             &mut function.varargs,
             &mut function.return_type,
@@ -669,8 +701,9 @@ impl<'a> FunctionBinder<'a> {
         let mut bind_info: Option<Arc<dyn FunctionData>> = None;
         if let Some(bind) = function.bind.clone() {
             let (argument_types, constants) = self.bind_input(&children);
-            let aliases: Vec<String> = children.iter().map(|child| child.alias.clone()).collect();
-            let names: Vec<String> = children.iter().map(expression_name).collect();
+            let aliases: Vec<rustdb_common::ByteString> =
+                children.iter().map(|child| child.alias.clone()).collect();
+            let names: Vec<rustdb_common::ByteString> = children.iter().map(expression_name).collect();
             bind_info = bind(
                 &mut function,
                 &BindInput {
@@ -698,7 +731,7 @@ impl<'a> FunctionBinder<'a> {
             }
         }
         check_template_types_resolved(
-            &function.name,
+            function.name.as_bytes(),
             &function.arguments,
             function.varargs.as_ref(),
             &function.return_type,
@@ -706,14 +739,15 @@ impl<'a> FunctionBinder<'a> {
         let argument_types: Vec<LogicalType> =
             children.iter().map(|child| child.return_type.clone()).collect();
         if let Some(bind_expression) = &function.bind_expression
-            && let Some(value) = bind_expression(bind_info.as_deref(), &argument_types)
+            && let Some(value) = bind_expression(bind_info.as_deref(), &argument_types)?
         {
             return Ok(Expression::constant(value));
         }
         let children = self.handle_collations(&mut function, children)?;
         let mut arguments = std::mem::take(&mut function.arguments);
         let mut varargs = function.varargs.take();
-        let children = self.cast_to_arguments(&function.name, &mut arguments, &mut varargs, children)?;
+        let children =
+            self.cast_to_arguments(function.name.as_bytes(), &mut arguments, &mut varargs, children)?;
         function.arguments = arguments;
         function.varargs = varargs;
         let rewrite = function.rewrite_expression.clone();
@@ -737,7 +771,7 @@ impl<'a> FunctionBinder<'a> {
         order_bys: Option<BoundOrderModifier>,
     ) -> Result<Expression> {
         resolve_template_types(
-            &function.name,
+            function.name.as_bytes(),
             &mut function.arguments,
             &mut function.varargs,
             &mut function.return_type,
@@ -749,8 +783,9 @@ impl<'a> FunctionBinder<'a> {
         self.push_aggregate_collations(&mut function, &mut children)?;
         if let Some(bind) = function.bind.clone() {
             let (argument_types, constants) = self.bind_input(&children);
-            let aliases: Vec<String> = children.iter().map(|child| child.alias.clone()).collect();
-            let names: Vec<String> = children.iter().map(expression_name).collect();
+            let aliases: Vec<rustdb_common::ByteString> =
+                children.iter().map(|child| child.alias.clone()).collect();
+            let names: Vec<rustdb_common::ByteString> = children.iter().map(expression_name).collect();
             bind_info = bind(
                 &mut function,
                 &BindInput {
@@ -769,14 +804,15 @@ impl<'a> FunctionBinder<'a> {
             children.truncate(function.arguments.len());
         }
         check_template_types_resolved(
-            &function.name,
+            function.name.as_bytes(),
             &function.arguments,
             function.varargs.as_ref(),
             &function.return_type,
         )?;
         let mut arguments = std::mem::take(&mut function.arguments);
         let mut varargs = function.varargs.take();
-        let children = self.cast_to_arguments(&function.name, &mut arguments, &mut varargs, children)?;
+        let children =
+            self.cast_to_arguments(function.name.as_bytes(), &mut arguments, &mut varargs, children)?;
         function.arguments = arguments;
         function.varargs = varargs;
         let return_type = function.return_type.clone();
@@ -878,7 +914,7 @@ impl<'a> FunctionBinder<'a> {
         arguments: &[LogicalType],
     ) -> Result<std::result::Result<AggregateFunction, Error>> {
         Ok(self
-            .bind_function(&functions.name, &functions.functions, arguments)?
+            .bind_function(&*functions.name, &functions.functions, arguments)?
             .map(|index| functions.functions[index].clone()))
     }
 
@@ -889,7 +925,7 @@ impl<'a> FunctionBinder<'a> {
         arguments: &[LogicalType],
     ) -> Result<std::result::Result<TableFunction, Error>> {
         Ok(self
-            .bind_function(&functions.name, &functions.functions, arguments)?
+            .bind_function(&*functions.name, &functions.functions, arguments)?
             .map(|index| functions.functions[index].clone()))
     }
 }
@@ -956,7 +992,7 @@ type TemplateBindings = CaseInsensitiveMap<Vec<LogicalType>>;
 
 /// What a failed inference reports: the function and the argument being inferred.
 struct TemplateContext<'a> {
-    signature: &'a str,
+    signature: &'a rustdb_common::ByteString,
     location: Option<u64>,
     /// `old_implicit_casting`: bindings of any two types combine.
     old_implicit_casting: bool,
@@ -1019,27 +1055,28 @@ fn infer_template(
             }
             return Ok(());
         }
-        let mut message = format!(
+        let mut message = rustdb_common::byte_format!(
             "Cannot deduce template type '{name}' in function: '{}'\nType '{name}' was inferred to be:\n",
             context.signature
         );
         for index in (0..steps.len()).step_by(2) {
             if index == 0 {
-                let _ = writeln!(message, " - '{}', from first occurrence", steps[index]);
+                message.push_bytes(rustdb_common::byte_format!(
+                    " - '{}', from first occurrence\n",
+                    steps[index]
+                ));
             } else {
-                let _ = writeln!(
-                    message,
-                    " - '{}', by promoting '{}' + '{}'",
+                message.push_bytes(rustdb_common::byte_format!(
+                    " - '{}', by promoting '{}' + '{}'\n",
                     steps[index],
                     steps[index - 2],
                     steps[index - 1]
-                );
+                ));
             }
         }
-        let _ = write!(
-            message,
+        message.push_bytes(rustdb_common::byte_format!(
             " - '{actual}', which is incompatible with previously inferred type!"
-        );
+        ));
         return Err(Error::binder(message).with_position(context.location));
     }
     if matches!(source.id(), LogicalTypeId::List | LogicalTypeId::Array)
@@ -1108,22 +1145,23 @@ fn substitute_template(ty: &LogicalType, bindings: &TemplateBindings) -> Logical
 
 /// DuckDB's `FunctionBinder::ResolveTemplateTypes`.
 fn resolve_template_types(
-    name: &str,
+    name: impl AsRef<[u8]>,
     arguments: &mut [LogicalType],
     varargs: &mut Option<LogicalType>,
     return_type: &mut LogicalType,
     children: &[Expression],
     old_implicit_casting: bool,
 ) -> Result<()> {
+    let name = name.as_ref();
     let templated = arguments.iter().any(is_templated)
         || varargs.as_ref().is_some_and(is_templated)
         || is_templated(return_type);
     if !templated {
         return Ok(());
     }
-    let signature = format!(
+    let signature = rustdb_common::byte_format!(
         "{} -> {return_type}",
-        call_to_string(name, arguments, varargs.as_ref())
+        call_to_bytes(name, arguments, varargs.as_ref())
     );
     let mut bindings = TemplateBindings::default();
     for (argument, child) in arguments.iter().zip(children) {
@@ -1158,18 +1196,19 @@ fn resolve_template_types(
 
 /// DuckDB's `FunctionBinder::CheckTemplateTypesResolved`.
 fn check_template_types_resolved(
-    name: &str,
+    name: impl AsRef<[u8]>,
     arguments: &[LogicalType],
     varargs: Option<&LogicalType>,
     return_type: &LogicalType,
 ) -> Result<()> {
+    let name = name.as_ref();
     for ty in arguments
         .iter()
         .chain(varargs)
         .chain(std::iter::once(return_type))
     {
         if let Some(template) = unresolved_template(ty) {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Function '{name}' has a template parameter type '{template}' that could not be resolved to a \
                  concrete type"
             )));
@@ -1190,9 +1229,9 @@ fn unresolved_template(ty: &LogicalType) -> Option<String> {
 }
 
 /// DuckDB's `Expression::GetName`: the alias, or the expression's SQL text.
-fn expression_name(expression: &Expression) -> String {
+fn expression_name(expression: &Expression) -> rustdb_common::ByteString {
     if expression.alias.is_empty() {
-        expression.to_string()
+        expression.to_bytes()
     } else {
         expression.alias.clone()
     }

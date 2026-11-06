@@ -237,10 +237,16 @@ impl ArrowTypeExtensionSet {
     /// lookup, by alias alone, finds extensions registered without a type, of which there
     /// are none).
     pub fn for_type(&self, ty: &LogicalType) -> Option<&ArrowTypeExtension> {
-        let alias = ty.alias().unwrap_or("");
+        let alias = ty
+            .alias()
+            .map_or(b"".as_slice(), rustdb_common::ByteString::as_bytes);
         self.type_extensions.iter().find(|extension| {
             let duckdb_type = &extension.type_extension.duckdb_type;
-            duckdb_type.id() == ty.id() && duckdb_type.alias().unwrap_or("") == alias
+            duckdb_type.id() == ty.id()
+                && duckdb_type
+                    .alias()
+                    .map_or(b"".as_slice(), rustdb_common::ByteString::as_bytes)
+                    == alias
         })
     }
 

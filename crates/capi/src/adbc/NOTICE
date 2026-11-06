@@ -1,0 +1,10 @@
+Arrow Database Connectivity (ADBC) C interface
+Apache Software Foundation
+
+ffi.rs contains modified Rust declarations transcribed from the Apache-2.0 ADBC C
+header vendored by DuckDB 1.5.6 at src/include/duckdb/common/adbc/adbc.h.
+The original license notice is preserved in ffi.rs. The declarations are modified
+for Rust types, callback representation and layout checks.
+
+The driver implementation is a Rust port of DuckDB's MIT-licensed ADBC adapter.
+No C or C++ engine is linked by these modules.

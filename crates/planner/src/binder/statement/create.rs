@@ -9,7 +9,7 @@ use rustdb_ast::{
     LogicalDependencyList, NotNullConstraint, OnEntryNotFound, TableColumnType,
 };
 use rustdb_catalog::{CatalogType, EntryKind, TableEntry};
-use rustdb_common::{Error, LogicalIndex, PhysicalIndex, Result};
+use rustdb_common::{ByteString, CaseInsensitiveSet, Error, LogicalIndex, PhysicalIndex, Result};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 use super::super::expression::{bind_logical_type, bind_logical_type_in_schema};
@@ -22,7 +22,7 @@ use crate::operator::{BoundCreateTableInfo, LogicalKind, LogicalOperator};
 use crate::prepared::StatementReturnType;
 
 fn count_result(plan: LogicalOperator) -> BoundStatement {
-    BoundStatement::new(plan, vec!["Count".to_owned()], vec![LogicalType::BIGINT])
+    BoundStatement::new(plan, vec!["Count".into()], vec![LogicalType::BIGINT])
 }
 
 /// `CREATE ...` (DuckDB's `Binder::Bind(CreateStatement &)`).
@@ -37,7 +37,7 @@ pub fn bind_create(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<B
             if catalog.eq_ignore_ascii_case(rustdb_catalog::TEMP_CATALOG)
                 && !info.schema.eq_ignore_ascii_case(rustdb_catalog::DEFAULT_SCHEMA)
             {
-                return Err(Error::invalid_input(format!(
+                return Err(Error::invalid_input(rustdb_common::byte_format!(
                     "Cannot create non-temporary entry \"{}\" in temporary catalog",
                     info.schema
                 )));
@@ -87,7 +87,7 @@ pub fn bind_create(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<B
             scope.with_properties(|properties| properties.return_type = StatementReturnType::QueryResult);
             return Ok(BoundStatement::new(
                 LogicalOperator::new(LogicalKind::CreateSecret(Box::new(input))),
-                vec!["Success".to_owned()],
+                vec!["Success".into()],
                 vec![LogicalType::BOOLEAN],
             ));
         }
@@ -228,9 +228,10 @@ fn bind_create_type(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<
 }
 
 /// The catalog a schema is created in (`Binder::BindCatalog`).
-fn bind_catalog(scope: &BindScope<'_>, catalog: &str) -> String {
-    match scope.context.catalog(catalog) {
-        Some(found) if !catalog.is_empty() => found.name().to_string(),
+fn bind_catalog(scope: &BindScope<'_>, catalog: impl AsRef<[u8]>) -> ByteString {
+    let catalog = catalog.as_ref();
+    match scope.context.catalog(catalog.as_ref()) {
+        Some(found) if !catalog.as_ref().is_empty() => ByteString::from(found.name().as_ref()),
         _ => scope.context.default_catalog(),
     }
 }
@@ -243,15 +244,15 @@ pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Resul
     // (without one, to the default database).
     let has_temp = scope.context.catalog(rustdb_catalog::TEMP_CATALOG).is_some();
     if catalog.is_empty() && info.temporary && has_temp {
-        rustdb_catalog::TEMP_CATALOG.clone_into(&mut catalog);
+        catalog = rustdb_catalog::TEMP_CATALOG.into();
     }
     if !has_temp && catalog.eq_ignore_ascii_case(rustdb_catalog::TEMP_CATALOG) {
         catalog.clear();
     }
     match (catalog.is_empty(), schema.is_empty()) {
         (true, true) => {
-            scope.context.default_catalog().clone_into(&mut catalog);
-            scope.context.default_schema().clone_into(&mut schema);
+            catalog = scope.context.default_catalog();
+            schema = scope.context.default_schema().into();
         }
         (false, true) => schema = scope.context.default_schema_for(&catalog),
         (true, false) => catalog = scope.context.default_catalog_for(&schema),
@@ -272,20 +273,20 @@ pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Resul
     }
     let Some(found) = scope.context.catalog(&catalog) else {
         // `Catalog::GetSchema` (`BindSchema`).
-        return Err(Error::catalog(format!(
+        return Err(Error::catalog(rustdb_common::byte_format!(
             "Catalog with name {catalog} does not exist!"
         )));
     };
-    if found.name().eq_ignore_ascii_case("system") {
+    if found.name().eq_ignore_ascii_case(b"system") {
         return Err(Error::binder("Cannot create entry in system catalog"));
     }
     let Some(schema_entry) = found.schema(&scope.context.transaction, &schema) else {
-        return Err(Error::catalog(format!(
+        return Err(Error::catalog(rustdb_common::byte_format!(
             "Schema with name {schema} does not exist!"
         )));
     };
-    info.catalog = found.name().to_string();
-    schema_entry.name().clone_into(&mut info.schema);
+    info.catalog = found.name().as_ref().into();
+    info.schema.clone_from(schema_entry.name());
     Ok(())
 }
 
@@ -325,9 +326,10 @@ fn bind_create_view_info(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Re
 pub(crate) fn add_recorded_dependencies(
     dependencies: &mut LogicalDependencyList,
     recorded: Vec<crate::context::EntryLookup>,
-    catalog: &str,
+    catalog: impl AsRef<[u8]>,
     temporary: bool,
 ) {
+    let catalog = catalog.as_ref();
     for lookup in recorded {
         if !lookup.catalog.eq_ignore_ascii_case(catalog)
             || lookup.entry.temporary != temporary
@@ -350,9 +352,9 @@ pub(crate) fn add_recorded_dependencies(
 }
 
 /// A column definition with `name` and `ty`.
-fn column(name: String, ty: LogicalType) -> ColumnDefinition {
+fn column(name: impl Into<rustdb_common::ByteString>, ty: LogicalType) -> ColumnDefinition {
     ColumnDefinition {
-        name,
+        name: name.into(),
         logical_type: ty,
         expression: None,
         category: TableColumnType::Standard,
@@ -364,16 +366,21 @@ fn column(name: String, ty: LogicalType) -> ColumnDefinition {
 
 /// Adds `definition`, renaming it like DuckDB's `ColumnList` with duplicates allowed
 /// (`a`, `a_1`, ...).
-fn push_deduplicated(columns: &mut Vec<ColumnDefinition>, mut definition: ColumnDefinition) {
+fn push_deduplicated(
+    columns: &mut Vec<ColumnDefinition>,
+    names: &mut CaseInsensitiveSet<ByteString>,
+    mut definition: ColumnDefinition,
+) {
     let base = definition.name.clone();
     let mut index = 1;
-    while columns
-        .iter()
-        .any(|c| c.name.eq_ignore_ascii_case(&definition.name))
-    {
-        definition.name = format!("{base}_{index}");
+    while names.contains(&definition.name) {
+        definition.name = base.clone();
+        definition
+            .name
+            .push_bytes(rustdb_common::byte_format!("_{index}"));
         index += 1;
     }
+    names.insert(definition.name.clone());
     columns.push(definition);
 }
 
@@ -399,7 +406,7 @@ pub fn bind_create_table_info(
             };
             bind_node(&mut child_scope, &mut query.node)?
         };
-        let mut target: Vec<String> = table.columns.columns.iter().map(|c| c.name.clone()).collect();
+        let mut target: Vec<ByteString> = table.columns.columns.iter().map(|c| c.name.clone()).collect();
         if target.len() > bound.types.len() {
             return Err(Error::binder(
                 "Target table has more colum names than query result.",
@@ -409,8 +416,13 @@ pub fn bind_create_table_info(
             target.push(name.clone());
         }
         let mut columns = Vec::with_capacity(target.len());
+        let mut names = CaseInsensitiveSet::default();
         for (name, ty) in target.into_iter().zip(&bound.types) {
-            push_deduplicated(&mut columns, column(name, bind_logical_type(&scope.context, ty)?));
+            push_deduplicated(
+                &mut columns,
+                &mut names,
+                column(name, bind_logical_type(&scope.context, ty)?),
+            );
         }
         table.columns.columns = columns;
         query_plan = Some(bound.plan);
@@ -453,13 +465,13 @@ fn verify_compression_types(storage_version: Option<u64>, columns: &[ColumnDefin
         match compression_type_is_available(compression, storage_version) {
             CompressionAvailability::Available => {}
             CompressionAvailability::Deprecated => {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "Can't compress using user-provided compression type '{compression}', that type is deprecated \
                      and only has decompress support"
                 )));
             }
             CompressionAvailability::NotAvailableYet => {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "Can't compress using user-provided compression type '{compression}', that type is not \
                      available yet"
                 )));
@@ -470,7 +482,7 @@ fn verify_compression_types(storage_version: Option<u64>, columns: &[ColumnDefin
         }
         let physical = column.logical_type.physical_type();
         if !has_compression_function(compression, physical) {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Can't compress column \"{}\" with type '{}' (physical: {}) using compression type '{compression}'",
                 column.name,
                 column.logical_type,
@@ -485,10 +497,12 @@ fn verify_compression_types(storage_version: Option<u64>, columns: &[ColumnDefin
 /// TABLE` without a query.
 fn bind_table_definition(
     scope: &mut BindScope<'_>,
-    catalog: &str,
-    schema: &str,
+    catalog: impl AsRef<[u8]>,
+    schema: impl AsRef<[u8]>,
     table: &mut rustdb_ast::CreateTableInfo,
 ) -> Result<()> {
+    let catalog = catalog.as_ref();
+    let schema = schema.as_ref();
     for column in &mut table.columns.columns {
         if column.logical_type.id() != rustdb_types::LogicalTypeId::Any {
             column.logical_type =
@@ -527,7 +541,7 @@ fn bind_table_definition(
     bind_new_constraints(&table.table, &table.columns.columns, &mut table.constraints)?;
     // Validate the default values (`BindDefaultValues`); names resolve in the table's
     // catalog and schema.
-    let path = (catalog.to_owned(), schema.to_owned());
+    let path = (ByteString::from(catalog), ByteString::from(schema));
     for column in &table.columns.columns {
         if column.category != TableColumnType::Generated {
             bind_default_value_in(
@@ -543,8 +557,8 @@ fn bind_table_definition(
 
 /// The names of the columns `expression` references (`ColumnDefinition::
 /// GetListOfDependencies`); lambdas are rejected.
-fn referenced_columns(expression: &rustdb_ast::ParsedExpression, out: &mut Vec<String>) -> Result<()> {
-    struct Collect<'a>(&'a mut Vec<String>, bool);
+fn referenced_columns(expression: &rustdb_ast::ParsedExpression, out: &mut Vec<ByteString>) -> Result<()> {
+    struct Collect<'a>(&'a mut Vec<ByteString>, bool);
     impl rustdb_ast::visit::VisitorMut for Collect<'_> {
         fn visit_expression(&mut self, expression: &mut rustdb_ast::ParsedExpression) {
             if let rustdb_ast::ParsedExpressionKind::Lambda(_) = &expression.kind {
@@ -604,9 +618,10 @@ fn visit_generated(
 /// generated column without a type takes its expression's type (wrapped in a cast).
 fn bind_generated_columns(
     scope: &mut BindScope<'_>,
-    table: &str,
+    table: impl AsRef<[u8]>,
     columns: &mut [ColumnDefinition],
 ) -> Result<()> {
+    let table = table.as_ref();
     let count = columns.len();
     let mut dependencies: Vec<Vec<usize>> = vec![Vec::new(); count];
     for (index, column) in columns.iter().enumerate() {
@@ -620,7 +635,7 @@ fn bind_generated_columns(
         referenced_columns(expression, &mut names)?;
         for name in names {
             let Some(dependency) = columns.iter().position(|c| c.name.eq_ignore_ascii_case(&name)) else {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "Column \"{name}\" referenced by generated column does not exist"
                 )));
             };
@@ -648,10 +663,15 @@ fn bind_generated_columns(
             generated_binder.bind(&mut expression, true)?
         };
         if bound.has_subquery() {
-            return Err(Error::binder(format!(
-                "Failed to bind generated column '{}' because the expression contains a subquery",
-                columns[index].name
-            )));
+            return Err(Error::new_bytes(
+                rustdb_common::ErrorKind::Binder,
+                [
+                    "Failed to bind generated column '".as_bytes(),
+                    columns[index].name.as_bytes(),
+                    "' because the expression contains a subquery".as_bytes(),
+                ]
+                .concat(),
+            ));
         }
         let column = &mut columns[index];
         if column.logical_type.id() == rustdb_types::LogicalTypeId::Any {
@@ -704,7 +724,7 @@ fn any_constraint_references_generated_column(
     columns: &[ColumnDefinition],
     constraints: &[Constraint],
 ) -> bool {
-    let generated = |name: &str| {
+    let generated = |name: &[u8]| {
         columns
             .iter()
             .any(|c| c.category == TableColumnType::Generated && c.name.eq_ignore_ascii_case(name))
@@ -752,10 +772,11 @@ fn physical_index(columns: &[ColumnDefinition], logical: usize) -> Option<usize>
 
 /// `Binder::BindNewConstraints`: a PRIMARY KEY makes its columns NOT NULL.
 fn bind_new_constraints(
-    table: &str,
+    table: impl AsRef<[u8]>,
     columns: &[ColumnDefinition],
     constraints: &mut Vec<Constraint>,
 ) -> Result<()> {
+    let table = table.as_ref();
     let mut primary_keys: Option<Vec<usize>> = None;
     let mut not_null = Vec::new();
     for constraint in constraints.iter() {
@@ -763,7 +784,7 @@ fn bind_new_constraints(
             Constraint::NotNull(constraint) => not_null.push(constraint.index.0 as usize),
             Constraint::Unique(unique) if unique.is_primary_key => {
                 if primary_keys.is_some() {
-                    return Err(Error::parser(format!(
+                    return Err(Error::parser(rustdb_common::byte_format!(
                         "table \"{table}\" has more than one primary key"
                     )));
                 }
@@ -772,18 +793,23 @@ fn bind_new_constraints(
                     for name in &unique.columns {
                         let Some(index) = columns.iter().position(|c| c.name.eq_ignore_ascii_case(name))
                         else {
-                            return Err(Error::catalog(format!(
+                            return Err(Error::catalog(rustdb_common::byte_format!(
                                 "table \"{table}\" does not have a column named \"{name}\""
                             )));
                         };
                         if columns[index].category == TableColumnType::Generated {
-                            return Err(Error::binder(format!(
-                                "cannot create a PRIMARY KEY on a generated column: {}",
-                                columns[index].name
-                            )));
+                            return Err(Error::new_bytes(
+                                rustdb_common::ErrorKind::Binder,
+                                [
+                                    "cannot create a PRIMARY KEY on a generated column: ".as_bytes(),
+                                    columns[index].name.as_bytes(),
+                                    "".as_bytes(),
+                                ]
+                                .concat(),
+                            ));
                         }
                         if keys.contains(&index) {
-                            return Err(Error::parser(format!(
+                            return Err(Error::parser(rustdb_common::byte_format!(
                                 "column \"{name}\" appears twice in primary key constraint"
                             )));
                         }
@@ -797,7 +823,7 @@ fn bind_new_constraints(
             }
             // `BindForeignKey`, in constraint order with the UNIQUE checks.
             Constraint::ForeignKey(fk) => {
-                let duplicate = |names: &[String]| {
+                let duplicate = |names: &[ByteString]| {
                     names
                         .iter()
                         .enumerate()
@@ -816,12 +842,12 @@ fn bind_new_constraints(
                 let mut seen = Vec::new();
                 for name in &unique.columns {
                     let Some(index) = columns.iter().position(|c| c.name.eq_ignore_ascii_case(name)) else {
-                        return Err(Error::catalog(format!(
+                        return Err(Error::catalog(rustdb_common::byte_format!(
                             "table \"{table}\" does not have a column named \"{name}\""
                         )));
                     };
                     if seen.contains(&index) {
-                        return Err(Error::parser(format!(
+                        return Err(Error::parser(rustdb_common::byte_format!(
                             "column \"{name}\" appears twice in primary key constraint"
                         )));
                     }
@@ -844,7 +870,7 @@ fn bind_new_constraints(
 }
 
 /// The key column names of a UNIQUE constraint.
-fn unique_names(columns: &[ColumnDefinition], unique: &rustdb_ast::UniqueConstraint) -> Vec<String> {
+fn unique_names(columns: &[ColumnDefinition], unique: &rustdb_ast::UniqueConstraint) -> Vec<ByteString> {
     if unique.index.0 == u64::MAX {
         unique.columns.clone()
     } else {
@@ -874,10 +900,10 @@ fn find_matching_primary_key_columns(
         let pk_names = unique_names(columns, unique);
         if find_primary_key {
             if pk_names.len() != fk.fk_columns.len() {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "Failed to create foreign key: number of referencing ({}) and referenced columns ({}) differ",
-                    fk.fk_columns.join(","),
-                    pk_names.join(",")
+                    ByteString::join(&fk.fk_columns, ","),
+                    ByteString::join(&pk_names, ",")
                 )));
             }
             fk.pk_columns = pk_names;
@@ -901,40 +927,48 @@ fn find_matching_primary_key_columns(
         } else {
             "primary key or unique constraint"
         };
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "Failed to create foreign key: there is no {search} for referenced table \"{}\"",
             fk.table
         )));
     }
     for name in &fk.pk_columns {
         if !columns.iter().any(|c| c.name.eq_ignore_ascii_case(name)) {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Failed to create foreign key: referenced table \"{}\" does not have a column named \"{name}\"",
                 fk.table
             )));
         }
     }
-    Err(Error::binder(format!(
+    Err(Error::binder(rustdb_common::byte_format!(
         "Failed to create foreign key: referenced table \"{}\" does not have a primary key or unique constraint on the columns {}",
         fk.table,
-        fk.pk_columns.join(",")
+        ByteString::join(&fk.pk_columns, ",")
     )))
 }
 
 /// `FindForeignKeyIndexes`.
-fn find_foreign_key_indexes(columns: &[ColumnDefinition], names: &[String]) -> Result<Vec<PhysicalIndex>> {
+fn find_foreign_key_indexes(
+    columns: &[ColumnDefinition],
+    names: &[ByteString],
+) -> Result<Vec<PhysicalIndex>> {
     let mut indexes = Vec::with_capacity(names.len());
     for name in names {
         let Some(logical) = columns.iter().position(|c| c.name.eq_ignore_ascii_case(name)) else {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "column \"{name}\" named in key does not exist"
             )));
         };
         let Some(physical) = physical_index(columns, logical) else {
-            return Err(Error::binder(format!(
-                "Failed to create foreign key: referenced column \"{}\" is a generated column",
-                columns[logical].name
-            )));
+            return Err(Error::new_bytes(
+                rustdb_common::ErrorKind::Binder,
+                [
+                    "Failed to create foreign key: referenced column \"".as_bytes(),
+                    columns[logical].name.as_bytes(),
+                    "\" is a generated column".as_bytes(),
+                ]
+                .concat(),
+            ));
         };
         indexes.push(PhysicalIndex(physical as u64));
     }
@@ -962,9 +996,12 @@ fn check_foreign_key_types(
             continue;
         };
         if pk_col.logical_type != fk_col.logical_type {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Failed to create foreign key: incompatible types between column \"{}\" (\"{}\") and column \"{}\" (\"{}\")",
-                pk_col.name, pk_col.logical_type, fk_col.name, fk_col.logical_type
+                pk_col.name,
+                pk_col.logical_type,
+                fk_col.name,
+                fk_col.logical_type
             )));
         }
     }
@@ -989,12 +1026,15 @@ fn entry_column_definitions(table: &TableEntry) -> Vec<ColumnDefinition> {
 /// `BindCreateTableConstraints`: resolves the referenced columns of foreign keys.
 fn bind_create_table_constraints(
     scope: &BindScope<'_>,
-    table_name: &str,
-    catalog: &str,
-    schema: &str,
+    table_name: impl AsRef<[u8]>,
+    catalog: impl AsRef<[u8]>,
+    schema: impl AsRef<[u8]>,
     columns: &mut [ColumnDefinition],
     constraints: &mut [Constraint],
 ) -> Result<()> {
+    let catalog = catalog.as_ref();
+    let schema = schema.as_ref();
+    let table_name = table_name.as_ref();
     let own_constraints = constraints.to_vec();
     for constraint in constraints.iter_mut() {
         let Constraint::ForeignKey(fk) = constraint else {
@@ -1041,10 +1081,10 @@ fn bind_create_table_constraints(
                 )
                 .is_none()
             {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "Failed to create foreign key on {}({}): no UNIQUE or PRIMARY KEY constraint present on these columns",
                     found.entry.name(),
-                    fk.pk_columns.join(",")
+                    ByteString::join(&fk.pk_columns, ",")
                 )));
             }
         }
@@ -1059,7 +1099,7 @@ pub fn bind_drop(scope: &mut BindScope<'_>, drop: &mut DropInfo) -> Result<Bound
         // `DROP SECRET` is executed by the secret manager (`PhysicalDrop`).
         return Ok(BoundStatement::new(
             LogicalOperator::new(LogicalKind::Drop(Box::new(drop.clone()))),
-            vec!["Success".to_owned()],
+            vec!["Success".into()],
             vec![LogicalType::BOOLEAN],
         ));
     }
@@ -1073,7 +1113,7 @@ pub fn bind_drop(scope: &mut BindScope<'_>, drop: &mut DropInfo) -> Result<Bound
         AstCatalogType::IndexEntry => Some(CatalogType::Index),
         AstCatalogType::TypeEntry => Some(CatalogType::Type),
         other => {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Unknown catalog type for drop statement: '{}'",
                 other.name()
             )));
@@ -1099,7 +1139,7 @@ pub fn bind_drop(scope: &mut BindScope<'_>, drop: &mut DropInfo) -> Result<Bound
         }
         if let Some(found) = found {
             if found.entry.internal {
-                return Err(Error::catalog(format!(
+                return Err(Error::catalog(rustdb_common::byte_format!(
                     "Cannot drop internal catalog entry \"{}\"!",
                     found.entry.name()
                 )));
@@ -1117,7 +1157,7 @@ pub fn bind_drop(scope: &mut BindScope<'_>, drop: &mut DropInfo) -> Result<Bound
     let plan = LogicalOperator::new(LogicalKind::Drop(Box::new(drop.clone())));
     Ok(BoundStatement::new(
         plan,
-        vec!["Success".to_owned()],
+        vec!["Success".into()],
         vec![LogicalType::BOOLEAN],
     ))
 }
@@ -1132,4 +1172,20 @@ fn is_bound(ty: &LogicalType) -> bool {
 #[allow(dead_code, reason = "shared helper")]
 pub fn table_entry(entry: &rustdb_catalog::CatalogEntry) -> Result<&TableEntry> {
     table_of(entry)
+}
+
+#[cfg(test)]
+mod deduplicated_column_tests {
+    use super::*;
+
+    #[test]
+    fn ctas_names_keep_existing_suffix_and_ascii_case_rules() {
+        let mut columns = Vec::new();
+        let mut names = CaseInsensitiveSet::default();
+        for name in ["x", "X", "x_1", "x", "X_2"] {
+            push_deduplicated(&mut columns, &mut names, column(name, LogicalType::INTEGER));
+        }
+        let actual: Vec<_> = columns.iter().map(|column| column.name.as_bytes()).collect();
+        assert_eq!(actual, [b"x".as_slice(), b"X_1", b"x_1_1", b"x_2", b"X_2_1"]);
+    }
 }

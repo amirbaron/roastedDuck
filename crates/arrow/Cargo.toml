@@ -16,3 +16,6 @@ serde_json = { version = "1", features = ["preserve_order"] }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+rustdb-serde.workspace = true

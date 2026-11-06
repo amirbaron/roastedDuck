@@ -9,10 +9,11 @@
 //! | `PGNode *`, `PGExpr *`      | `Option<Node>`          |
 //! | `PGFoo *`                   | `Option<Box<Foo>>`      |
 //! | `PGList *` (`NIL` = empty)  | [`List`]                |
-//! | `char *`                    | `Option<String>`        |
+//! | `char *`                    | `Option<ByteString>`        |
 //! | `PGValue` / `makeString` …  | [`Value`]               |
 //! | `char *` stored in a list   | [`Node::Str`]           |
 
+use rustdb_common::ByteString;
 mod enums;
 mod json;
 mod teardown;
@@ -32,11 +33,11 @@ pub enum Value {
     /// An integer that fits in 32 bits (`T_PGInteger`; stored as C `long`).
     Integer(i64),
     /// A numeric literal kept in its textual form (`T_PGFloat`).
-    Float(String),
+    Float(ByteString),
     /// A string (`T_PGString`), also used for identifiers in name lists.
-    String(String),
+    String(ByteString),
     /// A bit-string literal; the text keeps its `b`/`x` prefix (`T_PGBitString`).
-    BitString(String),
+    BitString(ByteString),
     /// SQL `NULL` (`T_PGNull`).
     #[default]
     Null,
@@ -44,7 +45,7 @@ pub enum Value {
 
 impl Value {
     /// The textual payload of a string, float or bit-string value.
-    pub fn as_str(&self) -> Option<&str> {
+    pub fn as_bytes(&self) -> Option<&[u8]> {
         match self {
             Self::Float(s) | Self::String(s) | Self::BitString(s) => Some(s),
             Self::Integer(_) | Self::Null => None,
@@ -141,7 +142,7 @@ macro_rules! nodes {
             /// A bare C string stored directly in a list cell (for example the column
             /// path of `ALTER TABLE ... DROP COLUMN a.b`), as opposed to a `PGString`
             /// [`Value`].
-            Str(String),
+            Str(ByteString),
             $(
                 #[doc = concat!("A [`", stringify!($name), "`] node.")]
                 $name(Box<$name>),
@@ -186,7 +187,7 @@ mod structs;
 
 impl Node {
     /// A `PGString` value node.
-    pub fn string(s: impl Into<String>) -> Node {
+    pub fn string(s: impl Into<ByteString>) -> Node {
         Node::Value(Value::String(s.into()))
     }
 
@@ -209,7 +210,7 @@ impl Node {
     }
 
     /// The string of a `PGString` value node (`strVal`).
-    pub fn str_val(&self) -> Option<&str> {
+    pub fn str_val(&self) -> Option<&[u8]> {
         match self {
             Node::Value(Value::String(s)) => Some(s),
             _ => None,

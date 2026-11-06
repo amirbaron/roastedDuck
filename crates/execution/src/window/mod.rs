@@ -53,10 +53,10 @@ pub struct WindowExpression {
     pub expression_type: ExpressionType,
     pub return_type: LogicalType,
     /// The alias of the call.
-    pub alias: String,
+    pub alias: rustdb_common::ByteString,
     /// The name of the call (`Expression::GetName`: its alias, else its SQL), for plan
     /// rendering.
-    pub name: String,
+    pub name: rustdb_common::ByteString,
     pub window: BoundWindowExpression,
 }
 

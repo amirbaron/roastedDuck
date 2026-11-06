@@ -601,7 +601,7 @@ impl ValueWriter for FixedDecimalWriter {
 /// `EnumColumnWriter`: the enum's index, with the enum values as dictionary.
 #[derive(Debug)]
 pub struct EnumWriter {
-    values: Vec<String>,
+    values: Vec<rustdb_common::ByteString>,
     bit_width: u8,
     stats: StringStatistics,
     encoder: RleBpEncoder,
@@ -609,7 +609,7 @@ pub struct EnumWriter {
 }
 
 impl EnumWriter {
-    pub fn new(values: Vec<String>) -> Self {
+    pub fn new(values: Vec<rustdb_common::ByteString>) -> Self {
         let bit_width = compute_bit_width(values.len() as u64);
         Self {
             values,

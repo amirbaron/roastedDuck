@@ -55,8 +55,8 @@ struct FlattenDependentJoins<'a> {
     ctes: HashMap<u64, CteNode>,
 }
 
-fn column_ref(name: &str, ty: &LogicalType, binding: ColumnBinding) -> Expression {
-    Expression::column_ref(name, ty.clone(), binding, 0)
+fn column_ref(name: impl AsRef<[u8]>, ty: &LogicalType, binding: ColumnBinding) -> Expression {
+    Expression::column_ref(name.as_ref(), ty.clone(), binding, 0)
 }
 
 fn delim_get(table_index: u64, types: &[LogicalType]) -> LogicalOperator {
@@ -81,7 +81,7 @@ fn comparison_join(
 pub(crate) fn row_number(
     partitions: Vec<Expression>,
     orders: Vec<BoundOrderByNode>,
-    alias: &str,
+    alias: impl Into<rustdb_common::ByteString>,
 ) -> Expression {
     Expression::new(
         ExpressionType::WindowRowNumber,
@@ -677,7 +677,7 @@ impl<'a> FlattenDependentJoins<'a> {
             .get(i)
             .ok_or_else(|| Error::internal("correlated column out of range"))?;
         Ok(column_ref(
-            if with_name { &column.name } else { "" },
+            if with_name { column.name.as_bytes() } else { b"" },
             &column.logical_type,
             ColumnBinding::new(
                 self.base_binding.table_index,

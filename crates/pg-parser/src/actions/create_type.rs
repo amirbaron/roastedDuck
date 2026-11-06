@@ -72,7 +72,7 @@ pub(super) fn create_type_value<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> 
         // Typename
         2 => {
             let type_name = rhs.take::<TypeName>(1)?;
-            let stmt = if type_name.names.last().and_then(Node::str_val) == Some("enum") {
+            let stmt = if type_name.names.last().and_then(Node::str_val) == Some(b"enum") {
                 CreateTypeStmt {
                     kind: NewTypeKind::Enum,
                     vals: type_name.typmods,

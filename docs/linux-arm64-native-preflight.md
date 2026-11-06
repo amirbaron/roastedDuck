@@ -1,5 +1,10 @@
 # Linux arm64 native checkpoint — 2026-10-30
 
+This checkpoint predates the newer
+[integer-average precision candidate](integer-average-precision-parity.md).
+Its artifact hashes and155-case C API result remain controls; the updated engine
+still needs optimized native and complete final verification.
+
 This is a platform checkpoint, not final release or whole-port acceptance.
 The optimized signed Linux arm64 candidate passes all30 upstream C API files:
 **155 cases /862,010 assertions**, with zero failures. Runtime container swap is
@@ -80,6 +85,21 @@ are signed and verified. The second full paired run is active with a fresh fixtu
 matching all4,870 SQL files and1,522 data entries and a read-only reference build.
 Both previously missing-demo failures now pass on C++; full results remain pending.
 No Linux C++ paired parity result is claimed yet.
+
+The active control run records one C++ worker OOM in the unchanged4.3GB gzip
+round-trip test. Filtered kernel evidence identifies the owned worker and
+`CONSTRAINT_MEMCG` at the7GiB container cap with swap disabled. The full run
+continues; a separate unchanged-SQL correctness follow-up is prepared with an
+explicit SSD-swap allowance and separate per-engine fixtures. It has not run and
+will not establish performance acceptance or change the Rust memory policy.
+Evidence: `linux-paired-corpus-2-{resource-probe,kernel-oom}-1.json` and the original
+worker log. This control failure has no accepted final disposition yet.
+
+The C++ VARIANT TPC-H SF1 storage file also reaches the unchanged300-second limit
+while its worker is actively using CPU. Its canonical timeout is retained. A
+separate exact-SQL follow-up is prepared with the same7GiB/no-swap limits and a
+900-second bound; it has not run. Neither control exception establishes a Rust
+regression or a completed parity gate.
 
 The Go harness now selects native macOS/Linux and arm64/amd64, checks the library
 architecture, records Linux rpath/loader selection and requires a caller-supplied

@@ -59,8 +59,8 @@ pub trait CatalogUndo: Send + Sync + fmt::Debug {
 /// The state of a sequence after a transaction used it (DuckDB's `SequenceValue`).
 #[derive(Debug)]
 pub(crate) struct SequenceValue {
-    pub schema: String,
-    pub name: String,
+    pub schema: rustdb_common::ByteString,
+    pub name: rustdb_common::ByteString,
     pub usage_count: u64,
     pub counter: i64,
 }

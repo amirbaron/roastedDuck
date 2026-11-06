@@ -12,7 +12,7 @@ use crate::{ExtraTypeInfo, LogicalType, LogicalTypeId, PhysicalType, TypeInfo};
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EnumTypeInfo {
     /// The member names; a member's position is its stored value.
-    pub values: Vec<String>,
+    pub values: Vec<rustdb_common::ByteString>,
 }
 
 impl EnumTypeInfo {
@@ -30,7 +30,7 @@ impl SerializeObject for EnumTypeInfo {
     fn serialize_fields(&self, serializer: &mut dyn Serializer) -> Result<()> {
         serializer.write_property(200, "values_count", &(self.values.len() as u64))?;
         serializer.write_list_property(201, "values", self.values.len(), |serializer, i| {
-            serializer.write_str(&self.values[i]);
+            serializer.write_string_bytes(&self.values[i]);
             Ok(())
         })
     }
@@ -47,7 +47,7 @@ impl DeserializeObject for EnumTypeInfo {
         }
         let mut values = Vec::with_capacity(count.min(4096) as usize);
         deserializer.read_list_property(201, "values", |deserializer, _| {
-            values.push(deserializer.read_string()?);
+            values.push(deserializer.read_string_bytes()?.into());
             Ok(())
         })?;
         Ok(Self { values })
@@ -145,7 +145,7 @@ impl DeserializeObject for LogicalType {
             .read_optional::<TypeInfoProperty>(101, "type_info")?
             .and_then(|property| property.0);
         let ty = Self::from_parts(id, info);
-        if ty.id() == LogicalTypeId::Blob && ty.alias() == Some("GEOMETRY") {
+        if ty.id() == LogicalTypeId::Blob && ty.alias().is_some_and(|alias| alias == "GEOMETRY") {
             return Ok(Self::GEOMETRY);
         }
         Ok(ty)

@@ -22,18 +22,18 @@ struct CheckConstraint {
     /// The physical columns the expression reads.
     bound_columns: Vec<usize>,
     /// The constraint as written (`CHECK((i > 0))`), for the error message.
-    text: String,
+    text: rustdb_common::ByteString,
 }
 
 /// Evaluates the generated column expressions and `CHECK` constraints of a table.
 #[derive(Debug)]
 struct CheckVerifier {
-    table: String,
+    table: rustdb_common::ByteString,
     /// The types of the table's physical columns.
     types: Vec<LogicalType>,
     checks: Vec<CheckConstraint>,
     /// Generated column expressions with their `name TYPE AS (expression)` text.
-    generated: Vec<(Expression, String)>,
+    generated: Vec<(Expression, rustdb_common::ByteString)>,
 }
 
 impl CheckVerifier {
@@ -49,11 +49,12 @@ impl CheckVerifier {
         }
         let values = vector.values::<i32>();
         if (0..count).any(|row| !vector.is_null(row) && values[row] == 0) {
-            return Err(Error::new(
+            return Err(Error::new_bytes(
                 ErrorKind::Constraint,
-                format!(
+                rustdb_common::byte_format!(
                     "CHECK constraint failed on table {} with expression {}",
-                    self.table, check.text
+                    self.table,
+                    check.text
                 ),
             ));
         }
@@ -72,11 +73,11 @@ impl ConstraintVerifier for CheckVerifier {
                 if error.kind() == ErrorKind::Internal {
                     return Err(error);
                 }
-                return Err(Error::new(
+                return Err(Error::new_bytes(
                     ErrorKind::Constraint,
-                    format!(
+                    rustdb_common::byte_format!(
                         "Incorrect value for generated column \"{text}\" : {}",
-                        error.raw_message()
+                        error.raw_message_bytes()
                     ),
                 ));
             }
@@ -141,7 +142,11 @@ pub fn table_constraints(
         .take(1)
         .cloned()
         .collect();
-    let catalogs = if own_catalog.is_empty() { catalogs } else { &own_catalog[..] };
+    let catalogs = if own_catalog.is_empty() {
+        catalogs
+    } else {
+        &own_catalog[..]
+    };
     let mut checks = Vec::new();
     let mut generated = Vec::new();
     for constraint in bound {
@@ -207,8 +212,8 @@ pub fn table_constraints(
 fn find_storage(
     transaction: &Transaction,
     catalogs: &[Arc<Catalog>],
-    schema: &str,
-    name: &str,
+    schema: &[u8],
+    name: &[u8],
 ) -> Option<Arc<DataTable>> {
     catalogs.iter().find_map(|catalog| {
         let entry = catalog.get_entry(transaction, CatalogType::Table, schema, name)?;

@@ -1,6 +1,7 @@
 //! Semantic actions for the rules in `grammar/statements/create_secret.y`.
 
 use super::prelude::*;
+use rustdb_common::ByteString;
 
 /// ```text
 /// CreateSecretStmt:
@@ -72,11 +73,11 @@ pub(super) fn opt_secret_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
 pub(super) fn opt_persist<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // /* empty */
-        0 => Ok(SemValue::Str(Some("default".to_owned()))),
+        0 => Ok(SemValue::Str(Some("default".into()))),
         // TEMPORARY
-        1 => Ok(SemValue::Str(Some("temporary".to_owned()))),
+        1 => Ok(SemValue::Str(Some("temporary".into()))),
         // PERSISTENT
-        2 => Ok(SemValue::Str(Some("persistent".to_owned()))),
+        2 => Ok(SemValue::Str(Some("persistent".into()))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -89,7 +90,7 @@ pub(super) fn opt_persist<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result
 pub(super) fn opt_storage_specifier<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // /* empty */
-        0 => Ok(SemValue::Str(Some(String::new()))),
+        0 => Ok(SemValue::Str(Some(ByteString::new()))),
         _ => Err(rhs.bad_alternative()),
     }
 }

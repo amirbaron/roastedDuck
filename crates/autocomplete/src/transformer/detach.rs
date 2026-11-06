@@ -13,7 +13,7 @@ impl PegTransformer {
         };
         let name = list.identifier(3)?.to_owned();
         Ok(SqlStatement::new(SqlStatementKind::Detach(DetachInfo {
-            name,
+            name: name.into(),
             if_not_found,
         })))
     }

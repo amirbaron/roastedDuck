@@ -8,21 +8,21 @@ use super::prelude::*;
 /// `ShowRef()`: a `DESCRIBE` of nothing yet.
 const fn show_ref() -> ShowRef {
     ShowRef {
-        table_name: String::new(),
+        table_name: ByteString::new(),
         query: None,
         show_type: ShowType::Describe,
-        catalog_name: String::new(),
-        schema_name: String::new(),
+        catalog_name: ByteString::new(),
+        schema_name: ByteString::new(),
     }
 }
 
 /// `make_uniq<BaseTableRef>()` with a table name.
 fn base_table_ref(table_name: String) -> TableRef {
     build::table_ref(TableRefKind::BaseTable(Box::new(BaseTableRef {
-        schema_name: String::new(),
-        table_name,
+        schema_name: ByteString::new(),
+        table_name: table_name.into(),
         column_name_alias: Vec::new(),
-        catalog_name: String::new(),
+        catalog_name: ByteString::new(),
         at_clause: None,
     })))
 }
@@ -94,7 +94,7 @@ impl PegTransformer {
     pub(super) fn transform_show_all_tables(&mut self, _parse_result: &ParseResult) -> Result<QueryNode> {
         let mut result = show_ref();
         // Legacy reasons, see bind_showref.cpp.
-        "__show_tables_expanded".clone_into(&mut result.table_name);
+        result.table_name = "__show_tables_expanded".into();
         result.show_type = ShowType::ShowUnqualified;
         Ok(select_star_from_show(result))
     }
@@ -111,7 +111,7 @@ impl PegTransformer {
             let is_string = choice.result_type() == ParseResultType::String;
             if is_string {
                 // Case: SHOW 'something' or DESCRIBE 'something'.
-                choice.string_literal()?.0.clone_into(&mut showref.table_name);
+                showref.table_name = choice.string_literal()?.0.into();
             } else {
                 // Case: a relation / table reference.
                 let BaseTable(table) = self.transform(choice)?;
@@ -128,10 +128,10 @@ impl PegTransformer {
                     // Unqualified relations: databases, tables, schemas, variables.
                     let table_name = base_table.table_name.to_ascii_lowercase();
                     if matches!(
-                        table_name.as_str(),
-                        "databases" | "tables" | "schemas" | "variables"
+                        table_name.as_bytes(),
+                        b"databases" | b"tables" | b"schemas" | b"variables"
                     ) {
-                        showref.table_name = format!("\"{table_name}\"");
+                        showref.table_name = byte_format!("\"{table_name}\"");
                         showref.show_type = ShowType::ShowUnqualified;
                     }
                 }
@@ -152,7 +152,7 @@ impl PegTransformer {
             if showref.show_type == ShowType::Summary {
                 return Err(Error::parser("Expected table name with SUMMARIZE"));
             }
-            "__show_tables_expanded".clone_into(&mut showref.table_name);
+            showref.table_name = "__show_tables_expanded".into();
             showref.show_type = ShowType::ShowUnqualified;
         }
         Ok(select_star_from_show(showref))

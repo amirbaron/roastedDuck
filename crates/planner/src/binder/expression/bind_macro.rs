@@ -9,7 +9,7 @@ use rustdb_ast::{
     CastExpression, ExpressionType, FunctionExpression, MacroFunction, MacroFunctionKind, ParsedExpression,
     ParsedExpressionKind, QueryNode, lambda_parameters,
 };
-use rustdb_common::{CaseInsensitiveMap, Error, Result};
+use rustdb_common::{ByteString, CaseInsensitiveMap, Error, Result};
 use rustdb_types::{LogicalType, LogicalTypeId};
 
 use crate::binder::{Binder, Binding, DUMMY_NAME};
@@ -26,14 +26,16 @@ pub struct MacroArguments {
     /// The positional arguments.
     pub positional: Vec<ParsedExpression>,
     /// The named arguments and the defaults of parameters without argument.
-    pub named: CaseInsensitiveMap<ParsedExpression>,
+    pub named: CaseInsensitiveMap<ParsedExpression, ByteString>,
 }
 
 /// The name of a macro parameter (`ColumnRefExpression::GetColumnName`).
-pub fn parameter_name(parameter: &ParsedExpression) -> &str {
+pub fn parameter_name(parameter: &ParsedExpression) -> &[u8] {
     match &parameter.kind {
-        ParsedExpressionKind::ColumnRef(column) => column.column_names.last().map_or("", String::as_str),
-        _ => "",
+        ParsedExpressionKind::ColumnRef(column) => {
+            column.column_names.last().map_or(b"", ByteString::as_bytes)
+        }
+        _ => b"",
     }
 }
 
@@ -45,28 +47,29 @@ fn parameter_types(function: &MacroFunction) -> Vec<LogicalType> {
 }
 
 /// `name(a, b INTEGER, c := 1)` for error messages (DuckDB's `FormatMacroFunction`).
-pub fn format_macro_function(function: &MacroFunction, name: &str) -> String {
-    let parameters: Vec<String> = function
+pub fn format_macro_function(function: &MacroFunction, name: impl AsRef<[u8]>) -> ByteString {
+    let name = name.as_ref();
+    let parameters: Vec<ByteString> = function
         .parameters
         .iter()
         .enumerate()
         .map(|(index, parameter)| {
             let parameter_name = parameter_name(parameter);
-            let mut text = parameter_name.to_owned();
+            let mut text = ByteString::from(parameter_name);
             if let Some(ty) = function.types.get(index)
                 && ty.id() != LogicalTypeId::Unknown
             {
-                text.push(' ');
-                text.push_str(&ty.to_string());
+                text.push(b' ');
+                text.push_bytes(ty.to_bytes());
             }
             if let Some(default) = function.default_parameters.get(parameter_name) {
-                text.push_str(" := ");
-                text.push_str(&default.to_string());
+                text.push_bytes(" := ");
+                text.push_bytes(default.to_sql_bytes());
             }
             text
         })
         .collect();
-    format!("{name}({})", parameters.join(", "))
+    rustdb_common::byte_format!("{name}({})", ByteString::join(&parameters, ", "))
 }
 
 /// A cast of a macro argument to its parameter's type.
@@ -96,8 +99,8 @@ fn overload_cost(
     binder: &Binder,
     function: &MacroFunction,
     positional_types: &[LogicalType],
-    named: &CaseInsensitiveMap<ParsedExpression>,
-    named_types: &CaseInsensitiveMap<LogicalType>,
+    named: &CaseInsensitiveMap<ParsedExpression, ByteString>,
+    named_types: &CaseInsensitiveMap<LogicalType, ByteString>,
 ) -> Option<u64> {
     let types = parameter_types(function);
     let parameter_count = function.parameters.len();
@@ -144,17 +147,18 @@ fn overload_cost(
 pub fn bind_macro_function(
     binder: &mut Binder,
     functions: &[MacroFunction],
-    name: &str,
+    name: impl AsRef<[u8]>,
     function: &mut FunctionExpression,
     depth: u64,
-) -> Result<std::result::Result<MacroArguments, String>> {
+) -> Result<std::result::Result<MacroArguments, ByteString>> {
+    let name = name.as_ref();
     let requires_bind = functions
         .iter()
         .any(|function| function.types.iter().any(|ty| ty.id() != LogicalTypeId::Unknown));
     let mut positional = Vec::new();
     let mut positional_types = Vec::new();
-    let mut named: CaseInsensitiveMap<ParsedExpression> = CaseInsensitiveMap::default();
-    let mut named_types: CaseInsensitiveMap<LogicalType> = CaseInsensitiveMap::default();
+    let mut named: CaseInsensitiveMap<ParsedExpression, ByteString> = CaseInsensitiveMap::default();
+    let mut named_types: CaseInsensitiveMap<LogicalType, ByteString> = CaseInsensitiveMap::default();
     for argument in std::mem::take(&mut function.children) {
         let mut argument_type = LogicalType::UNKNOWN;
         if requires_bind {
@@ -168,7 +172,7 @@ pub fn bind_macro_function(
         }
         if !argument.alias.is_empty() {
             if named.contains_key(&argument.alias) {
-                return Ok(Err(format!(
+                return Ok(Err(rustdb_common::byte_format!(
                     "Macro {name}() has named argument repeated '{}'",
                     argument.alias
                 )));
@@ -176,7 +180,7 @@ pub fn bind_macro_function(
             named_types.insert(argument.alias.clone(), argument_type);
             named.insert(argument.alias.clone(), argument);
         } else if !named.is_empty() {
-            return Ok(Err(format!(
+            return Ok(Err(rustdb_common::byte_format!(
                 "Macro {name}() has positional argument following named argument"
             )));
         } else {
@@ -200,9 +204,9 @@ pub fn bind_macro_function(
         }
     }
     let [index] = candidates.as_slice() else {
-        let (message, listed): (String, Vec<&MacroFunction>) = if candidates.is_empty() {
+        let (message, listed): (ByteString, Vec<&MacroFunction>) = if candidates.is_empty() {
             (
-                format!(
+                rustdb_common::byte_format!(
                     "Macro {name}() does not support the supplied arguments. You might need to add explicit type \
                      casts.\nCandidate macros:"
                 ),
@@ -210,7 +214,7 @@ pub fn bind_macro_function(
             )
         } else {
             (
-                format!(
+                rustdb_common::byte_format!(
                     "Macro {name}() has multiple overloads that match the supplied arguments.\nIn order to select \
                      one, please supply all arguments by name, and/or add explicit type casts.\nCandidate macros:"
                 ),
@@ -219,8 +223,8 @@ pub fn bind_macro_function(
         };
         let mut message = message;
         for function in listed {
-            message.push_str("\n\t");
-            message.push_str(&format_macro_function(function, name));
+            message.push_bytes("\n\t");
+            message.push_bytes(format_macro_function(function, name));
         }
         return Ok(Err(message));
     };
@@ -264,18 +268,19 @@ pub fn bind_macro_function(
 /// `MacroFunction::CreateDummyBinding`).
 pub fn create_dummy_binding(
     definition: &MacroFunction,
-    name: &str,
+    name: impl AsRef<[u8]>,
     arguments: MacroArguments,
 ) -> Result<Binding> {
+    let name = name.as_ref();
     let types = parameter_types(definition);
     let MacroArguments {
         positional, named, ..
     } = arguments;
-    let mut names: Vec<String> = definition
+    let mut names: Vec<ByteString> = definition
         .parameters
         .iter()
         .take(positional.len())
-        .map(|parameter| parameter_name(parameter).to_owned())
+        .map(|parameter| ByteString::from(parameter_name(parameter)))
         .collect();
     let mut values = positional;
     for (parameter, argument) in named {
@@ -294,12 +299,12 @@ pub fn create_dummy_binding(
 /// `ExpressionBinder::ReplaceMacroParameters`); lambda parameters shadow them.
 struct ParameterReplacer<'a> {
     binding: &'a Binding,
-    lambda_parameters: Vec<HashSet<String>>,
+    lambda_parameters: Vec<HashSet<ByteString>>,
     error: Option<Error>,
 }
 
 impl ParameterReplacer<'_> {
-    fn is_lambda_parameter(&self, name: &str) -> bool {
+    fn is_lambda_parameter(&self, name: &[u8]) -> bool {
         self.lambda_parameters.iter().any(|level| level.contains(name))
     }
 
@@ -335,7 +340,9 @@ impl VisitorMut for ParameterReplacer<'_> {
                     return;
                 }
                 let replace = if column.column_names.len() > 1 {
-                    column.column_names[column.column_names.len() - 2].contains(DUMMY_NAME)
+                    column.column_names[column.column_names.len() - 2]
+                        .windows(DUMMY_NAME.len())
+                        .any(|part| part == DUMMY_NAME.as_bytes())
                 } else {
                     self.binding.has_matching_binding(column_name)
                 };
@@ -387,11 +394,12 @@ pub fn replace_macro_parameters_in_node(node: &mut QueryNode, binding: &Binding)
 pub fn unfold_macro_expression(
     binder: &mut Binder,
     function: &mut FunctionExpression,
-    name: &str,
+    name: impl AsRef<[u8]>,
     macros: &[MacroFunction],
     expr: &mut ParsedExpression,
     depth: u64,
 ) -> Result<()> {
+    let name = name.as_ref();
     let location = expr.query_location;
     let arguments = match bind_macro_function(binder, macros, name, function, depth)? {
         Ok(arguments) => arguments,
@@ -428,10 +436,11 @@ pub fn unfold_macro_expression(
 pub fn bind_macro<B: ExpressionBinder + ?Sized>(
     binder: &mut B,
     expr: &mut ParsedExpression,
-    name: &str,
+    name: impl AsRef<[u8]>,
     macros: &[MacroFunction],
     depth: u64,
 ) -> Result<BindResult> {
+    let name = name.as_ref();
     let ParsedExpressionKind::Function(function) = &mut expr.kind else {
         return Err(Error::internal("expected a function call"));
     };
@@ -442,14 +451,14 @@ pub fn bind_macro<B: ExpressionBinder + ?Sized>(
 
 fn empty_function() -> FunctionExpression {
     FunctionExpression {
-        function_name: String::new(),
-        schema: String::new(),
+        function_name: String::new().into(),
+        schema: String::new().into(),
         children: Vec::new(),
         filter: None,
         order_bys: rustdb_ast::OrderModifier { orders: Vec::new() },
         distinct: false,
         is_operator: false,
         export_state: false,
-        catalog: String::new(),
+        catalog: String::new().into(),
     }
 }

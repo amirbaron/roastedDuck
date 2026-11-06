@@ -1189,8 +1189,8 @@ mod tests {
             ],
         );
         let row = Value::struct_value(vec![
-            ("a".to_owned(), list.clone()),
-            ("b".to_owned(), Value::varchar("a string longer than twelve")),
+            ("a".into(), list.clone()),
+            ("b".into(), Value::varchar("a string longer than twelve")),
         ]);
         let mut vector = Vector::flat(row.logical_type().clone(), 2);
         vector.set_value(0, &row).unwrap();

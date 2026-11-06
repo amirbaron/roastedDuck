@@ -65,7 +65,7 @@ fn bind_extract(_: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Option<
         ));
     };
     let component = if path_type.id() == LogicalTypeId::Varchar {
-        VariantPathComponent::Key(constant.to_varchar()?)
+        VariantPathComponent::Key(constant.to_varchar_bytes()?)
     } else {
         let index = constant.as_u32().unwrap_or_default();
         if index == 0 {
@@ -116,10 +116,13 @@ pub fn variant_typeof_functions() -> ScalarFunctionSet {
         LogicalType::VARCHAR,
         |args, _, result| {
             *result = map_rows(args.column(0), args.len(), &LogicalType::VARCHAR, |data| {
-                Ok(Some(Value::varchar(match data {
+                let name = match data {
                     Some(data) => data.type_name(0)?,
-                    None => VariantLogicalType::VariantNull.name().to_owned(),
-                })))
+                    None => VariantLogicalType::VariantNull.name().into(),
+                };
+                // The C++ kernel adds type_str.c_str() to its VARCHAR vector.
+                let text = name.split(|byte| *byte == 0).next().unwrap_or_default();
+                Ok(Some(Value::bytes(LogicalType::VARCHAR, text)))
             })?;
             Ok(())
         },

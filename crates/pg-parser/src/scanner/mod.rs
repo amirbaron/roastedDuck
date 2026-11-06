@@ -6,6 +6,7 @@
 //! locations are byte offsets. Errors reproduce `scanner_yyerror`: the message names
 //! the text from the error location up to the end of the current flex match.
 
+use rustdb_common::ByteString;
 mod literal;
 
 use rustdb_common::{Error, Result};
@@ -100,7 +101,6 @@ pub(crate) struct ScanOptions {
 
 /// The scanner state for one query string.
 pub(crate) struct Scanner<'a> {
-    text: &'a str,
     buf: &'a [u8],
     pos: usize,
     options: ScanOptions,
@@ -115,11 +115,18 @@ pub(crate) struct Scanner<'a> {
 
 impl<'a> Scanner<'a> {
     /// Prepares to scan `text`. Like the C scanner, input stops at the first NUL.
+    #[cfg(test)]
     pub(crate) fn new(text: &'a str, options: ScanOptions) -> Self {
-        let text = text.find('\0').map_or(text, |nul| &text[..nul]);
+        Self::new_bytes(text.as_bytes(), options)
+    }
+
+    pub(crate) fn new_bytes(bytes: &'a [u8], options: ScanOptions) -> Self {
+        let buf = bytes
+            .iter()
+            .position(|byte| *byte == 0)
+            .map_or(bytes, |nul| &bytes[..nul]);
         Self {
-            text,
-            buf: text.as_bytes(),
+            buf,
             pos: 0,
             options,
             lit: Vec::new(),
@@ -146,16 +153,15 @@ impl<'a> Scanner<'a> {
         // The C scanner prints the NUL-terminated string at `loc`: it ends where flex
         // parked its NUL (`end`) or, past that point, at the end of the buffer.
         let full = if loc == end || loc >= self.buf.len() {
-            format!("{message} at end of input")
+            rustdb_common::byte_format!("{message} at end of input")
         } else {
             let end = if loc > end { self.buf.len() } else { end };
-            format!("{message} at or near \"{}\"", self.lossy(loc, end))
+            rustdb_common::byte_format!(
+                "{message} at or near \"{}\"",
+                &self.buf[loc..end.min(self.buf.len())]
+            )
         };
         parser_error(full, self.buf, Some(loc))
-    }
-
-    fn lossy(&self, start: usize, end: usize) -> String {
-        String::from_utf8_lossy(&self.buf[start..end.min(self.buf.len())]).into_owned()
     }
 
     /// A syntax error reported by the grammar at the most recently returned token
@@ -167,7 +173,7 @@ impl<'a> Scanner<'a> {
 
     /// `ereport(ERROR, errmsg(message), parser_errposition(location))`; a negative
     /// location means "unknown" and attaches no position.
-    pub(crate) fn error_at(&self, message: String, location: i32) -> Error {
+    pub(crate) fn error_at(&self, message: ByteString, location: i32) -> Error {
         let location = usize::try_from(location).ok();
         parser_error(message, self.buf, location)
     }
@@ -367,7 +373,7 @@ impl<'a> Scanner<'a> {
                 self.pos,
             ));
         }
-        let op = self.text[start..self.pos].to_owned();
+        let op = ByteString::from(&self.buf[start..self.pos]);
         Ok(self.token(token::Op, SemValue::Str(Some(op)), start))
     }
 
@@ -413,7 +419,7 @@ impl<'a> Scanner<'a> {
         }
         self.pos = end;
         if is_float {
-            let text = self.text[start..end].to_owned();
+            let text = ByteString::from(&self.buf[start..end]);
             return self.token(token::FCONST, SemValue::Str(Some(text)), start);
         }
         self.integer_token(start)
@@ -421,15 +427,17 @@ impl<'a> Scanner<'a> {
 
     /// `process_integer_literal`: an `ICONST`, or an `FCONST` if it overflows `int`.
     fn integer_token(&self, start: usize) -> Token<'a> {
-        let digits = &self.text[start..self.pos];
-        let cleaned: std::borrow::Cow<'_, str> = if digits.contains('_') {
-            digits.replace('_', "").into()
-        } else {
-            digits.into()
-        };
-        match cleaned.parse::<i32>() {
-            Ok(value) => self.token(token::ICONST, SemValue::Int(value), start),
-            Err(_) => self.token(token::FCONST, SemValue::Str(Some(cleaned.into_owned())), start),
+        let cleaned: Vec<u8> = self.buf[start..self.pos]
+            .iter()
+            .copied()
+            .filter(|byte| *byte != b'_')
+            .collect();
+        let value = cleaned.iter().try_fold(0i32, |value, byte| {
+            value.checked_mul(10)?.checked_add(i32::from(byte - b'0'))
+        });
+        match value {
+            Some(value) => self.token(token::ICONST, SemValue::Int(value), start),
+            None => self.token(token::FCONST, SemValue::Str(Some(cleaned.into())), start),
         }
     }
 
@@ -476,7 +484,7 @@ impl<'a> Scanner<'a> {
         while i < self.buf.len() {
             if self.buf[i] == b'$' && self.buf[i..].starts_with(delim) {
                 self.pos = i + delim.len();
-                let text = self.text[body..i].to_owned();
+                let text = ByteString::from(&self.buf[body..i]);
                 return Ok(self.token(token::SCONST, SemValue::Str(Some(text)), start));
             }
             i += 1;
@@ -510,8 +518,8 @@ impl<'a> Scanner<'a> {
             end += 1;
         }
         self.pos = end;
-        let word = &self.text[start..end];
-        if let Some(keyword) = keywords::lookup(word) {
+        let word = &self.buf[start..end];
+        if let Some(keyword) = keywords::lookup_bytes(word) {
             return Ok(self.token(keyword.token, SemValue::Keyword(word), start));
         }
         let ident = self.fold_case(start, end);
@@ -519,10 +527,10 @@ impl<'a> Scanner<'a> {
     }
 
     /// `downcase_identifier`: ASCII case folding unless case is preserved.
-    fn fold_case(&self, start: usize, end: usize) -> String {
-        let mut ident = self.text[start..end].to_owned();
+    fn fold_case(&self, start: usize, end: usize) -> ByteString {
+        let mut ident = ByteString::from(&self.buf[start..end]);
         if !self.options.preserve_identifier_case {
-            ident.make_ascii_lowercase();
+            ident = ident.to_ascii_lowercase();
         }
         ident
     }
@@ -531,8 +539,8 @@ impl<'a> Scanner<'a> {
     fn scan_national(&mut self, start: usize) -> Token<'a> {
         self.pos = start + 1;
         match keywords::lookup("nchar") {
-            Some(keyword) => self.token(keyword.token, SemValue::Keyword(keyword.name), start),
-            None => self.token(token::IDENT, SemValue::Str(Some("n".to_owned())), start),
+            Some(keyword) => self.token(keyword.token, SemValue::Keyword(keyword.name.as_bytes()), start),
+            None => self.token(token::IDENT, SemValue::Str(Some("n".into())), start),
         }
     }
 }

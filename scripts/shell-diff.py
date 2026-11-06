@@ -4,7 +4,9 @@
 Runs both binaries on the same cases and compares stdout, stderr, the exit code and the
 files each case writes, byte for byte. A case runs in a scratch directory at the same path
 for both binaries, with argv[0] `duckdb` and an empty `HOME`, so paths and the program
-name print the same; anything else that legitimately varies between two runs (timings) is
+name print the same. Each engine is launched through the same scratch symlink because
+Linux binary translation can replace argv[0] with the executable path. Anything else
+that legitimately varies between two runs (timings) is
 masked by the case's own `normalize` rules.
 
 Usage: scripts/shell-diff.py --binary RUSTDB --reference DUCKDB [-k SUBSTRING] [--show]
@@ -30,6 +32,8 @@ Cases live in TOML files (default: scripts/shell-diff/*.toml), one `[[case]]` ta
   pty        run under a pseudo-terminal: `keys` is a list of strings sent one at a time
              (numbers wait that many seconds); `cols`/`rows` set the window size;
              `resize` = [[after_key_index, cols, rows], ...] resizes mid-session
+  startup_wait_for  require this output before sending the first key (bounded by
+             startup_timeout, default five seconds); a missing marker fails the case
 """
 import argparse
 import concurrent.futures
@@ -57,6 +61,32 @@ REF = os.environ.get("REF", os.path.join(ROOT, ".context/duckdb-download/duckdb-
 # Files whose bytes depend on the library (database files hold its version): compared by
 # existence only.
 OPAQUE_SUFFIXES = (".db", ".duckdb", ".wal", ".parquet")
+
+
+class TerminalQueryResponder:
+    """Minimal terminal replies, retaining queries split across PTY reads.
+
+    DA1 without an OSC 11 reply reports a terminal without background-color
+    support. Both shells can then finish detection without its five-second
+    timeout. The original query bytes remain in the captured transcript.
+    """
+
+    QUERY = re.compile(rb"\x1b\[(?:6n|0?c)")
+
+    def __init__(self):
+        self.pending = b""
+
+    def feed(self, data):
+        data = self.pending + data
+        replies = []
+        consumed = 0
+        for query in self.QUERY.finditer(data):
+            replies.append(b"\x1b[1;1R" if query[0].endswith(b"6n") else b"\x1b[?1;2c")
+            consumed = query.end()
+        # The longest recognized query is four bytes. Keep at most its partial
+        # prefix, excluding queries we have already answered.
+        self.pending = data[max(consumed, len(data) - 3):]
+        return b"".join(replies)
 
 
 def expand(cases):
@@ -126,11 +156,14 @@ def written_files(work, case):
 
 
 def run_pipe(binary, work, case):
+    work = os.path.abspath(work)
     _, env = prepare(work, case)
+    executable = os.path.join(work, ".shell-executable")
+    os.symlink(binary, executable)
     stdin = case.get("stdin")
     encoding = case.get("encoding", "utf-8")
     arguments = [argument.encode(encoding) for argument in ["duckdb"] + case.get("args", [])]
-    process = subprocess.Popen(arguments, executable=binary,
+    process = subprocess.Popen(arguments, executable=executable,
                                stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
                                stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT if case.get("merged") else subprocess.PIPE,
@@ -155,15 +188,19 @@ def run_pipe(binary, work, case):
 
 
 def run_pty(binary, work, case):
+    work = os.path.abspath(work)
     _, env = prepare(work, case)
+    executable = os.path.join(work, ".shell-executable")
+    os.symlink(binary, executable)
     env.setdefault("TERM", "xterm-256color")
     cols, rows = case.get("cols", 100), case.get("rows", 30)
     pid, fd = pty.fork()
     if pid == 0:
         os.chdir(work)
-        os.execve(binary, ["duckdb"] + case.get("args", []), env)
+        os.execve(executable, ["duckdb"] + case.get("args", []), env)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
     out = bytearray()
+    terminal = TerminalQueryResponder()
 
     def drain(timeout):
         end = time.time() + timeout
@@ -181,13 +218,21 @@ def run_pty(binary, work, case):
             if not data:
                 return False
             out.extend(data)
-            # answer cursor position queries like a terminal with the cursor at 1;1
-            if b"\x1b[6n" in data:
-                os.write(fd, b"\x1b[1;1R")
+            reply = terminal.feed(data)
+            if reply:
+                os.write(fd, reply)
 
     resizes = {r[0]: (r[1], r[2]) for r in case.get("resize", [])}
+    wait_timeouts = []
     alive = drain(case.get("startup", 1.0))
-    for index, key in enumerate(case["keys"]):
+    if "startup_wait_for" in case:
+        marker = case["startup_wait_for"].encode()
+        deadline = time.monotonic() + case.get("startup_timeout", 5.0)
+        while alive and marker not in out and time.monotonic() < deadline:
+            alive = drain(min(0.1, max(0, deadline - time.monotonic())))
+        if marker not in out:
+            wait_timeouts.append("startup: " + case["startup_wait_for"])
+    for index, key in enumerate(case["keys"] if not wait_timeouts else []):
         if index in resizes:
             cols, rows = resizes[index]
             fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
@@ -197,6 +242,14 @@ def run_pty(binary, work, case):
             break
         if isinstance(key, (int, float)):
             alive = drain(key)
+            continue
+        if isinstance(key, dict) and "wait_for" in key:
+            marker = key["wait_for"].encode()
+            deadline = time.monotonic() + key.get("timeout", 5.0)
+            while alive and marker not in out and time.monotonic() < deadline:
+                alive = drain(min(0.1, max(0, deadline - time.monotonic())))
+            if marker not in out:
+                wait_timeouts.append(key["wait_for"])
             continue
         os.write(fd, key.encode())
         alive = drain(case.get("delay", 0.3))
@@ -214,7 +267,10 @@ def run_pty(binary, work, case):
         status = -1
     os.close(fd)
     code = os.waitstatus_to_exitcode(status) if status not in (None, -1) else "killed"
-    return {"stdout": bytes(out), "stderr": b"", "exit": code, "files": written_files(work, case)}
+    result = {"stdout": bytes(out), "stderr": b"", "exit": code, "files": written_files(work, case)}
+    if wait_timeouts:
+        result["wait_timeouts"] = wait_timeouts
+    return result
 
 
 def normalize(result, case):
@@ -247,6 +303,8 @@ def run_case(case, binary, reference, work_root, index):
     finally:
         if os.path.exists(work):
             shutil.rmtree(work)
+    if ref.get("wait_timeouts") or got.get("wait_timeouts"):
+        return case, ref, got, "output readiness timeout"
     return case, ref, got, None
 
 
@@ -254,6 +312,42 @@ def show_bytes(label, data):
     print(f"--- {label} ({len(data)} bytes)")
     for line in data.decode("utf-8", "backslashreplace").split("\n"):
         print("  " + repr(line)[1:-1])
+
+
+def known_difference_allowed(case, ref, got):
+    if "known" not in case:
+        return False
+    if case.get("known_scope") != "native_stack_trace":
+        return True
+    if {k: v for k, v in ref.items() if k != "stderr"} != {k: v for k, v in got.items() if k != "stderr"}:
+        return False
+    marker = b"\n\nStack Trace:\n"
+    if ref["stderr"].count(marker) != 1 or got["stderr"].count(marker) != 1:
+        return False
+    left, left_trace = ref["stderr"].split(marker, 1)
+    right, right_trace = got["stderr"].split(marker, 1)
+    if left != right:
+        return False
+
+    def native_frames(data):
+        lines = [line for line in data.splitlines() if line.strip()]
+        # Linux execinfo emits module(symbol+offset) [address] instead of
+        # numbered frames. Only the already-declared native-frame exception
+        # permits this shape; message bytes, exits and other channels above
+        # must still match exactly.
+        if lines and all(re.fullmatch(rb"(?:/[^\r\n]*|duckdb)\([^()\r\n]*\) \[0x[0-9a-fA-F]+\]", line)
+                         for line in lines):
+            return True
+        frames = []
+        for line in lines:
+            frame = re.match(rb"^\s*(\d+)(?:\s+|:\s+)\S.*$", line)
+            if frame:
+                frames.append(int(frame[1]))
+            elif not frames or not re.match(rb"^\s+at .+:\d+(?::\d+)?$", line):
+                return False
+        return bool(frames) and frames == list(range(len(frames)))
+
+    return native_frames(left_trace) and native_frames(right_trace)
 
 
 def report(case, ref, got):
@@ -322,7 +416,7 @@ def main():
                 if ref != got:
                     show_bytes("binary stdout", got["stdout"])
                     show_bytes("binary stderr", got["stderr"])
-            if ref != got and "known" in case and not args.show:
+            if ref != got and known_difference_allowed(case, ref, got) and not args.show:
                 known += 1
                 print(f"=== {case['name']}: known difference: {case['known']}")
             elif ref != got:

@@ -157,6 +157,9 @@ pub struct FieldConfig {
     /// member as another type that writes it the same way (a `usize` index, or a type
     /// of a crate the class's crate does not depend on).
     pub property_type: Option<&'static str>,
+    /// An owned Rust field type with the same wire representation as the spec type.
+    /// Used while replacing C++ byte strings at their actual name boundaries.
+    pub field_type: Option<&'static str>,
 }
 
 impl FieldConfig {
@@ -166,7 +169,31 @@ impl FieldConfig {
         required: false,
         serialize_with: None,
         property_type: None,
+        field_type: None,
     };
+}
+
+const fn byte_string(member: &'static str) -> FieldConfig {
+    FieldConfig {
+        member,
+        field_type: Some("rustdb_common::ByteString"),
+        ..FieldConfig::DEFAULT
+    }
+}
+const fn byte_strings(member: &'static str) -> FieldConfig {
+    FieldConfig {
+        member,
+        field_type: Some("Vec<rustdb_common::ByteString>"),
+        ..FieldConfig::DEFAULT
+    }
+}
+
+const fn typed_field(member: &'static str, ty: &'static str) -> FieldConfig {
+    FieldConfig {
+        member,
+        field_type: Some(ty),
+        ..FieldConfig::DEFAULT
+    }
 }
 
 const fn required(member: &'static str) -> FieldConfig {
@@ -544,9 +571,30 @@ pub const ENUM_VARIANT_NAMES: &[(&str, &[(&str, &str)])] = &[(
 
 /// Per-class overrides.
 pub const CLASSES: &[ClassConfig] = &[
+    ClassConfig {
+        class: "ExportedTableData",
+        fields: &[
+            byte_string("table_name"),
+            byte_string("schema_name"),
+            byte_string("database_name"),
+            byte_string("file_path"),
+            byte_strings("not_null_columns"),
+        ],
+        ..ClassConfig::DEFAULT
+    },
     // types.json
     ClassConfig {
+        class: "StructTypeInfo",
+        fields: &[FieldConfig {
+            member: "child_types",
+            field_type: Some("Vec<(rustdb_common::ByteString, LogicalType)>"),
+            ..FieldConfig::DEFAULT
+        }],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
         class: "ExtraTypeInfo",
+        fields: &[byte_string("alias")],
         kind_name: Some("TypeInfo"),
         strip_suffix: Some("_TYPE_INFO"),
         null_variants: &["INVALID_TYPE_INFO"],
@@ -578,7 +626,10 @@ pub const CLASSES: &[ClassConfig] = &[
     ClassConfig {
         class: "ColumnIndex",
         data_type: Some("ColumnIndex"),
-        fields: &[rename("type", "ty")],
+        fields: &[
+            rename("type", "ty"),
+            property_type("field", "&'a rustdb_common::ByteString"),
+        ],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
@@ -586,16 +637,37 @@ pub const CLASSES: &[ClassConfig] = &[
         derives: &["Default"],
         ..ClassConfig::DEFAULT
     },
+    ClassConfig {
+        class: "ParameterExpression",
+        fields: &[byte_string("identifier")],
+        ..ClassConfig::DEFAULT
+    },
     // parsed_expression.json
     ClassConfig {
         class: "ParsedExpression",
-        fields: &[rename("type", "expression_type")],
+        fields: &[
+            rename("type", "expression_type"),
+            FieldConfig {
+                member: "alias",
+                field_type: Some("rustdb_common::ByteString"),
+                ..FieldConfig::DEFAULT
+            },
+        ],
         extra_variants: &[ExtraVariant {
             variant: "Bound",
             ty: "crate::BoundExpression",
             discriminant: "BOUND_EXPRESSION",
             doc: "A sub-tree already bound by the binder (`BoundExpression`); binding only.",
             serialize: "Err(Error::serialization(\"Cannot serialize bound expression\"))",
+        }],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "ColumnRefExpression",
+        fields: &[FieldConfig {
+            member: "column_names",
+            field_type: Some("Vec<rustdb_common::ByteString>"),
+            ..FieldConfig::DEFAULT
         }],
         ..ClassConfig::DEFAULT
     },
@@ -616,7 +688,7 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "CollateExpression",
-        fields: &[required("child")],
+        fields: &[required("child"), byte_string("collation")],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
@@ -625,8 +697,36 @@ pub const CLASSES: &[ClassConfig] = &[
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
+        class: "WindowExpression",
+        fields: &[
+            byte_string("function_name"),
+            byte_string("catalog"),
+            byte_string("schema"),
+        ],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "StringTypeInfo",
+        fields: &[byte_string("collation")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LoadInfo",
+        fields: &[
+            byte_string("filename"),
+            byte_string("repository"),
+            byte_string("version"),
+        ],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
         class: "FunctionExpression",
-        fields: &[required("order_bys")],
+        fields: &[
+            required("order_bys"),
+            byte_string("function_name"),
+            byte_string("catalog"),
+            byte_string("schema"),
+        ],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
@@ -665,7 +765,12 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "RecursiveCTENode",
-        fields: &[required("left"), required("right")],
+        fields: &[
+            required("left"),
+            required("right"),
+            byte_string("cte_name"),
+            byte_strings("aliases"),
+        ],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
@@ -681,30 +786,85 @@ pub const CLASSES: &[ClassConfig] = &[
         strip_suffix: Some("_MODIFIER"),
         ..ClassConfig::DEFAULT
     },
+    ClassConfig {
+        class: "TypeExpression",
+        fields: &[
+            byte_string("catalog"),
+            byte_string("schema"),
+            byte_string("type_name"),
+        ],
+        ..ClassConfig::DEFAULT
+    },
     // tableref.json
     ClassConfig {
+        class: "ShowRef",
+        fields: &[
+            byte_string("table_name"),
+            byte_string("catalog_name"),
+            byte_string("schema_name"),
+        ],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "ExpressionListRef",
+        fields: &[byte_strings("expected_names")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "ColumnDataRef",
+        fields: &[byte_strings("expected_names")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "StructFilter",
+        fields: &[property_type("child_name", "&'a rustdb_common::ByteString")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
         class: "TableRef",
+        fields: &[byte_string("alias")],
+        extra_fields: &[ExtraField {
+            name: "external_dependency",
+            ty: "crate::ExternalDependency",
+            doc: "External scan ownership, copied with the tree and never serialized.",
+            default: "crate::ExternalDependency::default()",
+        }],
         variant_names: &[("EMPTY_FROM", "Empty"), ("SHOW_REF", "Show")],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
+        class: "BaseTableRef",
+        fields: &[
+            byte_string("schema_name"),
+            byte_string("table_name"),
+            byte_string("catalog_name"),
+            byte_strings("column_name_alias"),
+        ],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
         class: "JoinRef",
-        fields: &[required("left"), required("right")],
+        fields: &[required("left"), required("right"), byte_strings("using_columns")],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
         class: "SubqueryRef",
-        fields: &[required("subquery")],
+        fields: &[required("subquery"), byte_strings("column_name_alias")],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
         class: "TableFunctionRef",
-        fields: &[required("function")],
+        fields: &[required("function"), byte_strings("column_name_alias")],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
         class: "PivotRef",
-        fields: &[required("source")],
+        fields: &[
+            required("source"),
+            byte_strings("column_name_alias"),
+            byte_strings("unpivot_names"),
+            byte_strings("groups"),
+        ],
         extra_fields: &[ExtraField {
             name: "bound",
             ty: "Option<Box<crate::BoundPivotSpec>>",
@@ -715,19 +875,27 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "AtClause",
-        fields: &[required("expr")],
+        fields: &[required("expr"), byte_string("unit")],
         ..ClassConfig::DEFAULT
     },
     // statement.json
     ClassConfig {
         class: "SelectStatement",
-        fields: &[required("node")],
+        fields: &[
+            required("node"),
+            FieldConfig {
+                member: "named_param_map",
+                field_type: Some("rustdb_common::CaseInsensitiveMap<u64, rustdb_common::ByteString>"),
+                ..FieldConfig::DEFAULT
+            },
+        ],
         ..ClassConfig::DEFAULT
     },
     // nodes.json
     ClassConfig {
         class: "CommonTableExpressionInfo",
         fields: &[
+            byte_strings("aliases"),
             required("query"),
             FieldConfig {
                 member: "materialized",
@@ -742,6 +910,13 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "CommonTableExpressionMap",
+        fields: &[FieldConfig {
+            member: "map",
+            field_type: Some(
+                "rustdb_common::CaseInsensitiveMap<CommonTableExpressionInfo, rustdb_common::ByteString>",
+            ),
+            ..FieldConfig::DEFAULT
+        }],
         derives: &["Default"],
         ..ClassConfig::DEFAULT
     },
@@ -762,11 +937,15 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "PivotColumn",
-        fields: &[FieldConfig {
-            member: "entries",
-            serialize_with: Some("crate::tableref::pivot_entries_for_serialization(self, serializer)?"),
-            ..FieldConfig::DEFAULT
-        }],
+        fields: &[
+            byte_string("pivot_enum"),
+            byte_strings("unpivot_names"),
+            FieldConfig {
+                member: "entries",
+                serialize_with: Some("crate::tableref::pivot_entries_for_serialization(self, serializer)?"),
+                ..FieldConfig::DEFAULT
+            },
+        ],
         extra_fields: &[ExtraField {
             name: "subquery",
             ty: "Option<Box<crate::QueryNode>>",
@@ -777,7 +956,14 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "ColumnDefinition",
-        fields: &[rename("type", "logical_type")],
+        fields: &[
+            rename("type", "logical_type"),
+            FieldConfig {
+                member: "name",
+                field_type: Some("rustdb_common::ByteString"),
+                ..FieldConfig::DEFAULT
+            },
+        ],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
@@ -787,6 +973,12 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "QualifiedColumnName",
+        fields: &[
+            byte_string("catalog"),
+            byte_string("schema"),
+            byte_string("table"),
+            byte_string("column"),
+        ],
         derives: &["Default", "Eq", "Hash"],
         ..ClassConfig::DEFAULT
     },
@@ -801,9 +993,25 @@ pub const CLASSES: &[ClassConfig] = &[
         fields: &[required("expression")],
         ..ClassConfig::DEFAULT
     },
+    ClassConfig {
+        class: "UniqueConstraint",
+        fields: &[byte_strings("columns")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "ForeignKeyConstraint",
+        fields: &[
+            byte_strings("pk_columns"),
+            byte_strings("fk_columns"),
+            byte_string("schema"),
+            byte_string("table"),
+        ],
+        ..ClassConfig::DEFAULT
+    },
     // create_info.json
     ClassConfig {
         class: "CreateInfo",
+        fields: &[byte_string("catalog"), byte_string("schema"), byte_string("sql")],
         strip_suffix: Some("_ENTRY"),
         extra_variants: &[ExtraVariant {
             variant: "Secret",
@@ -816,6 +1024,7 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "CreateTypeInfo",
+        fields: &[byte_string("name")],
         extra_fields: &[ExtraField {
             name: "query",
             ty: "Option<Box<crate::SelectStatement>>",
@@ -834,6 +1043,146 @@ pub const CLASSES: &[ClassConfig] = &[
         custom: true,
         ..ClassConfig::DEFAULT
     },
+    ClassConfig {
+        class: "CreateTableInfo",
+        fields: &[
+            byte_string("table"),
+            typed_field(
+                "options",
+                "rustdb_common::CaseInsensitiveMap<ParsedExpression,rustdb_common::ByteString>",
+            ),
+        ],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "CreateIndexInfo",
+        fields: &[
+            byte_string("name"),
+            byte_string("table"),
+            byte_strings("names"),
+            byte_string("index_type_name"),
+            typed_field(
+                "options",
+                "rustdb_common::CaseInsensitiveMap<Value,rustdb_common::ByteString>",
+            ),
+        ],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "CreateSequenceInfo",
+        fields: &[byte_string("name")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalDependency",
+        fields: &[byte_string("catalog")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "AddFieldInfo",
+        fields: &[byte_strings("column_path")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "AlterForeignKeyInfo",
+        fields: &[
+            byte_string("fk_table"),
+            byte_strings("pk_columns"),
+            byte_strings("fk_columns"),
+        ],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "ChangeColumnTypeInfo",
+        fields: &[byte_string("column_name")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "ChangeOwnershipInfo",
+        fields: &[byte_string("owner_schema"), byte_string("owner_name")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "DropNotNullInfo",
+        fields: &[byte_string("column_name")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "RemoveColumnInfo",
+        fields: &[byte_string("removed_column")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "RemoveFieldInfo",
+        fields: &[byte_strings("column_path")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "RenameColumnInfo",
+        fields: &[byte_string("old_name"), byte_string("new_name")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "RenameDatabaseInfo",
+        fields: &[byte_string("new_name")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "RenameFieldInfo",
+        fields: &[byte_string("new_name"), byte_strings("column_path")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "RenameTableInfo",
+        fields: &[byte_string("new_table_name")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "RenameViewInfo",
+        fields: &[byte_string("new_view_name")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "SetDefaultInfo",
+        fields: &[byte_string("column_name")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "SetNotNullInfo",
+        fields: &[byte_string("column_name")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "DetachInfo",
+        fields: &[byte_string("name")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "UpdateExtensionsInfo",
+        fields: &[byte_strings("extensions_to_update")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "ExtraDropSecretInfo",
+        fields: &[byte_string("secret_storage")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "SetTableOptionsInfo",
+        fields: &[typed_field(
+            "table_options",
+            "rustdb_common::CaseInsensitiveMap<ParsedExpression,rustdb_common::ByteString>",
+        )],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "ResetTableOptionsInfo",
+        fields: &[typed_field(
+            "table_options",
+            "rustdb_common::CaseInsensitiveSet<rustdb_common::ByteString>",
+        )],
+        ..ClassConfig::DEFAULT
+    },
     // parse_info.json
     ClassConfig {
         class: "ParseInfo",
@@ -842,20 +1191,69 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "AttachInfo",
+        fields: &[
+            byte_string("name"),
+            byte_string("path"),
+            typed_field(
+                "options",
+                "rustdb_common::OrderedMap<rustdb_common::ByteString, Value>",
+            ),
+        ],
         extra_fields: &[ExtraField {
             name: "parsed_options",
-            ty: "rustdb_common::CaseInsensitiveMap<crate::ParsedExpression>",
+            ty: "rustdb_common::CaseInsensitiveMap<crate::ParsedExpression, rustdb_common::ByteString>",
             doc: "`parsed_options`: the options as written, before the binder evaluates them.",
             default: "rustdb_common::CaseInsensitiveMap::default()",
         }],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
+        class: "AlterInfo",
+        fields: &[byte_string("catalog"), byte_string("schema"), byte_string("name")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "SetColumnCommentInfo",
+        fields: &[byte_string("column_name")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "PragmaInfo",
+        fields: &[
+            byte_string("name"),
+            FieldConfig {
+                member: "named_parameters",
+                field_type: Some(
+                    "rustdb_common::CaseInsensitiveMap<ParsedExpression, rustdb_common::ByteString>",
+                ),
+                ..FieldConfig::DEFAULT
+            },
+        ],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "PivotColumnEntry",
+        fields: &[byte_string("alias")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
         class: "CopyInfo",
+        fields: &[
+            byte_string("file_path"),
+            byte_string("format"),
+            typed_field(
+                "options",
+                "rustdb_common::CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteString>",
+            ),
+            byte_string("catalog"),
+            byte_string("schema"),
+            byte_string("table"),
+            byte_strings("select_list"),
+        ],
         extra_fields: &[
             ExtraField {
                 name: "parsed_options",
-                ty: "rustdb_common::CaseInsensitiveMap<Option<crate::ParsedExpression>>",
+                ty: "rustdb_common::CaseInsensitiveMap<Option<crate::ParsedExpression>,rustdb_common::ByteString>",
                 doc: "`parsed_options`: the options as written (`None` for a bare option name), before \
                       the binder evaluates them.",
                 default: "rustdb_common::CaseInsensitiveMap::default()",
@@ -871,7 +1269,12 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "DropInfo",
-        fields: &[rename("type", "catalog_type")],
+        fields: &[
+            rename("type", "catalog_type"),
+            byte_string("catalog"),
+            byte_string("schema"),
+            byte_string("name"),
+        ],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
@@ -881,7 +1284,7 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "VacuumInfo",
-        fields: &[rename("ref", "table_ref")],
+        fields: &[rename("ref", "table_ref"), byte_strings("columns")],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
@@ -915,7 +1318,11 @@ pub const CLASSES: &[ClassConfig] = &[
     // dependency.json
     ClassConfig {
         class: "CatalogEntryInfo",
-        fields: &[rename("type", "catalog_type")],
+        fields: &[
+            rename("type", "catalog_type"),
+            byte_string("schema"),
+            byte_string("name"),
+        ],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
@@ -961,7 +1368,10 @@ pub const CLASSES: &[ClassConfig] = &[
     ClassConfig {
         class: "StorageIndex",
         data_type: Some("table::StorageIndex"),
-        fields: &[rename("type", "ty")],
+        fields: &[
+            rename("type", "ty"),
+            property_type("field", "&'a rustdb_common::ByteString"),
+        ],
         ..ClassConfig::DEFAULT
     },
     // logical_operator.json (property structs of the planner's operators)
@@ -1032,6 +1442,16 @@ pub const CLASSES: &[ClassConfig] = &[
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
+        class: "LogicalSet",
+        fields: &[property_type("name", "&'a rustdb_common::ByteString")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalReset",
+        fields: &[property_type("name", "&'a rustdb_common::ByteString")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
         class: "LogicalExport",
         fields: &[required("copy_info"), required("exported_tables")],
         ..ClassConfig::DEFAULT
@@ -1057,16 +1477,47 @@ pub const CLASSES: &[ClassConfig] = &[
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
+        class: "FilenamePattern",
+        fields: &[property_type("base", "&'a rustdb_common::ByteString")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
         class: "FileNameSegment",
         data_type: Some("operator::FileNameSegment"),
-        fields: &[rename("type", "segment_type")],
+        fields: &[
+            rename("type", "segment_type"),
+            property_type("data", "&'a rustdb_common::ByteString"),
+        ],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LambdaRefExpression",
+        fields: &[byte_string("column_name")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalCTERef",
+        fields: &[property_type("bound_columns", "&'a [rustdb_common::ByteString]")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalRecursiveCTE",
+        fields: &[property_type("ctename", "&'a rustdb_common::ByteString")],
+        ..ClassConfig::DEFAULT
+    },
+    ClassConfig {
+        class: "LogicalMaterializedCTE",
+        fields: &[property_type("ctename", "&'a rustdb_common::ByteString")],
         ..ClassConfig::DEFAULT
     },
     // expression.json (property structs of the planner's expressions)
     ClassConfig {
         class: "Expression",
         data_type: Some("Expression"),
-        fields: &[rename("type", "expression_type")],
+        fields: &[
+            rename("type", "expression_type"),
+            property_type("alias", "&'a rustdb_common::ByteString"),
+        ],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
@@ -1096,7 +1547,14 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "BoundParameterExpression",
-        fields: &[required("parameter_data")],
+        fields: &[
+            required("parameter_data"),
+            FieldConfig {
+                member: "identifier",
+                property_type: Some("&'a rustdb_common::ByteString"),
+                ..FieldConfig::DEFAULT
+            },
+        ],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
@@ -1140,6 +1598,7 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "BoundPivotInfo",
+        fields: &[property_type("pivot_values", "&'a [rustdb_common::ByteString]")],
         data_type: Some("operator::BoundPivotInfo"),
         ..ClassConfig::DEFAULT
     },

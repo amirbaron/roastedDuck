@@ -4,8 +4,8 @@ use rustdb_ast::{
     ExpressionClass, ExpressionType, LambdaExpression, LambdaSyntaxType, ParsedExpression,
     ParsedExpressionKind, StarExpression,
 };
-use rustdb_common::string_util::candidates_error_message;
-use rustdb_common::{CaseInsensitiveMap, Error, Result};
+use rustdb_common::string_util::candidates_error_message_bytes;
+use rustdb_common::{ByteString, CaseInsensitiveMap, Error, Result};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::binder::BindScope;
@@ -30,10 +30,10 @@ fn is_columns(expr: &ParsedExpression) -> bool {
 }
 
 /// The name a COLUMNS(*) list uses for a column (DuckDB's `GetColumnsStringValue`).
-fn columns_string_value(expr: &ParsedExpression) -> String {
+fn columns_string_value(expr: &ParsedExpression) -> ByteString {
     match &expr.kind {
         ParsedExpressionKind::ColumnRef(column) => column.column_names.last().cloned().unwrap_or_default(),
-        _ => expr.to_string(),
+        _ => expr.to_sql_bytes(),
     }
 }
 
@@ -89,8 +89,8 @@ pub fn find_star_expression(
                 .generate_all_column_expressions(current, scope.binder.binding_mode())?;
             let values = list
                 .iter()
-                .map(|e| Value::varchar(columns_string_value(e)))
-                .collect();
+                .map(|e| Value::try_varchar(&columns_string_value(e)))
+                .collect::<Result<Vec<_>>>()?;
             *expr = ParsedExpression::constant(Value::list(LogicalType::VARCHAR, values));
             return Ok(StarExpressionType::Star);
         }
@@ -153,40 +153,42 @@ fn replace_star_expression(expr: &mut ParsedExpression, replacement: &ParsedExpr
 }
 
 /// DuckDB's `ReplaceColumnsAlias`: `\0` is the column name, `\n` a regex group.
-fn replace_columns_alias(alias: &str, column_name: &str, regex: Option<&regex::Regex>) -> Result<String> {
-    let mut result = String::with_capacity(alias.len());
-    let mut chars = alias.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
+fn replace_columns_alias(
+    alias: &[u8],
+    column_name: &[u8],
+    regex: Option<&regex::bytes::Regex>,
+) -> Result<ByteString> {
+    let mut result = ByteString::new();
+    let mut bytes = alias.iter().copied();
+    while let Some(c) = bytes.next() {
+        if c != b'\\' {
             result.push(c);
             continue;
         }
-        let Some(code) = chars.next() else {
-            return Err(Error::binder(format!(
-                "Unterminated backslash in COLUMNS(*) \"{alias}\" alias. Backslashes must either be escaped or \
-                 followed by a number"
+        let Some(code) = bytes.next() else {
+            return Err(Error::binder(rustdb_common::byte_format!(
+                "Unterminated backslash in COLUMNS(*) \"{alias}\" alias. Backslashes must either be escaped or followed by a number"
             )));
         };
         match code {
-            '\\' => result.push('\\'),
-            '0' => result.push_str(column_name),
-            '1'..='9' => {
+            b'\\' => result.push(b'\\'),
+            b'0' => result.push_bytes(column_name),
+            b'1'..=b'9' => {
                 let Some(regex) = regex else {
                     return Err(Error::binder(
                         "Only the backslash escape code \\0 can be used when no regex is supplied to COLUMNS(*)",
                     ));
                 };
-                let group = code as usize - '0' as usize;
+                let group = usize::from(code - b'0');
                 if let Some(captures) = regex.captures(column_name)
                     && let Some(matched) = captures.get(group)
                 {
-                    result.push_str(matched.as_str());
+                    result.push_bytes(matched.as_bytes());
                 }
             }
             _ => {
-                return Err(Error::binder(format!(
-                    "Invalid backslash code in COLUMNS(*) \"{alias}\" alias. Backslashes must either be escaped or \
-                     followed by a number"
+                return Err(Error::binder(rustdb_common::byte_format!(
+                    "Invalid backslash code in COLUMNS(*) \"{alias}\" alias. Backslashes must either be escaped or followed by a number"
                 )));
             }
         }
@@ -235,8 +237,11 @@ fn try_transform_star_like(root: &mut ParsedExpression) -> Result<()> {
     if star.columns {
         return Ok(());
     }
-    if !SUPPORTED.contains(&function.function_name.as_str()) {
-        return Err(Error::binder(format!(
+    if !SUPPORTED
+        .iter()
+        .any(|name| name.as_bytes() == function.function_name.as_bytes())
+    {
+        return Err(Error::binder(rustdb_common::byte_format!(
             "Function \"{}\" cannot be applied to a star expression",
             function.function_name
         ))
@@ -320,7 +325,7 @@ fn function_child(root: &mut ParsedExpression, inverse: bool) -> Result<&mut rus
 }
 
 /// The column reference behind an expanded star entry (DuckDB's `GetResolvedColumnExpression`).
-pub(crate) fn resolved_column_name(expr: &ParsedExpression) -> Option<String> {
+pub(crate) fn resolved_column_name(expr: &ParsedExpression) -> Option<rustdb_common::ByteString> {
     match &expr.kind {
         ParsedExpressionKind::ColumnRef(column) => column.column_names.last().cloned(),
         ParsedExpressionKind::Operator(operator)
@@ -372,7 +377,7 @@ pub fn expand_star_expression(
                     return Err(Error::binder("COLUMNS does not support NULL as regex argument"));
                 }
                 let pattern = value.to_varchar()?;
-                let compiled = regex::Regex::new(&pattern).map_err(|error| {
+                let compiled = regex::bytes::Regex::new(&pattern).map_err(|error| {
                     Error::binder(format!("Failed to compile regex \"{pattern}\": {error}"))
                         .with_position(star_location)
                 })?;
@@ -390,14 +395,14 @@ pub fn expand_star_expression(
                 }
                 if new_list.is_empty() {
                     let suggestion = if candidates.is_empty() {
-                        String::new()
+                        ByteString::new()
                     } else {
-                        format!(
+                        rustdb_common::byte_format!(
                             "\n{}",
-                            candidates_error_message(&candidates, &pattern, "Did you mean")
+                            candidates_error_message_bytes(&candidates, pattern.as_bytes(), b"Did you mean")
                         )
                     };
-                    return Err(Error::binder(format!(
+                    return Err(Error::binder(rustdb_common::byte_format!(
                         "No matching columns found that match regex \"{pattern}\"{suggestion}"
                     ))
                     .with_position(star_location));
@@ -415,7 +420,7 @@ pub fn expand_star_expression(
                     ))
                     .with_position(star_location));
                 }
-                let mut selected: Vec<(String, bool)> = Vec::new();
+                let mut selected: Vec<(ByteString, bool)> = Vec::new();
                 for child in children {
                     if child.is_null() {
                         return Err(Error::binder(
@@ -423,7 +428,7 @@ pub fn expand_star_expression(
                         )
                         .with_position(star_location));
                     }
-                    let name = child.to_varchar()?;
+                    let name = child.to_varchar_bytes()?;
                     if !selected
                         .iter()
                         .any(|(existing, _)| existing.eq_ignore_ascii_case(&name))
@@ -440,7 +445,7 @@ pub fn expand_star_expression(
                     }
                 }
                 if let Some((name, _)) = selected.iter().find(|(_, found)| !found) {
-                    return Err(Error::binder(format!(
+                    return Err(Error::binder(rustdb_common::byte_format!(
                         "Column \"{name}\" was selected but was not found in the FROM clause"
                     )));
                 }
@@ -488,7 +493,7 @@ fn add_unpacked_child(
     new_children: &mut Vec<ParsedExpression>,
     star_list: &[ParsedExpression],
     star: &StarExpression,
-    regex: Option<&regex::Regex>,
+    regex: Option<&regex::bytes::Regex>,
 ) -> Result<()> {
     if child.expression_type != ExpressionType::OperatorUnpack {
         new_children.push(child);
@@ -525,7 +530,7 @@ fn replace_unpacked_star_expression(
     expr: &mut ParsedExpression,
     star_list: &[ParsedExpression],
     star: &StarExpression,
-    regex: Option<&regex::Regex>,
+    regex: Option<&regex::bytes::Regex>,
 ) -> Result<()> {
     let expression_type = expr.expression_type;
     match &mut expr.kind {

@@ -2,10 +2,9 @@
 //! `read_csv` call for a file.
 
 use std::any::Any;
-use std::fmt::Write as _;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
+use rustdb_common::{ByteString, Error, Result, byte_write};
 use rustdb_function::cast::CastFunctionSet;
 use rustdb_function::{
     FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
@@ -22,7 +21,7 @@ use crate::sniffer::CsvSniffer;
 /// The bind data of `sniff_csv` (DuckDB's `CSVSniffFunctionData`).
 #[derive(Debug)]
 struct CsvSniffFunctionData {
-    path: String,
+    path: rustdb_common::ByteString,
     options: CsvReaderOptions,
     file_options: MultiFileOptions,
     force_match: bool,
@@ -38,8 +37,8 @@ impl FunctionData for CsvSniffFunctionData {
 /// The output columns of `sniff_csv`.
 fn sniff_columns() -> Vec<(&'static str, LogicalType)> {
     let column = LogicalType::struct_type(vec![
-        ("name".to_owned(), LogicalType::VARCHAR),
-        ("type".to_owned(), LogicalType::VARCHAR),
+        ("name".into(), LogicalType::VARCHAR),
+        ("type".into(), LogicalType::VARCHAR),
     ]);
     vec![
         ("Delimiter", LogicalType::VARCHAR),
@@ -72,10 +71,10 @@ fn sniff_csv_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBin
     let mut force_match = true;
     let mut parameters = Vec::new();
     for (key, value) in input.named_parameters {
-        match key.to_lowercase().as_str() {
-            "auto_detect" => {
+        match key.to_ascii_lowercase().as_bytes() {
+            b"auto_detect" => {
                 if value.is_null() {
-                    return Err(Error::binder(format!(
+                    return Err(Error::binder(rustdb_common::byte_format!(
                         "\"{key}\" expects a non-null boolean value (e.g. TRUE or 1)"
                     )));
                 }
@@ -85,7 +84,7 @@ fn sniff_csv_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBin
                     ));
                 }
             }
-            "force_match" => force_match = value.as_bool().unwrap_or(true),
+            b"force_match" => force_match = value.as_bool().unwrap_or(true),
             _ => parameters.push((key, value)),
         }
     }
@@ -106,9 +105,9 @@ fn sniff_csv_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBin
     let columns = sniff_columns();
     Ok(TableFunctionBindOutput {
         return_types: columns.iter().map(|(_, ty)| ty.clone()).collect(),
-        names: columns.iter().map(|(name, _)| (*name).to_owned()).collect(),
+        names: columns.iter().map(|(name, _)| (*name).into()).collect(),
         bind_data: Some(Arc::new(CsvSniffFunctionData {
-            path: path.to_varchar()?,
+            path: path.to_varchar_bytes()?,
             options,
             file_options,
             force_match,
@@ -184,23 +183,23 @@ fn sniff_csv_row(data: &CsvSniffFunctionData) -> Result<Vec<Value>> {
         Value::uinteger(u32::try_from(options.dialect_options.skip_rows.value()).unwrap_or(u32::MAX)),
         Value::boolean(has_header),
     ];
-    let mut columns = "{".to_owned();
+    let mut columns = ByteString::from("{");
     let mut values = Vec::new();
     for (i, (name, ty)) in result.names.iter().zip(&result.return_types).enumerate() {
         values.push(Value::struct_value(vec![
-            ("name".to_owned(), Value::varchar(name)),
-            ("type".to_owned(), Value::varchar(ty.to_string())),
+            ("name".into(), Value::try_varchar(name)?),
+            ("type".into(), Value::varchar(ty.to_string())),
         ]));
-        let _ = write!(columns, "'{name}': '{ty}'");
+        let _ = byte_write!(columns, "'{name}': '{ty}'");
         if i + 1 != result.return_types.len() {
-            columns += separator;
+            columns.push_bytes(separator);
         }
     }
-    columns += "}";
+    columns.push_bytes("}");
     row.push(Value::list(
         LogicalType::struct_type(vec![
-            ("name".to_owned(), LogicalType::VARCHAR),
-            ("type".to_owned(), LogicalType::VARCHAR),
+            ("name".into(), LogicalType::VARCHAR),
+            ("type".into(), LogicalType::VARCHAR),
         ]),
         values,
     ));
@@ -227,71 +226,72 @@ fn sniff_csv_row(data: &CsvSniffFunctionData) -> Result<Vec<Value>> {
     row.push(if data.options.user_defined_parameters.is_empty() {
         Value::null(LogicalType::VARCHAR)
     } else {
-        Value::varchar(data.options.user_defined_parameters_string())
+        Value::try_varchar(&data.options.user_defined_parameters_string())?
     });
-    let mut csv_read = format!("FROM read_csv('{file}'{separator}auto_detect=false{separator}");
+    let mut csv_read =
+        rustdb_common::byte_format!("FROM read_csv('{file}'{separator}auto_detect=false{separator}");
     if !sm.delimiter.is_set_by_user() {
-        let _ = write!(
+        let _ = byte_write!(
             csv_read,
             "delim='{}'{separator}",
             format_option(sm.delimiter.get())
         );
     }
     if !sm.quote.is_set_by_user() {
-        let _ = write!(csv_read, "quote='{}'{separator}", format_byte(sm.quote.value()));
+        let _ = byte_write!(csv_read, "quote='{}'{separator}", format_byte(sm.quote.value()));
     }
     if !sm.escape.is_set_by_user() {
-        let _ = write!(csv_read, "escape='{}'{separator}", format_byte(sm.escape.value()));
+        let _ = byte_write!(csv_read, "escape='{}'{separator}", format_byte(sm.escape.value()));
     }
     if !sm.new_line.is_set_by_user() && new_line != "mix" {
-        let _ = write!(csv_read, "new_line='{new_line}'{separator}");
+        let _ = byte_write!(csv_read, "new_line='{new_line}'{separator}");
     }
     if !options.dialect_options.skip_rows.is_set_by_user() {
-        let _ = write!(
+        let _ = byte_write!(
             csv_read,
             "skip={}{separator}",
             options.dialect_options.skip_rows.value()
         );
     }
     if !sm.comment.is_set_by_user() {
-        let _ = write!(
+        let _ = byte_write!(
             csv_read,
             "comment='{}'{separator}",
             format_byte(sm.comment.value())
         );
     }
     if !options.dialect_options.header.is_set_by_user() {
-        let _ = write!(
+        let _ = byte_write!(
             csv_read,
             "header={}{separator}",
             if has_header { "true" } else { "false" }
         );
     }
-    let _ = write!(csv_read, "columns={columns}");
+    let _ = byte_write!(csv_read, "columns={columns}");
     if !date_format.is_set_by_user() {
         if !date_format.get().format_specifier().is_empty() {
-            let _ = write!(
+            let _ = byte_write!(
                 csv_read,
                 "{separator}dateformat='{}'",
                 date_format.get().format_specifier()
             );
         } else if has_date {
-            let _ = write!(csv_read, "{separator}dateformat='%Y-%m-%d'");
+            let _ = byte_write!(csv_read, "{separator}dateformat='%Y-%m-%d'");
         }
     }
     if !timestamp_format.is_set_by_user() && !timestamp_format.get().format_specifier().is_empty() {
-        let _ = write!(
+        let _ = byte_write!(
             csv_read,
             "{separator}timestampformat='{}'",
             timestamp_format.get().format_specifier()
         );
     }
     if !data.options.user_defined_parameters.is_empty() {
-        csv_read += separator;
-        csv_read += &data.options.user_defined_parameters_string();
+        csv_read.push_bytes(separator);
+        csv_read.push_bytes(data.options.user_defined_parameters_string());
     }
-    csv_read += ");";
-    row.push(Value::varchar(csv_read));
+    csv_read.push_bytes(");");
+    row.push(Value::try_varchar(&csv_read)?);
     Ok(row)
 }
 

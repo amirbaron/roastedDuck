@@ -135,25 +135,36 @@ impl ColumnBindingResolver {
         if let ExpressionKind::ColumnRef(column) = &expr.kind {
             let binding = column.binding;
             let Some(index) = self.bindings.iter().position(|candidate| *candidate == binding) else {
-                return Err(Error::internal(format!(
-                    "Failed to bind column reference \"{}\" [{}.{}] (bindings: {})",
-                    expr.alias,
-                    binding.table_index,
-                    binding.column_index,
-                    self.bindings
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                )));
+                return Err(Error::new_bytes(
+                    rustdb_common::ErrorKind::Internal,
+                    rustdb_common::byte_format!(
+                        "Failed to bind column reference \"{}\" [{}.{}] (bindings: {})",
+                        expr.alias,
+                        binding.table_index,
+                        binding.column_index,
+                        self.bindings
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    )
+                    .into_bytes(),
+                ));
             };
             if let Some(ty) = self.types.get(index)
                 && ty != &expr.return_type
             {
-                return Err(Error::internal(format!(
-                    "Failed to bind column reference \"{}\" [{}.{}]: inequal types ({} != {ty})",
-                    expr.alias, binding.table_index, binding.column_index, expr.return_type
-                )));
+                return Err(Error::new_bytes(
+                    rustdb_common::ErrorKind::Internal,
+                    rustdb_common::byte_format!(
+                        "Failed to bind column reference \"{}\" [{}.{}]: inequal types ({} != {ty})",
+                        expr.alias,
+                        binding.table_index,
+                        binding.column_index,
+                        expr.return_type
+                    )
+                    .into_bytes(),
+                ));
             }
             *expr = Expression::reference(expr.alias.clone(), expr.return_type.clone(), index as u64);
             return Ok(());

@@ -233,11 +233,11 @@ impl QueryResult for CppResult {
         unsafe { (self.api.result_row_count)(self.raw.as_ptr()) as usize }
     }
 
-    fn column_name(&self, column: usize) -> &str {
+    fn column_name(&self, column: usize) -> &[u8] {
         // SAFETY: the name is owned by the live result; out-of-range columns yield "".
         let name = unsafe { (self.api.result_column_name)(self.raw.as_ptr(), column as u64) };
         // SAFETY: NUL-terminated string borrowed from `self`.
-        unsafe { CStr::from_ptr(name) }.to_str().unwrap_or("")
+        unsafe { CStr::from_ptr(name) }.to_bytes()
     }
 
     fn column_type(&self, column: usize) -> String {

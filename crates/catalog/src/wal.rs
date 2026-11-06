@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use rustdb_ast::{AlterInfo, AlterInfoKind, AlterTableInfo, Constraint, CreateInfoKind, ParseInfo};
-use rustdb_common::{CaseInsensitiveMap, Result};
+use rustdb_common::{ByteString, CaseInsensitiveMap, Result};
 use rustdb_serde::Serializer;
 use rustdb_storage::checkpoint::pointers::serialize_index_storage_info;
 use rustdb_storage::index::art::ArtStorageInfo;
@@ -47,13 +47,13 @@ fn index_options(batch: &WalBatch) -> CaseInsensitiveMap<Value> {
 fn serialize_index(
     batch: &WalBatch,
     table: Option<&Arc<rustdb_storage::DataTableInfo>>,
-    name: &str,
+    name: impl AsRef<[u8]>,
 ) -> Result<(ArtStorageInfo, Vec<Vec<Vec<u8>>>)> {
     let options = index_options(batch);
-    let Some(entry) = table.and_then(|table| table.indexes().find(name)) else {
+    let Some(entry) = table.and_then(|table| table.indexes().find(name.as_ref())) else {
         // The index is already gone from storage: log it empty.
         let info = ArtStorageInfo {
-            name: name.to_owned(),
+            name: name.as_ref().into(),
             options,
             ..ArtStorageInfo::default()
         };
@@ -83,10 +83,12 @@ fn write_index_storage(
 /// Logs the creation of `entry` in schema `schema` of catalog `catalog`.
 pub(crate) fn write_create(
     batch: &mut WalBatch,
-    catalog: &str,
-    schema: &str,
+    catalog: impl AsRef<[u8]>,
+    schema: impl AsRef<[u8]>,
     entry: &CatalogEntry,
 ) -> Result<()> {
+    let catalog = catalog.as_ref();
+    let schema = schema.as_ref();
     if entry.temporary || entry.internal {
         return Ok(());
     }
@@ -142,7 +144,8 @@ pub(crate) fn write_create(
 }
 
 /// Logs the drop of `entry` from schema `schema`.
-pub(crate) fn write_drop(batch: &mut WalBatch, schema: &str, entry: &CatalogEntry) -> Result<()> {
+pub(crate) fn write_drop(batch: &mut WalBatch, schema: impl AsRef<[u8]>, entry: &CatalogEntry) -> Result<()> {
+    let schema = schema.as_ref();
     if entry.temporary || entry.internal {
         return Ok(());
     }
@@ -168,7 +171,7 @@ pub(crate) fn write_drop(batch: &mut WalBatch, schema: &str, entry: &CatalogEntr
 }
 
 /// The name of the index an `ADD PRIMARY KEY` creates (`UniqueConstraint::GetName`).
-fn primary_key_index_name(info: &AlterInfo) -> Option<String> {
+fn primary_key_index_name(info: &AlterInfo) -> Option<ByteString> {
     let AlterInfoKind::AlterTable(AlterTableInfo::AddConstraint(add)) = &info.kind else {
         return None;
     };
@@ -178,10 +181,10 @@ fn primary_key_index_name(info: &AlterInfo) -> Option<String> {
     if !unique.is_primary_key {
         return None;
     }
-    let mut name = format!("PRIMARY_{}", info.name);
+    let mut name = rustdb_common::byte_format!("PRIMARY_{}", info.name);
     for column in &unique.columns {
-        name.push('_');
-        name.push_str(column);
+        name.push(b'_');
+        name.push_bytes(column);
     }
     Some(name)
 }

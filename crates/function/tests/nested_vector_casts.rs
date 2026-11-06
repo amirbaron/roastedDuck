@@ -76,19 +76,13 @@ fn lists_to_text_and_arrays() {
 #[test]
 fn structs_to_text_and_maps() {
     let row_type = LogicalType::struct_type(vec![
-        ("a".to_owned(), LogicalType::INTEGER),
-        ("b".to_owned(), LogicalType::VARCHAR),
+        ("a".into(), LogicalType::INTEGER),
+        ("b".into(), LogicalType::VARCHAR),
     ]);
     let rows = [
-        Value::struct_value(vec![
-            ("a".to_owned(), Value::integer(1)),
-            ("b".to_owned(), text("x")),
-        ]),
+        Value::struct_value(vec![("a".into(), Value::integer(1)), ("b".into(), text("x"))]),
         Value::null(row_type),
-        Value::struct_value(vec![
-            ("a".to_owned(), Value::integer(2)),
-            ("b".to_owned(), text("y,z")),
-        ]),
+        Value::struct_value(vec![("a".into(), Value::integer(2)), ("b".into(), text("y,z"))]),
     ];
     assert_eq!(
         cast_rows(&rows, &LogicalType::VARCHAR, false),

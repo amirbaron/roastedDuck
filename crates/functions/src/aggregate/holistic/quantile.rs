@@ -25,12 +25,20 @@ use crate::values::as_double;
 
 /// One requested quantile (DuckDB's `QuantileValue`): its absolute value as DOUBLE, and the
 /// unscaled value and scale factor when it was given as a DECIMAL.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub(crate) struct QuantileValue {
     /// The quantile as given, made positive (DuckDB's `val`): a DECIMAL stays one.
     val: Value,
     pub(crate) dbl: f64,
     decimal: Option<(i128, i128)>,
+}
+
+impl PartialEq for QuantileValue {
+    fn eq(&self, other: &Self) -> bool {
+        // QuantileValue::operator== compares the original Values numerically,
+        // including equivalent DECIMAL scales and DOUBLE probability literals.
+        rustdb_function::cast::values_equal(&self.val, &other.val).unwrap_or(false)
+    }
 }
 
 impl QuantileValue {
@@ -67,6 +75,13 @@ pub(crate) struct QuantileBindData {
 }
 
 impl FunctionData for QuantileBindData {
+    fn equals(&self, other: &dyn FunctionData) -> bool {
+        other
+            .as_any()
+            .downcast_ref::<Self>()
+            .is_some_and(|other| self == other)
+    }
+
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }

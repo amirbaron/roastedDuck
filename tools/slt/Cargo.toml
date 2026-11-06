@@ -12,6 +12,7 @@ name = "slt"
 path = "src/main.rs"
 
 [dependencies]
+rustdb_capi = { package = "rustdb-capi", path = "../../crates/capi" }
 rustdb.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 flate2 = "1"

@@ -310,7 +310,7 @@ static std::string prepare(const std::string &sql) {
 
 int main(int argc, char **argv) {
 	auto records = read_corpus();
-	duckdb::PostgresParser::SetPreserveIdentifierCase(true);
+	duckdb::PostgresParser::SetPreserveIdentifierCase(!(argc > 1 && std::string(argv[1]) == "--fold"));
 	if (argc > 1 && std::string(argv[1]) == "bench") {
 		int iterations = argc > 2 ? std::stoi(argv[2]) : 10;
 		std::vector<std::string> queries;

@@ -11,7 +11,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::{Error, Result};
+use rustdb_common::{ByteString, Error, Result};
 use rustdb_serde::{SerializeObject, Serializer};
 use rustdb_types::compare::{CompareOp, SqlOrd};
 
@@ -40,17 +40,18 @@ pub trait ExpressionFilter: Send + Sync + fmt::Debug {
     }
 
     /// The filter as SQL text over `column_name`.
-    fn to_sql(&self, column_name: &str) -> String;
+    fn to_sql(&self, column_name: &[u8]) -> ByteString;
 
     /// Writes the filter's `TableFilter` properties, its type included, for a serialized
     /// plan (DuckDB's `ExpressionFilter::Serialize`). Filters the execution layer creates
     /// never reach a serialized plan.
     fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
         let _ = serializer;
-        Err(Error::serialization(format!(
-            "Cannot serialize the table filter {}",
-            self.to_sql("column")
-        )))
+        Err(Error::new_bytes(
+            rustdb_common::ErrorKind::Serialization,
+            rustdb_common::byte_format!("Cannot serialize the table filter {}", self.to_sql(b"column"))
+                .into_bytes(),
+        ))
     }
 
     /// The filter as `Any`, so that layers above storage can recognize their own
@@ -232,7 +233,7 @@ pub enum TableFilter {
     /// A filter on field `child_index` of a STRUCT column.
     StructExtract {
         child_index: usize,
-        child_name: String,
+        child_name: ByteString,
         child_filter: Box<TableFilter>,
     },
     /// Only used to skip row groups and segments; rows are not filtered by it.
@@ -432,7 +433,9 @@ impl TableFilter {
     }
 
     /// The filter as SQL text over `column_name` (`TableFilter::ToString`).
-    pub fn to_sql(&self, column_name: &str) -> String {
+    pub fn to_sql(&self, column_name: impl AsRef<[u8]>) -> ByteString {
+        use rustdb_common::byte_format as format;
+        let column_name = column_name.as_ref();
         match self {
             Self::ConstantComparison { op, constant } => {
                 format!(
@@ -443,16 +446,20 @@ impl TableFilter {
             }
             Self::IsNull => format!("{column_name} IS NULL"),
             Self::IsNotNull => format!("{column_name} IS NOT NULL"),
-            Self::Or(children) => children
-                .iter()
-                .map(|child| child.to_sql(column_name))
-                .collect::<Vec<_>>()
-                .join(" OR "),
-            Self::And(children) => children
-                .iter()
-                .map(|child| child.to_sql(column_name))
-                .collect::<Vec<_>>()
-                .join(" AND "),
+            Self::Or(children) => ByteString::join(
+                &children
+                    .iter()
+                    .map(|child| child.to_sql(column_name))
+                    .collect::<Vec<_>>(),
+                " OR ",
+            ),
+            Self::And(children) => ByteString::join(
+                &children
+                    .iter()
+                    .map(|child| child.to_sql(column_name))
+                    .collect::<Vec<_>>(),
+                " AND ",
+            ),
             Self::StructExtract {
                 child_index,
                 child_name,
@@ -464,16 +471,18 @@ impl TableFilter {
                     child_filter.to_sql(&format!("{column_name}.{child_name}"))
                 }
             }
-            Self::Optional(child) => child.as_ref().map_or_else(String::new, |child| {
+            Self::Optional(child) => child.as_ref().map_or_else(ByteString::new, |child| {
                 format!("optional: {}", child.to_sql(column_name))
             }),
             Self::SelectivityOptional(filter) => format!("optional: {}", filter.child.to_sql(column_name)),
             Self::In(values) => {
-                let list = values
-                    .iter()
-                    .map(rustdb_types::Value::to_sql_string)
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                let list = ByteString::join(
+                    &values
+                        .iter()
+                        .map(rustdb_types::Value::to_sql_string)
+                        .collect::<Vec<_>>(),
+                    ", ",
+                );
                 format!("{column_name} IN ({list})")
             }
             // DuckDB's `DynamicFilter::ToString`.

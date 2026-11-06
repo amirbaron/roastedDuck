@@ -379,7 +379,7 @@ pub fn maximum_value(ty: &LogicalType) -> Option<NumericValue> {
         L::Double => NumericValue::F64(f64::INFINITY),
         L::Decimal => return decimal_bound(ty, true),
         L::Enum => {
-            let size = ty.enum_values().map_or(0, <[String]>::len) as u64;
+            let size = ty.enum_values().map_or(0, <[_]>::len) as u64;
             let last = size.saturating_sub(1);
             match ty.physical_type() {
                 PhysicalType::UInt8 => NumericValue::U8(last as u8),

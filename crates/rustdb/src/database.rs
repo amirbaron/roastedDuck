@@ -24,6 +24,7 @@ mod active_query;
 mod appender;
 mod prepared_statement;
 mod registration;
+mod statement_preprocessor;
 
 pub use active_query::{
     ClientHandle, PendingExecutionResult, PendingQuery, QueryId, QueryProgress, QueryResult,
@@ -46,7 +47,7 @@ pub enum ExtensionLoad {
 /// Shared state of one database (DuckDB's `DatabaseInstance`).
 #[derive(Debug)]
 pub(crate) struct DatabaseInstance {
-    path: String,
+    path: rustdb_common::ByteString,
     config: Config,
     pub(crate) transactions: Arc<TransactionManager>,
     /// Builtin functions and system objects (`system.main`); read by the binder.
@@ -55,7 +56,7 @@ pub(crate) struct DatabaseInstance {
     pub(crate) databases: DatabaseManager,
     /// The name of the database opened at start-up (the default database), which
     /// `ALTER DATABASE ... SET ALIAS TO` renames.
-    default_database: std::sync::RwLock<Option<String>>,
+    default_database: std::sync::RwLock<Option<rustdb_common::ByteString>>,
     /// The cast functions (DuckDB's `DBConfig::GetCastFunctions`); extensions replace
     /// the set when they register casts.
     casts: std::sync::RwLock<Arc<CastFunctionSet>>,
@@ -115,6 +116,7 @@ pub(crate) struct DatabaseInstance {
     global_settings: Mutex<GlobalSettings>,
     /// The statically linked extensions whose catalog entries are registered.
     loaded_extensions: Arc<Mutex<Vec<StaticExtension>>>,
+    external_extensions: Arc<crate::external_extensions::ExternalExtensionState>,
     /// The replacement scans clients added (DuckDB's `DBConfig::replacement_scans` after
     /// the built-in ones).
     replacement_scans: std::sync::RwLock<Vec<rustdb_planner::ReplacementScan>>,
@@ -141,6 +143,17 @@ impl rustdb_planner::DatabaseState for InstanceState {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    fn autoload_extension(&self, name: &str) -> Result<bool> {
+        let Some(extension) = StaticExtension::from_name(name) else {
+            return Ok(false);
+        };
+        self.instance
+            .upgrade()
+            .ok_or_else(|| Error::internal("Extension autoload after database shutdown"))?
+            .load_static_extension(extension)?;
+        Ok(true)
+    }
 }
 
 /// The instance state of the database a call is bound in.
@@ -150,6 +163,63 @@ pub(crate) fn instance_state(context: &ClientContext) -> Result<&InstanceState> 
         .as_ref()
         .and_then(|state| state.as_any().downcast_ref::<InstanceState>())
         .ok_or_else(|| Error::internal("function bound without a database instance"))
+}
+
+/// `BindExtensionFunction`: load the provider, resolve using the declared placeholder
+/// arguments, then delegate to the real overload's bind callback.
+pub(crate) fn bind_extension_overload(
+    function: &mut rustdb_function::ScalarFunction,
+    input: &rustdb_function::BindInput<'_>,
+    extension: &str,
+) -> Result<Option<Arc<dyn rustdb_function::FunctionData>>> {
+    if !rustdb_function::extension_entries::can_autoload_extension(extension) {
+        return Err(Error::binder(rustdb_common::byte_format!(
+            "Trying to call function \"{}\" which is present in extension \"{extension}\" - but the extension is not loaded and could not be auto-loaded",
+            function.name
+        )));
+    }
+    let context = input
+        .binder
+        .and_then(|binder| binder.downcast_ref::<ClientContext>())
+        .ok_or_else(|| Error::internal("Extension overload bound without a client context"))?;
+    let instance = instance_state(context)?
+        .instance()
+        .upgrade()
+        .ok_or_else(|| Error::internal("Extension overload bound after database shutdown"))?;
+    if let Some(extension) = StaticExtension::from_name(extension) {
+        instance.load_static_extension(extension)?;
+    }
+    let entry = instance
+        .system_catalog
+        .get_entry(
+            &Transaction::system(),
+            rustdb_catalog::CatalogType::ScalarFunction,
+            "main",
+            &function.name,
+        )
+        .ok_or_else(|| Error::internal("Extension scalar entry disappeared during loading"))?;
+    let rustdb_catalog::EntryKind::ScalarFunction(functions) = &entry.kind else {
+        return Err(Error::internal("Extension entry is not a scalar function"));
+    };
+    let index = rustdb_planner::function_binder::FunctionBinder::new(context)
+        .bind_function(&function.name, &functions.functions, &function.arguments)?
+        .map_err(|error| Error::internal(error.raw_message()))?;
+    let resolved = functions.functions[index].clone();
+    if resolved
+        .bind
+        .as_ref()
+        .zip(function.bind.as_ref())
+        .is_some_and(|(left, right)| Arc::ptr_eq(left, right))
+    {
+        return Err(Error::internal(
+            "Extension loading did not replace its scalar placeholder",
+        ));
+    }
+    *function = resolved;
+    function
+        .bind
+        .clone()
+        .map_or(Ok(None), |bind| bind(function, input))
 }
 
 /// The object cache key of the database's loaded extensions, read by `duckdb_extensions()`.
@@ -204,12 +274,12 @@ enum StaticExtension {
 
 impl StaticExtension {
     const ALL: [Self; 6] = [
-        Self::Parquet,
         Self::Json,
+        Self::Icu,
         Self::Tpch,
         Self::Tpcds,
         Self::Autocomplete,
-        Self::Icu,
+        Self::Parquet,
     ];
 
     fn from_name(name: &str) -> Option<Self> {
@@ -244,21 +314,23 @@ impl StaticExtension {
     }
 
     /// Whether the extension has a pragma `name` that stands for a query.
-    fn has_pragma(self, name: &str) -> bool {
+    fn has_pragma(self, name: impl AsRef<[u8]>) -> bool {
+        let name = name.as_ref();
         match self {
-            Self::Tpch => name.eq_ignore_ascii_case("tpch"),
-            Self::Tpcds => name.eq_ignore_ascii_case("tpcds"),
+            Self::Tpch => name.eq_ignore_ascii_case(b"tpch"),
+            Self::Tpcds => name.eq_ignore_ascii_case(b"tpcds"),
             Self::Parquet | Self::Json | Self::Autocomplete | Self::Icu => false,
         }
     }
 
     /// The SQL the extension's pragma `name` stands for.
-    fn pragma_query(self, name: &str, parameters: &[Value]) -> Result<String> {
+    fn pragma_query(self, name: impl AsRef<[u8]>, parameters: &[Value]) -> Result<String> {
+        let name = name.as_ref();
         match self {
             Self::Tpch => rustdb_tpch::pragma_tpch_query(parameters),
             Self::Tpcds => rustdb_tpcds::pragma_tpcds_query(parameters),
             Self::Parquet | Self::Json | Self::Autocomplete | Self::Icu => {
-                Err(Error::internal(format!("no pragma {name}")))
+                Err(Error::internal(rustdb_common::byte_format!("no pragma {name}")))
             }
         }
     }
@@ -350,7 +422,8 @@ fn pragma_function_names(loaded: &Mutex<Vec<StaticExtension>>) -> Vec<String> {
 #[derive(Debug, Default, Clone)]
 struct GlobalSettings {
     version: u64,
-    values: Vec<(&'static str, Value)>,
+    /// None records an explicit RESET, including a reset of constructor options.
+    values: Vec<(&'static str, Option<Value>)>,
 }
 
 /// The default of `checkpoint_threshold` (16 MiB).
@@ -460,8 +533,9 @@ fn check_shredding_type(ty: &LogicalType) -> Result<()> {
 }
 
 /// Whether `name` is `force_compression`.
-fn is_force_compression(name: &str) -> bool {
-    name.eq_ignore_ascii_case("force_compression")
+fn is_force_compression(name: impl AsRef<[u8]>) -> bool {
+    let name = name.as_ref();
+    name.eq_ignore_ascii_case(b"force_compression")
 }
 
 /// `ForceCompressionSetting::OnSet`: the codec named by `value` (`none` / `auto`: none).
@@ -496,28 +570,102 @@ fn parse_force_compression(
 }
 
 /// Whether `name` is a setting of the secret manager.
-fn is_secret_setting(name: &str) -> bool {
+fn is_secret_setting(name: impl AsRef<[u8]>) -> bool {
+    let name = name.as_ref();
     [
         "secret_directory",
         "allow_persistent_secrets",
         "default_secret_storage",
     ]
     .iter()
-    .any(|setting| setting.eq_ignore_ascii_case(name))
+    .any(|setting| setting.as_bytes().eq_ignore_ascii_case(name))
 }
 
 /// DuckDB's default `temp_directory`: `<database>.tmp`, or `.tmp` in memory.
-fn default_temp_directory(path: &str) -> String {
+fn default_temp_directory(path: impl AsRef<[u8]>) -> rustdb_common::ByteString {
+    let path = path.as_ref();
     if path.is_empty() {
-        ".tmp".to_owned()
+        ".tmp".into()
     } else {
-        format!("{path}.tmp")
+        rustdb_common::byte_format!("{path}.tmp")
     }
+}
+
+/// Configure the explicitly opened main file and temporary directory as allowed
+/// paths when external access starts disabled (`DatabaseInstance::Configure`).
+fn add_startup_access_paths(config: &mut Config, path: &[u8]) -> Result<()> {
+    use rustdb_function::cast::ValueCast;
+    let external = config
+        .options
+        .iter()
+        .rev()
+        .find(|(name, _)| name.eq_ignore_ascii_case("enable_external_access"))
+        .map(|(_, value)| value.default_cast_as(&LogicalType::BOOLEAN))
+        .transpose()?
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+    if external || path.is_empty() {
+        return Ok(());
+    }
+    let paths = ["", ".wal", ".wal.checkpoint", ".wal.recovery"]
+        .into_iter()
+        .map(|suffix| {
+            rustdb_function::file_system::sanitize_allowed_path_bytes(&rustdb_common::byte_format!(
+                "{path}{suffix}"
+            ))
+        })
+        .collect();
+    let temp = config
+        .options
+        .iter()
+        .rev()
+        .find(|(name, _)| name.eq_ignore_ascii_case("temp_directory"))
+        .map_or_else(
+            || Ok(default_temp_directory(path)),
+            |(_, value)| {
+                if value.is_null() {
+                    Ok(rustdb_common::ByteString::new())
+                } else {
+                    value.to_varchar_bytes()
+                }
+            },
+        )?;
+    add_allowed_config_paths(config, "allowed_paths", paths);
+    if !temp.is_empty() {
+        let mut temp = rustdb_function::file_system::sanitize_allowed_path_bytes(&temp);
+        if !temp.ends_with(b"/") {
+            temp.push(b'/');
+        }
+        add_allowed_config_paths(config, "allowed_directories", vec![temp]);
+    }
+    Ok(())
+}
+
+fn add_allowed_config_paths(config: &mut Config, name: &str, paths: Vec<rustdb_common::ByteString>) {
+    let mut values = config
+        .options
+        .iter()
+        .rev()
+        .find(|(key, _)| key == name)
+        .and_then(|(_, value)| value.children())
+        .unwrap_or_default()
+        .to_vec();
+    for path in paths {
+        let value = Value::bytes(LogicalType::VARCHAR, &path);
+        if !values.contains(&value) {
+            values.push(value);
+        }
+    }
+    config.options.retain(|(key, _)| key != name);
+    config
+        .options
+        .push((name.to_owned(), Value::list(LogicalType::VARCHAR, values)));
 }
 
 /// Whether `name` is an option an extension adds rather than a built-in option (DuckDB
 /// keeps such start-up options as `unrecognized_options` until the extension loads).
-fn is_extension_setting(name: &str) -> bool {
+fn is_extension_setting(name: impl AsRef<[u8]>) -> bool {
+    let name = name.as_ref();
     crate::settings::canonical_option(name).is_none()
         && rustdb_function::extension_entries::find_extension(
             name,
@@ -551,13 +699,15 @@ fn contains_type(ty: &LogicalType, id: rustdb_types::LogicalTypeId) -> bool {
 }
 
 /// Whether `name` is `threads` or its alias `worker_threads`.
-fn is_threads_setting(name: &str) -> bool {
-    name.eq_ignore_ascii_case("threads") || name.eq_ignore_ascii_case("worker_threads")
+fn is_threads_setting(name: impl AsRef<[u8]>) -> bool {
+    let name = name.as_ref();
+    name.eq_ignore_ascii_case(b"threads") || name.eq_ignore_ascii_case(b"worker_threads")
 }
 
 /// Whether `name` is `checkpoint_threshold` or its alias `wal_autocheckpoint`.
-fn is_checkpoint_threshold(name: &str) -> bool {
-    name.eq_ignore_ascii_case("checkpoint_threshold") || name.eq_ignore_ascii_case("wal_autocheckpoint")
+fn is_checkpoint_threshold(name: impl AsRef<[u8]>) -> bool {
+    let name = name.as_ref();
+    name.eq_ignore_ascii_case(b"checkpoint_threshold") || name.eq_ignore_ascii_case(b"wal_autocheckpoint")
 }
 
 impl Drop for DatabaseInstance {
@@ -594,6 +744,7 @@ impl DatabaseInstance {
                 self.load_icu_config();
             }
             if extension == StaticExtension::Parquet {
+                self.load_parquet_config()?;
                 // `ParquetExtension::Load` registers the ZSTD file system.
                 self.object_cache.put(
                     rustdb_function::file_system::ZSTD_FILE_SYSTEM_KEY.to_owned(),
@@ -601,6 +752,26 @@ impl DatabaseInstance {
                 );
             }
             loaded.push(extension);
+        }
+        Ok(())
+    }
+
+    /// `ParquetExtension::LoadInternal`: real boolean extension settings, with
+    /// session defaults for SET and global initial/default values.
+    fn load_parquet_config(&self) -> Result<()> {
+        for name in crate::settings::PARQUET_OPTION_NAMES {
+            let definition = crate::default_settings::SETTINGS
+                .iter()
+                .find(|definition| definition.name == name)
+                .ok_or_else(|| Error::internal(format!("Missing Parquet setting metadata: {name}")))?;
+            self.add_extension_option(rustdb_function::ExtensionOption {
+                name: name.to_owned(),
+                description: definition.description.to_owned(),
+                input_type: LogicalType::BOOLEAN,
+                default_value: Value::boolean(name == "enable_geoparquet_conversion"),
+                set_function: None,
+                global_by_default: false,
+            });
         }
         Ok(())
     }
@@ -620,7 +791,7 @@ impl DatabaseInstance {
 
     /// The collations extensions registered in the system catalog, with whether they are
     /// combinable.
-    pub(crate) fn extension_collations(&self) -> Vec<(String, bool)> {
+    pub(crate) fn extension_collations(&self) -> Vec<(rustdb_common::ByteString, bool)> {
         let Some(schema) = self.system_catalog.schema(
             &rustdb_catalog::Transaction::system(),
             rustdb_catalog::DEFAULT_SCHEMA,
@@ -679,12 +850,16 @@ impl DatabaseInstance {
 
     /// The extension option called `name` (case-insensitive), if an extension added it
     /// (`DBConfig::TryGetExtensionOption`).
-    pub(crate) fn extension_option(&self, name: &str) -> Option<rustdb_function::ExtensionOption> {
+    pub(crate) fn extension_option(
+        &self,
+        name: impl AsRef<[u8]>,
+    ) -> Option<rustdb_function::ExtensionOption> {
+        let name = name.as_ref();
         self.extension_options
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .iter()
-            .find(|option| option.name.eq_ignore_ascii_case(name))
+            .find(|option| option.name.as_bytes().eq_ignore_ascii_case(name))
             .cloned()
     }
 
@@ -756,7 +931,8 @@ impl DatabaseInstance {
     }
 
     /// The extension providing pragma `name`, if one is loaded.
-    fn extension_with_pragma(&self, name: &str) -> Option<StaticExtension> {
+    fn extension_with_pragma(&self, name: impl AsRef<[u8]>) -> Option<StaticExtension> {
+        let name = name.as_ref();
         self.loaded_extensions
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -766,15 +942,19 @@ impl DatabaseInstance {
     }
 
     /// Whether a loaded extension has a pragma `name`.
-    fn has_extension_pragma(&self, name: &str) -> bool {
+    fn has_extension_pragma(&self, name: impl AsRef<[u8]>) -> bool {
+        let name = name.as_ref();
         self.extension_with_pragma(name).is_some()
     }
 
     /// The SQL the pragma `name` of a loaded extension stands for (a
     /// `PragmaFunction::PragmaCall` with a query).
-    fn extension_pragma_query(&self, name: &str, parameters: &[Value]) -> Result<String> {
+    fn extension_pragma_query(&self, name: impl AsRef<[u8]>, parameters: &[Value]) -> Result<String> {
+        let name = name.as_ref();
         self.extension_with_pragma(name)
-            .ok_or_else(|| Error::internal(format!("no extension has the pragma {name}")))?
+            .ok_or_else(|| {
+                Error::internal(rustdb_common::byte_format!("no extension has the pragma {name}"))
+            })?
             .pragma_query(name, parameters)
     }
 
@@ -831,7 +1011,8 @@ impl DatabaseInstance {
                     ));
                 }
                 let directory = match value {
-                    Some(value) => value.to_varchar()?,
+                    Some(value) if value.is_null() => rustdb_common::ByteString::new(),
+                    Some(value) => value.to_varchar_bytes()?,
                     None => default_temp_directory(&self.path),
                 };
                 buffer_manager.set_temporary_directory(&directory)
@@ -1247,7 +1428,7 @@ impl DatabaseInstance {
         let (name, new_name) = (&info.catalog, &rename.new_name);
         if !self.databases.rename(name, new_name)? {
             if info.if_not_found == rustdb_ast::OnEntryNotFound::ThrowException {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "Failed to rename database \"{name}\": database not found"
                 )));
             }
@@ -1267,24 +1448,25 @@ impl DatabaseInstance {
     }
 
     /// The name of the database opened at start-up.
-    pub(crate) fn default_database_name(&self) -> String {
+    pub(crate) fn default_database_name(&self) -> rustdb_common::ByteString {
         self.default_database
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
-            .unwrap_or_else(|| "memory".to_owned())
+            .unwrap_or_else(|| "memory".into())
     }
 
     /// The attached database called `name`.
-    pub(crate) fn database(&self, name: &str) -> Result<Arc<AttachedDatabase>> {
+    pub(crate) fn database(&self, name: impl AsRef<[u8]>) -> Result<Arc<AttachedDatabase>> {
+        let name = name.as_ref();
         self.databases
             .get(name)
-            .ok_or_else(|| Error::binder(format!("Catalog \"{name}\" does not exist!")))
+            .ok_or_else(|| Error::binder(rustdb_common::byte_format!("Catalog \"{name}\" does not exist!")))
     }
 
     /// The catalogs the binder sees: `default` first, the other attached databases,
     /// then `system`.
-    pub(crate) fn catalogs(&self, default: &str) -> Vec<Arc<Catalog>> {
+    pub(crate) fn catalogs(&self, default: &[u8]) -> Vec<Arc<Catalog>> {
         let databases = self.databases.all();
         let mut catalogs: Vec<Arc<Catalog>> = databases
             .iter()
@@ -1318,7 +1500,7 @@ impl DatabaseInstance {
     /// either).
     fn auto_checkpoint(
         &self,
-        name: &str,
+        name: &[u8],
         blocks_concurrent: bool,
         estimated_size: u64,
         skip_checkpoint: bool,
@@ -1377,7 +1559,7 @@ impl DatabaseInstance {
             // transaction made changes they must not see; the checkpoint lock must be free,
             // also of committed changes older transactions still need.
             if blocks_concurrent
-                || self.transactions.retains_changes(u64::MAX, &database.name())
+                || self.transactions.retains_changes(u64::MAX, database.name())
                 || database.catalog.locks().checkpoint.try_exclusive().is_none()
             {
                 return Ok(());
@@ -1429,6 +1611,9 @@ impl DatabaseInstance {
             return None;
         }
         let database = self.databases.get(&changes.database)?;
+        if rustdb_catalog::checkpoint::has_pending_index_replays(&database.catalog) {
+            return None;
+        }
         let storage = database.storage.file()?;
         if storage.is_read_only() {
             return None;
@@ -1456,7 +1641,7 @@ impl DatabaseInstance {
         // (`recently_committed_transactions`).
         if self
             .transactions
-            .retains_changes(transaction.transaction_id, &database.name())
+            .retains_changes(transaction.transaction_id, database.name())
         {
             return None;
         }
@@ -1498,27 +1683,46 @@ fn json_casts() -> CastFunctionSet {
 
 impl Database {
     /// Opens (or creates) the database at `path`; `""` or `":memory:"` is in-memory.
-    pub fn open(path: &str, config: &Config) -> Result<Self> {
+    pub fn open(path: impl AsRef<[u8]>, config: &Config) -> Result<Self> {
+        Self::open_configured(path.as_ref(), config, &[], &[])
+    }
+
+    /// Reopens using the configuration and registered extension options retained
+    /// from a database, independently from any connection's session overrides.
+    pub fn open_from_snapshot(
+        path: impl AsRef<[u8]>,
+        snapshot: &crate::ConfigurationSnapshot,
+    ) -> Result<Self> {
+        let snapshot = snapshot.prepare()?;
+        Self::open_configured(
+            path.as_ref(),
+            &snapshot.config,
+            &snapshot.extensions,
+            &snapshot.database_options,
+        )
+    }
+
+    fn open_configured(
+        path: &[u8],
+        config: &Config,
+        extensions: &[(rustdb_function::ExtensionOption, Value)],
+        database_options: &[(String, Value)],
+    ) -> Result<Self> {
         config.check_recognized()?;
-        let path = if path == ":memory:" {
-            String::new()
+        let mut config = config.clone();
+        config.options.extend_from_slice(database_options);
+        let path = if path == b":memory:" {
+            rustdb_common::ByteString::new()
         } else {
-            path.to_owned()
+            rustdb_common::ByteString::from(path)
         };
+        add_startup_access_paths(&mut config, &path)?;
+        let config = &config;
         let system_catalog = Catalog::new("system")?;
-        for set in rustdb_functions::builtin_scalar_functions() {
-            system_catalog.register_scalar_functions(set)?;
-        }
-        for set in rustdb_functions::builtin_aggregate_functions()? {
-            system_catalog.register_aggregate_functions(set)?;
-        }
+        let functions = crate::function_registration::StartupFunctions::new()?;
         for set in rustdb_functions::builtin_table_functions() {
             system_catalog.register_table_functions(set)?;
         }
-        for set in crate::sequence::sequence_functions() {
-            system_catalog.register_scalar_functions(set)?;
-        }
-        system_catalog.register_scalar_functions(crate::switch::switch_functions())?;
         for set in crate::checkpoint::checkpoint_functions() {
             system_catalog.register_table_functions(set)?;
         }
@@ -1527,9 +1731,6 @@ impl Database {
         }
         for set in crate::system_functions::catalog_table_functions() {
             system_catalog.register_table_functions(set)?;
-        }
-        for set in crate::system_functions::context_scalar_functions() {
-            system_catalog.register_scalar_functions(set)?;
         }
         for set in crate::system_functions::pragma_table_functions() {
             system_catalog.register_table_functions(set)?;
@@ -1558,10 +1759,13 @@ impl Database {
             system_catalog.register_table_functions(set)?;
         }
         system_catalog.register_table_functions(crate::read_duckdb::read_duckdb_functions())?;
+        crate::function_registration::register_builtin_collations(&system_catalog)?;
+        crate::function_registration::register_extension_overloads(&system_catalog)?;
+        let core_functions = functions.register_builtin(&system_catalog)?;
         crate::system_functions::register_default_views(&system_catalog)?;
         crate::system_functions::register_default_macros(&system_catalog)?;
         let buffer_manager = rustdb_buffer::BufferManager::new(rustdb_buffer::BufferManagerConfig {
-            temp_directory: Some(default_temp_directory(&path).into()),
+            temp_directory: Some(rustdb_common::native_file_path(&default_temp_directory(&path))?),
             ..rustdb_buffer::BufferManagerConfig::default()
         })?;
         let env = Arc::new(rustdb_execution::ClientEnv::new(buffer_manager));
@@ -1572,12 +1776,13 @@ impl Database {
             env.buffer_manager.clone(),
             true,
         ));
+        let oid_allocator = system_catalog.oid_allocator();
         let instance = DatabaseInstance {
             path: path.clone(),
             config: config.clone(),
             transactions: Arc::default(),
             system_catalog: Arc::new(system_catalog),
-            databases: DatabaseManager::new(Arc::clone(&log_manager)),
+            databases: DatabaseManager::new(Arc::clone(&log_manager), oid_allocator),
             default_database: std::sync::RwLock::default(),
             casts: std::sync::RwLock::new(Arc::new(json_casts())),
             client_casts: std::sync::atomic::AtomicBool::new(false),
@@ -1603,8 +1808,17 @@ impl Database {
             log_manager,
             global_settings: Mutex::default(),
             loaded_extensions: Arc::default(),
+            external_extensions: Arc::default(),
             replacement_scans: std::sync::RwLock::default(),
         };
+        for (option, value) in extensions {
+            instance.add_extension_option(option.clone());
+            instance.set_extension_global(option, Some(value.clone()));
+        }
+        instance.object_cache.put(
+            crate::external_extensions::EXTERNAL_EXTENSIONS_KEY.to_owned(),
+            Arc::clone(&instance.external_extensions),
+        );
         instance.object_cache.put(
             LOADED_EXTENSIONS_KEY.to_owned(),
             Arc::clone(&instance.loaded_extensions),
@@ -1613,12 +1827,10 @@ impl Database {
             rustdb_function::file_system::DISABLED_FILE_SYSTEMS_KEY.to_owned(),
             Arc::new(rustdb_function::file_system::DisabledFileSystems::default()),
         );
-        if config.load_extensions {
-            for extension in StaticExtension::ALL {
-                instance.load_static_extension(extension)?;
-            }
-        }
         for (name, value) in &config.options {
+            if is_secret_setting(name) {
+                instance.secrets.set_option(name, Some(value))?;
+            }
             if is_threads_setting(name) {
                 instance.set_threads(Some(value))?;
             }
@@ -1643,54 +1855,168 @@ impl Database {
         let database = Self {
             instance: Arc::new(instance),
         };
-        let options = crate::storage::startup_options(config);
-        // A data file opens as an in-memory database with views on it, as with `ATTACH`
-        // (`DatabaseManager::GetDatabaseType` resolving to `__open_file__`).
-        let main = if crate::attached::is_open_file(&path)? {
-            database.attach_open_file("", &path, &options, rustdb_ast::OnCreateConflict::ErrorOnConflict)?
-        } else {
-            database.attach("", &path, &options, rustdb_ast::OnCreateConflict::ErrorOnConflict)?
-        };
-        if let Some(main) = main {
-            main.is_initial.store(true, std::sync::atomic::Ordering::Release);
-            *database
-                .instance
-                .default_database
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(main.name().to_string());
+        database.load_extension_settings()?;
+        {
+            let mut connection = database.connect()?;
+            connection.transactions.begin(false)?;
+            let _scope = connection.query_scope();
+            let options = crate::storage::startup_options(config);
+            // A data file opens as an in-memory database with views on it, as with `ATTACH`
+            // (`DatabaseManager::GetDatabaseType` resolving to `__open_file__`).
+            let main = if crate::attached::is_open_file(&path)? {
+                database.attach_open_file(
+                    "",
+                    &path,
+                    &options,
+                    rustdb_ast::OnCreateConflict::ErrorOnConflict,
+                )?
+            } else {
+                database.attach("", &path, &options, rustdb_ast::OnCreateConflict::ErrorOnConflict)?
+            };
+            if let Some(main) = main {
+                main.is_initial.store(true, std::sync::atomic::Ordering::Release);
+                *database
+                    .instance
+                    .default_database
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((&*main.name()).into());
+            }
+            connection.transactions.commit(None)?;
+        }
+        let mut core_functions = Some(core_functions);
+        if config.load_extensions {
+            for extension in StaticExtension::ALL {
+                // The frozen generated loader registers core_functions after
+                // autocomplete and before parquet, including ICU's overloads first.
+                if extension == StaticExtension::Parquet
+                    && let Some(functions) = core_functions.take()
+                {
+                    functions.register(&database.instance.system_catalog)?;
+                }
+                database.instance.load_static_extension(extension)?;
+            }
+        }
+        // Retain the SDK's existing always-available core function contract when
+        // ordinary extension loading is disabled.
+        if let Some(functions) = core_functions {
+            functions.register(&database.instance.system_catalog)?;
         }
         Ok(database)
+    }
+
+    /// Validate configured extension options through the real connection callbacks
+    /// before creating main storage (`DatabaseInstance::LoadExtensionSettings`).
+    fn load_extension_settings(&self) -> Result<()> {
+        use rustdb_function::cast::ValueCast;
+
+        let options: Vec<_> = self
+            .instance
+            .config
+            .options
+            .iter()
+            .filter(|(name, _)| is_extension_setting(name) && self.instance.extension_option(name).is_none())
+            .collect();
+        if options.is_empty() {
+            return Ok(());
+        }
+        let mut order = rustdb_common::libcxx::UnorderedOrder::default();
+        for (index, (name, _)) in options.iter().enumerate() {
+            order.insert(rustdb_common::libcxx::ci_hash(name), index, |a, b| {
+                options[*a].0.eq_ignore_ascii_case(&options[*b].0)
+            });
+        }
+        // Configure copy-assigns DBConfigOptions into the empty instance config.
+        let configured = order.copy_assigned_to_empty();
+        let autoload = self
+            .instance
+            .config
+            .options
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case("autoload_known_extensions"))
+            .map_or(Ok(true), |(_, value)| {
+                Ok::<_, Error>(
+                    value
+                        .default_cast_as(&LogicalType::BOOLEAN)?
+                        .as_bool()
+                        .unwrap_or(false),
+                )
+            })?;
+        if !autoload {
+            let names: Vec<_> = configured
+                .order()
+                .into_iter()
+                .map(|index| options[configured.keys()[index]].0.as_str())
+                .collect();
+            return Err(Error::invalid_input(format!(
+                "The following options were not recognized: {}",
+                names.join(", ")
+            )));
+        }
+        // LoadExtensionSettings copy-constructs the map it traverses, protecting
+        // iteration from extensions removing recognized options during loading.
+        let snapshot = configured.copy_constructed(|a, b| options[*a].0.eq_ignore_ascii_case(&options[*b].0));
+        let mut connection = self.connect()?;
+        connection.transactions.begin(false)?;
+        for index in snapshot.order() {
+            let (name, value) = options[snapshot.keys()[index]];
+            let extension = rustdb_function::extension_entries::find_extension(
+                name,
+                rustdb_function::extension_entries::EXTENSION_SETTINGS,
+            )
+            .ok_or_else(|| Error::internal(format!("Missing extension setting provider: {name}")))?;
+            let loaded = StaticExtension::from_name(extension)
+                .is_some_and(|extension| self.instance.load_static_extension(extension).is_ok());
+            if !loaded {
+                return Err(Error::invalid_input(format!(
+                    "To set the {name} setting, the {extension} extension needs to be loaded. But it could not be autoloaded."
+                )));
+            }
+            connection.set_extension_variable(name, value, SetScope::Global)?;
+        }
+        connection.transactions.commit(None)?;
+        Ok(())
     }
 
     /// Attaches the database at `path` as `name` and replays its WAL
     /// (`DatabaseManager::AttachDatabase`).
     pub(crate) fn attach(
         &self,
-        name: &str,
-        path: &str,
+        name: impl AsRef<[u8]>,
+        path: impl AsRef<[u8]>,
         options: &AttachOptions,
         on_conflict: rustdb_ast::OnCreateConflict,
     ) -> Result<Option<Arc<AttachedDatabase>>> {
-        // A database file is tracked by its canonical path
-        // (`DatabaseManager::AttachDatabase` with `RequiresTrackingAttaches`).
+        let path = path.as_ref();
+        let name = name.as_ref();
+        // Remote files use filesystem URI canonicalization and automatic read-only
+        // access, as DatabaseManager::AttachDatabase does before tracking paths.
+        let mut options = options.clone();
+        let remote = rustdb_function::file_system::is_remote_file(path);
+        if remote && options.access == crate::AccessMode::Automatic {
+            options.access = crate::AccessMode::ReadOnly;
+        }
         let canonical_path;
-        let path = if path.is_empty() || path == ":memory:" {
+        let path = if path.is_empty() || path == b":memory:" {
             path
         } else {
-            canonical_path = rustdb_function::file_system::canonicalize_local_path(path);
-            canonical_path.as_str()
+            canonical_path = if remote {
+                rustdb_function::file_system::canonicalize_path_bytes(path)
+            } else {
+                rustdb_function::file_system::canonicalize_local_path_bytes(path)
+            };
+            canonical_path.as_bytes()
         };
-        if !path.is_empty() && path != ":memory:" {
+        if !path.is_empty() && path != b":memory:" {
             rustdb_function::file_system::verify_can_access_file(path)?;
             if !options.read_only() {
                 rustdb_function::file_system::verify_can_write(path)?;
             }
         }
-        // A new database file gets the configured storage version and block size
-        // (`serialization_compatibility`, `default_block_alloc_size`, also set by a
-        // global `SET`); an existing file keeps its own.
-        let mut options = options.clone();
-        if !path.is_empty() && path != ":memory:" && !std::path::Path::new(path).exists() {
+        // Existing files retain their storage version and block allocation size.
+        if !path.is_empty()
+            && path != b":memory:"
+            && !rustdb_storage::file_system::DatabaseFileSystem::for_path(path).exists(path)?
+        {
             if options.storage_version.is_none() {
                 options.storage_version = self.global_setting("storage_compatibility_version");
             }
@@ -1731,7 +2057,7 @@ impl Database {
             .storage
             .set_variant_shredding_config(self.instance.variant_shredding_config());
         if let Err(error) = crate::wal::replay(self, &attached) {
-            self.instance.databases.remove(&attached.name());
+            self.instance.databases.remove(attached.name());
             return Err(error);
         }
         // `RecoveryMode::NO_WAL_WRITES`: the WAL is replayed, but not written to again.
@@ -1748,23 +2074,35 @@ impl Database {
     /// (`OpenFileStorageAttach` with `OpenFileDefaultGenerator`).
     pub(crate) fn attach_open_file(
         &self,
-        name: &str,
-        path: &str,
+        name: impl AsRef<[u8]>,
+        path: impl AsRef<[u8]>,
         options: &AttachOptions,
         on_conflict: rustdb_ast::OnCreateConflict,
     ) -> Result<Option<Arc<AttachedDatabase>>> {
+        let path = path.as_ref();
+        let name = name.as_ref();
         // Its path is canonical, as the database type is only known after
         // `RequiresTrackingAttaches` canonicalized it.
-        let path = &rustdb_function::file_system::canonicalize_local_path(path);
+        let remote = rustdb_function::file_system::is_remote_file(path);
+        let path = &if remote {
+            rustdb_function::file_system::canonicalize_path_bytes(path)
+        } else {
+            rustdb_function::file_system::canonicalize_local_path_bytes(path)
+        };
         rustdb_function::file_system::verify_can_access_file(path)?;
+        let mut options = options.clone();
+        if remote && options.access == crate::AccessMode::Automatic {
+            options.access = crate::AccessMode::ReadOnly;
+        }
+        let options = &options;
         let name = if name.is_empty() {
             crate::storage::database_name(path)
         } else {
-            name.to_owned()
+            rustdb_common::ByteString::from(name)
         };
         let Some(attached) = self.instance.databases.attach(
             &name,
-            "",
+            b"",
             options,
             on_conflict,
             &self.instance.env.buffer_manager,
@@ -1773,14 +2111,16 @@ impl Database {
         else {
             return Ok(None);
         };
-        let sql = format!("SELECT * FROM '{}'", path.replace('\'', "''"));
-        let mut view_names = vec!["file".to_owned()];
+        let sql =
+            rustdb_common::byte_format!("SELECT * FROM {}", rustdb_ast::keyword::sql_string_bytes(path));
+        let mut view_names = vec![rustdb_common::ByteString::from("file")];
         if !name.eq_ignore_ascii_case("file") {
             view_names.push(name);
         }
         for view_name in view_names {
-            let Some(rustdb_ast::SqlStatementKind::Select(query)) =
-                rustdb_parser::parse(&sql)?.pop().map(|statement| statement.kind)
+            let Some(rustdb_ast::SqlStatementKind::Select(query)) = rustdb_parser::parse_bytes(&sql)?
+                .pop()
+                .map(|statement| statement.kind)
             else {
                 return Err(Error::internal("open file view is not a SELECT"));
             };
@@ -1793,7 +2133,9 @@ impl Database {
             };
             attached.catalog.create_entry_committed(
                 rustdb_catalog::DEFAULT_SCHEMA,
-                rustdb_catalog::CatalogEntry::new(view_name, rustdb_catalog::EntryKind::View(view)),
+                attached
+                    .catalog
+                    .new_entry(view_name, rustdb_catalog::EntryKind::View(view)),
             )?;
         }
         Ok(Some(attached))
@@ -1804,7 +2146,7 @@ impl Database {
     }
 
     /// The database file path, or `""` for in-memory databases.
-    pub fn path(&self) -> &str {
+    pub fn path(&self) -> &[u8] {
         &self.instance.path
     }
 
@@ -1836,11 +2178,65 @@ impl Database {
             .values
             .iter()
             .find(|(option, _)| option.eq_ignore_ascii_case(name))
-            .map(|(_, value)| value.clone())
+            .and_then(|(_, value)| value.clone())
     }
 
     pub fn config(&self) -> &Config {
         &self.instance.config
+    }
+
+    /// The live global configuration, including registered option definitions.
+    pub fn configuration_snapshot(&self) -> crate::ConfigurationSnapshot {
+        let mut config = self.instance.config.clone();
+        let mut database_options = Vec::new();
+        config.options.retain(|(name, value)| {
+            let Some(option) = crate::settings::canonical_option(name) else {
+                return true;
+            };
+            if crate::config::retained_database_option(option) {
+                database_options.push((option.to_owned(), value.clone()));
+            }
+            !crate::config::requires_database(option)
+        });
+        for (name, value) in &self
+            .instance
+            .global_settings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values
+        {
+            if crate::config::requires_database(name) {
+                database_options.retain(|(existing, _)| existing != name);
+                if crate::config::retained_database_option(name)
+                    && let Some(value) = value
+                {
+                    database_options.push(((*name).to_owned(), value.clone()));
+                }
+                continue;
+            }
+            config
+                .options
+                .retain(|(existing, _)| crate::settings::canonical_option(existing) != Some(*name));
+            if let Some(value) = value {
+                config.options.push(((*name).to_owned(), value.clone()));
+            }
+        }
+        let extensions = self.instance.extension_option_values();
+        config.options.retain(|(name, _)| {
+            !extensions
+                .iter()
+                .any(|(option, _)| option.name.eq_ignore_ascii_case(name))
+        });
+        config.unrecognized_options.retain(|(name, _)| {
+            !extensions
+                .iter()
+                .any(|(option, _)| option.name.eq_ignore_ascii_case(name))
+        });
+        crate::ConfigurationSnapshot {
+            config,
+            extensions,
+            database_options,
+        }
     }
 
     pub fn connect(&self) -> Result<Connection> {
@@ -1856,7 +2252,7 @@ impl Database {
             Arc::clone(&self.instance.transactions),
             Arc::clone(&function_client),
         );
-        function_client.set_database(&self.instance.default_database_name());
+        function_client.set_database(self.instance.default_database_name());
         self.instance
             .connections
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1869,13 +2265,29 @@ impl Database {
             crate::logging::LoggingContext::new(crate::logging::ContextScope::Connection),
         ));
         function_client.set_logger(Arc::clone(&logger) as Arc<dyn rustdb_function::logging::ClientLogger>);
+        if crate::platform::is_rosetta_translated() {
+            use rustdb_function::logging::{ClientLogger, LogLevel, LogScope};
+            if logger.should_log(LogScope::Connection, "", LogLevel::Warning) {
+                logger.write_log(
+                    LogScope::Connection,
+                    "",
+                    LogLevel::Warning,
+                    "OSX binary translation ('Rosetta') detected. Running DuckDB through Rosetta will \
+                     cause a significant performance degradation. DuckDB is available natively on Apple \
+                     silicon, please download an appropriate binary here: https://duckdb.org/install/",
+                )?;
+            }
+        }
         // `ClientData::temporary_objects`: the connection's in-memory `temp` database.
-        let temp_catalog = Arc::new(Catalog::new(rustdb_catalog::TEMP_CATALOG)?);
+        let temp_catalog = Arc::new(Catalog::with_oid_allocator(
+            rustdb_catalog::TEMP_CATALOG,
+            self.instance.system_catalog.oid_allocator(),
+        )?);
         temp_catalog.set_io(Arc::new(rustdb_storage::TableIoManager::new(
             self.instance.env.buffer_manager.clone(),
             Arc::new(rustdb_buffer::InMemoryBlockManager::default()),
         )))?;
-        Ok(Connection {
+        let mut connection = Connection {
             synced_globals: GlobalSettings::default(),
             local_overrides: std::collections::HashSet::new(),
             temp_catalog,
@@ -1898,7 +2310,9 @@ impl Database {
             active_query: None,
             next_query_id: 0,
             client: Arc::default(),
-        })
+        };
+        connection.sync_global_settings();
+        Ok(connection)
     }
 
     /// Adds a configuration option (`DBConfig::AddExtensionOption`, as
@@ -1910,6 +2324,66 @@ impl Database {
         }
         self.instance.add_extension_option(option);
         true
+    }
+
+    /// Register native HTTP(S) and S3 transports. Full HTTPFS support, including
+    /// credential refresh and `HuggingFace`, remains separate work.
+    pub fn register_http_file_system(&self) -> Result<()> {
+        rustdb_function::registered_files::Registry::initialize(&self.instance.object_cache)
+            .register(Arc::new(rustdb_httpfs::HttpFileSystem))?;
+        rustdb_function::registered_files::Registry::initialize(&self.instance.object_cache)
+            .register(Arc::new(rustdb_httpfs::huggingface::HuggingFaceFileSystem))?;
+        rustdb_function::registered_files::Registry::initialize(&self.instance.object_cache).register(
+            Arc::new(rustdb_httpfs::s3::S3FileSystem::new(
+                self.instance.env.buffer_manager.clone(),
+            )),
+        )?;
+        self.instance.secrets.register_s3_types();
+        self.instance.object_cache.put(
+            rustdb_httpfs::HTTP_SECRET_RESOLVER_KEY,
+            Arc::new(rustdb_httpfs::HttpSecretResolver(Arc::new(
+                crate::secrets::HttpSecretLookup(Arc::clone(&self.instance.secrets)),
+            ))),
+        );
+        self.instance.object_cache.put(
+            rustdb_httpfs::s3::SECRET_RESOLVER_KEY,
+            Arc::new(rustdb_httpfs::s3::SecretResolver(Arc::new(
+                crate::secrets::S3SecretLookup(Arc::clone(&self.instance.secrets)),
+            ))),
+        );
+        self.instance.object_cache.put(
+            rustdb_httpfs::huggingface::SECRET_RESOLVER_KEY,
+            Arc::new(rustdb_httpfs::huggingface::SecretResolver(Arc::new(
+                crate::secrets::HuggingFaceSecretLookup(Arc::clone(&self.instance.secrets)),
+            ))),
+        );
+        for option in rustdb_httpfs::options()
+            .into_iter()
+            .chain(rustdb_httpfs::s3::options())
+        {
+            self.add_extension_option(option);
+        }
+        // The pinned extension snapshots these environment settings at LOAD.
+        // These are global values; keep the reported option defaults intact.
+        for (name, variable) in [
+            ("s3_region", "AWS_DEFAULT_REGION"),
+            ("s3_region", "AWS_REGION"),
+            ("s3_access_key_id", "AWS_ACCESS_KEY_ID"),
+            ("s3_secret_access_key", "AWS_SECRET_ACCESS_KEY"),
+            ("s3_session_token", "AWS_SESSION_TOKEN"),
+            ("s3_endpoint", "DUCKDB_S3_ENDPOINT"),
+            ("s3_use_ssl", "DUCKDB_S3_USE_SSL"),
+            ("s3_kms_key_id", "DUCKDB_S3_KMS_KEY_ID"),
+            ("s3_requester_pays", "DUCKDB_S3_REQUESTER_PAYS"),
+        ] {
+            if let Ok(text) = std::env::var(variable)
+                && let Some(option) = self.instance.extension_option(name)
+            {
+                let value = Value::varchar(text).default_cast_as(&option.input_type)?;
+                self.instance.set_extension_global(&option, Some(value));
+            }
+        }
+        Ok(())
     }
 
     /// Runs queued tasks of the database's queries on the calling thread (DuckDB's
@@ -2028,6 +2502,15 @@ impl Database {
             .push(scan);
     }
 
+    pub(crate) fn invalidate_external_extension(&self, message: &[u8]) {
+        self.instance.validity.invalidate(message);
+    }
+
+    /// Metadata and initialization synchronization for external extensions.
+    pub fn external_extensions(&self) -> &Arc<crate::external_extensions::ExternalExtensionState> {
+        &self.instance.external_extensions
+    }
+
     /// Loads a (statically linked) extension, like `LOAD name`.
     pub fn load_extension(&self, name: &str) -> Result<ExtensionLoad> {
         if let Some(extension) = StaticExtension::from_name(name) {
@@ -2073,11 +2556,11 @@ pub struct Connection {
     settings: Settings,
     /// The `(catalog, schema)` entries set by `USE` / `SET search_path` (DuckDB's
     /// `ClientData::catalog_search_path`).
-    search_path: Vec<(String, String)>,
+    search_path: Vec<(rustdb_common::ByteString, rustdb_common::ByteString)>,
     /// The entries as `CatalogSearchPath::GetSetPaths` keeps them for display: the
     /// catalog as given (or taken from the previous default), empty if none.
-    search_path_set: Vec<(String, String)>,
-    prepared_statements: CaseInsensitiveMap<Arc<PreparedStatementData>>,
+    search_path_set: Vec<(rustdb_common::ByteString, rustdb_common::ByteString)>,
+    prepared_statements: CaseInsensitiveMap<Arc<PreparedStatementData>, rustdb_common::ByteString>,
     /// Connection state functions use (DuckDB keeps it in the `ClientContext`).
     function_client: Arc<rustdb_function::FunctionClient>,
     /// Databases attached by the open explicit transaction; rolling it back detaches
@@ -2087,7 +2570,7 @@ pub struct Connection {
     /// database detached meanwhile is closed when the transaction ends.
     used_databases: Vec<Arc<AttachedDatabase>>,
     /// `SET VARIABLE` values (DuckDB's `ClientConfig::user_variables`).
-    user_variables: CaseInsensitiveMap<rustdb_types::Value>,
+    user_variables: CaseInsensitiveMap<rustdb_types::Value, rustdb_common::ByteString>,
     /// The connection's loggers.
     logger: Arc<crate::logging::ConnectionLogger>,
     /// The profiler of the connection's statements (DuckDB's `ClientData::profiler`).
@@ -2114,12 +2597,23 @@ pub struct Connection {
     explicit_commit: Option<CommittedChanges>,
 }
 
+/// Connection configuration retained across a database restart. Transaction,
+/// prepared-statement and active-query state are deliberately not retained.
+#[derive(Clone, Debug)]
+pub struct ClientSessionSnapshot {
+    settings: Settings,
+    local_overrides: std::collections::HashSet<&'static str>,
+    search_path: Vec<(rustdb_common::ByteString, rustdb_common::ByteString)>,
+    extension_session: CaseInsensitiveMap<Value>,
+    query_log_path: Option<String>,
+}
+
 /// What a transaction about to commit changed, for the automatic checkpoint after the
 /// commit.
 #[derive(Debug)]
 struct CommittedChanges {
     /// The database it wrote to.
-    database: String,
+    database: rustdb_common::ByteString,
     properties: rustdb_storage::transaction::UndoProperties,
 }
 
@@ -2185,9 +2679,9 @@ impl Connection {
 
     /// The default database and schema of the connection
     /// (`DatabaseManager::GetDefaultDatabase` and the default of its catalog search path).
-    pub fn current_database_and_schema(&self) -> (String, String) {
+    pub fn current_database_and_schema(&self) -> (rustdb_common::ByteString, rustdb_common::ByteString) {
         let schema = self.search_path.first().map_or_else(
-            || rustdb_catalog::DEFAULT_SCHEMA.to_owned(),
+            || rustdb_catalog::DEFAULT_SCHEMA.into(),
             |(_, schema)| schema.clone(),
         );
         (self.default_catalog(), schema)
@@ -2251,6 +2745,92 @@ impl Connection {
             }
         }
         assigned
+    }
+
+    pub fn configuration_snapshot(&self) -> crate::ConfigurationSnapshot {
+        self.database.configuration_snapshot()
+    }
+
+    pub fn session_snapshot(&self) -> ClientSessionSnapshot {
+        ClientSessionSnapshot {
+            settings: self.settings.clone(),
+            local_overrides: self.local_overrides.clone(),
+            search_path: self.search_path_set.clone(),
+            extension_session: self.extension_session.clone(),
+            query_log_path: self
+                .log_query_writer
+                .as_ref()
+                .and_then(|_| self.current_setting("log_query_path").ok()?.to_varchar().ok()),
+        }
+    }
+
+    /// Restores only client configuration; registered options and global values
+    /// come from the separately restored database configuration.
+    pub fn restore_session(&mut self, snapshot: ClientSessionSnapshot) -> Result<()> {
+        self.cleanup_active_query();
+        let inherited = self.settings.clone();
+        self.settings = snapshot.settings;
+        self.local_overrides = snapshot.local_overrides;
+        self.extension_session = snapshot.extension_session;
+        self.settings.extension_collations = self.database.instance.extension_collations();
+        let mut names: Vec<_> = self.settings.assigned().map(|(name, _)| name).collect();
+        names.extend(inherited.assigned().map(|(name, _)| name));
+        names.sort_unstable();
+        names.dedup();
+        for name in names {
+            if !self.local_overrides.contains(name) {
+                if let Some((_, value)) = inherited.assigned().find(|(option, _)| *option == name) {
+                    self.settings.set(name, value)?;
+                } else {
+                    self.settings.reset(name)?;
+                }
+            }
+        }
+        self.synced_globals = self
+            .database
+            .instance
+            .global_settings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        self.transactions.begin(false)?;
+        let paths = self.apply_search_path(snapshot.search_path, false, "SET search_path");
+        if let Err(error) = paths {
+            let _ = self.transactions.rollback();
+            return Err(error);
+        }
+        self.transactions.commit(None)?;
+        self.log_query_writer = snapshot
+            .query_log_path
+            .map(|path| {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(false)
+                    .open(&path)
+                    .map_err(|error| {
+                        Error::new(ErrorKind::Io, format!("Cannot open file \"{path}\": {error}"))
+                    })
+            })
+            .transpose()?;
+        self.function_client
+            .set_settings(Arc::new(self.settings_snapshot()));
+        Ok(())
+    }
+
+    /// Enable profiling of subsequent queries (`Connection::EnableProfiling`).
+    pub fn enable_profiling(&mut self) {
+        self.settings.profiler.enable();
+    }
+    /// Disable profiling without discarding the last profile (`Connection::DisableProfiling`).
+    pub fn disable_profiling(&mut self) {
+        self.settings.profiler.disable();
+    }
+    /// Render the native query profile in the requested format without running a query.
+    pub fn profiling_information(&self, format: &str) -> Result<rustdb_common::ByteString> {
+        let format = crate::query_profiler::ProfilerPrintFormat::from_name(format)
+            .ok_or_else(|| Error::invalid_input(format!("Invalid ProfilerPrintFormat string: {format}")))?;
+        self.profiler.information(&self.settings.profiler, format)
     }
 
     /// The profile of the latest query (`Connection::GetProfilingTree`): `None` if
@@ -2336,7 +2916,7 @@ impl Connection {
         // does here, so that statement fails with the error of the whole query; but a
         // statement before it is transformed, and fails with its own error if it cannot be.
         for statement in rustdb_parser::split_queries(sql) {
-            match rustdb_parser::parse_with_options(&statement, &options) {
+            match rustdb_parser::parse_bytes_with_options(&statement, &options) {
                 Ok(_) => {}
                 Err(failure) if failure.subtype() == Some(rustdb_parser::SYNTAX_ERROR) => break,
                 Err(failure) => return Err(failure),
@@ -2345,66 +2925,70 @@ impl Connection {
         Err(error)
     }
 
-    /// The statements of `sql` as DuckDB's `ClientContext::ParseStatements` hands them out
-    /// (its `StatementPreprocessor`): every PRAGMA is bound, which fails for one the catalog
-    /// does not have, and a pragma that stands for a query is replaced by the statements of
-    /// that query (`TryReparsePragma`). Failures are processed and thrown again like those
-    /// of [`Connection::extract_statements`].
-    pub fn parse_statements(&mut self, sql: &str) -> Result<Vec<SqlStatement>> {
-        let statements = self.extract_statements(sql)?;
-        if !statements
-            .iter()
-            .any(|statement| matches!(statement.kind, rustdb_ast::SqlStatementKind::Pragma(_)))
+    /// Native SQL ingress through the standard parser, with processed native errors.
+    pub fn extract_statements_bytes(&self, sql: &[u8]) -> Result<Vec<SqlStatement>> {
+        // The PEG override currently has a text ingress; preserve its behavior for
+        // representable input and fail explicitly in strict mode until its byte port.
+        if self.settings.parser_override() != crate::settings::ParserOverride::Default
+            && self.database.instance().has_parser_extension()
         {
-            return Ok(statements);
+            if let Ok(text) = std::str::from_utf8(sql) {
+                return self.extract_statements(text);
+            }
+            if self.settings.parser_override() == crate::settings::ParserOverride::Strict {
+                return Err(Error::not_implemented(
+                    "Native-byte PEG parser ingress is not implemented",
+                ));
+            }
         }
-        self.preprocess_pragmas(statements)
-            .map_err(|error| self.process_error(error, sql).rethrown())
+        let options = self.settings.parser_options();
+        let parsed = rustdb_parser::parse_bytes_with_options(sql, &options);
+        let parsed = match parsed {
+            Err(error)
+                if error.subtype() == Some(rustdb_parser::SYNTAX_ERROR)
+                    && self.database.instance().has_parser_extension() =>
+            {
+                for statement in rustdb_parser::split_queries_bytes(sql) {
+                    match rustdb_parser::parse_bytes_with_options(&statement, &options) {
+                        Ok(_) => {}
+                        Err(failure) if failure.subtype() == Some(rustdb_parser::SYNTAX_ERROR) => break,
+                        Err(failure) => return Err(self.process_error(failure, sql).rethrown()),
+                    }
+                }
+                Err(error)
+            }
+            outcome => outcome,
+        };
+        parsed.map_err(|error| self.process_error(error, sql).rethrown())
     }
 
-    /// The pragma part of `StatementPreprocessor::Preprocess`.
-    fn preprocess_pragmas(&mut self, statements: Vec<SqlStatement>) -> Result<Vec<SqlStatement>> {
-        let mut result = Vec::with_capacity(statements.len());
-        for statement in statements {
-            let rustdb_ast::SqlStatementKind::Pragma(pragma) = &statement.kind else {
-                result.push(statement);
-                continue;
-            };
-            let name = pragma.name.clone();
-            let bound = self.bind_pragma_parameters(statement.clone());
-            let ended = self.transactions.end_statement(bound.is_ok(), false);
-            let parameters = bound.and_then(|parameters| ended.map(|()| parameters))?;
-            let instance = self.database.instance();
-            let query = if instance.has_extension_pragma(&name) {
-                Some(instance.extension_pragma_query(&name, &parameters)?)
-            } else {
-                crate::system_functions::pragma_query(&name, &parameters)?
-            };
-            let Some(query) = query else {
-                result.push(statement);
-                continue;
-            };
-            let mut reparsed = rustdb_parser::parse(&query)?;
-            if reparsed.len() <= 1 {
-                result.append(&mut reparsed);
-                continue;
-            }
-            // Several statements run as one (`GetTransactionHandling`): in an implicit
-            // transaction outside an explicit one, under `ALL_ERRORS_INVALIDATE_TRANSACTION`
-            // inside one; the multi-statement run decides which when it executes.
-            result.push(SqlStatement {
-                kind: rustdb_ast::SqlStatementKind::Multi(reparsed),
-                ..statement
-            });
-        }
-        Ok(result)
+    /// Native equivalent of `ParseStatements`, preserving query bytes through pragmas.
+    pub fn parse_statements_bytes(&mut self, sql: &[u8]) -> Result<Vec<SqlStatement>> {
+        let statements = self.extract_statements_bytes(sql)?;
+        self.preprocess_statements(sql, statements)
+    }
+
+    /// Preprocess owned statements through DuckDB's transaction-aware expansion.
+    pub fn preprocess_statements(
+        &mut self,
+        sql: impl AsRef<[u8]>,
+        statements: Vec<SqlStatement>,
+    ) -> Result<Vec<SqlStatement>> {
+        self.preprocess_parsed_statements(statements)
+            .map_err(|error| self.process_error(error, sql.as_ref()).rethrown())
+    }
+
+    /// Parsed and preprocessed statements, including expanded PRAGMA bodies.
+    pub fn parse_statements(&mut self, sql: &str) -> Result<Vec<SqlStatement>> {
+        let statements = self.extract_statements(sql)?;
+        self.preprocess_statements(sql, statements)
     }
 
     /// Runs every statement in `sql` and returns the result of the last one (DuckDB's
     /// `ClientContext::Query`).
-    pub fn query(&mut self, sql: &str) -> Result<MaterializedResult> {
+    pub fn query(&mut self, sql: impl AsRef<[u8]>) -> Result<MaterializedResult> {
         self.sync_global_settings();
-        let statements = self.parse_statements(sql)?;
+        let statements = self.parse_statements_bytes(sql.as_ref())?;
         self.execute_statements(statements)
     }
 
@@ -2440,7 +3024,12 @@ impl Connection {
     /// Runs one parsed statement of `query` (DuckDB's `PendingStatementInternal` and
     /// `ExecutePendingQueryInternal`): bind and plan, resolve column bindings, build the
     /// physical plan and run it, all inside the connection's transaction.
-    pub fn execute_statement(&mut self, query: &str, statement: SqlStatement) -> Result<MaterializedResult> {
+    pub fn execute_statement(
+        &mut self,
+        query: impl AsRef<[u8]>,
+        statement: SqlStatement,
+    ) -> Result<MaterializedResult> {
+        let query = query.as_ref();
         self.execute_statement_with(query, statement, QueryResultMemoryType::InMemory)
     }
 
@@ -2448,10 +3037,11 @@ impl Connection {
     /// says (`Connection::Query(statement, memory_type)`).
     pub fn execute_statement_with(
         &mut self,
-        query: &str,
+        query: impl AsRef<[u8]>,
         statement: SqlStatement,
         memory_type: QueryResultMemoryType,
     ) -> Result<MaterializedResult> {
+        let query = query.as_ref();
         self.initial_cleanup();
         let statement_type = statement.statement_type();
         self.begin_query(query, &statement)?;
@@ -2467,9 +3057,10 @@ impl Connection {
 
     /// `ClientContext::BeginQueryInternal` up to the logging: nothing runs on an invalidated
     /// instance; the statement sees the latest global settings, and the profiler starts.
-    pub(crate) fn begin_query(&mut self, query: &str, statement: &SqlStatement) -> Result<()> {
+    pub(crate) fn begin_query(&mut self, query: impl AsRef<[u8]>, statement: &SqlStatement) -> Result<()> {
+        let query = query.as_ref();
         if let Some(message) = self.database.instance().validity.invalidated() {
-            return Err(invalidated_database_error(&message).with_query_context(query));
+            return Err(invalidated_database_error(&message).with_query_context_bytes(query));
         }
         self.sync_global_settings();
         self.function_client.set_query(query);
@@ -2490,6 +3081,15 @@ impl Connection {
     /// dropped: the metrics its profiler records into, and the connection as the opener of
     /// the files it opens (they read its settings and log to its loggers).
     pub(crate) fn query_scope(&self) -> QueryScope {
+        if let Some(context) = self
+            .active_query
+            .as_ref()
+            .and_then(|query| query.callback_context.as_ref())
+        {
+            let context: Arc<dyn std::any::Any + Send + Sync> = Arc::clone(context) as _;
+            self.function_client
+                .set_transaction_context(Some(Arc::downgrade(&context)));
+        }
         let metrics = self.profiler.active_metrics().cloned();
         QueryScope {
             _metrics: rustdb_common::profiling::activate(metrics.as_ref()),
@@ -2503,15 +3103,22 @@ impl Connection {
         work(self)
     }
 
+    /// Binding outside query execution leaves an aborted synthetic transaction for
+    /// its query owner to roll back, matching the client-context transaction helper.
+    fn end_client_statement(&mut self, success: bool, invalidates: bool) -> Result<()> {
+        self.transactions.end_statement(success, invalidates)
+    }
+
     /// `ClientContext::EndQueryInternal`: applies the configuration changes functions made,
     /// ends the statement in its transaction (committing or rolling back an auto-commit
     /// one), writes the profile, checkpoints automatically and releases the databases the
     /// transaction used. Errors are put in the context of `query`.
     pub(crate) fn end_query(
         &mut self,
-        query: &str,
+        query: impl AsRef<[u8]>,
         outcome: Result<MaterializedResult>,
     ) -> Result<MaterializedResult> {
+        let query = query.as_ref();
         self.end_query_internal(query, outcome, true)
     }
 
@@ -2519,10 +3126,11 @@ impl Connection {
     /// `invalidate_transaction` (a query whose result was closed unread does not).
     pub(crate) fn end_query_internal(
         &mut self,
-        query: &str,
+        query: impl AsRef<[u8]>,
         outcome: Result<MaterializedResult>,
         invalidate_transaction: bool,
     ) -> Result<MaterializedResult> {
+        let query = query.as_ref();
         let metrics = self.profiler.active_metrics().cloned();
         let metrics_guard = rustdb_common::profiling::activate(metrics.as_ref());
         let _opener_guard = rustdb_function::file_system::activate_opener(Arc::clone(&self.function_client));
@@ -2550,7 +3158,7 @@ impl Connection {
             None
         };
         let outcome = match invalid_use {
-            Some(message) => Err(Error::new(ErrorKind::Io, message)),
+            Some(message) => Err(Error::new_bytes(ErrorKind::Io, message)),
             None => outcome,
         };
         // An auto-commit that checkpoints instead of logging its changes; it is the
@@ -2562,18 +3170,29 @@ impl Connection {
                 None
             };
         let committed = committed.filter(|_| checkpoint.is_none());
-        let ended = self
-            .transactions
-            .end_statement_checkpointing(outcome.is_ok(), invalidates, checkpoint);
+        let was_explicit = !self.transactions.is_auto_commit();
+        let ended = self.transactions.end_statement_checkpointing(
+            outcome.is_ok(),
+            invalidates,
+            crate::transaction::StatementEnd::Query {
+                allow_invalidation: invalidate_transaction,
+            },
+            checkpoint,
+        );
+        if was_explicit && self.transactions.is_auto_commit() {
+            self.finish_transaction_attaches(outcome.is_err());
+        }
         // Between statements, the connection's functions (and C API clients reading its
         // options) see the settings the statement left.
         self.function_client
             .set_settings(Arc::new(self.settings_snapshot()));
         // `EndQueryInternal`: the profile is written before the logger is refreshed.
         drop(metrics_guard);
-        let profiled = self
-            .profiler
-            .end_query(&self.settings.profiler, self.logger.as_ref());
+        let profiled = self.profiler.end_query(
+            &self.settings.profiler,
+            self.logger.as_ref(),
+            self.function_client.http_stats(),
+        );
         self.end_query_logging();
         let mut result = outcome.and_then(|result| ended.map(|()| result));
         if result.is_ok()
@@ -2618,6 +3237,92 @@ impl Connection {
         )
     }
 
+    /// Binds an ADD PRIMARY KEY WAL entry while restoring its native tree. Its
+    /// index stays staged until the creating replay transaction commits.
+    pub(crate) fn replay_primary_key(
+        &mut self,
+        info: rustdb_ast::AlterInfo,
+        stored: &rustdb_storage::index::art::ArtStorageInfo,
+    ) -> Result<(
+        Arc<rustdb_storage::DataTableInfo>,
+        rustdb_storage::index::IndexSlot,
+    )> {
+        let transaction = self.current_transaction();
+        let client = self.client_context(Arc::clone(&transaction));
+        let planned = Planner::new(Arc::clone(&client)).create_plan(SqlStatement::new(
+            rustdb_ast::SqlStatementKind::Alter(Box::new(info)),
+        ))?;
+        let rustdb_planner::operator::LogicalKind::Alter(alter) = planned
+            .plan
+            .ok_or_else(|| Error::internal("primary-key WAL replay without logical plan"))?
+            .kind
+        else {
+            return Err(Error::internal("primary-key WAL replay produced another plan"));
+        };
+        rustdb_execution::operators::AlterEntryAction {
+            catalog: client
+                .catalog(&alter.catalog)
+                .cloned()
+                .ok_or_else(|| Error::internal("primary-key WAL replay catalog is missing"))?,
+            schema: alter.schema,
+            entry: alter.entry,
+            action: alter.action,
+            dependents_allowed: alter.dependents_allowed,
+            info: alter.info,
+        }
+        .execute_replayed_primary_key(&transaction, stored)
+    }
+
+    /// Executes a checkpoint table function's request while its query metrics and
+    /// transaction are still active. Prepared and SQL-text execution share this path.
+    fn checkpoint_database(
+        &mut self,
+        database: Option<rustdb_common::ByteString>,
+        force: bool,
+    ) -> Result<()> {
+        let instance = self.database.instance();
+        let name = database.unwrap_or_else(|| self.default_catalog());
+        let attached = instance.database(&name)?;
+        let started = !self.transactions.is_auto_commit()
+            && self
+                .used_databases
+                .iter()
+                .any(|database| Arc::ptr_eq(database, &attached));
+        let transaction = self.transactions.current();
+        // Explicit checkpoints bind the indexes first, so the written indexes hold
+        // the changes replayed from the WAL (`SingleFileCheckpointWriter::WriteTable`
+        // with a bind connection).
+        if attached.storage.file().is_some() {
+            let client = self.client_context(Arc::clone(&transaction));
+            let system = Transaction::system();
+            for schema in attached.catalog.schemas().scan(&system) {
+                let Some(schema_entry) = schema.as_schema() else {
+                    continue;
+                };
+                for table in schema_entry.tables.scan(&system) {
+                    rustdb_execution::operators::bind_table_indexes(&client, &table)?;
+                }
+            }
+        }
+        crate::storage::checkpoint(&attached, &transaction, started, force, &instance.transactions)?;
+        Ok(())
+    }
+
+    /// Checkpoint effects belong to the executor task that called the function:
+    /// observe their errors before telling a pending client the task is ready.
+    /// Other callback changes keep their existing end-query ordering.
+    fn apply_checkpoint_requests(&mut self) -> Result<()> {
+        for request in self.function_client.take_client_requests() {
+            match request {
+                rustdb_function::ClientRequest::Checkpoint { database, force } => {
+                    self.checkpoint_database(database, force)?;
+                }
+                other => self.function_client.push_client_request(other),
+            }
+        }
+        Ok(())
+    }
+
     /// Applies the configuration changes functions made (`enable_profiling` /
     /// `disable_profiling`, `enable_peg_parser` / `disable_peg_parser`).
     fn apply_client_requests(&mut self, requests: Vec<rustdb_function::ClientRequest>) -> Result<()> {
@@ -2648,6 +3353,9 @@ impl Connection {
                     self.settings.set(&name, &value)?;
                     self.record_setting(&name, Some(&value), SetScope::Global);
                 }
+                ClientRequest::Checkpoint { database, force } => {
+                    self.checkpoint_database(database, force)?;
+                }
             }
         }
         Ok(())
@@ -2674,7 +3382,14 @@ impl Connection {
                 .iter()
                 .any(|(synced, synced_value)| synced == name && synced_value == value);
             if !unchanged && !self.local_overrides.contains(name) {
-                let _ = self.settings.set(name, value);
+                match value {
+                    Some(value) => {
+                        let _ = self.settings.set(name, value);
+                    }
+                    None => {
+                        let _ = self.settings.reset(name);
+                    }
+                }
             }
         }
         for (name, _) in &self.synced_globals.values {
@@ -2692,14 +3407,22 @@ impl Connection {
     /// `PhysicalSet::SetExtensionVariable`: the option's callback checks the value, which
     /// is then set for the session or globally (without a scope, as the option's default
     /// scope says).
-    fn set_extension_variable(&mut self, name: &str, value: &Value, scope: SetScope) -> Result<()> {
+    fn set_extension_variable(
+        &mut self,
+        name: impl AsRef<[u8]>,
+        value: &Value,
+        scope: SetScope,
+    ) -> Result<()> {
+        let name = name.as_ref();
         let instance = self.database.instance();
         let option = instance.extension_option(name).ok_or_else(|| {
-            Error::invalid_input(format!(
+            Error::invalid_input(rustdb_common::byte_format!(
                 "Extension parameter {name} was not found after autoloading"
             ))
         })?;
-        let mut target_value = self.cast_value(value, &option.input_type)?;
+        let mut target_value = self.cast_value(value, &option.input_type).map_err(|error| {
+            Error::invalid_input(format!("Failed to cast value: {}", error.raw_message()))
+        })?;
         if let Some(set_function) = &option.set_function {
             set_function(&mut target_value)?;
         }
@@ -2714,10 +3437,11 @@ impl Connection {
     /// `PhysicalReset::ResetExtensionVariable`: the option's callback checks the default,
     /// which then becomes the session's or the global value (without a scope, as the
     /// option's default scope says).
-    fn reset_extension_variable(&mut self, name: &str, scope: SetScope) -> Result<()> {
+    fn reset_extension_variable(&mut self, name: impl AsRef<[u8]>, scope: SetScope) -> Result<()> {
+        let name = name.as_ref();
         let instance = self.database.instance();
         let option = instance.extension_option(name).ok_or_else(|| {
-            Error::invalid_input(format!(
+            Error::invalid_input(rustdb_common::byte_format!(
                 "Extension parameter {name} was not found after autoloading"
             ))
         })?;
@@ -2736,7 +3460,8 @@ impl Connection {
 
     /// Records a `SET` / `RESET` (`value` `None`) of option `name` with `scope`: a global
     /// one is shared with the other connections, a local one overrides the global value.
-    fn record_setting(&mut self, name: &str, value: Option<&Value>, scope: SetScope) {
+    fn record_setting(&mut self, name: impl AsRef<[u8]>, value: Option<&Value>, scope: SetScope) {
+        let name = name.as_ref();
         let Some(option) = crate::settings::canonical_option(name) else {
             return;
         };
@@ -2758,7 +3483,14 @@ impl Connection {
                 .iter()
                 .find(|(name, _)| *name == option)
             {
-                let _ = self.settings.set(option, &global_value.clone());
+                match global_value {
+                    Some(value) => {
+                        let _ = self.settings.set(option, value);
+                    }
+                    None => {
+                        let _ = self.settings.reset(option);
+                    }
+                }
             }
             return;
         }
@@ -2770,9 +3502,7 @@ impl Connection {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         globals.values.retain(|(name, _)| *name != option);
-        if let Some(value) = value {
-            globals.values.push((option, value.clone()));
-        }
+        globals.values.push((option, value.cloned()));
         globals.version += 1;
         // This connection already applied the change.
         self.synced_globals = globals.clone();
@@ -2780,9 +3510,10 @@ impl Connection {
 
     /// `ClientContext::BeginQueryInternal`'s logging: flush, a logger for this query's
     /// connection, transaction and query, and the `QueryLog` entry.
-    fn begin_query_logging(&mut self, query: &str) {
+    fn begin_query_logging(&mut self, query: impl AsRef<[u8]>) {
         use crate::logging::{ContextScope, LoggingContext};
         use rustdb_function::logging::{ClientLogger, LogLevel, LogScope};
+        let query = query.as_ref();
         self.log_query(query);
         let manager = Arc::clone(&self.logger.manager);
         let _ = manager.flush();
@@ -2807,16 +3538,17 @@ impl Connection {
         {
             let _ = self
                 .logger
-                .write_log(LogScope::Connection, "QueryLog", LogLevel::Info, query);
+                .write_log_bytes(LogScope::Connection, "QueryLog", LogLevel::Info, query);
         }
     }
 
     /// `ClientContext::LogQueryInternal`: the statement and a newline, synced to disk.
-    fn log_query(&mut self, query: &str) {
+    fn log_query(&mut self, query: impl AsRef<[u8]>) {
         use std::io::Write as _;
+        let query = query.as_ref();
         if let Some(writer) = &mut self.log_query_writer {
             let _ = writer
-                .write_all(query.as_bytes())
+                .write_all(query)
                 .and_then(|()| writer.write_all(b"\n"))
                 .and_then(|()| writer.sync_data());
         }
@@ -2852,7 +3584,12 @@ impl Connection {
     /// The logical plan of a parsed statement of `query`, with column references
     /// resolved, as `json_serialize_plan` (without optimization) sees it. A development
     /// aid for comparing plans with DuckDB's.
-    pub fn logical_plan(&mut self, query: &str, statement: SqlStatement) -> Result<LogicalOperator> {
+    pub fn logical_plan(
+        &mut self,
+        query: impl AsRef<[u8]>,
+        statement: SqlStatement,
+    ) -> Result<LogicalOperator> {
+        let query = query.as_ref();
         let transaction = self.transactions.current();
         let planner = Planner::new(self.client_context(transaction));
         let outcome = planner.create_plan(statement).and_then(|planned| {
@@ -2862,7 +3599,7 @@ impl Connection {
             ColumnBindingResolver::resolve(&mut plan)?;
             Ok(plan)
         });
-        let ended = self.transactions.end_statement(outcome.is_ok(), false);
+        let ended = self.end_client_statement(outcome.is_ok(), false);
         outcome
             .and_then(|plan| ended.map(|()| plan))
             .map_err(|error| self.process_error(error, query))
@@ -2870,11 +3607,12 @@ impl Connection {
 
     /// `ClientContext::ProcessError`: the error as JSON under `errors_as_json`, else with
     /// the location in the query.
-    fn process_error(&self, error: Error, query: &str) -> Error {
+    fn process_error(&self, error: Error, query: impl AsRef<[u8]>) -> Error {
+        let query = query.as_ref();
         if self.settings.errors_as_json() {
             error.into_json()
         } else {
-            error.with_query_context(query)
+            error.with_query_context_bytes(query)
         }
     }
 
@@ -2885,7 +3623,7 @@ impl Connection {
 
     /// The catalogs this connection sees: the attached databases with `default` first,
     /// its `temp` catalog, then `system`.
-    fn catalogs(&self, default: &str) -> Vec<Arc<Catalog>> {
+    fn catalogs(&self, default: &[u8]) -> Vec<Arc<Catalog>> {
         let mut catalogs = self.database.instance().catalogs(default);
         let system = catalogs.len().saturating_sub(1);
         catalogs.insert(system, Arc::clone(&self.temp_catalog));
@@ -2950,45 +3688,7 @@ impl Connection {
     /// `IMPORT DATABASE 'dir'` (DuckDB's `PragmaImportDatabase`): runs the directory's
     /// `schema.sql`, then its `load.sql` with the files taken from the directory.
     fn import_database(&mut self, parameters: &[rustdb_types::Value]) -> Result<MaterializedResult> {
-        let directory = parameters
-            .first()
-            .map(rustdb_types::Value::to_varchar)
-            .transpose()?
-            .unwrap_or_default();
-        rustdb_function::file_system::verify_can_access_directory(&directory)?;
-        let join = |name: &str| {
-            if directory.ends_with('/') {
-                format!("{directory}{name}")
-            } else {
-                format!("{directory}/{name}")
-            }
-        };
-        let mut statements = Vec::new();
-        for file in ["schema.sql", "load.sql"] {
-            let path = join(file);
-            let query = std::fs::read_to_string(&path).map_err(|error| {
-                let reason = if error.kind() == std::io::ErrorKind::NotFound {
-                    "No such file or directory".to_owned()
-                } else {
-                    error.to_string()
-                };
-                Error::new(ErrorKind::Io, format!("Cannot open file \"{path}\": {reason}"))
-            })?;
-            for mut statement in rustdb_parser::parse(&query)? {
-                if file == "load.sql"
-                    && let rustdb_ast::SqlStatementKind::Copy(info) = &mut statement.kind
-                {
-                    let name = info
-                        .file_path
-                        .rsplit(['/', '\\'])
-                        .next()
-                        .unwrap_or_default()
-                        .to_owned();
-                    info.file_path = join(&name);
-                }
-                statements.push(statement);
-            }
-        }
+        let statements = self.import_database_statements(parameters)?;
         let mut result = MaterializedResult::default();
         for statement in statements {
             result = self.run_statement(statement)?;
@@ -3005,12 +3705,13 @@ impl Connection {
         let source = instance.database(&stmt.from_database)?;
         let target = instance.database(&stmt.to_database)?;
         if Arc::ptr_eq(&source.catalog, &target.catalog) {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Cannot copy from \"{}\" to \"{}\" - FROM and TO databases are the same",
-                stmt.from_database, stmt.to_database
+                stmt.from_database,
+                stmt.to_database
             )));
         }
-        let target_name = target.name().to_string();
+        let target_name = rustdb_common::ByteString::from(&*target.name());
         // Read the source in the open transaction, or in a snapshot of its own.
         let (snapshot, temporary) = if self.transactions.has_current() {
             (self.transactions.current(), false)
@@ -3019,7 +3720,7 @@ impl Connection {
         };
         // The statements to run; `queries` are SQL texts to run before `statements[i]`.
         let mut statements: Vec<SqlStatement> = Vec::new();
-        let mut queries: Vec<(usize, String)> = Vec::new();
+        let mut queries: Vec<(usize, rustdb_common::ByteString)> = Vec::new();
         if stmt.copy_type == rustdb_ast::CopyDatabaseType::CopySchema {
             for mut info in rustdb_catalog::checkpoint::export_create_infos(&source.catalog, &snapshot) {
                 info.catalog.clone_from(&target_name);
@@ -3057,17 +3758,17 @@ impl Connection {
                 let rustdb_catalog::EntryKind::Table(table) = &entry.kind else {
                     continue;
                 };
-                let columns: Vec<String> = table
+                let columns: Vec<rustdb_common::ByteString> = table
                     .physical_columns()
-                    .map(|(_, _, column)| rustdb_ast::keyword::write_optionally_quoted(&column.name))
+                    .map(|(_, _, column)| rustdb_ast::keyword::write_optionally_quoted_bytes(&column.name))
                     .collect();
-                let columns = columns.join(", ");
+                let columns = rustdb_common::ByteString::join(&columns, b", ");
                 queries.push((
                     statements.len(),
-                    format!(
+                    rustdb_common::byte_format!(
                         "INSERT INTO {} ({columns}) SELECT {columns} FROM {}",
                         rustdb_ast::qualifier_to_string(&target_name, &schema, entry.name()),
-                        rustdb_ast::qualifier_to_string(&source.name(), &schema, entry.name()),
+                        rustdb_ast::qualifier_to_string(source.name(), &schema, entry.name()),
                     ),
                 ));
             }
@@ -3083,7 +3784,7 @@ impl Connection {
             .enumerate()
         {
             while let Some((_, query)) = queries.next_if(|(before, _)| *before == index) {
-                for parsed in rustdb_parser::parse(&query)? {
+                for parsed in rustdb_parser::parse_bytes(&query)? {
                     self.run_statement(parsed)?;
                 }
             }
@@ -3097,8 +3798,8 @@ impl Connection {
     /// `LOAD` / `INSTALL` (`PhysicalLoad`).
     fn run_load(&mut self, info: &rustdb_ast::LoadInfo) -> Result<()> {
         let config =
-            crate::extensions::ExtensionConfig::from_settings(|name| self.database.global_setting(name));
-        if let Some(name) = crate::extensions::load_extension(info, &config)?
+            crate::extensions::ExtensionConfig::from_settings(|name| self.current_setting(name).ok());
+        if let Some(name) = crate::extensions::load_extension(info, &config, &self.database)?
             && let Some(extension) = StaticExtension::from_name(&name)
         {
             self.database.instance.load_static_extension(extension)?;
@@ -3106,14 +3807,28 @@ impl Connection {
         Ok(())
     }
 
+    /// Load a native extension without closing an active client result.
+    pub fn load_extension(&mut self, name: impl AsRef<[u8]>) -> Result<()> {
+        self.function_client
+            .set_settings(Arc::new(self.settings_snapshot()));
+        let info = rustdb_ast::LoadInfo {
+            filename: name.as_ref().into(),
+            load_type: rustdb_ast::LoadType::Load,
+            repository: rustdb_common::ByteString::new(),
+            version: rustdb_common::ByteString::new(),
+            repo_is_alias: false,
+        };
+        self.in_query_scope(|connection| connection.run_load(&info))
+    }
+
     /// Loads the extension of the `ATTACH` storage type `db_type`
     /// (`DatabaseManager::GetDatabaseType`'s `LoadExternalExtension`).
-    fn load_storage_extension(&mut self, db_type: &str) -> Result<()> {
+    fn load_storage_extension(&mut self, db_type: &[u8]) -> Result<()> {
         self.run_load(&rustdb_ast::LoadInfo {
-            filename: db_type.to_owned(),
+            filename: db_type.into(),
             load_type: rustdb_ast::LoadType::Load,
-            repository: String::new(),
-            version: String::new(),
+            repository: String::new().into(),
+            version: String::new().into(),
             repo_is_alias: false,
         })
     }
@@ -3134,10 +3849,13 @@ impl Connection {
             return self.copy_database(copy).map(StatementRun::Done);
         }
         if let rustdb_ast::SqlStatementKind::Load(info) = &statement.kind {
-            self.run_load(info)?;
+            // PhysicalLoad runs inside ExecutorTask in DuckDB, whose error catch
+            // rebuilds the exception metadata before the client receives it.
+            self.run_load(info).map_err(Error::caught)?;
             // `Binder::Bind(LoadStatement &)`: the statement returns nothing.
             return Ok(StatementRun::Done(
-                MaterializedResult::default().with_return_type(rustdb_planner::StatementReturnType::Nothing),
+                MaterializedResult::new(vec!["Success".into()], vec![LogicalType::BOOLEAN], Vec::new())
+                    .with_return_type(rustdb_planner::StatementReturnType::Nothing),
             ));
         }
         // Pragmas that stand for a query run that query (DuckDB's `PragmaHandler`).
@@ -3158,13 +3876,15 @@ impl Connection {
                 .parameters
                 .iter()
                 .map(|parameter| match &parameter.kind {
-                    rustdb_ast::ParsedExpressionKind::Constant(constant) => Some(constant.value.clone()),
+                    rustdb_ast::ParsedExpressionKind::Constant(constant) => Ok(Some(constant.value.clone())),
                     rustdb_ast::ParsedExpressionKind::ColumnRef(column) => {
-                        Some(rustdb_types::Value::varchar(column.column_names.join(".")))
+                        Ok(Some(rustdb_types::Value::try_varchar(
+                            &rustdb_common::ByteString::join(&column.column_names, b"."),
+                        )?))
                     }
-                    _ => None,
+                    _ => Ok(None),
                 })
-                .collect();
+                .collect::<Result<Option<Vec<_>>>>()?;
             if let Some(constants) = &constants
                 && pragma.name.eq_ignore_ascii_case("import_database")
             {
@@ -3178,34 +3898,6 @@ impl Connection {
                 return self.run_pragma_query(&query).map(StatementRun::Done);
             }
         }
-        // `CHECKPOINT` is `CALL checkpoint()`: the call is bound and run like any table
-        // function, then the connection writes the checkpoint.
-        let checkpoint = match &statement.kind {
-            rustdb_ast::SqlStatementKind::Call(call) => match &call.function.kind {
-                rustdb_ast::ParsedExpressionKind::Function(function)
-                    if function.function_name.eq_ignore_ascii_case("checkpoint")
-                        || function.function_name.eq_ignore_ascii_case("force_checkpoint") =>
-                {
-                    Some(function.function_name.eq_ignore_ascii_case("force_checkpoint"))
-                }
-                _ => None,
-            },
-            _ => None,
-        };
-        let database = checkpoint.and_then(|_| match &statement.kind {
-            rustdb_ast::SqlStatementKind::Call(call) => match &call.function.kind {
-                rustdb_ast::ParsedExpressionKind::Function(function) => {
-                    function.children.first().and_then(|name| match &name.kind {
-                        rustdb_ast::ParsedExpressionKind::Constant(constant) => {
-                            constant.value.to_varchar().ok()
-                        }
-                        _ => None,
-                    })
-                }
-                _ => None,
-            },
-            _ => None,
-        });
         // `VACUUM tbl` compacts the table's indexes (`PhysicalVacuum::Finalize`).
         let vacuum_table = match &statement.kind {
             rustdb_ast::SqlStatementKind::Vacuum(info) if info.has_table => info
@@ -3217,7 +3909,7 @@ impl Connection {
                 }),
             _ => None,
         };
-        if checkpoint.is_none() && vacuum_table.is_none() {
+        if vacuum_table.is_none() {
             return self.start_planned(statement, mode);
         }
         // The connection finishes these statements itself once their plan ran.
@@ -3239,33 +3931,6 @@ impl Connection {
                 storage.vacuum_indexes()?;
             }
         }
-        if let Some(force) = checkpoint {
-            let instance = self.database.instance();
-            let name = database.unwrap_or_else(|| self.default_catalog());
-            let attached = instance.database(&name)?;
-            let started = !self.transactions.is_auto_commit()
-                && self
-                    .used_databases
-                    .iter()
-                    .any(|database| Arc::ptr_eq(database, &attached));
-            let transaction = self.transactions.current();
-            // Explicit checkpoints bind the indexes first, so the written indexes hold
-            // the changes replayed from the WAL (`SingleFileCheckpointWriter::WriteTable`
-            // with a bind connection).
-            if attached.storage.file().is_some() {
-                let client = self.client_context(Arc::clone(&transaction));
-                let system = Transaction::system();
-                for schema in attached.catalog.schemas().scan(&system) {
-                    let Some(schema_entry) = schema.as_schema() else {
-                        continue;
-                    };
-                    for table in schema_entry.tables.scan(&system) {
-                        rustdb_execution::operators::bind_table_indexes(&client, &table)?;
-                    }
-                }
-            }
-            crate::storage::checkpoint(&attached, &transaction, started, force, &instance.transactions)?;
-        }
         Ok(StatementRun::Done(result))
     }
 
@@ -3285,6 +3950,10 @@ impl Connection {
         let rustdb_ast::SqlStatementKind::Pragma(mut pragma) = statement.kind else {
             return Err(Error::internal("expected a PRAGMA"));
         };
+        // PRAGMA expansion binds before ordinary statement startup, so it must
+        // publish the current settings before catalog lookup can autoload.
+        self.function_client
+            .set_settings(Arc::new(self.settings_snapshot()));
         let transaction = self.transactions.current();
         let planner = Planner::new(self.client_context(transaction));
         Ok(planner.bind_pragma(&mut pragma)?.parameters)
@@ -3298,7 +3967,7 @@ impl Connection {
     }
 
     /// The reason a database the transaction used was invalidated, if one was.
-    fn invalidated_used_database(&self) -> Option<String> {
+    fn invalidated_used_database(&self) -> Option<rustdb_common::ByteString> {
         self.used_databases
             .iter()
             .find_map(|database| database.validity.invalidated())
@@ -3340,9 +4009,9 @@ impl Connection {
         if !self.transactions.is_auto_commit()
             && self.transactions.current().has_accessed_database(&info.name)
         {
-            return Err(Error::new(
+            return Err(Error::new_bytes(
                 ErrorKind::Transaction,
-                format!(
+                rustdb_common::byte_format!(
                     "Cannot detach database \"{}\" because the current transaction has outstanding work on it - \
                      commit or rollback first",
                     info.name
@@ -3350,7 +4019,7 @@ impl Connection {
             ));
         }
         if self.default_catalog().eq_ignore_ascii_case(&info.name) {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Cannot detach database \"{}\" because it is the default database. Select a different database \
                  using `USE` to allow detaching this database",
                 info.name
@@ -3363,7 +4032,7 @@ impl Connection {
         {
             Some(result) => result,
             None if info.if_not_found == rustdb_ast::OnEntryNotFound::ReturnNull => Ok(()),
-            None => Err(Error::binder(format!(
+            None => Err(Error::binder(rustdb_common::byte_format!(
                 "Failed to detach database with name \"{}\": database not found",
                 info.name
             ))),
@@ -3372,27 +4041,37 @@ impl Connection {
 
     /// `SET schema` / `SET search_path` (`CatalogSearchPath::Set`): every entry must name
     /// an existing schema; a single name may be a database (its default schema).
-    fn set_search_path(&mut self, name: &str, value: &rustdb_types::Value) -> Result<()> {
-        let set_schema = name.eq_ignore_ascii_case("schema");
+    fn set_search_path(&mut self, name: impl AsRef<[u8]>, value: &rustdb_types::Value) -> Result<()> {
+        let name = name.as_ref();
+        let set_schema = name.eq_ignore_ascii_case(b"schema");
         let set_name = if set_schema {
             "SET schema"
         } else {
             "SET search_path"
         };
-        let text = value.to_varchar()?;
+        let text = value.to_varchar_bytes()?;
         let entries = parse_search_path(&text)?;
         if set_schema && entries.len() > 1 {
             // `CatalogSearchEntry::Parse` reads a single entry.
-            return Err(Error::parser(format!(
+            return Err(Error::parser(rustdb_common::byte_format!(
                 "Failed to convert entry \"{text}\" to CatalogSearchEntry - expected a single entry"
             )));
         }
         if set_schema && entries.len() != 1 {
-            return Err(Error::catalog(format!(
+            return Err(Error::catalog(rustdb_common::byte_format!(
                 "{set_name} can set only 1 schema. This has {}",
                 entries.len()
             )));
         }
+        self.apply_search_path(entries, set_schema, set_name)
+    }
+
+    fn apply_search_path(
+        &mut self,
+        entries: Vec<(rustdb_common::ByteString, rustdb_common::ByteString)>,
+        set_schema: bool,
+        set_name: &str,
+    ) -> Result<()> {
         let instance = self.database.instance();
         let transaction = self.transactions.current();
         let mut resolved = Vec::with_capacity(entries.len());
@@ -3407,10 +4086,10 @@ impl Connection {
             let display = if catalog.is_empty() {
                 schema.clone()
             } else {
-                format!("{catalog}.{schema}")
+                rustdb_common::byte_format!("{catalog}.{schema}")
             };
             let not_found = || {
-                Error::catalog(format!(
+                Error::catalog(rustdb_common::byte_format!(
                     "{set_name}: No catalog + schema named \"{display}\" found."
                 ))
             };
@@ -3419,8 +4098,8 @@ impl Connection {
                 if schema.eq_ignore_ascii_case(rustdb_catalog::TEMP_CATALOG)
                     || schema.eq_ignore_ascii_case("system")
                 {
-                    resolved.push((schema.to_lowercase(), rustdb_catalog::DEFAULT_SCHEMA.to_owned()));
-                    set_paths.push((schema.clone(), rustdb_catalog::DEFAULT_SCHEMA.to_owned()));
+                    resolved.push((schema.to_ascii_lowercase(), rustdb_catalog::DEFAULT_SCHEMA.into()));
+                    set_paths.push((schema.clone(), rustdb_catalog::DEFAULT_SCHEMA.into()));
                     continue;
                 }
                 // A database name alone means its default schema.
@@ -3429,21 +4108,21 @@ impl Connection {
                         .catalog
                         .schema(&transaction, rustdb_catalog::DEFAULT_SCHEMA)
                 {
-                    resolved.push((database.name().to_string(), main.name().to_owned()));
+                    resolved.push(((&*database.name()).into(), main.name().to_owned()));
                     set_paths.push((schema.clone(), main.name().to_owned()));
                     continue;
                 }
                 let default = self.default_catalog();
                 let database = instance.databases.get(&default).ok_or_else(not_found)?;
                 if let Some(found) = database.catalog.schema(&transaction, &schema) {
-                    resolved.push((database.name().to_string(), found.name().to_owned()));
+                    resolved.push(((&*database.name()).into(), found.name().to_owned()));
                 } else {
                     // `Catalog::GetSchema` without a catalog also finds the system schemas.
                     let found = instance
                         .system_catalog
                         .schema(&transaction, &schema)
                         .ok_or_else(not_found)?;
-                    resolved.push(("system".to_owned(), found.name().to_owned()));
+                    resolved.push(("system".into(), found.name().to_owned()));
                 }
                 set_paths.push((previous_default.clone(), schema));
                 continue;
@@ -3453,14 +4132,14 @@ impl Connection {
                 .catalog
                 .schema(&transaction, &schema)
                 .ok_or_else(not_found)?;
-            resolved.push((database.name().to_string(), found.name().to_owned()));
+            resolved.push(((&*database.name()).into(), found.name().to_owned()));
             set_paths.push((catalog, schema));
         }
         if set_schema
             && let Some((catalog, _)) = resolved.first()
             && (catalog.eq_ignore_ascii_case("temp") || catalog.eq_ignore_ascii_case("system"))
         {
-            return Err(Error::catalog(format!(
+            return Err(Error::catalog(rustdb_common::byte_format!(
                 "{set_name} cannot be set to internal schema \"{catalog}\""
             )));
         }
@@ -3471,34 +4150,68 @@ impl Connection {
 
     /// The configuration functions see while the next statement runs.
     fn settings_snapshot(&self) -> crate::settings::SettingsSnapshot {
+        // Read-only client APIs also observe global changes without first running
+        // a statement that synchronizes the connection's planner settings.
+        let mut settings = self.settings.clone();
+        let globals = self
+            .database
+            .instance
+            .global_settings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if globals.version != self.synced_globals.version {
+            for (name, value) in &globals.values {
+                if !self.local_overrides.contains(name) {
+                    match value {
+                        Some(value) => {
+                            let _ = settings.set(name, value);
+                        }
+                        None => {
+                            let _ = settings.reset(name);
+                        }
+                    }
+                }
+            }
+        }
+        drop(globals);
         // `CatalogSearchEntry::ListToString` of the set paths.
-        let quoted = |part: &str| {
-            if part.contains(['.', ',', '"']) {
-                format!("\"{}\"", part.replace('"', "\"\""))
+        let quoted = |part: &[u8]| {
+            if part.iter().any(|byte| b".,\"".contains(byte)) {
+                let mut output = rustdb_common::ByteString::from(b"\"");
+                for &byte in part {
+                    if byte == b'"' {
+                        output.push(byte);
+                    }
+                    output.push(byte);
+                }
+                output.push(b'"');
+                output
             } else {
-                part.to_owned()
+                part.into()
             }
         };
-        let search_path = self
+        let paths: Vec<_> = self
             .search_path_set
             .iter()
             .map(|(catalog, schema)| {
                 if catalog.is_empty() {
                     quoted(schema)
                 } else {
-                    format!("{}.{}", quoted(catalog), quoted(schema))
+                    rustdb_common::byte_format!("{}.{}", quoted(catalog), quoted(schema))
                 }
             })
-            .collect::<Vec<_>>()
-            .join(",");
+            .collect();
+        let search_path = rustdb_common::ByteString::join(&paths, b",");
         let schema = self.search_path.first().map_or_else(
-            || rustdb_catalog::DEFAULT_SCHEMA.to_owned(),
+            || rustdb_catalog::DEFAULT_SCHEMA.into(),
             |(_, schema)| schema.clone(),
         );
         let buffer_manager = &self.database.instance().env.buffer_manager;
         crate::settings::SettingsSnapshot {
+            extension_registry: Arc::downgrade(&self.database.instance),
+            access_mode: self.database.instance().config.access_mode,
             logging: self.database.instance().log_manager.config(),
-            settings: self.settings.clone(),
+            settings,
             search_path,
             schema,
             memory_limit: buffer_manager.max_memory(),
@@ -3525,7 +4238,7 @@ impl Connection {
     }
 
     /// The name of the default database of this connection.
-    fn default_catalog(&self) -> String {
+    fn default_catalog(&self) -> rustdb_common::ByteString {
         self.search_path.first().map_or_else(
             || self.database.instance().default_database_name(),
             |(catalog, _)| catalog.clone(),
@@ -3582,7 +4295,7 @@ impl Connection {
     pub(crate) fn start_bound_plan(
         &mut self,
         plan: LogicalOperator,
-        names: Vec<String>,
+        names: Vec<rustdb_common::ByteString>,
         types: Vec<LogicalType>,
         properties: &rustdb_planner::StatementProperties,
         statement_type: rustdb_ast::StatementType,
@@ -3654,14 +4367,14 @@ impl Connection {
     fn register_modifications(
         &mut self,
         plan: &LogicalOperator,
-        function_modified: &[String],
+        function_modified: &[rustdb_common::ByteString],
         statement_type: rustdb_ast::StatementType,
     ) -> Result<()> {
         let instance = self.database.instance();
         // DuckDB walks its `modified_databases` map, which lists the latest registration
         // first: the databases functions write to come before the statement's own target,
         // which its bind registered earlier.
-        let mut modified: Vec<String> = function_modified.iter().rev().cloned().collect();
+        let mut modified: Vec<rustdb_common::ByteString> = function_modified.iter().rev().cloned().collect();
         collect_modified_databases(plan, instance, &self.default_catalog(), &mut modified);
         // The databases the statement reads or writes join the transaction
         // (`MetaTransaction::GetTransaction`), unless they were invalidated.
@@ -3685,9 +4398,9 @@ impl Connection {
                 continue;
             }
             if self.transactions.is_read_only() {
-                return Err(Error::new(
+                return Err(Error::new_bytes(
                     ErrorKind::Transaction,
-                    format!(
+                    rustdb_common::byte_format!(
                         "Cannot write to database \"{name}\" - transaction is launched in read-only mode"
                     ),
                 ));
@@ -3697,14 +4410,14 @@ impl Connection {
             };
             if database.read_only {
                 let ty = statement_type.name();
-                return Err(Error::invalid_input(format!(
+                return Err(Error::invalid_input(rustdb_common::byte_format!(
                     "Cannot execute statement of type \"{}\" on database \"{}\" which is attached in read-only mode!",
                     ty.strip_suffix("_STATEMENT").unwrap_or(ty),
                     database.name()
                 )));
             }
             transaction.modify_database(
-                &database.name(),
+                database.name(),
                 database.catalog.wal(),
                 database.catalog.locks(),
                 needs_checkpoint_lock(plan),
@@ -3718,7 +4431,7 @@ impl Connection {
     fn run_plan(
         &mut self,
         plan: LogicalOperator,
-        names: Vec<String>,
+        names: Vec<rustdb_common::ByteString>,
         types: Vec<LogicalType>,
     ) -> Result<MaterializedResult> {
         self.start_plan(plan, names, types, RunMode::MATERIALIZE)
@@ -3731,12 +4444,12 @@ impl Connection {
     fn start_plan(
         &mut self,
         mut plan: LogicalOperator,
-        names: Vec<String>,
+        names: Vec<rustdb_common::ByteString>,
         types: Vec<LogicalType>,
         mode: RunMode,
     ) -> Result<StatementRun> {
         let nothing =
-            || MaterializedResult::new(vec!["Success".to_owned()], vec![LogicalType::BOOLEAN], Vec::new());
+            || MaterializedResult::new(vec!["Success".into()], vec![LogicalType::BOOLEAN], Vec::new());
         // `PhysicalSet` / `PhysicalReset`: `DBConfig::CheckLock`, then the checks of options
         // that cannot change while the database runs.
         match &plan.kind {
@@ -3761,6 +4474,7 @@ impl Connection {
             LogicalKind::Attach(_) => Some("ATTACH"),
             LogicalKind::Detach(_) => Some("DETACH"),
             LogicalKind::Load(_) => Some("LOAD"),
+            LogicalKind::UpdateExtensions(_) => Some("UPDATE_EXTENSIONS"),
             LogicalKind::Set {
                 scope: SetScope::Variable,
                 ..
@@ -3778,14 +4492,16 @@ impl Connection {
         };
         if let Some(operator_type) = operator_type {
             self.profiler
-                .initialize_statement(&self.settings.profiler, operator_type);
+                .initialize_statement(&self.settings.profiler, operator_type)?;
         }
         match &plan.kind {
             LogicalKind::Transaction { info } => {
                 match info.transaction_type {
                     TransactionType::BeginTransaction => {
-                        self.transactions.begin(
+                        self.transactions.begin_with_options(
                             info.modifier == rustdb_ast::TransactionModifierType::TransactionReadOnly,
+                            info.invalidation_policy,
+                            info.auto_rollback,
                         )?;
                         // `immediate_transaction_mode` starts the transaction in every valid
                         // database right away.
@@ -3800,7 +4516,7 @@ impl Connection {
                             let transaction = self.transactions.current();
                             for database in self.database.instance().databases.all() {
                                 if database.validity.invalidated().is_none() {
-                                    transaction.access_database(&database.name());
+                                    transaction.access_database(database.name());
                                     self.use_database(&database);
                                 }
                             }
@@ -3812,7 +4528,7 @@ impl Connection {
                         if let Some(message) = self.invalidated_used_database() {
                             self.transactions.rollback()?;
                             self.finish_transaction_attaches(true);
-                            return Err(Error::new(ErrorKind::Io, message));
+                            return Err(Error::new_bytes(ErrorKind::Io, message));
                         }
                         let rolls_back = self.transactions.is_invalidated();
                         let mut checkpoint = None;
@@ -3830,7 +4546,7 @@ impl Connection {
                         self.transactions.rollback()?;
                         self.finish_transaction_attaches(true);
                         if let Some(message) = self.invalidated_used_database() {
-                            return Err(Error::new(ErrorKind::Io, message));
+                            return Err(Error::new_bytes(ErrorKind::Io, message));
                         }
                     }
                     TransactionType::Invalid => {
@@ -3846,18 +4562,20 @@ impl Connection {
                 // `duckdb` as no type, checks the file's magic bytes without one (data
                 // files are attached as views on them) and loads the extension of any
                 // other type, whose storage rustdb does not have.
-                let mut path = info.path.as_str();
+                let mut path = info.path.as_bytes();
                 let mut db_type = options.db_type.clone();
                 if db_type.is_none()
                     && let Some(prefix) = crate::attached::extension_prefix(path)
                 {
-                    db_type = Some(prefix.to_lowercase());
+                    db_type = Some(prefix.to_ascii_lowercase().into());
                     path = &path[prefix.len() + 1..];
                 }
-                let duckdb_type = db_type.as_deref() == Some("duckdb");
+                let duckdb_type = db_type.as_deref() == Some(b"duckdb".as_slice());
                 if let Some(db_type) = db_type.filter(|db_type| db_type != "duckdb") {
                     self.load_storage_extension(&db_type)?;
-                    return Err(Error::binder(format!("Unrecognized storage type \"{db_type}\"")));
+                    return Err(Error::binder(rustdb_common::byte_format!(
+                        "Unrecognized storage type \"{db_type}\""
+                    )));
                 }
                 let attached = if !duckdb_type && crate::attached::is_open_file(path)? {
                     self.database
@@ -3878,8 +4596,31 @@ impl Connection {
                 return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::Load(info) => {
-                self.run_load(info)?;
+                self.run_load(info).map_err(Error::caught)?;
                 return Ok(StatementRun::Done(nothing()));
+            }
+            LogicalKind::UpdateExtensions(info) => {
+                let config =
+                    crate::extensions::ExtensionConfig::from_settings(|name| self.current_setting(name).ok());
+                let allow_mismatch = self
+                    .current_setting("allow_extensions_metadata_mismatch")?
+                    .default_cast_as(&LogicalType::BOOLEAN)?
+                    .as_bool()
+                    .unwrap_or(false);
+                let rows =
+                    crate::extensions::update_extensions(info, &config, &self.database, allow_mismatch)?;
+                let mut chunks = Vec::new();
+                for batch in rows.chunks(rustdb_types::STANDARD_VECTOR_SIZE) {
+                    let mut chunk = rustdb_types::DataChunk::with_types(&types, batch.len());
+                    for (row, values) in batch.iter().enumerate() {
+                        for (column, value) in values.iter().enumerate() {
+                            chunk.column_mut(column).set_value(row, value)?;
+                        }
+                    }
+                    chunk.set_len(batch.len());
+                    chunks.push(chunk);
+                }
+                return Ok(StatementRun::Done(MaterializedResult::new(names, types, chunks)));
             }
             LogicalKind::AlterDatabase(info) => {
                 self.database.instance().alter_database(info)?;
@@ -3898,7 +4639,8 @@ impl Connection {
                     .pop()
                     .ok_or_else(|| Error::internal("SET VARIABLE without a value plan"))?;
                 let types = child.types.clone();
-                let result = self.run_plan(child, vec![String::new(); types.len()], types)?;
+                let result =
+                    self.run_plan(child, vec![rustdb_common::ByteString::new(); types.len()], types)?;
                 match result.row_count() {
                     0 => {}
                     1 => {
@@ -3962,6 +4704,8 @@ impl Connection {
                 }));
             }
             LogicalKind::Set { name, value, scope } => {
+                let native_name = name;
+                let name = self.settings.resolve_option(native_name)?;
                 if is_secret_setting(name) {
                     self.database.instance().secrets.set_option(name, Some(value))?;
                 }
@@ -3977,6 +4721,18 @@ impl Connection {
                         .instance()
                         .set_disabled_file_systems(&list.split(',').collect::<Vec<_>>())?;
                 }
+                if name.eq_ignore_ascii_case("current_transaction_invalidation_policy") {
+                    let text = value.to_varchar()?;
+                    let policy =
+                        rustdb_ast::TransactionInvalidationPolicy::from_name(&text).ok_or_else(|| {
+                            crate::settings::enum_value_error(
+                                &text,
+                                "TransactionInvalidationPolicy",
+                                &["STANDARD_POLICY", "ALL_ERRORS_INVALIDATE_TRANSACTION"],
+                            )
+                        })?;
+                    self.transactions.set_invalidation_policy(policy);
+                }
                 self.database.instance().set_buffer_setting(name, Some(value))?;
                 if crate::logging::is_logging_setting(name) {
                     crate::logging::apply_setting(&self.database.instance().log_manager, name, Some(value))?;
@@ -3985,8 +4741,8 @@ impl Connection {
                     self.settings.extension_collations = self.database.instance().extension_collations();
                 }
                 self.settings.set(name, value)?;
-                let (option, set_value, set_scope) = (name.clone(), value.clone(), *scope);
-                self.record_setting(&option, Some(&set_value), set_scope);
+                let (option, set_value, set_scope) = (name, value.clone(), *scope);
+                self.record_setting(option, Some(&set_value), set_scope);
                 if is_checkpoint_threshold(name) {
                     self.database.instance().set_checkpoint_threshold(value)?;
                 }
@@ -4011,6 +4767,12 @@ impl Connection {
                 return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::Reset { name, scope } => {
+                let native_name = name;
+                let name = self.settings.resolve_option(native_name)?;
+                if name.eq_ignore_ascii_case("current_transaction_invalidation_policy") {
+                    self.transactions
+                        .set_invalidation_policy(rustdb_ast::TransactionInvalidationPolicy::StandardPolicy);
+                }
                 if is_secret_setting(name) {
                     self.database.instance().secrets.set_option(name, None)?;
                 }
@@ -4028,8 +4790,8 @@ impl Connection {
                     self.database.instance().set_threads(None)?;
                 }
                 self.database.instance().set_buffer_setting(name, None)?;
-                let (option, reset_scope) = (name.clone(), *scope);
-                self.record_setting(&option, None, reset_scope);
+                let (option, reset_scope) = (name, *scope);
+                self.record_setting(option, None, reset_scope);
                 if is_force_compression(name) {
                     self.database.instance().set_force_compression(None)?;
                 }
@@ -4066,7 +4828,10 @@ impl Connection {
             }
             LogicalKind::CreateSecret(input) => {
                 // `PhysicalCreateSecret`: one row with `true`.
-                self.database.instance().secrets.create_secret(input)?;
+                self.database
+                    .instance()
+                    .secrets
+                    .create_secret(input, &self.transactions.current())?;
                 let column = rustdb_types::Vector::constant(&rustdb_types::Value::boolean(true))?;
                 return Ok(StatementRun::Done(MaterializedResult::new(
                     names,
@@ -4079,13 +4844,17 @@ impl Connection {
                     Some(rustdb_ast::ExtraDropInfo::Secret(extra)) => {
                         (extra.persist_mode, extra.secret_storage.clone())
                     }
-                    None => (rustdb_ast::SecretPersistType::Default, String::new()),
+                    None => (
+                        rustdb_ast::SecretPersistType::Default,
+                        rustdb_common::ByteString::new(),
+                    ),
                 };
                 self.database.instance().secrets.drop_secret(
                     &info.name,
                     info.if_not_found,
                     persist_type,
                     &storage,
+                    &self.transactions.current(),
                 )?;
                 return Ok(StatementRun::Done(nothing()));
             }
@@ -4094,7 +4863,7 @@ impl Connection {
                 if lower == "add_parquet_key" {
                     // `ParquetCrypto::AddKey` (`PragmaCall` with two VARCHAR arguments).
                     let [key_name, key] = parameters.as_slice() else {
-                        return Err(Error::binder(format!(
+                        return Err(Error::binder(rustdb_common::byte_format!(
                             "No function matches the given name and argument types '{name}({})'. You might need to add explicit type casts.",
                             parameters
                                 .iter()
@@ -4111,11 +4880,11 @@ impl Connection {
                     return Ok(StatementRun::Done(nothing()));
                 }
                 // `PragmaEnableProgressBar` and friends set the client's configuration.
-                let progress_setting = match lower.as_str() {
-                    "enable_progress_bar" => Some(("enable_progress_bar", true)),
-                    "disable_progress_bar" => Some(("enable_progress_bar", false)),
-                    "enable_print_progress_bar" => Some(("enable_progress_bar_print", true)),
-                    "disable_print_progress_bar" => Some(("enable_progress_bar_print", false)),
+                let progress_setting = match lower.as_bytes() {
+                    b"enable_progress_bar" => Some(("enable_progress_bar", true)),
+                    b"disable_progress_bar" => Some(("enable_progress_bar", false)),
+                    b"enable_print_progress_bar" => Some(("enable_progress_bar_print", true)),
+                    b"disable_print_progress_bar" => Some(("enable_progress_bar_print", false)),
                     _ => None,
                 };
                 if let Some((setting, enabled)) = progress_setting {
@@ -4125,21 +4894,26 @@ impl Connection {
                 if lower == "enable_optimizer" || lower == "disable_optimizer" {
                     self.settings.optimizer_disabled = lower == "disable_optimizer";
                 }
-                match lower.as_str() {
-                    "enable_profiling" | "enable_profile" => self.settings.profiler.enable(),
-                    "disable_profiling" | "disable_profile" => self.settings.profiler.disable(),
+                match lower.as_bytes() {
+                    b"enable_profiling" | b"enable_profile" => self.settings.profiler.enable(),
+                    b"disable_profiling" | b"disable_profile" => self.settings.profiler.disable(),
                     _ => {}
                 }
                 if lower == "disable_checkpoint_on_shutdown" || lower == "enable_checkpoint_on_shutdown" {
-                    self.database
-                        .instance()
-                        .shutdown_checkpoint_disabled
-                        .store(lower.starts_with("disable"), std::sync::atomic::Ordering::Relaxed);
+                    self.database.instance().shutdown_checkpoint_disabled.store(
+                        lower.starts_with(b"disable"),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
                 }
-                if NO_OP_PRAGMAS.contains(&name.to_ascii_lowercase().as_str()) {
+                if NO_OP_PRAGMAS
+                    .iter()
+                    .any(|pragma| pragma.as_bytes() == lower.as_bytes())
+                {
                     return Ok(StatementRun::Done(nothing()));
                 }
-                return Err(Error::not_implemented(format!("PRAGMA {name}")));
+                return Err(Error::not_implemented(rustdb_common::byte_format!(
+                    "PRAGMA {name}"
+                )));
             }
             LogicalKind::Execute { .. } => {
                 // The prepared statement was planned again with the values: run that plan.
@@ -4166,7 +4940,7 @@ impl Connection {
                 .search_path
                 .first()
                 .cloned()
-                .unwrap_or_else(|| (self.default_catalog(), rustdb_catalog::DEFAULT_SCHEMA.to_owned()));
+                .unwrap_or_else(|| (self.default_catalog(), rustdb_catalog::DEFAULT_SCHEMA.into()));
             if catalog == current_catalog && schema == current_schema {
                 self.set_search_path(
                     "schema",
@@ -4181,7 +4955,7 @@ impl Connection {
     fn execute_plan(
         &mut self,
         plan: LogicalOperator,
-        names: Vec<String>,
+        names: Vec<rustdb_common::ByteString>,
         types: Vec<LogicalType>,
     ) -> Result<MaterializedResult> {
         self.start_execution(plan, names, types, RunMode::MATERIALIZE)
@@ -4194,7 +4968,7 @@ impl Connection {
     fn start_execution(
         &mut self,
         mut plan: LogicalOperator,
-        names: Vec<String>,
+        names: Vec<rustdb_common::ByteString>,
         types: Vec<LogicalType>,
         mode: RunMode,
     ) -> Result<StatementRun> {
@@ -4274,7 +5048,8 @@ impl Connection {
         };
         // `Executor::Initialize`; EXPLAIN ANALYZE and profiled queries record what every
         // operator did.
-        self.profiler.initialize(&self.settings.profiler, &root);
+        self.profiler
+            .initialize(&self.settings.profiler, &root, &estimates)?;
         let profiler = (explain_analyze || self.profiler.is_running()).then(|| {
             Arc::new(
                 rustdb_execution::QueryProfiler::new()
@@ -4297,7 +5072,7 @@ impl Connection {
             Ok(execution) => execution,
             Err(error) => {
                 if let Some(profiler) = &profiler {
-                    self.profiler.flush(&self.settings.profiler, profiler);
+                    self.profiler.flush(&self.settings.profiler, profiler)?;
                 }
                 return Err(error);
             }
@@ -4309,13 +5084,24 @@ impl Connection {
         }
     }
 
+    /// Finish an exhausted streaming executor and flush its actual operator counters.
+    pub(crate) fn finish_stream(&mut self, run: PlanExecution) -> Result<MaterializedResult> {
+        let (execution, _, _, profiler, _) = run.into_parts();
+        let state = execution.finish();
+        if let Some(profiler) = &profiler {
+            self.profiler.flush(&self.settings.profiler, profiler)?;
+        }
+        drop(state?);
+        Ok(MaterializedResult::default())
+    }
+
     /// Runs the remaining tasks of a plan and collects its result
     /// (`ClientContext::ExecutePendingQueryInternal`).
     pub(crate) fn finish_execution(&mut self, run: PlanExecution) -> Result<MaterializedResult> {
         let (execution, names, types, profiler, return_type) = run.into_parts();
         let state = execution.finish();
         if let Some(profiler) = &profiler {
-            self.profiler.flush(&self.settings.profiler, profiler);
+            self.profiler.flush(&self.settings.profiler, profiler)?;
         }
         let rows = PhysicalResultCollector::take_rows(&state?)?;
         Ok(MaterializedResult::from_rows(names, types, rows).with_return_type(return_type))
@@ -4336,27 +5122,28 @@ fn seed_samples(plan: &mut LogicalOperator, client: &rustdb_function::FunctionCl
 }
 
 /// Whether `name` is `schema` or `search_path`, which set the catalog search path.
-fn is_search_path_setting(name: &str) -> bool {
-    name.eq_ignore_ascii_case("schema") || name.eq_ignore_ascii_case("search_path")
+fn is_search_path_setting(name: impl AsRef<[u8]>) -> bool {
+    let name = name.as_ref();
+    name.eq_ignore_ascii_case(b"schema") || name.eq_ignore_ascii_case(b"search_path")
 }
 
 /// `CatalogSearchEntry::ParseList`: comma-separated `[catalog.]schema` entries with
 /// double-quoted identifiers.
-fn parse_search_path(input: &str) -> Result<Vec<(String, String)>> {
+fn parse_search_path(input: &[u8]) -> Result<Vec<(rustdb_common::ByteString, rustdb_common::ByteString)>> {
     let mut entries = Vec::new();
-    let mut parts: Vec<String> = Vec::new();
-    let mut current = String::new();
-    let mut chars = input.chars().peekable();
-    let finish_entry = |parts: &mut Vec<String>,
-                        current: &mut String,
-                        entries: &mut Vec<(String, String)>|
+    let mut parts: Vec<rustdb_common::ByteString> = Vec::new();
+    let mut current = rustdb_common::ByteString::new();
+    let mut chars = input.iter().copied().peekable();
+    let finish_entry = |parts: &mut Vec<rustdb_common::ByteString>,
+                        current: &mut rustdb_common::ByteString,
+                        entries: &mut Vec<(rustdb_common::ByteString, rustdb_common::ByteString)>|
      -> Result<()> {
         parts.push(std::mem::take(current));
         let entry = match parts.len() {
-            1 => (String::new(), parts[0].clone()),
+            1 => (rustdb_common::ByteString::new(), parts[0].clone()),
             2 => (parts[0].clone(), parts[1].clone()),
             _ => {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "Too many dots - expected [schema] or [catalog.schema] for search path entry \"{input}\""
                 )));
             }
@@ -4369,24 +5156,24 @@ fn parse_search_path(input: &str) -> Result<Vec<(String, String)>> {
     };
     while let Some(c) = chars.next() {
         match c {
-            '"' => loop {
+            b'"' => loop {
                 match chars.next() {
-                    Some('"') if chars.peek() == Some(&'"') => {
+                    Some(b'"') if chars.peek() == Some(&b'"') => {
                         chars.next();
-                        current.push('"');
+                        current.push(b'"');
                     }
-                    Some('"') => break,
+                    Some(b'"') => break,
                     Some(c) => current.push(c),
                     None => {
-                        return Err(Error::parser(format!(
+                        return Err(Error::parser(rustdb_common::byte_format!(
                             "Unterminated quote in qualified name! (input: {input})"
                         )));
                     }
                 }
             },
-            '.' => parts.push(std::mem::take(&mut current)),
-            ',' => finish_entry(&mut parts, &mut current, &mut entries)?,
-            c if c.is_whitespace() && current.is_empty() => {}
+            b'.' => parts.push(std::mem::take(&mut current)),
+            b',' => finish_entry(&mut parts, &mut current, &mut entries)?,
+            c if c.is_ascii_whitespace() && current.is_empty() => {}
             c => current.push(c),
         }
     }
@@ -4397,17 +5184,20 @@ fn parse_search_path(input: &str) -> Result<Vec<(String, String)>> {
 /// The databases a plan writes to: the catalog of DDL statements and the database of
 /// the table of DML statements.
 /// `ErrorManager::InvalidatedDatabase`: the error of using an invalidated instance.
-pub(crate) fn invalidated_database_error(message: &str) -> Error {
+pub(crate) fn invalidated_database_error(message: &[u8]) -> Error {
     const BASE: &str = "Failed: database has been invalidated because of a previous fatal error. The database must \
                         be restarted prior to being used again.\n";
-    if message.contains(BASE) {
-        return Error::new(ErrorKind::Fatal, message.to_owned());
+    if message.windows(BASE.len()).any(|part| part == BASE.as_bytes()) {
+        return Error::new_bytes(ErrorKind::Fatal, message.to_owned());
     }
-    Error::new(ErrorKind::Fatal, format!("{BASE}Original error: \"{message}\""))
+    Error::new_bytes(
+        ErrorKind::Fatal,
+        rustdb_common::byte_format!("{BASE}Original error: \"{message}\""),
+    )
 }
 
 /// The databases whose tables a plan scans.
-fn collect_read_databases(plan: &LogicalOperator, out: &mut Vec<String>) {
+fn collect_read_databases(plan: &LogicalOperator, out: &mut Vec<rustdb_common::ByteString>) {
     if let LogicalKind::Get(get) = &plan.kind
         && get.table.is_some()
         && let Some((catalog, _)) = &get.table_schema
@@ -4426,15 +5216,15 @@ fn collect_read_databases(plan: &LogicalOperator, out: &mut Vec<String>) {
 fn collect_modified_databases(
     plan: &LogicalOperator,
     instance: &DatabaseInstance,
-    default_catalog: &str,
-    out: &mut Vec<String>,
+    default_catalog: &[u8],
+    out: &mut Vec<rustdb_common::ByteString>,
 ) {
-    let mut push = |name: &str| {
+    let mut push = |name: &[u8]| {
         if !name.is_empty() && !out.iter().any(|existing| existing.eq_ignore_ascii_case(name)) {
-            out.push(name.to_owned());
+            out.push(name.into());
         }
     };
-    let table_database = |entry: &rustdb_catalog::CatalogEntry| -> Option<String> {
+    let table_database = |entry: &rustdb_catalog::CatalogEntry| -> Option<rustdb_common::ByteString> {
         let rustdb_catalog::EntryKind::Table(table) = &entry.kind else {
             return None;
         };
@@ -4449,7 +5239,7 @@ fn collect_modified_databases(
                     .io()
                     .is_ok_and(|io| Arc::ptr_eq(io, storage.io()))
             })
-            .map(|database| database.name().to_string())
+            .map(|database| (&*database.name()).into())
     };
     match &plan.kind {
         LogicalKind::Insert(insert) => {
@@ -4505,7 +5295,9 @@ fn collect_modified_databases(
 
 /// The database a table function call writes to, as its bind registered it (DuckDB's
 /// `RegisterDBModify`, e.g. by `dbgen`).
-fn table_function_modified_database(get: &rustdb_planner::operator::LogicalGet) -> Option<String> {
+fn table_function_modified_database(
+    get: &rustdb_planner::operator::LogicalGet,
+) -> Option<rustdb_common::ByteString> {
     get.bind_data.as_deref()?.modified_database()
 }
 

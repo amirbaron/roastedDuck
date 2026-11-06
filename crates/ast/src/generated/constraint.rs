@@ -112,15 +112,15 @@ impl DeserializeObject for CheckConstraint {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ForeignKeyConstraint {
     /// `pk_columns` (property 200).
-    pub pk_columns: Vec<String>,
+    pub pk_columns: Vec<rustdb_common::ByteString>,
     /// `fk_columns` (property 201).
-    pub fk_columns: Vec<String>,
+    pub fk_columns: Vec<rustdb_common::ByteString>,
     /// `fk_type` (property 202).
     pub fk_type: ForeignKeyType,
     /// `schema` (property 203).
-    pub schema: String,
+    pub schema: rustdb_common::ByteString,
     /// `table` (property 204).
-    pub table: String,
+    pub table: rustdb_common::ByteString,
     /// `pk_keys` (property 205).
     pub pk_keys: Vec<PhysicalIndex>,
     /// `fk_keys` (property 206).
@@ -142,11 +142,13 @@ impl SerializeObject for ForeignKeyConstraint {
 
 impl DeserializeObject for ForeignKeyConstraint {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let pk_columns: Vec<String> = deserializer.read_property_with_default(200, "pk_columns")?;
-        let fk_columns: Vec<String> = deserializer.read_property_with_default(201, "fk_columns")?;
+        let pk_columns: Vec<rustdb_common::ByteString> =
+            deserializer.read_property_with_default(200, "pk_columns")?;
+        let fk_columns: Vec<rustdb_common::ByteString> =
+            deserializer.read_property_with_default(201, "fk_columns")?;
         let fk_type: ForeignKeyType = deserializer.read_property(202, "fk_type")?;
-        let schema: String = deserializer.read_property_with_default(203, "schema")?;
-        let table: String = deserializer.read_property_with_default(204, "table")?;
+        let schema: rustdb_common::ByteString = deserializer.read_property_with_default(203, "schema")?;
+        let table: rustdb_common::ByteString = deserializer.read_property_with_default(204, "table")?;
         let pk_keys: Vec<PhysicalIndex> = deserializer.read_property_with_default(205, "pk_keys")?;
         let fk_keys: Vec<PhysicalIndex> = deserializer.read_property_with_default(206, "fk_keys")?;
         Ok(Self {
@@ -169,7 +171,7 @@ pub struct UniqueConstraint {
     /// `index` (property 201).
     pub index: LogicalIndex,
     /// `columns` (property 202).
-    pub columns: Vec<String>,
+    pub columns: Vec<rustdb_common::ByteString>,
 }
 
 impl SerializeObject for UniqueConstraint {
@@ -185,7 +187,8 @@ impl DeserializeObject for UniqueConstraint {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
         let is_primary_key: bool = deserializer.read_property_with_default(200, "is_primary_key")?;
         let index: LogicalIndex = deserializer.read_property(201, "index")?;
-        let columns: Vec<String> = deserializer.read_property_with_default(202, "columns")?;
+        let columns: Vec<rustdb_common::ByteString> =
+            deserializer.read_property_with_default(202, "columns")?;
         Ok(Self {
             is_primary_key,
             index,

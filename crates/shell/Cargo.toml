@@ -11,6 +11,7 @@ name = "rustdb"
 path = "src/main.rs"
 
 [dependencies]
+rustdb_capi = { package = "rustdb-capi", path = "../capi" }
 rustdb.workspace = true
 rustdb-ast.workspace = true
 rustdb-common.workspace = true

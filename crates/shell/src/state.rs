@@ -10,6 +10,7 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb::Config;
+use rustdb_common::ByteString;
 
 use crate::highlight::{self, HighlightElementType, HighlightMode, ShellHighlight};
 use crate::output::{Output, OutputTarget, PrintOutput};
@@ -205,7 +206,7 @@ pub enum BailOnError {
 /// A column of a table as `.tables` and `DESCRIBE` show it (`ShellColumnInfo`).
 #[derive(Clone, Debug, Default)]
 pub struct ShellColumnInfo {
-    pub column_name: String,
+    pub column_name: rustdb_common::ByteString,
     pub column_type: String,
     pub is_primary_key: bool,
     pub is_not_null: bool,
@@ -216,9 +217,9 @@ pub struct ShellColumnInfo {
 /// A table as `.tables` and `DESCRIBE` show it (`ShellTableInfo`).
 #[derive(Clone, Debug, Default)]
 pub struct ShellTableInfo {
-    pub database_name: String,
-    pub schema_name: String,
-    pub table_name: String,
+    pub database_name: rustdb_common::ByteString,
+    pub schema_name: rustdb_common::ByteString,
+    pub table_name: rustdb_common::ByteString,
     pub estimated_size: Option<u64>,
     pub is_view: bool,
     pub columns: Vec<ShellColumnInfo>,
@@ -267,22 +268,22 @@ pub struct ShellState {
     pub shell_flags: u32,
     pub prior_shell_flags: u32,
     /// The table name of `.mode insert`.
-    pub dest_table: String,
+    pub dest_table: ByteString,
     /// A temporary file that might need deleting.
     pub temp_file: String,
-    pub col_separator: String,
-    pub row_separator: String,
-    pub col_separator_prior: String,
-    pub row_separator_prior: String,
+    pub col_separator: ByteString,
+    pub row_separator: ByteString,
+    pub col_separator_prior: ByteString,
+    pub row_separator_prior: ByteString,
     /// The widths of `.width`; negative values right-align.
     pub col_width: Vec<i32>,
     /// How NULL renders.
-    pub null_value: String,
+    pub null_value: ByteString,
     /// Column-wise duckbox rendering.
     pub columns: bool,
     /// The name of the output file, or `|command` for a pipe.
-    pub outfile: String,
-    pub db_filename: String,
+    pub outfile: ByteString,
+    pub db_filename: ByteString,
     /// The file of `.log`.
     pub log: Option<OutputTarget>,
     /// The rows of a duckbox result.
@@ -295,37 +296,37 @@ pub struct ShellState {
     pub thousand_separator: Option<u8>,
     pub large_number_rendering: LargeNumberRendering,
     /// The command `-ui` runs.
-    pub ui_command: String,
+    pub ui_command: ByteString,
     pub last_changes: u64,
     pub total_changes: u64,
     /// Whether commands are read from stdin after the command line.
     pub read_stdin: bool,
-    pub init_file: String,
+    pub init_file: ByteString,
     pub run_init: bool,
     pub last_result: LastResult,
     pub bail: BailOnError,
     /// The table name shown for a `DESCRIBE`.
-    pub describe_table_name: String,
+    pub describe_table_name: rustdb_common::ByteString,
     pub stdin_is_interactive: bool,
     pub stdout_is_console: bool,
     pub stderr_is_console: bool,
-    pub program_name: String,
+    pub program_name: ByteString,
     pub safe_mode: bool,
     pub highlight_errors: OptionType,
     pub highlight_results: OptionType,
     /// The init file being read.
-    pub duckdb_rc_path: String,
+    pub duckdb_rc_path: ByteString,
     pub startup_text: StartupText,
     pub displayed_loading_resources_message: bool,
     pub main_prompt: Prompt,
-    pub continue_prompt: String,
-    pub continue_prompt_selected: String,
-    pub scroll_up_prompt: String,
-    pub scroll_down_prompt: String,
+    pub continue_prompt: ByteString,
+    pub continue_prompt_selected: ByteString,
+    pub scroll_up_prompt: ByteString,
+    pub scroll_down_prompt: ByteString,
     pub progress_bar: ShellProgressBar,
     pub rl_version: ReadLineVersion,
     pub pager_mode: PagerMode,
-    pub pager_command: String,
+    pub pager_command: ByteString,
     /// In automatic mode, the pager shows results of at least this many rows.
     pub pager_min_rows: usize,
     pub pager_is_active: bool,
@@ -351,17 +352,17 @@ impl ShellState {
             show_header: true,
             shell_flags: 0,
             prior_shell_flags: 0,
-            dest_table: String::new(),
+            dest_table: ByteString::new(),
             temp_file: String::new(),
-            col_separator: SEP_COLUMN.to_owned(),
-            row_separator: SEP_ROW.to_owned(),
-            col_separator_prior: String::new(),
-            row_separator_prior: String::new(),
+            col_separator: SEP_COLUMN.into(),
+            row_separator: SEP_ROW.into(),
+            col_separator_prior: ByteString::new(),
+            row_separator_prior: ByteString::new(),
             col_width: Vec::new(),
-            null_value: "NULL".to_owned(),
+            null_value: "NULL".into(),
             columns: false,
-            outfile: String::new(),
-            db_filename: String::new(),
+            outfile: ByteString::new(),
+            db_filename: ByteString::new(),
             log: None,
             max_rows: 40,
             max_width: 0,
@@ -369,34 +370,34 @@ impl ShellState {
             decimal_separator: None,
             thousand_separator: None,
             large_number_rendering: LargeNumberRendering::Default,
-            ui_command: "CALL start_ui()".to_owned(),
+            ui_command: "CALL start_ui()".into(),
             last_changes: 0,
             total_changes: 0,
             read_stdin: true,
-            init_file: String::new(),
+            init_file: ByteString::new(),
             run_init: true,
             last_result: LastResult::default(),
             bail: BailOnError::Automatic,
-            describe_table_name: String::new(),
+            describe_table_name: rustdb_common::ByteString::new(),
             stdin_is_interactive: true,
             stdout_is_console: true,
             stderr_is_console: true,
-            program_name: "duckdb".to_owned(),
+            program_name: "duckdb".into(),
             safe_mode: false,
             highlight_errors: OptionType::Default,
             highlight_results: OptionType::Default,
-            duckdb_rc_path: String::new(),
+            duckdb_rc_path: ByteString::new(),
             startup_text: StartupText::All,
             displayed_loading_resources_message: false,
             main_prompt: Prompt::default_main_prompt(),
-            continue_prompt: "  ".to_owned(),
-            continue_prompt_selected: "  ".to_owned(),
-            scroll_up_prompt: "⇡ ".to_owned(),
-            scroll_down_prompt: "⇣ ".to_owned(),
+            continue_prompt: "  ".into(),
+            continue_prompt_selected: "  ".into(),
+            scroll_up_prompt: "⇡ ".into(),
+            scroll_down_prompt: "⇣ ".into(),
             progress_bar: ShellProgressBar::with_default_components(),
             rl_version: ReadLineVersion::Linenoise,
             pager_mode: PagerMode::Automatic,
-            pager_command: String::new(),
+            pager_command: ByteString::new(),
             pager_min_rows: 50,
             pager_is_active: false,
             highlight_mode: HighlightMode::Automatic,
@@ -452,7 +453,7 @@ impl ShellState {
     }
 
     /// `SetOrClearFlag`.
-    pub fn set_or_clear_flag(&mut self, flag: ShellFlag, arg: &str) {
+    pub fn set_or_clear_flag(&mut self, flag: ShellFlag, arg: impl AsRef<[u8]>) {
         if self.string_to_bool(arg) {
             self.set_flag(flag);
         } else {
@@ -493,9 +494,9 @@ impl ShellState {
     }
 
     /// `EscapeCString`: `str` quoted by C and TCL rules.
-    pub fn escape_c_string(text: &str) -> String {
+    pub fn escape_c_string(text: impl AsRef<[u8]>) -> String {
         let mut result = String::from("\"");
-        for &c in text.as_bytes() {
+        for &c in text.as_ref() {
             match c {
                 b'\\' => result.push_str("\\\\"),
                 b'"' => result.push_str("\\\""),
@@ -533,13 +534,13 @@ impl ShellState {
     }
 
     /// `SetTableName`: the table name of `.mode insert`, quoted if needed.
-    pub fn set_table_name(&mut self, name: Option<&str>) {
-        self.dest_table = name.map(sql_identifier).unwrap_or_default();
+    pub fn set_table_name(&mut self, name: Option<&[u8]>) {
+        self.dest_table = name.map(sql_identifier_bytes).unwrap_or_default();
     }
 
     /// `StringToInt`: an integer with an optional sign, hexadecimal with `0x`, and an
     /// optional size suffix (`KiB`, `MB`, `G`, ...).
-    pub fn string_to_int(arg: &str) -> i64 {
+    pub fn string_to_int(arg: impl AsRef<[u8]>) -> i64 {
         const MULTIPLIERS: [(&str, i64); 9] = [
             ("KiB", 1024),
             ("MiB", 1024 * 1024),
@@ -551,7 +552,7 @@ impl ShellState {
             ("M", 1_000_000),
             ("G", 1_000_000_000),
         ];
-        let mut bytes = arg.as_bytes();
+        let mut bytes = arg.as_ref();
         let mut value: i64 = 0;
         let negative = bytes.first() == Some(&b'-');
         if negative || bytes.first() == Some(&b'+') {
@@ -580,8 +581,9 @@ impl ShellState {
 
     /// `StringToBool`: an integer, `on`/`yes` or `off`/`no`; anything else is reported
     /// and taken as false.
-    pub fn string_to_bool(&self, arg: &str) -> bool {
-        let bytes = arg.as_bytes();
+    pub fn string_to_bool(&self, arg: impl AsRef<[u8]>) -> bool {
+        let arg = arg.as_ref();
+        let bytes = arg;
         let digits = if bytes.starts_with(b"0x") {
             2 + bytes[2..]
                 .iter()
@@ -593,22 +595,22 @@ impl ShellState {
         if digits > 0 && digits == bytes.len() {
             return Self::string_to_int(arg) & 0xffff_ffff != 0;
         }
-        if arg.eq_ignore_ascii_case("on") || arg.eq_ignore_ascii_case("yes") {
+        if arg.eq_ignore_ascii_case(b"on") || arg.eq_ignore_ascii_case(b"yes") {
             return true;
         }
-        if arg.eq_ignore_ascii_case("off") || arg.eq_ignore_ascii_case("no") {
+        if arg.eq_ignore_ascii_case(b"off") || arg.eq_ignore_ascii_case(b"no") {
             return false;
         }
-        self.print_err(format!(
+        self.print_err(rustdb_common::byte_format!(
             "ERROR: Not a boolean value: \"{arg}\". Assuming \"no\".\n"
         ));
         false
     }
 
     /// `SetOutputMode`: `.mode NAME ?TABLE?`, where NAME may be a prefix of the mode.
-    pub fn set_output_mode(&mut self, mode_name: &str, table_name: Option<&str>) -> bool {
-        let is = |name: &str| name.as_bytes().starts_with(mode_name.as_bytes()) && !mode_name.is_empty();
-        let first = mode_name.as_bytes().first().copied().unwrap_or(0);
+    pub fn set_output_mode(&mut self, mode_name: &[u8], table_name: Option<&[u8]>) -> bool {
+        let is = |name: &str| name.as_bytes().starts_with(mode_name) && !mode_name.is_empty();
+        let first = mode_name.first().copied().unwrap_or(0);
         let long = mode_name.len() > 2;
         if table_name.is_some() && !(first == b'i' && is("insert")) {
             self.print_err("TABLE argument can only be used with .mode insert");
@@ -616,41 +618,41 @@ impl ShellState {
         }
         if first == b'l' && long && is("lines") {
             self.mode = RenderMode::Line;
-            SEP_ROW.clone_into(&mut self.row_separator);
+            self.row_separator = SEP_ROW.into();
         } else if first == b'c' && is("columns") {
             self.mode = RenderMode::Column;
             if self.has_flag(ShellFlag::HeaderSet) {
                 self.show_header = true;
             }
-            SEP_ROW.clone_into(&mut self.row_separator);
+            self.row_separator = SEP_ROW.into();
         } else if first == b'l' && long && is("list") {
             self.mode = RenderMode::List;
-            SEP_COLUMN.clone_into(&mut self.col_separator);
-            SEP_ROW.clone_into(&mut self.row_separator);
+            self.col_separator = SEP_COLUMN.into();
+            self.row_separator = SEP_ROW.into();
         } else if first == b'h' && is("html") {
             self.mode = RenderMode::Html;
         } else if first == b't' && is("tcl") {
             self.mode = RenderMode::Tcl;
-            SEP_SPACE.clone_into(&mut self.col_separator);
-            SEP_ROW.clone_into(&mut self.row_separator);
+            self.col_separator = SEP_SPACE.into();
+            self.row_separator = SEP_ROW.into();
         } else if first == b'c' && is("csv") {
             self.mode = RenderMode::Csv;
-            SEP_COMMA.clone_into(&mut self.col_separator);
-            SEP_CRLF.clone_into(&mut self.row_separator);
+            self.col_separator = SEP_COMMA.into();
+            self.row_separator = SEP_CRLF.into();
         } else if first == b't' && is("tabs") {
             self.mode = RenderMode::List;
-            SEP_TAB.clone_into(&mut self.col_separator);
+            self.col_separator = SEP_TAB.into();
         } else if first == b'i' && is("insert") {
             self.mode = RenderMode::Insert;
-            self.set_table_name(Some(table_name.unwrap_or("table")));
+            self.set_table_name(Some(table_name.unwrap_or(b"table")));
         } else if first == b'q' && is("quote") {
             self.mode = RenderMode::Quote;
-            SEP_COMMA.clone_into(&mut self.col_separator);
-            SEP_ROW.clone_into(&mut self.row_separator);
+            self.col_separator = SEP_COMMA.into();
+            self.row_separator = SEP_ROW.into();
         } else if first == b'a' && is("ascii") {
             self.mode = RenderMode::Ascii;
-            SEP_UNIT.clone_into(&mut self.col_separator);
-            SEP_RECORD.clone_into(&mut self.row_separator);
+            self.col_separator = SEP_UNIT.into();
+            self.row_separator = SEP_RECORD.into();
         } else if first == b'm' && is("markdown") {
             self.mode = RenderMode::Markdown;
         } else if first == b't' && is("table") {
@@ -692,11 +694,13 @@ impl ShellState {
         self.print(Self::escape_c_string(&self.null_value));
         self.print("\n");
         let output = if self.outfile.is_empty() {
-            "stdout"
+            b"stdout".as_slice()
         } else {
-            &self.outfile
+            self.outfile.as_bytes()
         };
-        self.print(format!("{:>12.12}: {output}\n", "output"));
+        self.print(format!("{:>12.12}: ", "output"));
+        self.print(output);
+        self.print("\n");
         self.print(format!("{:>12.12}: ", "colseparator"));
         self.print(Self::escape_c_string(&self.col_separator));
         self.print("\n");
@@ -708,7 +712,9 @@ impl ShellState {
             self.print(format!("{width} "));
         }
         self.print("\n");
-        self.print(format!("{:>12.12}: {}\n", "filename", self.db_filename));
+        self.print(format!("{:>12.12}: ", "filename"));
+        self.print(&self.db_filename);
+        self.print("\n");
     }
 
     /// `PrintDatabaseError`: an error to stderr, highlighted when errors are.
@@ -748,8 +754,13 @@ impl ShellState {
     }
 
     /// `ShellHighlight(state).PrintText(...)`.
-    pub fn print_highlighted(&self, text: &str, output: PrintOutput, element: HighlightElementType) {
-        ShellHighlight::new(&self.out).print_text(text, output, element);
+    pub fn print_highlighted(
+        &self,
+        text: impl AsRef<[u8]>,
+        output: PrintOutput,
+        element: HighlightElementType,
+    ) {
+        ShellHighlight::new(&self.out).print_bytes(text.as_ref(), output, element);
     }
 
     /// `ClearInterrupt`, without the connection's flag (the next query clears it).
@@ -758,12 +769,11 @@ impl ShellState {
     }
 
     /// `SetPrompt`: at most 19 bytes of `value`.
-    pub fn truncated_prompt(value: &str) -> String {
-        let mut end = value.len().min(MAX_PROMPT_SIZE - 1);
-        while !value.is_char_boundary(end) {
-            end -= 1;
-        }
-        value[..end].to_owned()
+    pub fn truncated_prompt(value: impl AsRef<[u8]>) -> ByteString {
+        let value = value.as_ref();
+        let end = value.iter().position(|&byte| byte == 0).unwrap_or(value.len())
+            .min(MAX_PROMPT_SIZE - 1);
+        value[..end].into()
     }
 
     /// `GetMaxRenderWidth`: `.maxwidth`, else the terminal width; at least 80.
@@ -785,7 +795,7 @@ impl ShellState {
     /// `ResetOutput`: the output returns to stdout, closing a file or pipe; a temporary
     /// file of `.excel` / `.once -e` is opened with the system viewer first.
     pub fn reset_output(&mut self) {
-        let is_pipe = self.outfile.len() > 1 && self.outfile.starts_with('|');
+        let is_pipe = self.outfile.len() > 1 && self.outfile.starts_with(b"|");
         self.close_output();
         if !is_pipe && self.do_xdg_open {
             let open_command = if cfg!(target_os = "macos") {
@@ -808,16 +818,20 @@ impl ShellState {
     }
 
     /// `OpenOutputFile`: `stdout`, `stderr`, `off` (none) or a file.
-    pub fn open_output_file(&self, file: &str) -> Option<OutputTarget> {
+    pub fn open_output_file(&self, file: impl AsRef<[u8]>) -> Option<OutputTarget> {
+        let file = file.as_ref();
         match file {
-            "stdout" => Some(OutputTarget::Stdout),
-            "stderr" => Some(OutputTarget::Stderr),
-            "off" => None,
+            b"stdout" => Some(OutputTarget::Stdout),
+            b"stderr" => Some(OutputTarget::Stderr),
+            b"off" => None,
             _ => {
-                if let Ok(handle) = File::create(expand_path(file)) {
+                let handle = rustdb_function::file_system::native_path(&expand_path_bytes(file))
+                    .ok()
+                    .and_then(|path| File::create(path).ok());
+                if let Some(handle) = handle {
                     Some(OutputTarget::File(BufWriter::new(handle)))
                 } else {
-                    self.print_err(format!("Error: cannot open \"{file}\"\n"));
+                    self.print_err(rustdb_common::byte_format!("Error: cannot open \"{file}\"\n"));
                     None
                 }
             }
@@ -846,15 +860,15 @@ impl ShellState {
     }
 
     /// `GetSystemPager`: `DUCKDB_PAGER`, `PAGER`, or `less -SRX`.
-    pub fn system_pager() -> String {
+    pub fn system_pager() -> ByteString {
         for variable in ["DUCKDB_PAGER", "PAGER"] {
-            if let Ok(pager) = std::env::var(variable)
+            if let Some(pager) = std::env::var_os(variable)
                 && !pager.is_empty()
             {
-                return pager;
+                return pager.as_os_str().as_encoded_bytes().into();
             }
         }
-        "less -SRX".to_owned()
+        "less -SRX".into()
     }
 
     /// `ShouldUsePager()`: only for results to an interactive terminal.
@@ -891,7 +905,10 @@ impl ShellState {
         crate::interrupt::install(libc::SIGPIPE);
         let child = Command::new("/bin/sh")
             .arg("-c")
-            .arg(&self.pager_command)
+            .arg(match rustdb_function::file_system::native_path(&self.pager_command) {
+                Ok(command) => command,
+                Err(_) => return false,
+            })
             .stdin(Stdio::piped())
             .spawn();
         let mut child = match child {
@@ -913,7 +930,7 @@ impl ShellState {
             child,
             stdin: BufWriter::new(stdin),
         });
-        self.outfile = format!("|{}", self.pager_command);
+        self.outfile = rustdb_common::byte_format!("|{}", self.pager_command);
         true
     }
 
@@ -999,11 +1016,24 @@ pub fn sql_string(text: &str) -> String {
     rustdb_types::identifier::write_quoted(text, '\'')
 }
 
-/// `FileSystem::ExpandPath`: a leading `~` is the home directory.
-pub fn expand_path(path: &str) -> String {
-    match path.strip_prefix('~') {
-        Some(rest) if rest.is_empty() || rest.starts_with('/') => format!("{}{rest}", home_directory()),
-        _ => path.to_owned(),
+pub fn sql_identifier_bytes(name: &[u8]) -> ByteString {
+    rustdb_types::identifier::sql_identifier_bytes(name)
+}
+
+pub fn sql_string_bytes(text: &[u8]) -> ByteString {
+    rustdb_types::identifier::write_quoted_bytes(text, b'\'')
+}
+
+/// Native path expansion, keeping the suffix and OS home-directory bytes intact.
+pub fn expand_path_bytes(path: &[u8]) -> ByteString {
+    match path.strip_prefix(b"~") {
+        Some(rest) if rest.is_empty() || rest.starts_with(b"/") => {
+            let home = std::env::var_os("HOME").unwrap_or_default();
+            let mut result = ByteString::from(home.as_encoded_bytes());
+            result.push_bytes(rest);
+            result
+        }
+        _ => path.into(),
     }
 }
 

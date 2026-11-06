@@ -5,6 +5,7 @@ use rustdb_ast::ExplainFormat;
 use rustdb_common::tree_renderer::{
     RenderParams, RenderSource, RenderTree, RenderTreeNode, RendererKind, render,
 };
+use rustdb_common::{ByteString, Result};
 
 use super::{LogicalKind, LogicalOperator};
 use crate::expression::Expression;
@@ -92,20 +93,19 @@ pub const fn logical_operator_name(operator_type: LogicalOperatorType) -> &'stat
 }
 
 /// The expressions' names, one per line.
-fn names(expressions: &[Expression]) -> String {
-    expressions
-        .iter()
-        .map(Expression::name)
-        .collect::<Vec<_>>()
-        .join("\n")
+fn names(expressions: &[Expression]) -> ByteString {
+    ByteString::join(
+        &expressions.iter().map(Expression::name).collect::<Vec<_>>(),
+        b"\n",
+    )
 }
 
 impl LogicalOperator {
     /// The operator's name in `EXPLAIN` output (DuckDB's `GetName`).
-    pub fn explain_name(&self) -> String {
+    pub fn explain_name(&self) -> ByteString {
         match &self.kind {
-            LogicalKind::Get(get) => get.function.name.to_ascii_uppercase(),
-            _ => logical_operator_name(self.operator_type()).to_owned(),
+            LogicalKind::Get(get) => get.function.name.to_ascii_uppercase().into(),
+            _ => logical_operator_name(self.operator_type()).into(),
         }
     }
 
@@ -129,11 +129,11 @@ impl LogicalOperator {
                 result.insert("Expressions".to_owned(), names(&self.expressions));
             }
             LogicalKind::AnyJoin { condition, .. } => {
-                result.insert("Condition".to_owned(), condition.to_string());
+                result.insert("Condition".to_owned(), condition.to_bytes());
             }
             LogicalKind::ComparisonJoin(join) => {
                 result.insert("Join Type".to_owned(), join.join_type.name().to_owned());
-                let mut conditions: Vec<String> = join
+                let mut conditions: Vec<ByteString> = join
                     .conditions
                     .iter()
                     .map(|condition| {
@@ -142,13 +142,13 @@ impl LogicalOperator {
                             condition.left.clone(),
                             condition.right.clone(),
                         )
-                        .to_string()
+                        .to_bytes()
                     })
                     .collect();
                 if let Some(predicate) = &join.predicate {
-                    conditions.push(predicate.to_string());
+                    conditions.push(predicate.to_bytes());
                 }
-                result.insert("Conditions".to_owned(), conditions.join("\n"));
+                result.insert("Conditions".to_owned(), ByteString::join(&conditions, b"\n"));
             }
             LogicalKind::CteRef { cte_index, .. } => {
                 result.insert("CTE Index".to_owned(), cte_index.to_string());
@@ -160,8 +160,8 @@ impl LogicalOperator {
                 }
             }
             LogicalKind::Order { orders, .. } => {
-                let orders: Vec<String> = orders.iter().map(|order| order.expression.name()).collect();
-                result.insert("__order_by__".to_owned(), orders.join("\n"));
+                let orders: Vec<ByteString> = orders.iter().map(|order| order.expression.name()).collect();
+                result.insert("__order_by__".to_owned(), ByteString::join(&orders, b"\n"));
             }
             LogicalKind::MaterializedCte {
                 ctename, table_index, ..
@@ -173,13 +173,13 @@ impl LogicalOperator {
                 result.insert("Table Index".to_owned(), table_index.to_string());
             }
             LogicalKind::Get(get) => {
-                let filters: Vec<String> = get
+                let filters: Vec<ByteString> = get
                     .table_filters
                     .filters
                     .iter()
                     .filter_map(|(&column, filter)| get.names.get(column).map(|name| filter.to_sql(name)))
                     .collect();
-                result.insert("Filters".to_owned(), filters.join("\n"));
+                result.insert("Filters".to_owned(), ByteString::join(&filters, b"\n"));
                 if let Some(sample_options) = &get.sample_options {
                     result.insert(
                         "Sample Method".to_owned(),
@@ -209,7 +209,7 @@ impl LogicalOperator {
     }
 
     /// The plan rendered for `EXPLAIN` (DuckDB's `LogicalOperator::ToString(format)`).
-    pub fn to_explain_string(&self, format: ExplainFormat) -> String {
+    pub fn to_explain_string(&self, format: ExplainFormat) -> Result<ByteString> {
         render(renderer_kind(format), RenderTree::create(&self))
     }
 }

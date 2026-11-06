@@ -52,7 +52,7 @@ pub struct ExtraDropSecretInfo {
     /// `persist_mode` (property 200).
     pub persist_mode: SecretPersistType,
     /// `secret_storage` (property 201).
-    pub secret_storage: String,
+    pub secret_storage: rustdb_common::ByteString,
 }
 
 impl SerializeObject for ExtraDropSecretInfo {
@@ -66,7 +66,8 @@ impl SerializeObject for ExtraDropSecretInfo {
 impl DeserializeObject for ExtraDropSecretInfo {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
         let persist_mode: SecretPersistType = deserializer.read_property(200, "persist_mode")?;
-        let secret_storage: String = deserializer.read_property_with_default(201, "secret_storage")?;
+        let secret_storage: rustdb_common::ByteString =
+            deserializer.read_property_with_default(201, "secret_storage")?;
         Ok(Self {
             persist_mode,
             secret_storage,

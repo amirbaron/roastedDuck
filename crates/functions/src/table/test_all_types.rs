@@ -304,16 +304,16 @@ fn test_types(use_large_enum: bool, use_large_bignum: bool) -> Result<Vec<TestTy
 
     // STRUCTs.
     let struct_type = LogicalType::struct_type(vec![
-        ("a".to_owned(), LogicalType::INTEGER),
-        ("b".to_owned(), LogicalType::VARCHAR),
+        ("a".to_owned().into(), LogicalType::INTEGER),
+        ("b".to_owned().into(), LogicalType::VARCHAR),
     ]);
     let min_struct = Value::struct_value(vec![
-        ("a".to_owned(), Value::null(LogicalType::INTEGER)),
-        ("b".to_owned(), Value::null(LogicalType::VARCHAR)),
+        ("a".to_owned().into(), Value::null(LogicalType::INTEGER)),
+        ("b".to_owned().into(), Value::null(LogicalType::VARCHAR)),
     ]);
     let max_struct = Value::struct_value(vec![
-        ("a".to_owned(), Value::integer(42)),
-        ("b".to_owned(), Value::varchar(DUCKS)),
+        ("a".to_owned().into(), Value::integer(42)),
+        ("b".to_owned().into(), Value::varchar(DUCKS)),
     ]);
     result.push(TestType::new(
         struct_type.clone(),
@@ -323,17 +323,17 @@ fn test_types(use_large_enum: bool, use_large_bignum: bool) -> Result<Vec<TestTy
     ));
     result.push(TestType::new(
         LogicalType::struct_type(vec![
-            ("a".to_owned(), int_list_type.clone()),
-            ("b".to_owned(), varchar_list_type.clone()),
+            ("a".to_owned().into(), int_list_type.clone()),
+            ("b".to_owned().into(), varchar_list_type.clone()),
         ]),
         "struct_of_arrays",
         Value::struct_value(vec![
-            ("a".to_owned(), Value::null(int_list_type.clone())),
-            ("b".to_owned(), Value::null(varchar_list_type)),
+            ("a".to_owned().into(), Value::null(int_list_type.clone())),
+            ("b".to_owned().into(), Value::null(varchar_list_type)),
         ]),
         Value::struct_value(vec![
-            ("a".to_owned(), full_int_list.clone()),
-            ("b".to_owned(), full_varchar_list),
+            ("a".to_owned().into(), full_int_list.clone()),
+            ("b".to_owned().into(), full_varchar_list),
         ]),
     ));
     result.push(TestType::new(
@@ -363,8 +363,8 @@ fn test_types(use_large_enum: bool, use_large_bignum: bool) -> Result<Vec<TestTy
         ),
     ));
     let union_type = LogicalType::union_type(vec![
-        ("name".to_owned(), LogicalType::VARCHAR),
-        ("age".to_owned(), LogicalType::SMALLINT),
+        ("name".to_owned().into(), LogicalType::VARCHAR),
+        ("age".to_owned().into(), LogicalType::SMALLINT),
     ]);
     result.push(TestType::new(
         union_type.clone(),
@@ -459,17 +459,17 @@ fn test_types(use_large_enum: bool, use_large_bignum: bool) -> Result<Vec<TestTy
     ));
     result.push(TestType::new(
         LogicalType::struct_type(vec![
-            ("a".to_owned(), fixed_int_type.clone()),
-            ("b".to_owned(), fixed_varchar_type),
+            ("a".to_owned().into(), fixed_int_type.clone()),
+            ("b".to_owned().into(), fixed_varchar_type),
         ]),
         "struct_of_fixed_array",
         Value::struct_value(vec![
-            ("a".to_owned(), fixed_int_min.clone()),
-            ("b".to_owned(), fixed_varchar_min),
+            ("a".to_owned().into(), fixed_int_min.clone()),
+            ("b".to_owned().into(), fixed_varchar_min),
         ]),
         Value::struct_value(vec![
-            ("a".to_owned(), fixed_int_max.clone()),
-            ("b".to_owned(), fixed_varchar_max),
+            ("a".to_owned().into(), fixed_int_max.clone()),
+            ("b".to_owned().into(), fixed_varchar_max),
         ]),
     ));
     result.push(TestType::new(
@@ -564,7 +564,7 @@ fn bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOutput> {
     let types = test_types(flag(input, "use_large_enum")?, flag(input, "use_large_bignum")?)?;
     Ok(TableFunctionBindOutput {
         return_types: types.iter().map(|test| test.ty.clone()).collect(),
-        names: types.iter().map(|test| test.name.to_owned()).collect(),
+        names: types.iter().map(|test| test.name.into()).collect(),
         bind_data: Some(Arc::new(TestAllTypesBindData { types })),
     })
 }

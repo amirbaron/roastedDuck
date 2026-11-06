@@ -1,5 +1,7 @@
 # Swift client parity
 
+Current verification (November 4, 2026): source2253 signed Mac2268/Linux2255 and Apple SDK2301/2302 have current Swift evidence. All133 cases (132 upstream plus native identity) pass per engine on macOS arm64 and Linux arm64/x86_64. The actual Rust arm64 iOS simulator slice also passes all133 cases. Independent packaged consumers and typed checkpoint/nonempty-WAL journeys passed scoped review; Linux review2450 includes relocated source/native packages whose `DuckDBRust` directory is signed inside each Rust consumer distribution2339. Preserve these package sources and the selected native library in release composition; validation executables and C++ controls remain separate. Physical iOS execution/provisioning is unavailable and unverified. Final storage/performance/artifact acceptance remains pending. Earlier checkpoints below retain their original historical scope. See [current verification](current-source-verification.md) and [release exceptions](release-known-exceptions.md).
+
 Required language clients are Python, Go and Swift only (owner, 2026-10-25).
 Preserve C API and ADBC functionality; other language clients are outside this goal.
 Use the wrapper and tests bundled in frozen DuckDB1.5.6 under

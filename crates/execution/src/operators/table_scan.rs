@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use rustdb_common::tree_renderer::RenderParams;
 use rustdb_common::{Error, Result};
 use rustdb_function::{FunctionData, TableFunction, TablePartitionInfo, TableScanState};
+use rustdb_storage::table_filter::DynamicTableFilterSet;
 use rustdb_types::{DataChunk, LogicalType, Vector};
 
 use crate::operator::{
@@ -25,6 +26,8 @@ pub struct PhysicalTableScan {
     projection: Vec<usize>,
     /// The filters the function applies (shown by `EXPLAIN`).
     filters: Option<rustdb_storage::TableFilterSet>,
+    /// Join filters populated before this source opens (keyed by scan position).
+    dynamic_filters: Option<Arc<DynamicTableFilterSet>>,
     /// What `EXPLAIN` shows about the scan.
     explain: super::ScanExplainInfo,
 }
@@ -56,6 +59,7 @@ impl PhysicalTableScan {
             column_ids,
             projection: Vec::new(),
             filters: None,
+            dynamic_filters: None,
             explain: super::ScanExplainInfo::default(),
         }
     }
@@ -104,6 +108,13 @@ impl PhysicalTableScan {
         self
     }
 
+    /// Shares run-time join filters with this function scan.
+    #[must_use]
+    pub fn with_dynamic_filters(mut self, filters: Option<Arc<DynamicTableFilterSet>>) -> Self {
+        self.dynamic_filters = filters;
+        self
+    }
+
     /// Sets what `EXPLAIN` shows about the scan.
     #[must_use]
     pub fn with_explain_info(mut self, explain: super::ScanExplainInfo) -> Self {
@@ -121,6 +132,9 @@ impl PhysicalOperator for PhysicalTableScan {
     }
     fn children(&self) -> &[PhysicalRef] {
         &[]
+    }
+    fn preallocate_output(&self) -> bool {
+        false
     }
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
@@ -153,27 +167,39 @@ impl PhysicalOperator for PhysicalTableScan {
                     .then(|| self.explain.projection_name(index))
                     .flatten()
             };
-            let names: Vec<&str> = if self.projection.is_empty() {
+            let names: Vec<&[u8]> = if self.projection.is_empty() {
                 (0..self.explain.column_names.len()).filter_map(name).collect()
             } else {
                 self.projection.iter().filter_map(|&index| name(index)).collect()
             };
-            result.insert("Projections".to_owned(), names.join("\n"));
+            result.insert(
+                "Projections".to_owned(),
+                rustdb_common::ByteString::join(&names, b"\n"),
+            );
         }
-        if let Some(filters) = &self.filters
-            && self.function.filter_pushdown
-        {
-            let info: Vec<String> = filters
-                .filters
-                .iter()
-                .filter_map(|(&column, filter)| {
-                    self.explain
-                        .column_names
-                        .get(column)
-                        .map(|name| filter.to_sql(name))
-                })
-                .collect();
-            result.insert("Filters".to_owned(), info.join("\n"));
+        if self.function.filter_pushdown {
+            let mut add_filters = |label: &str, filters: &rustdb_storage::TableFilterSet| {
+                let info: Vec<rustdb_common::ByteString> = filters
+                    .filters
+                    .iter()
+                    .filter_map(|(&column, filter)| {
+                        self.explain
+                            .column_names
+                            .get(column)
+                            .map(|name| filter.to_sql(name))
+                    })
+                    .collect();
+                result.insert(label.to_owned(), rustdb_common::ByteString::join(&info, b"\n"));
+            };
+            if let Some(filters) = &self.filters {
+                add_filters("Filters", filters);
+            }
+            if let Some(dynamic) = &self.dynamic_filters
+                && dynamic.has_filters()
+                && let Some(filters) = dynamic.final_table_filters(None)
+            {
+                add_filters("Dynamic Filters", &filters);
+            }
         }
         for (key, value) in &self.explain.file_filters {
             result.insert(key.clone(), value.clone());
@@ -187,6 +213,8 @@ impl PhysicalOperator for PhysicalTableScan {
 /// scan.
 #[derive(Default)]
 pub struct TableScanGlobal {
+    /// Per-execution bind data containing the final static and dynamic filters.
+    bind_data: Option<Arc<dyn FunctionData>>,
     state: Mutex<(TableScanState, bool)>,
     parallel: Option<rustdb_function::ParallelScanGlobal>,
 }
@@ -243,9 +271,20 @@ impl Source for PhysicalTableScan {
     type Local = Option<rustdb_function::ParallelScanLocal>;
 
     fn global_source_state(&self, ctx: &ExecutionContext, _: Option<&SinkState>) -> Result<TableScanGlobal> {
+        let mut bind_data = self.bind_data.clone();
+        if let Some(dynamic) = &self.dynamic_filters
+            && dynamic.has_filters()
+            && let (Some(pushdown), Some(data), Some(filters)) = (
+                &self.function.pushdown_filters,
+                &bind_data,
+                dynamic.final_table_filters(self.filters.as_ref()),
+            )
+        {
+            bind_data = Some(pushdown(data.as_ref(), &self.column_ids, &filters)?);
+        }
         let parallel = match &self.function.parallel_scan {
             Some(parallel) => Some((parallel.init_global)(
-                self.bind_data.as_deref(),
+                bind_data.as_deref(),
                 &self.column_ids,
                 &self.column_indexes,
                 ctx.operator_logger(self).as_ref(),
@@ -253,6 +292,7 @@ impl Source for PhysicalTableScan {
             None => None,
         };
         Ok(TableScanGlobal {
+            bind_data,
             state: Mutex::default(),
             parallel,
         })
@@ -276,12 +316,16 @@ impl Source for PhysicalTableScan {
         }
     }
 
-    fn extra_source_params(&self, global: &TableScanGlobal, _: &Self::Local) -> Vec<(String, String)> {
+    fn extra_source_params(
+        &self,
+        global: &TableScanGlobal,
+        _: &Self::Local,
+    ) -> Vec<(rustdb_common::ByteString, rustdb_common::ByteString)> {
         match (&self.function.parallel_scan, &global.parallel) {
             (Some(parallel), Some(shared)) => parallel
                 .dynamic_to_string
                 .as_ref()
-                .map(|dynamic| dynamic(self.bind_data.as_deref(), shared))
+                .map(|dynamic| dynamic(global.bind_data.as_deref(), shared))
                 .unwrap_or_default(),
             _ => Vec::new(),
         }
@@ -353,7 +397,7 @@ impl Source for PhysicalTableScan {
         {
             let mut output = DataChunk::default();
             if !(parallel.scan)(
-                self.bind_data.as_deref(),
+                global.bind_data.as_deref(),
                 &self.column_ids,
                 shared,
                 local,
@@ -379,7 +423,7 @@ impl Source for PhysicalTableScan {
             return Ok(SourceResult::Finished);
         }
         let mut output = DataChunk::default();
-        let more = scan(self.bind_data.as_deref(), &self.column_ids, state, &mut output)?;
+        let more = scan(global.bind_data.as_deref(), &self.column_ids, state, &mut output)?;
         *finished = !more;
         let (projected, count) = self.project(output)?;
         chunk.set_columns(projected, count);
@@ -388,5 +432,56 @@ impl Source for PhysicalTableScan {
         } else {
             SourceResult::Finished
         })
+    }
+}
+
+#[cfg(test)]
+mod empty_output_tests {
+    use super::*;
+    use crate::ClientEnv;
+    use rustdb_types::Value;
+
+    #[test]
+    fn scan_replaces_empty_output_without_losing_previous_batch_ownership() -> Result<()> {
+        let mut function = TableFunction::new("empty_output_scan", Vec::new());
+        function.scan = Some(Arc::new(|_, _, state, output| {
+            if state.position == 2 {
+                return Ok(false);
+            }
+            let value = Value::varchar(format!("owned-scan-batch-{}-long-string", state.position));
+            let mut vector = Vector::flat(LogicalType::VARCHAR, 1);
+            vector.set_value(0, &value)?;
+            output.set_columns(vec![vector], 1);
+            state.position += 1;
+            Ok(true)
+        }));
+        let scan = PhysicalTableScan::new(vec![LogicalType::VARCHAR], function, None, vec![0]);
+        let context = ExecutionContext::new(ClientEnv::standalone()?);
+        let global = Source::global_source_state(&scan, &context, None)?;
+        let mut local = Source::local_source_state(&scan, &context, &global)?;
+        let mut output = DataChunk::with_types(&[LogicalType::VARCHAR], 0);
+        let mut snapshots = Vec::new();
+        for _ in 0..2 {
+            assert_eq!(
+                Source::get_data(&scan, &context, &mut output, &global, &mut local)?,
+                SourceResult::HaveMoreOutput
+            );
+            snapshots.push(output.clone());
+        }
+        assert_eq!(
+            Source::get_data(&scan, &context, &mut output, &global, &mut local)?,
+            SourceResult::Finished
+        );
+        drop(scan);
+        drop(global);
+        drop(output);
+        for (batch, chunk) in snapshots.iter().enumerate() {
+            assert_eq!(chunk.len(), 1);
+            assert_eq!(
+                chunk.column(0).get_value(0),
+                Value::varchar(format!("owned-scan-batch-{batch}-long-string"))
+            );
+        }
+        Ok(())
     }
 }

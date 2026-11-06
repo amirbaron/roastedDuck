@@ -34,7 +34,7 @@ pub fn bind_function_expression<B: ExpressionBinder + ?Sized>(
     if !is_aggregate
         && (function.distinct || function.filter.is_some() || !function.order_bys.orders.is_empty())
     {
-        return Err(Error::invalid_input(format!(
+        return Err(Error::invalid_input(rustdb_common::byte_format!(
             "Function \"{}\" is a {}. \"DISTINCT\", \"FILTER\", and \"ORDER BY\" are only applicable to aggregate \
              functions.",
             function.function_name,

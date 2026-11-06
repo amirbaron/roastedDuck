@@ -57,9 +57,9 @@ fn repeat_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOu
         return Err(Error::internal("repeat takes two arguments"));
     };
     let name = if value.is_null() {
-        "NULL".to_owned()
+        rustdb_common::ByteString::from("NULL")
     } else {
-        value.to_varchar()?
+        value.to_varchar_bytes()?
     };
     if count.is_null() {
         return Err(Error::binder("Repeat second parameter cannot be NULL"));
@@ -87,7 +87,7 @@ fn repeat_row_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBi
         .map(|value| value.logical_type().clone())
         .collect();
     let names = (0..input.inputs.len())
-        .map(|index| format!("column{index}"))
+        .map(|index| rustdb_common::byte_format!("column{index}"))
         .collect();
     let num_rows = input
         .named_parameters

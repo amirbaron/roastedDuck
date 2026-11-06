@@ -49,10 +49,10 @@ pub(crate) struct JsonScanData {
     pub(crate) reader_bind: MultiFileBindData,
     pub(crate) options: JsonReaderOptions,
     /// The output columns, including the filename and hive partition columns.
-    pub(crate) names: Vec<String>,
+    pub(crate) names: Vec<rustdb_common::ByteString>,
     pub(crate) types: Vec<LogicalType>,
     /// The JSON keys of the first `key_names.len()` columns.
-    pub(crate) key_names: Vec<String>,
+    pub(crate) key_names: Vec<rustdb_common::ByteString>,
     pub(crate) date_format_map: Arc<DateFormatMap>,
     pub(crate) transform: TransformFlags,
     pub(crate) casts: Arc<CastFunctionSet>,
@@ -117,7 +117,7 @@ enum ColumnSource {
     Filename,
     FileIndex,
     /// A hive partition key.
-    Hive(String),
+    Hive(rustdb_common::ByteString),
     /// A column with no data (the empty column).
     Null(LogicalType),
 }
@@ -127,7 +127,7 @@ enum ColumnSource {
 struct Projection {
     sources: Vec<ColumnSource>,
     /// The keys converted, and their types.
-    names: Vec<String>,
+    names: Vec<rustdb_common::ByteString>,
     types: Vec<LogicalType>,
     error_unknown_key: bool,
 }
@@ -218,7 +218,7 @@ impl WorkQueue {
         let mut format = data.options.format;
         if parallel {
             let path = &data.files.files[file_index];
-            let size = std::fs::metadata(path).map_or(0, |metadata| metadata.len());
+            let size = crate::json_reader::file_size(path);
             let compressed = !matches!(
                 data.options.compression.resolve(path),
                 rustdb_csv::options::FileCompressionType::Uncompressed
@@ -281,8 +281,7 @@ fn max_threads(data: &JsonScanData) -> usize {
     let size = data
         .files
         .first_file()
-        .and_then(|path| std::fs::metadata(path).ok())
-        .map_or(0, |metadata| metadata.len());
+        .map_or(0, crate::json_reader::file_size);
     usize::try_from(size / RANGE_SIZE + 1).unwrap_or(1)
 }
 
@@ -389,7 +388,7 @@ fn assemble(
                 Some(column) => column,
                 None => Vector::constant_null(projection.types[*index].clone()),
             },
-            ColumnSource::Filename => Vector::constant(&Value::varchar(path))?,
+            ColumnSource::Filename => Vector::constant(&Value::try_varchar(path)?)?,
             ColumnSource::FileIndex => Vector::constant(&Value::ubigint(file_index as u64))?,
             ColumnSource::Hive(key) => {
                 let value = hive_parse(path).get(key).cloned().unwrap_or_default();
@@ -517,7 +516,9 @@ pub(crate) fn json_scan(
 }
 
 /// `MultiFileGetVirtualColumns`.
-pub(crate) fn json_virtual_columns(bind_data: Option<&dyn FunctionData>) -> Vec<(u64, String, LogicalType)> {
+pub(crate) fn json_virtual_columns(
+    bind_data: Option<&dyn FunctionData>,
+) -> Vec<(u64, rustdb_common::ByteString, LogicalType)> {
     let filename_option = bind_data
         .and_then(|data| data.as_any().downcast_ref::<JsonScanData>())
         .is_some_and(|data| data.reader_bind.filename_idx.is_some());

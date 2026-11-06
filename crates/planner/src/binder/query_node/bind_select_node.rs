@@ -1,7 +1,5 @@
 //! SELECT nodes (DuckDB's `bind_select_node.cpp` and `plan_select_node.cpp`).
 
-use std::fmt::Write as _;
-
 use rustdb_ast::{
     AggregateHandling, ExpressionType, ParsedExpression, ParsedExpressionKind, QueryNode, QueryNodeKind,
     SelectNode,
@@ -184,7 +182,7 @@ pub fn bind_select_node(
             if let (Some(original), true) = (original, requires_collation) {
                 info.collated_groups.insert(i, result.aggregates.len());
                 let mut first = super::plan_subquery::builtin_aggregate(&context, "first", vec![original])?;
-                "__collated_group".clone_into(&mut first.alias);
+                first.alias = "__collated_group".into();
                 result.aggregates.push(first);
             }
             collated_groups.push(bound);
@@ -363,16 +361,16 @@ pub fn bind_select_node(
         bound_columns.extend(bound_qualify_columns);
         if let Some(column) = bound_columns.first() {
             let name = &column.name;
-            let mut message = format!(
+            let mut message = rustdb_common::byte_format!(
                 "column \"{name}\" must appear in the GROUP BY clause or must be part of an aggregate function."
             );
             if statement.aggregate_handling == AggregateHandling::ForceAggregates {
-                message.push_str(
+                message.push_bytes(
                     "\nGROUP BY ALL will only group entries in the SELECT list. Add it to the SELECT list or GROUP BY \
                      this entry explicitly.",
                 );
             } else {
-                let _ = write!(
+                let _ = rustdb_common::byte_write!(
                     message,
                     "\nEither add it to the GROUP BY list, or use \"ANY_VALUE({name})\" if the exact value of \"{name}\" \
                      is not important."

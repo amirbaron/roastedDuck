@@ -97,7 +97,7 @@ impl QueryResult for rustdb::MaterializedResult {
             .iter()
             .zip(self.types())
             .map(|(name, ty)| ResultColumn {
-                name: name.clone(),
+                name: name.as_bytes().to_vec(),
                 type_name: ty.to_string(),
                 kind: value_kind(ty),
             })

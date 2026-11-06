@@ -166,7 +166,10 @@ fn templated_copy(
 /// to positions from `target` at `base` in one go, for sources without a selection: the
 /// values are copied whole (a NULL's slot too, which nothing reads) and the NULLs marked
 /// after.
-#[expect(clippy::too_many_arguments, reason = "the parameters of DuckDB's copy plus the bulk copy")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the parameters of DuckDB's copy plus the bulk copy"
+)]
 fn templated_copy_with(
     ctx: &mut CopyContext<'_>,
     vector_index: usize,
@@ -912,6 +915,14 @@ impl ColumnDataCollection {
         &self.types
     }
 
+    /// The eviction priority of future blocks (`SetPartitionIndex`), set before
+    /// appending or sharing the allocator.
+    pub fn set_partition_index(&mut self, index: usize) -> Result<()> {
+        Arc::get_mut(&mut self.allocator)
+            .ok_or_else(|| Error::internal("ColumnDataCollection allocator is already shared"))?
+            .set_partition_index(index)
+    }
+
     pub fn column_count(&self) -> usize {
         self.types.len()
     }
@@ -1050,6 +1061,17 @@ impl ColumnDataCollection {
             column_ids: (0..self.types.len()).collect(),
             ..ColumnDataScanState::default()
         }
+    }
+
+    /// A replayable scan copying selected columns, with one chunk's blocks pinned.
+    pub fn initialize_scan_columns(&self, columns: &[usize]) -> Result<ColumnDataScanState> {
+        if columns.iter().any(|&index| index >= self.types.len()) {
+            return Err(Error::internal("ColumnDataCollection scan column out of range"));
+        }
+        Ok(ColumnDataScanState {
+            column_ids: columns.to_vec(),
+            ..ColumnDataScanState::default()
+        })
     }
 
     /// The position of the next chunk of the scan (`NextScanIndex`).

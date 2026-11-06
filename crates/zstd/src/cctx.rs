@@ -42,18 +42,9 @@ enum StreamStage {
     Flush,
 }
 
-/// The parameters of `level` that this port compresses with: the strategies above
-/// `ZSTD_dfast` (levels 4 or 5 and above, depending on the size) run the double-fast match
-/// finder with tables of at most 2^20 entries, keeping the level's window.
+/// Keep the reference level parameters without downgrading its strategy.
 fn effective_params(level: i32, src_size: u64) -> CParams {
-    let mut params = get_cparams(level, src_size);
-    if params.strategy > Strategy::DFast {
-        params.strategy = Strategy::DFast;
-        params.hash_log = params.hash_log.min(20);
-        params.chain_log = params.chain_log.min(20);
-        params.min_match = params.min_match.max(4);
-    }
-    params
+    get_cparams(level, src_size)
 }
 
 /// A compression context (`ZSTD_CCtx`), reusable for many frames.
@@ -214,6 +205,13 @@ impl Compressor {
             if ms.next_to_update < ms.window.low_limit {
                 ms.next_to_update = ms.window.low_limit;
             }
+            if self.params.strategy >= Strategy::BtOpt && self.params.window_log >= 17 {
+                crate::split::compress(&mut self.blocks, out, mem, ip, block_size, last_block);
+                ip += block_size;
+                remaining -= block_size;
+                self.blocks.is_first_block = false;
+                continue;
+            }
             let header_pos = out.len();
             out.extend_from_slice(&[0; BLOCK_HEADER_SIZE]);
             let c_size = self.blocks.compress_block(out, mem, ip, block_size);
@@ -258,6 +256,9 @@ impl Compressor {
             ms.next_to_update = ms.window.dict_limit;
         }
         let dict = ms.window.dict;
+        if let Some(ldm) = &mut self.blocks.ldm {
+            ldm.window.update(buf, pos, size);
+        }
         let in_buff = std::mem::take(&mut self.in_buff);
         {
             let select = |which: Buf| -> &[u8] { if which == Buf::InBuff { &in_buff } else { data } };

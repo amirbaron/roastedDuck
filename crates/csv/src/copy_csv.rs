@@ -158,7 +158,7 @@ fn write_format(format: &Value) -> Result<StrpTimeFormat> {
 /// `WriteCSVBind`.
 fn write_csv_bind(
     input: &mut CopyFunctionBindInput<'_>,
-    names: &[String],
+    names: &[rustdb_common::ByteString],
     types: &[LogicalType],
 ) -> Result<Arc<dyn FunctionData>> {
     let context = client_context(input.binder)?;
@@ -171,7 +171,7 @@ fn write_csv_bind(
         options.dialect_options.state_machine_options.escape = crate::options::CsvOption::new(quote.value());
     }
     for (name, values) in input.options.iter() {
-        options.set_write_option(&name.to_lowercase(), &convert_vector_to_value(values))?;
+        options.set_write_option(&name.to_ascii_lowercase(), &convert_vector_to_value(values))?;
     }
     if options.force_quote.is_empty() {
         options.force_quote = vec![false; names.len()];
@@ -239,7 +239,7 @@ fn write_csv_bind(
 /// A created file whose writes are logged to the connection's `FileSystem` log
 /// (the `DUCKDB_LOG_FILE_SYSTEM_*` calls of a local file handle).
 pub(crate) struct LoggedFile {
-    file: File,
+    file: rustdb_function::registered_files::Output,
     logger: Option<rustdb_function::logging::FileSystemLogger>,
     position: u64,
 }
@@ -280,7 +280,7 @@ impl CsvSink {
     /// Creates `path` (replacing an existing file), compressed as `compression` says
     /// (`FileSystem::OpenFile` with `FILE_FLAGS_FILE_CREATE_NEW` and the compression).
     pub(crate) fn create(
-        path: &str,
+        path: &[u8],
         compression: FileCompressionType,
         client: Option<&rustdb_function::FunctionClient>,
     ) -> Result<Self> {
@@ -289,7 +289,14 @@ impl CsvSink {
             rustdb_function::file_system::verify_zstd_file_system()?;
         }
         rustdb_function::file_system::verify_can_write(path)?;
-        let file = File::create(path).map_err(|error| crate::buffer::open_error(path, &error))?;
+        let file = if rustdb_function::registered_files::lookup(path).is_some() {
+            rustdb_function::registered_files::Output::create(path)?
+        } else {
+            rustdb_function::registered_files::Output::Local(
+                File::create(rustdb_function::file_system::native_path(path)?)
+                    .map_err(|error| crate::buffer::open_error(path, &error))?,
+            )
+        };
         let file = LoggedFile {
             file,
             logger: rustdb_function::logging::FileSystemLogger::open_for(client, path),
@@ -320,26 +327,30 @@ impl CsvSink {
 
     pub(crate) fn close(&mut self) -> std::io::Result<()> {
         match std::mem::replace(self, Self::Closed) {
-            // Dropping the file after the flush logs its `CLOSE`.
-            Self::Plain(mut file) => file.flush(),
-            Self::Gzip(encoder) => encoder.finish()?.flush(),
+            Self::Plain(file) => Self::close_file(file),
+            Self::Gzip(encoder) => Self::close_file(encoder.finish()?),
             Self::Zstd(buffer, mut file) => {
                 // `ZstdStreamWrapper`: a stream at the default level, ended at the close.
                 file.write_all(&rustdb_zstd::compress_streamed(
                     &buffer,
                     rustdb_zstd::DEFAULT_LEVEL,
                 ))?;
-                file.flush()
+                Self::close_file(file)
             }
             Self::Closed => Ok(()),
         }
+    }
+
+    fn close_file(mut file: BufWriter<LoggedFile>) -> std::io::Result<()> {
+        file.flush()?;
+        file.get_mut().file.close()
     }
 }
 
 /// The writer of one file (DuckDB's `CSVWriter` with `GlobalWriteCSVData`).
 struct CsvWriter {
     sink: CsvSink,
-    path: String,
+    path: rustdb_common::ByteString,
     written_anything: bool,
     bytes_written: u64,
     /// Rows not written to the file yet (the `MemoryStream` of `CSVWriterState`); they
@@ -353,8 +364,14 @@ struct CsvWriter {
 /// `CSVWriterOptions::flush_size`.
 const FLUSH_SIZE: usize = 4096 * 8;
 
-fn write_error(path: &str, error: &std::io::Error) -> Error {
-    Error::new(ErrorKind::Io, format!("Could not write file \"{path}\": {error}"))
+fn write_error(path: &[u8], error: &std::io::Error) -> Error {
+    if let Some(error) = rustdb_function::registered_files::callback_error(error) {
+        return error;
+    }
+    Error::new_bytes(
+        ErrorKind::Io,
+        rustdb_common::byte_format!("Could not write file \"{path}\": {error}"),
+    )
 }
 
 impl CsvWriter {
@@ -377,6 +394,12 @@ impl CsvWriter {
     /// `CSVWriter::WriteChunk` with a writer state: buffers a block of rows, flushing the
     /// buffer once it reaches `FLUSH_SIZE`.
     fn write_rows(&mut self, block: &[u8], newline: &str) -> Result<()> {
+        // A complete block already at the flush threshold would be copied into
+        // `pending` and immediately written. Write it directly when no earlier
+        // rows are pending, preserving the same flush and newline boundaries.
+        if !self.pending_written && block.len() >= FLUSH_SIZE {
+            return self.flush_block(block, newline);
+        }
         if self.pending_written {
             self.pending.extend_from_slice(newline.as_bytes());
         }
@@ -479,7 +502,7 @@ fn header_bytes(data: &WriteCsvData) -> Vec<u8> {
 }
 
 /// `WriteCSVInitializeGlobal`: opens the file and writes the prefix and header.
-fn write_csv_initialize_global(bind_data: &dyn FunctionData, path: &str) -> Result<CopyGlobalState> {
+fn write_csv_initialize_global(bind_data: &dyn FunctionData, path: &[u8]) -> Result<CopyGlobalState> {
     let data = bind_data
         .as_any()
         .downcast_ref::<WriteCsvData>()
@@ -487,7 +510,7 @@ fn write_csv_initialize_global(bind_data: &dyn FunctionData, path: &str) -> Resu
     let sink = CsvSink::create(path, data.options.compression, data.client.as_deref())?;
     let mut writer = CsvWriter {
         sink,
-        path: path.to_owned(),
+        path: path.into(),
         written_anything: false,
         bytes_written: 0,
         pending: Vec::new(),
@@ -659,15 +682,16 @@ fn write_csv_execution_mode(
 fn write_csv_prepare_batch(
     bind_data: &dyn FunctionData,
     _: &CopyGlobalState,
-    chunks: Vec<DataChunk>,
+    batch: &dyn rustdb_function::copy::CopyBatch,
 ) -> Result<PreparedBatch> {
     let data = write_data(bind_data)?;
-    let mut blocks = Vec::with_capacity(chunks.len());
-    for chunk in chunks {
-        if let Some(block) = encode_chunk(data, &chunk)? {
+    let mut blocks = Vec::new();
+    batch.scan(None, &mut |chunk| {
+        if let Some(block) = encode_chunk(data, chunk)? {
             blocks.push(block);
         }
-    }
+        Ok(())
+    })?;
     Ok(Box::new(blocks))
 }
 
@@ -724,14 +748,18 @@ fn write_csv_file_size(state: &CopyGlobalState) -> u64 {
 /// `MultiFileBindCopy` with `CSVMultiFileInfo`: binds `read_csv` for the target columns.
 fn read_csv_copy_bind(
     input: &CopyFromBindInput<'_>,
-    expected_names: &[String],
+    expected_names: &[rustdb_common::ByteString],
     expected_types: &[LogicalType],
 ) -> Result<Arc<dyn FunctionData>> {
     let context = client_context(input.binder)?;
-    let files: FileList = create_file_list("COPY", std::slice::from_ref(&input.file_path.to_owned()), "csv")?;
+    let files: FileList = create_file_list(
+        "COPY",
+        std::slice::from_ref(&rustdb_common::ByteString::from(input.file_path)),
+        "csv",
+    )?;
     let mut options = CsvReaderOptions::default();
     for (name, values) in input.options.iter() {
-        let loption = name.to_lowercase();
+        let loption = name.to_ascii_lowercase();
         options.set_read_option(&loption, &convert_vector_to_value(values), expected_names)?;
     }
     // FinalizeCopyBind

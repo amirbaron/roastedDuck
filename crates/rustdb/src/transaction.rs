@@ -5,11 +5,22 @@ use rustdb_common::{Error, ErrorKind, Result};
 use rustdb_function::FunctionClient;
 use rustdb_storage::transaction::CommitCheckpoint;
 
+/// Binding leaves an aborted synthetic transaction for its owning query to roll back.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum StatementEnd {
+    Client,
+    Query { allow_invalidation: bool },
+}
+
 /// A connection's transaction state (DuckDB's `TransactionContext`).
 ///
 /// Outside `BEGIN … COMMIT` every statement runs in its own auto-committed transaction.
 /// A failed statement inside an explicit transaction invalidates it until `ROLLBACK`.
 #[derive(Debug)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "Independent transaction flags matching TransactionContext and TransactionInfo"
+)]
 pub(crate) struct TransactionContext {
     manager: Arc<TransactionManager>,
     current: Option<Arc<Transaction>>,
@@ -17,6 +28,8 @@ pub(crate) struct TransactionContext {
     invalidated: bool,
     /// `BEGIN TRANSACTION READ ONLY`.
     read_only: bool,
+    invalidation_policy: rustdb_ast::TransactionInvalidationPolicy,
+    auto_rollback: bool,
     /// The connection's function state, which sees the binder's context of the open
     /// transaction until the transaction ends.
     client: Arc<FunctionClient>,
@@ -46,6 +59,8 @@ impl TransactionContext {
             auto_commit: true,
             invalidated: false,
             read_only: false,
+            invalidation_policy: rustdb_ast::TransactionInvalidationPolicy::StandardPolicy,
+            auto_rollback: false,
             client,
         }
     }
@@ -103,7 +118,7 @@ impl TransactionContext {
     /// failure; in an explicit transaction, a failure whose error `invalidates` the
     /// transaction aborts it.
     pub fn end_statement(&mut self, success: bool, invalidates: bool) -> Result<()> {
-        self.end_statement_checkpointing(success, invalidates, None)
+        self.end_statement_checkpointing(success, invalidates, StatementEnd::Client, None)
     }
 
     /// [`TransactionContext::end_statement`] whose auto-commit runs `checkpoint` instead
@@ -112,6 +127,7 @@ impl TransactionContext {
         &mut self,
         success: bool,
         invalidates: bool,
+        end: StatementEnd,
         checkpoint: Option<CommitCheckpoint<'_>>,
     ) -> Result<()> {
         if self.auto_commit {
@@ -127,8 +143,21 @@ impl TransactionContext {
                 None => Ok(()),
             };
         }
-        if !success && invalidates {
-            self.invalidated = true;
+        let (allow_invalidation, allow_rollback) = match end {
+            StatementEnd::Client => (true, false),
+            StatementEnd::Query { allow_invalidation } => (allow_invalidation, true),
+        };
+        if !success
+            && allow_invalidation
+            && (invalidates
+                || self.invalidation_policy
+                    == rustdb_ast::TransactionInvalidationPolicy::AllErrorsInvalidateTransaction)
+        {
+            if self.auto_rollback && allow_rollback {
+                self.rollback()?;
+            } else {
+                self.invalidated = true;
+            }
         }
         Ok(())
     }
@@ -143,6 +172,23 @@ impl TransactionContext {
 
     /// `BEGIN TRANSACTION [READ ONLY]`
     pub fn begin(&mut self, read_only: bool) -> Result<()> {
+        self.begin_with_options(
+            read_only,
+            rustdb_ast::TransactionInvalidationPolicy::StandardPolicy,
+            false,
+        )
+    }
+
+    pub fn set_invalidation_policy(&mut self, policy: rustdb_ast::TransactionInvalidationPolicy) {
+        self.invalidation_policy = policy;
+    }
+
+    pub fn begin_with_options(
+        &mut self,
+        read_only: bool,
+        policy: rustdb_ast::TransactionInvalidationPolicy,
+        auto_rollback: bool,
+    ) -> Result<()> {
         if !self.auto_commit {
             return Err(transaction_error(
                 "cannot start a transaction within a transaction",
@@ -150,6 +196,8 @@ impl TransactionContext {
         }
         self.auto_commit = false;
         self.read_only = read_only;
+        self.invalidation_policy = policy;
+        self.auto_rollback = auto_rollback;
         Ok(())
     }
 

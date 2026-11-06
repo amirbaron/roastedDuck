@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use rustdb_catalog::{CatalogEntry, EntryKind, Transaction};
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use rustdb_common::{ByteString, Error, Result, STANDARD_VECTOR_SIZE, byte_format};
 use rustdb_csv::multi_file::{
     COLUMN_IDENTIFIER_FILE_INDEX, COLUMN_IDENTIFIER_FILENAME, FileList, MultiFileBindData, MultiFileOptions,
     bind_options, combine_union_types, create_file_list, hive_parse, multi_file_parameters, parse_paths,
@@ -33,13 +33,13 @@ const FUNCTION_NAME: &str = "read_duckdb";
 /// The table selection of a `read_duckdb` call (`DuckDBFileReaderOptions`).
 #[derive(Clone, Debug, Default)]
 struct ReaderOptions {
-    schema_name: String,
-    table_name: String,
+    schema_name: ByteString,
+    table_name: ByteString,
 }
 
 impl ReaderOptions {
     /// `DuckDBFileReaderOptions::Matches`.
-    fn matches(&self, schema: &str, table: &str) -> bool {
+    fn matches(&self, schema: &[u8], table: &[u8]) -> bool {
         (self.schema_name.is_empty() || schema.eq_ignore_ascii_case(&self.schema_name))
             && (self.table_name.is_empty() || table.eq_ignore_ascii_case(&self.table_name))
     }
@@ -50,35 +50,35 @@ impl ReaderOptions {
     }
 
     /// `DuckDBFileReaderOptions::PrintOptions` (a schema alone keeps its trailing `", "`).
-    fn print_options(&self) -> String {
-        let mut options = String::new();
+    fn print_options(&self) -> ByteString {
+        let mut options = ByteString::new();
         if !self.schema_name.is_empty() {
-            options = format!("schema_name=\"{}\"", self.schema_name);
+            options = byte_format!("schema_name=\"{}\"", self.schema_name);
         }
         if !options.is_empty() {
-            options += ", ";
+            options.push_bytes(", ");
         }
         if !self.table_name.is_empty() {
-            options = format!("{options}table_name=\"{}\"", self.table_name);
+            options = byte_format!("{options}table_name=\"{}\"", self.table_name);
         }
         options
     }
 
     /// `DuckDBFileReaderOptions::GetCandidates`: the tables of the file, qualified by
     /// their schema when the name occurs in several schemas.
-    fn candidates(&self, tables: &[(String, String)]) -> String {
+    fn candidates(&self, tables: &[(ByteString, ByteString)]) -> ByteString {
         if tables.is_empty() {
-            return String::new();
+            return ByteString::new();
         }
-        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        let mut counts: BTreeMap<ByteString, usize> = BTreeMap::new();
         for (_, table) in tables {
-            *counts.entry(table.to_lowercase()).or_default() += 1;
+            *counts.entry(table.to_ascii_lowercase()).or_default() += 1;
         }
-        let candidates: Vec<String> = tables
+        let candidates: Vec<ByteString> = tables
             .iter()
             .map(|(schema, table)| {
-                if counts.get(&table.to_lowercase()).copied().unwrap_or(0) > 1 {
-                    format!("{schema}.{table}")
+                if counts.get(&table.to_ascii_lowercase()).copied().unwrap_or(0) > 1 {
+                    byte_format!("{schema}.{table}")
                 } else {
                     table.clone()
                 }
@@ -86,10 +86,10 @@ impl ReaderOptions {
             .collect();
         let mut search_term = self.schema_name.clone();
         if !search_term.is_empty() {
-            search_term.push('.');
+            search_term.push(b'.');
         }
-        search_term += &self.table_name;
-        rustdb_common::string_util::candidates_error_message(&candidates, &search_term, "Candidates")
+        search_term.push_bytes(&self.table_name);
+        rustdb_common::string_util::candidates_error_message_bytes(&candidates, &search_term, b"Candidates")
     }
 }
 
@@ -114,13 +114,13 @@ impl Drop for ReaderDatabase {
 /// it reads.
 #[derive(Debug)]
 struct DuckDbReader {
-    path: String,
+    path: ByteString,
     #[allow(dead_code, reason = "keeps the file attached while the reader lives")]
     database: Arc<ReaderDatabase>,
     /// The table's entry (`AttachedDatabaseWrapper::table_entry`).
     table: Arc<CatalogEntry>,
     /// The table's columns (generated ones included): name and type.
-    columns: Vec<(String, LogicalType)>,
+    columns: Vec<(ByteString, LogicalType)>,
 }
 
 impl DuckDbReader {
@@ -128,7 +128,7 @@ impl DuckDbReader {
     fn open(
         instance: &Weak<DatabaseInstance>,
         transaction: &Transaction,
-        path: &str,
+        path: &[u8],
         options: &ReaderOptions,
     ) -> Result<Self> {
         let database = attach_reader_database(instance, path)?;
@@ -157,11 +157,11 @@ impl DuckDbReader {
                 "has multiple tables"
             };
             let extra_info = if options.has_selection() {
-                format!(" matching {}", options.print_options())
+                byte_format!(" matching {}", options.print_options())
             } else {
-                "\nSelect a table using `table_name='<name>'".to_owned()
+                ByteString::from("\nSelect a table using `table_name='<name>'")
             };
-            return Err(Error::binder(format!(
+            return Err(Error::binder(byte_format!(
                 "Database \"{path}\" {error_msg}{extra_info}{}",
                 options.candidates(&candidate_tables)
             )));
@@ -176,7 +176,7 @@ impl DuckDbReader {
             .map(|column| (column.name.clone(), column.logical_type.clone()))
             .collect();
         Ok(Self {
-            path: path.to_owned(),
+            path: path.into(),
             database: Arc::new(database),
             table,
             columns,
@@ -208,10 +208,10 @@ impl DuckDbReader {
 /// `DuckDBReader::GetAttachedDatabase`: attaches the file read-only and hidden, under a
 /// name no user can attach (DuckDB uses invalid UTF-8; the Rust name uses U+0080), or
 /// takes the attachment another reader of the file made.
-fn attach_reader_database(instance: &Weak<DatabaseInstance>, path: &str) -> Result<ReaderDatabase> {
+fn attach_reader_database(instance: &Weak<DatabaseInstance>, path: &[u8]) -> Result<ReaderDatabase> {
     let database = Database::from_instance(instance)
         .ok_or_else(|| Error::internal("read_duckdb on a closed database"))?;
-    let name = format!("\u{80}__duckdb_reader_{path}");
+    let name = byte_format!("{}__duckdb_reader_{path}", b"\x80".as_slice());
     let options = AttachOptions {
         access: AccessMode::ReadOnly,
         hidden: true,
@@ -250,8 +250,8 @@ struct ReadDuckDbData {
     files: FileList,
     /// The file list `EXPLAIN ANALYZE` shows: the patterns given, until filters prune
     /// the expanded files (`GetDisplayFileList`).
-    display_paths: Option<Vec<String>>,
-    names: Vec<String>,
+    display_paths: Option<Vec<ByteString>>,
+    names: Vec<ByteString>,
     types: Vec<LogicalType>,
     file_options: MultiFileOptions,
     reader_bind: MultiFileBindData,
@@ -300,7 +300,7 @@ impl ReadDuckDbData {
 
     /// A copy that reads only the files at positions `keep` (`PruneReaders`).
     fn with_files(&self, keep: &[usize]) -> Self {
-        let files: Vec<String> = keep
+        let files: Vec<ByteString> = keep
             .iter()
             .filter_map(|&index| self.files.files.get(index).cloned())
             .collect();
@@ -354,11 +354,11 @@ fn bind_data(bind_data: Option<&dyn FunctionData>) -> Result<&ReadDuckDbData> {
 }
 
 /// The value of a VARCHAR option (`StringValue::Get`).
-fn string_option(value: &Value) -> Result<String> {
+fn string_option(value: &Value) -> Result<ByteString> {
     if value.is_null() {
         return Err(Error::internal("Calling StringValue::Get on a NULL value"));
     }
-    value.to_varchar()
+    value.to_varchar_bytes()
 }
 
 /// The value of an option of the client, if set (`ClientContext::TryGetCurrentSetting`).
@@ -392,10 +392,10 @@ fn read_duckdb_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionB
             continue;
         }
         // `DuckDBMultiFileInfo::ParseOption`.
-        match key.as_str() {
-            "schema_name" => options.schema_name = string_option(value)?,
-            "table_name" => options.table_name = string_option(value)?,
-            _ => return Err(Error::not_implemented(format!("Unimplemented option {key}"))),
+        match key.as_bytes() {
+            b"schema_name" => options.schema_name = string_option(value)?,
+            b"table_name" => options.table_name = string_option(value)?,
+            _ => return Err(Error::not_implemented(byte_format!("Unimplemented option {key}"))),
         }
     }
     file_options.auto_detect_hive_partitioning(&files, &context.casts)?;
@@ -409,7 +409,7 @@ fn read_duckdb_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionB
         let mut union_names_map = std::collections::HashMap::new();
         for path in &files.files {
             let reader = Arc::new(DuckDbReader::open(&instance, &transaction, path, &options)?);
-            let (file_names, file_types): (Vec<String>, Vec<LogicalType>) =
+            let (file_names, file_types): (Vec<ByteString>, Vec<LogicalType>) =
                 reader.columns.iter().cloned().unzip();
             combine_union_types(
                 &file_names,
@@ -487,14 +487,14 @@ enum ColumnSource {
 #[derive(Debug)]
 struct ColumnCast {
     cast: Result<BoundCastInfo>,
-    local_name: String,
+    local_name: ByteString,
     local_type: LogicalType,
     target: LogicalType,
 }
 
 impl ColumnCast {
     /// Casts a chunk of the column, explaining a failure like `GetExtendedMultiFileError`.
-    fn execute(&self, file_name: &str, vector: &Vector, count: usize) -> Result<Vector> {
+    fn execute(&self, file_name: &[u8], vector: &Vector, count: usize) -> Result<Vector> {
         let result = self.cast.as_ref().map_err(Clone::clone).and_then(|cast| {
             let mut result = Vector::flat(self.target.clone(), count);
             cast.execute(vector, &mut result, count, &mut CastParameters::new())?;
@@ -505,9 +505,9 @@ impl ColumnCast {
                 return error;
             }
             let (local_name, local_type, target) = (&self.local_name, &self.local_type, &self.target);
-            Error::conversion(format!(
+            Error::conversion(byte_format!(
                 "Error while reading file \"{file_name}\": failed to cast column \"{local_name}\" from type {local_type} to {target}: : {}\n\nIn file \"{file_name}\" the column \"{local_name}\" has type {local_type}, but we are trying to read it as type {target}.\nThis can happen when reading multiple duckdb files. The schema information is taken from the first duckdb file by default. Possible solutions:\n* Enable the union_by_name=True option to combine the schema of all duckdb files (https://duckdb.org/docs/stable/data/multiple_files/combining_schemas)\n* Use a COPY statement to automatically derive types from an existing table.",
-                error.raw_message()
+                error.raw_message_bytes()
             ))
         })
     }
@@ -548,14 +548,14 @@ impl FileScan {
 }
 
 /// `MultiFileColumnMapper::ThrowColumnNotFoundError`.
-fn column_not_found(data: &ReadDuckDbData, reader: &DuckDbReader, name: &str) -> Error {
-    let candidates: Vec<&str> = reader.columns.iter().map(|(name, _)| name.as_str()).collect();
-    Error::invalid_input(format!(
+fn column_not_found(data: &ReadDuckDbData, reader: &DuckDbReader, name: &[u8]) -> Error {
+    let candidates: Vec<&[u8]> = reader.columns.iter().map(|(name, _)| name.as_bytes()).collect();
+    Error::invalid_input(byte_format!(
         "Failed to read file \"{}\": schema mismatch in glob: column \"{name}\" was read from the original file \"{}\", but could not be found in file \"{}\".\nCandidate names: {}\nIf you are trying to read files with different schemas, try setting union_by_name=True",
         reader.path,
         data.files.first_file().unwrap_or_default(),
         reader.path,
-        candidates.join(", ")
+        ByteString::join(&candidates, b", ")
     ))
 }
 
@@ -586,7 +586,7 @@ fn prepare_file(
     for &global_id in column_ids {
         match global_id {
             COLUMN_IDENTIFIER_FILENAME => {
-                sources.push(constant(Value::varchar(&path))?);
+                sources.push(constant(Value::try_varchar(&path)?)?);
                 continue;
             }
             COLUMN_IDENTIFIER_FILE_INDEX => {
@@ -613,7 +613,7 @@ fn prepare_file(
             )));
         };
         if data.reader_bind.filename_idx == Some(global) {
-            sources.push(constant(Value::varchar(&path))?);
+            sources.push(constant(Value::try_varchar(&path)?)?);
             continue;
         }
         if let Some((key, _)) = data
@@ -645,7 +645,7 @@ fn prepare_file(
         };
         // `DuckDBReader::TryInitializeScan`: generated columns cannot be read.
         let Some(physical) = table.logical_to_physical(local) else {
-            return Err(Error::not_implemented(format!(
+            return Err(Error::not_implemented(byte_format!(
                 "Unsupported: read_duckdb cannot read generated column {}",
                 reader.columns[local].0
             )));
@@ -1001,7 +1001,7 @@ fn read_duckdb_scan(
 fn read_duckdb_dynamic_to_string(
     bind: Option<&dyn FunctionData>,
     global: &ParallelScanGlobal,
-) -> Vec<(String, String)> {
+) -> Vec<(ByteString, ByteString)> {
     let (Ok(data), Ok(global)) = (bind_data(bind), scan_global(global)) else {
         return Vec::new();
     };
@@ -1035,22 +1035,22 @@ fn read_duckdb_parallel() -> ParallelTableScan {
 /// `MultiFileGetVirtualColumns` with `DuckDBMultiFileInfo::GetVirtualColumns`:
 /// `filename` (unless the `filename` option names a real column), `file_index` and the
 /// table's `rowid`.
-fn read_duckdb_virtual_columns(bind: Option<&dyn FunctionData>) -> Vec<(u64, String, LogicalType)> {
+fn read_duckdb_virtual_columns(bind: Option<&dyn FunctionData>) -> Vec<(u64, ByteString, LogicalType)> {
     let filename_option = bind_data(bind).is_ok_and(|data| data.reader_bind.filename_idx.is_some());
     let mut result = Vec::with_capacity(3);
     if !filename_option {
         result.push((
             COLUMN_IDENTIFIER_FILENAME,
-            "filename".to_owned(),
+            "filename".into(),
             LogicalType::VARCHAR,
         ));
     }
     result.push((
         COLUMN_IDENTIFIER_FILE_INDEX,
-        "file_index".to_owned(),
+        "file_index".into(),
         LogicalType::UBIGINT,
     ));
-    result.push((COLUMN_IDENTIFIER_ROW_ID, "rowid".to_owned(), LogicalType::BIGINT));
+    result.push((COLUMN_IDENTIFIER_ROW_ID, "rowid".into(), LogicalType::BIGINT));
     result
 }
 

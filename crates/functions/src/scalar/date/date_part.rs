@@ -126,6 +126,18 @@ impl Part {
             .ok_or_else(|| Error::conversion(format!("extract specifier \"{specifier}\" not recognized")))
     }
 
+    /// Native-byte date-part lookup; invalid Unicode remains intact in diagnostics.
+    pub fn parse_bytes(specifier: &[u8]) -> Result<Self> {
+        std::str::from_utf8(specifier)
+            .ok()
+            .and_then(Self::try_parse)
+            .ok_or_else(|| {
+                Error::conversion(rustdb_common::byte_format!(
+                    "extract specifier \"{specifier}\" not recognized"
+                ))
+            })
+    }
+
     /// Whether the part is a BIGINT (the others are DOUBLE).
     pub const fn is_bigint(self) -> bool {
         !matches!(self, Self::Epoch | Self::JulianDay)
@@ -737,7 +749,7 @@ fn simplified_function_exists(part: Part, ty: &LogicalType) -> Result<()> {
     };
     let Some((set, _)) = named_part_functions()
         .into_iter()
-        .find(|(set, _)| &*set.name == name)
+        .find(|(set, _)| set.name.as_bytes() == name.as_bytes())
     else {
         return Ok(());
     };
@@ -876,7 +888,7 @@ fn bind_struct_date_part(function: &mut ScalarFunction, input: &BindInput<'_>) -
         return Err(crate::parameter_not_resolved());
     }
     let not_constant = || {
-        Error::binder(format!(
+        Error::binder(rustdb_common::byte_format!(
             "{} can only take constant lists of part names",
             function.name
         ))
@@ -889,7 +901,7 @@ fn bind_struct_date_part(function: &mut ScalarFunction, input: &BindInput<'_>) -
     }
     let children = list.children().unwrap_or_default();
     if children.is_empty() {
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "{} requires non-empty lists of part names",
             function.name
         )));
@@ -900,7 +912,7 @@ fn bind_struct_date_part(function: &mut ScalarFunction, input: &BindInput<'_>) -
     let mut fields = Vec::with_capacity(children.len());
     for child in children {
         if child.is_null() {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "NULL struct entry name in {}",
                 function.name
             )));
@@ -908,7 +920,7 @@ fn bind_struct_date_part(function: &mut ScalarFunction, input: &BindInput<'_>) -
         let name = crate::values::as_text(child)?;
         let part = struct_part(&name, ty)?;
         if names.iter().any(|existing| existing.eq_ignore_ascii_case(&name)) {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Duplicate struct entry name \"{name}\" in {}",
                 function.name
             )));
@@ -918,7 +930,7 @@ fn bind_struct_date_part(function: &mut ScalarFunction, input: &BindInput<'_>) -
         } else {
             LogicalType::DOUBLE
         };
-        fields.push((name.clone(), field_type));
+        fields.push((name.clone().into(), field_type));
         names.push(name);
         parts.push(part);
     }
@@ -1132,7 +1144,7 @@ fn timestamp_from_millis() -> ScalarFunction {
 }
 
 fn renamed(mut function: ScalarFunction, name: &str) -> ScalarFunction {
-    function.name = Arc::from(name);
+    function.name = name.into();
     function
 }
 

@@ -22,5 +22,8 @@ memchr = "2"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 rustdb-zstd = { path = "../zstd" }
 
+[dev-dependencies]
+rustdb-catalog = { path = "../catalog" }
+
 [lints]
 workspace = true

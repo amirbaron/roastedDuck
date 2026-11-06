@@ -8,9 +8,7 @@ use rustdb::{PreparedStatement, SqlStatement};
 use rustdb_common::{CaseInsensitiveMap, Error};
 use rustdb_types::{Date, Interval, LogicalType, LogicalTypeId, Time, Timestamp, Value};
 
-use crate::helper::{
-    bytes, c_string, catch, logical_type_id_to_c, lossy_str, opt_str, statement_type_to_c, to_cstring,
-};
+use crate::helper::{bytes, c_string, catch, logical_type_id_to_c, statement_type_to_c, to_cstring};
 use crate::logical_types::{DuckdbLogicalType, wrap_type};
 use crate::open::{DuckdbConnection, SharedConnection, connection_ref};
 use crate::result::translate_result;
@@ -38,11 +36,11 @@ pub struct PreparedStatementWrapper {
     /// The statement, or why preparing it failed.
     pub(crate) statement: Result<PreparedStatement, CError>,
     /// The values bound so far, by parameter identifier.
-    pub(crate) values: CaseInsensitiveMap<Value>,
+    pub(crate) values: CaseInsensitiveMap<Value, rustdb_common::ByteString>,
     /// The last binding error (`error_data` with `success` false).
     bind_error: Option<CError>,
     /// The identifier of each parameter, by index (`param_index_to_name`).
-    param_index_to_name: HashMap<u64, String>,
+    param_index_to_name: HashMap<u64, rustdb_common::ByteString>,
 }
 
 /// `duckdb_prepared_statement`
@@ -69,8 +67,10 @@ impl PreparedStatementWrapper {
     }
 
     /// The identifier of parameter `index` (`duckdb_parameter_name_internal`).
-    fn parameter_name(&self, index: Idx) -> Option<&str> {
-        self.param_index_to_name.get(&index).map(String::as_str)
+    fn parameter_name(&self, index: Idx) -> Option<&[u8]> {
+        self.param_index_to_name
+            .get(&index)
+            .map(rustdb_common::ByteString::as_bytes)
     }
 }
 
@@ -126,8 +126,8 @@ pub unsafe extern "C" fn duckdb_extract_statements(
         return 0;
     }
     // SAFETY: `query` is a NUL-terminated string.
-    let query = unsafe { lossy_str(query) };
-    let (statements, error) = match catch(|| context.lock().parse_statements(&query)) {
+    let query = unsafe { crate::helper::opt_bytes(query) }.unwrap_or_default();
+    let (statements, error) = match catch(|| context.lock().parse_statements_bytes(query)) {
         Ok(statements) => (statements, None),
         Err(error) => (Vec::new(), Some(to_cstring(error.to_bytes()))),
     };
@@ -195,8 +195,8 @@ pub unsafe extern "C" fn duckdb_prepare(
         return DuckdbState::DuckDBError;
     }
     // SAFETY: `query` is a NUL-terminated string.
-    let query = unsafe { lossy_str(query) };
-    let prepared = catch(|| context.lock().prepare(&query));
+    let query = unsafe { crate::helper::opt_bytes(query) }.unwrap_or_default();
+    let prepared = catch(|| context.lock().prepare(query));
     // SAFETY: checked non-null above.
     unsafe { store_prepared(context, prepared, out_prepared_statement) }
 }
@@ -362,7 +362,7 @@ fn bind(wrapper: &mut PreparedStatementWrapper, param_idx: Idx, value: Value) ->
         ))));
         return DuckdbState::DuckDBError;
     };
-    let identifier = identifier.to_owned();
+    let identifier = rustdb_common::ByteString::from(identifier);
     wrapper.values.insert(identifier, value);
     DuckdbState::DuckDBSuccess
 }
@@ -391,7 +391,9 @@ pub unsafe extern "C" fn duckdb_bind_parameter_index(
     name: *const c_char,
 ) -> DuckdbState {
     // SAFETY: `prepared_statement` is NULL or a live handle; `name` NULL or a C string.
-    let (Some(wrapper), Some(name)) = (unsafe { (prepared_ref(prepared_statement), opt_str(name)) }) else {
+    let (Some(wrapper), Some(name)) =
+        (unsafe { (prepared_ref(prepared_statement), crate::helper::opt_bytes(name)) })
+    else {
         return DuckdbState::DuckDBError;
     };
     if param_idx_out.is_null() {
@@ -568,14 +570,13 @@ unsafe fn execute_prepared(
     let Ok(statement) = &wrapper.statement else {
         return DuckdbState::DuckDBError;
     };
-    let outcome = catch(|| {
-        wrapper
-            .context
-            .lock()
-            .execute_prepared(statement, &wrapper.values, allow_stream)
-    });
+    let (outcome, properties) = {
+        let mut connection = wrapper.context.lock();
+        let outcome = catch(|| connection.execute_prepared(statement, &wrapper.values, allow_stream));
+        (outcome, connection.client_properties())
+    };
     // SAFETY: `out_result` is NULL or writable.
-    unsafe { translate_result(&wrapper.context, outcome, out_result) }
+    unsafe { translate_result(&wrapper.context, outcome, properties, out_result) }
 }
 
 /// `duckdb_state duckdb_execute_prepared(duckdb_prepared_statement prepared_statement,

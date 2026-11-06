@@ -13,6 +13,7 @@ use super::{DataTable, TableConstraints, constraint_error, has_null};
 use crate::index::art::IndexScanPredicate;
 use crate::index::conflict_manager::ConflictManager;
 use crate::index::table_index_list::ForeignKeyType;
+use crate::index::unbound_index::BufferedIndexReplay as Replay;
 use crate::index::{
     Art, BufferLoader, BufferPointer, IndexAppendMode, IndexConstraintType, IndexKeyExpressions,
     IndexRemovalType, TableIndexList, VerifyExistenceType,
@@ -161,7 +162,12 @@ impl DataTable {
     }
 
     /// A new empty ART over plain columns of this table.
-    pub fn new_art(&self, name: &str, constraint: IndexConstraintType, column_ids: &[usize]) -> Result<Art> {
+    pub fn new_art(
+        &self,
+        name: impl AsRef<[u8]>,
+        constraint: IndexConstraintType,
+        column_ids: &[usize],
+    ) -> Result<Art> {
         let key_types: Vec<LogicalType> = column_ids
             .iter()
             .map(|&c| {
@@ -184,7 +190,7 @@ impl DataTable {
     /// A new empty ART whose keys are computed by `expressions` from `column_ids`.
     pub fn new_art_with_expressions(
         &self,
-        name: &str,
+        name: impl AsRef<[u8]>,
         constraint: IndexConstraintType,
         column_ids: &[usize],
         key_types: Vec<LogicalType>,
@@ -192,7 +198,7 @@ impl DataTable {
     ) -> Result<Art> {
         let io = self.io();
         let mut art = Art::new(
-            name,
+            name.as_ref(),
             constraint,
             column_ids.to_vec(),
             key_types,
@@ -226,6 +232,44 @@ impl DataTable {
         Ok(true)
     }
 
+    /// Replays native CREATE INDEX allocator bytes without scanning the table.
+    pub fn restore_wal_index(
+        &self,
+        index: &mut Art,
+        info: &crate::index::art::ArtStorageInfo,
+        buffers: &[Vec<Vec<u8>>],
+    ) -> Result<bool> {
+        let Some(manager) = self.io().file_block_manager() else {
+            return Ok(false);
+        };
+        if info.allocator_infos.is_empty() {
+            return Ok(false);
+        }
+        let mut writer = crate::checkpoint::table_writer::BlockWriter::new(Arc::clone(manager));
+        let info = crate::index::unbound_index::persist_wal_index(info, buffers, &mut writer)?;
+        self.restore_index(index, &info)
+    }
+
+    /// Loads an unbound expression index from native disk/WAL allocator buffers.
+    pub fn restore_unbound_index(
+        &self,
+        index: &mut Art,
+        unbound: &crate::index::UnboundIndex,
+    ) -> Result<bool> {
+        let Some(manager) = self.io().file_block_manager() else {
+            return Ok(false);
+        };
+        let mut writer = crate::checkpoint::table_writer::BlockWriter::new(Arc::clone(manager));
+        let Some(info) = unbound.storage_for_binding(&mut writer)? else {
+            return Ok(false);
+        };
+        if !self.restore_index(index, &info)? {
+            return Ok(false);
+        }
+        unbound.apply_buffered_replays(index, &self.types())?;
+        Ok(true)
+    }
+
     /// Adds an index enforcing a PRIMARY KEY, UNIQUE or FOREIGN KEY constraint over
     /// `column_ids` at CREATE TABLE (`DataTable::AddIndex`). Its name is
     /// `<TYPE>_<table>_<constraint index>`.
@@ -235,7 +279,7 @@ impl DataTable {
         column_ids: &[usize],
         constraint_index: usize,
     ) -> Result<()> {
-        let name = format!("{}_{}_{constraint_index}", constraint.name(), self.name());
+        let name = rustdb_common::byte_format!("{}_{}_{constraint_index}", constraint.name(), self.name());
         let art = self.new_art(&name, constraint, column_ids)?;
         self.add_index(art)
     }
@@ -248,7 +292,7 @@ impl DataTable {
         column_ids: &[usize],
         constraint_index: usize,
     ) -> Result<()> {
-        let name = format!("{}_{}_{constraint_index}", constraint.name(), self.name());
+        let name = rustdb_common::byte_format!("{}_{}_{constraint_index}", constraint.name(), self.name());
         let mut art = self.new_art(&name, constraint, column_ids)?;
         self.build_index(&Transaction::system(), &mut art, false)?;
         self.add_index(art)
@@ -263,7 +307,8 @@ impl DataTable {
         constraint_index: usize,
         info: &crate::index::art::ArtStorageInfo,
     ) -> Result<bool> {
-        let generated = format!("{}_{}_{constraint_index}", constraint.name(), self.name());
+        let generated =
+            rustdb_common::byte_format!("{}_{}_{constraint_index}", constraint.name(), self.name());
         let name = if info.name.is_empty() {
             &generated
         } else {
@@ -310,7 +355,7 @@ impl DataTable {
     }
 
     /// Removes the index `name` (DROP INDEX, or rollback of CREATE INDEX).
-    pub fn remove_index(&self, name: &str) -> bool {
+    pub fn remove_index(&self, name: impl AsRef<[u8]>) -> bool {
         self.indexes().remove(name)
     }
 
@@ -324,13 +369,18 @@ impl DataTable {
         mut index: Art,
         check_unique_name: bool,
     ) -> Result<()> {
+        // A commit appends rows and updates the published indexes under this lock.
+        // Keep it until publication so no append can escape both the build scan
+        // and the normal maintenance of the new index.
+        let _append_lock = self.append_lock();
         self.build_index(transaction, &mut index, false)?;
         self.check_main_table_for_index_creation()?;
         if check_unique_name && self.indexes().contains(index.name()) {
-            return Err(Error::catalog(format!(
-                "An index with the name {} already exists!",
-                index.name()
-            )));
+            return Err(Error::new_bytes(
+                ErrorKind::Catalog,
+                rustdb_common::byte_format!("An index with the name {} already exists!", index.name())
+                    .into_bytes(),
+            ));
         }
         self.indexes().add(index);
         Ok(())
@@ -364,7 +414,7 @@ impl DataTable {
             let row_ids = row_id_column.values::<i64>()[..chunk.len()].to_vec();
             let data = DataChunk::new(chunk.columns()[..columns.len()].to_vec(), chunk.len());
             if reject_nulls && data.columns().iter().any(|column| has_null(column, data.len())) {
-                return Err(constraint_error(format!(
+                return Err(constraint_error(rustdb_common::byte_format!(
                     "NOT NULL constraint failed: {}",
                     index.name()
                 )));
@@ -434,11 +484,15 @@ impl DataTable {
                     index
                         .append(&table_chunk, &row_ids, &[], IndexAppendMode::Default)
                         .map_err(|error| {
-                            Error::internal(format!(
-                                "Failed to rebuild index '{}' after vacuum: {}",
-                                index.name(),
-                                error.raw_message()
-                            ))
+                            Error::new_bytes(
+                                ErrorKind::Internal,
+                                rustdb_common::byte_format!(
+                                    "Failed to rebuild index '{}' after vacuum: {}",
+                                    index.name(),
+                                    error.raw_message_bytes()
+                                )
+                                .into_bytes(),
+                            )
                         })?;
                 }
             }
@@ -543,6 +597,16 @@ impl DataTable {
                 return Err(error);
             }
             appended.push(entry);
+        }
+        if let Err(error) = indexes.buffer_chunk(
+            table_chunk,
+            &row_ids,
+            crate::index::unbound_index::BufferedIndexReplay::Insert,
+        ) {
+            for previous in &appended {
+                previous.lock().index.try_delete(table_chunk, &row_ids)?;
+            }
+            return Err(error);
         }
         Ok(())
     }
@@ -836,6 +900,14 @@ impl DataTable {
                 }
             }
         }
+        let replay = match removal {
+            IndexRemovalType::MainIndex | IndexRemovalType::MainIndexOnly => Some(Replay::Delete),
+            IndexRemovalType::RevertMainIndex | IndexRemovalType::RevertMainIndexOnly => Some(Replay::Insert),
+            IndexRemovalType::DeletedRowsInUse => None,
+        };
+        if let Some(replay) = replay {
+            self.indexes().buffer_chunk(&table_chunk, row_ids, replay)?;
+        }
         Ok(())
     }
 
@@ -857,6 +929,11 @@ impl DataTable {
             for entry in self.indexes().entries() {
                 entry.lock().index.try_delete(&table_chunk, &row_ids)?;
             }
+            self.indexes().buffer_chunk(
+                &table_chunk,
+                &row_ids,
+                crate::index::unbound_index::BufferedIndexReplay::Delete,
+            )?;
             start += batch;
         }
         Ok(())

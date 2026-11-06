@@ -161,6 +161,9 @@ impl<'m> Emitter<'m> {
     }
 
     fn member_type(&mut self, member: &Member) -> Result<String> {
+        if let Some(ty) = member.config.and_then(|config| config.field_type) {
+            return Ok(ty.into());
+        }
         if member.spec.base.is_some() {
             let CppType::Pointer(inner) = &member.ty else {
                 return Err(format!("member {} with a base must be a pointer", member.spec.name).into());

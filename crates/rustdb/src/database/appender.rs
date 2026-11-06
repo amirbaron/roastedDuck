@@ -29,7 +29,7 @@ mod cast;
 /// `TableDescription`).
 #[derive(Clone, Debug)]
 pub struct ColumnDescription {
-    pub name: String,
+    pub name: rustdb_common::ByteString,
     pub logical_type: LogicalType,
     /// The `DEFAULT` expression, if the column has one.
     pub default_value: Option<ParsedExpression>,
@@ -41,9 +41,9 @@ pub struct ColumnDescription {
 /// `schema` are the names the table was looked up with.
 #[derive(Clone, Debug)]
 pub struct TableDescription {
-    pub database: String,
-    pub schema: String,
-    pub table: String,
+    pub database: rustdb_common::ByteString,
+    pub schema: rustdb_common::ByteString,
+    pub table: rustdb_common::ByteString,
     /// Whether the table's database is attached read-only.
     pub readonly: bool,
     /// Every column, generated ones included, in table order.
@@ -56,10 +56,11 @@ impl Connection {
     /// `ClientContext::TableInfo`, run in a transaction of its own outside one).
     pub fn table_info(
         &mut self,
-        database: &str,
-        schema: &str,
-        table: &str,
+        database: impl AsRef<[u8]>,
+        schema: impl AsRef<[u8]>,
+        table: impl AsRef<[u8]>,
     ) -> Result<Option<TableDescription>> {
+        let (database, schema, table) = (database.as_ref(), schema.as_ref(), table.as_ref());
         self.initial_cleanup();
         let transaction = self.transactions.current();
         let context = self.client_context(transaction);
@@ -73,7 +74,7 @@ impl Connection {
             let catalog = if database.is_empty() {
                 self.default_catalog()
             } else {
-                database.to_owned()
+                database.into()
             };
             let readonly = self
                 .database
@@ -92,14 +93,14 @@ impl Connection {
                 })
                 .collect();
             Ok(Some(TableDescription {
-                database: database.to_owned(),
-                schema: schema.to_owned(),
-                table: table.to_owned(),
+                database: database.into(),
+                schema: schema.into(),
+                table: table.into(),
                 readonly,
                 columns,
             }))
         })();
-        let ended = self.transactions.end_statement(found.is_ok(), false);
+        let ended = self.end_client_statement(found.is_ok(), false);
         found.and_then(|found| ended.map(|()| found))
     }
 
@@ -109,7 +110,12 @@ impl Connection {
         let query = statement.query.clone();
         self.execute_statement(&query, statement)
             .map(drop)
-            .map_err(|error| Error::new(error.kind(), format!("Failed to append: {}", error.raw_message())))
+            .map_err(|error| {
+                Error::new_bytes(
+                    error.kind(),
+                    rustdb_common::byte_format!("Failed to append: {}", error.raw_message_bytes()),
+                )
+            })
     }
 
     /// The constant values of the columns' `DEFAULT` expressions, by column index
@@ -139,7 +145,7 @@ impl Connection {
             }
             Ok(defaults)
         })();
-        let ended = self.transactions.end_statement(defaults.is_ok(), false);
+        let ended = self.end_client_statement(defaults.is_ok(), false);
         defaults.and_then(|defaults| ended.map(|()| defaults))
     }
 }
@@ -157,9 +163,9 @@ enum AppenderTarget {
     /// A statement that reads the rows as `table_name`, with columns named `names`
     /// (DuckDB's `QueryAppender`).
     Query {
-        query: String,
-        names: Vec<String>,
-        table_name: String,
+        query: rustdb_common::ByteString,
+        names: Vec<rustdb_common::ByteString>,
+        table_name: rustdb_common::ByteString,
     },
 }
 
@@ -192,11 +198,18 @@ fn invalid_input(message: impl Into<String>) -> Error {
 impl Appender {
     /// An appender to `table` in `schema` of `database` (an empty name is the default
     /// database) (`Appender::Appender`).
-    pub fn new(connection: &mut Connection, database: &str, schema: &str, table: &str) -> Result<Self> {
+    pub fn new(
+        connection: &mut Connection,
+        database: impl AsRef<[u8]>,
+        schema: impl AsRef<[u8]>,
+        table: impl AsRef<[u8]>,
+    ) -> Result<Self> {
+        let (database, schema, table) = (database.as_ref(), schema.as_ref(), table.as_ref());
         let Some(description) = connection.table_info(database, schema, table)? else {
-            return Err(Error::catalog(format!(
-                "Table \"{database}.{schema}.{table}\" could not be found"
-            )));
+            return Err(Error::new_bytes(
+                rustdb_common::ErrorKind::Catalog,
+                rustdb_common::byte_format!("Table \"{database}.{schema}.{table}\" could not be found"),
+            ));
         };
         if description.readonly {
             return Err(invalid_input("Cannot append to a readonly database."));
@@ -224,6 +237,21 @@ impl Appender {
     /// An appender whose rows `query` reads as `table_name` (`appended_data` when empty),
     /// with columns of `types` named `names` (`col1`, ... when empty) (`QueryAppender`).
     pub fn for_query(query: String, types: Vec<LogicalType>, names: Vec<String>, table_name: String) -> Self {
+        Self::for_query_bytes(
+            query.into(),
+            types,
+            names.into_iter().map(Into::into).collect(),
+            table_name.into(),
+        )
+    }
+
+    /// Native C-string query/name input for `QueryAppender` clients.
+    pub fn for_query_bytes(
+        query: rustdb_common::ByteString,
+        types: Vec<LogicalType>,
+        names: Vec<rustdb_common::ByteString>,
+        table_name: rustdb_common::ByteString,
+    ) -> Self {
         Self::with_target(
             AppenderTarget::Query {
                 query,
@@ -361,8 +389,8 @@ impl Appender {
             let name = description
                 .columns
                 .get(index)
-                .map_or("", |column| column.name.as_str());
-            Error::not_implemented(format!(
+                .map_or(b"".as_slice(), |column| column.name.as_bytes());
+            Error::not_implemented(rustdb_common::byte_format!(
                 "AppendDefault is not supported for column \"{name}\": not a foldable default expressions."
             ))
         })
@@ -514,12 +542,12 @@ impl Appender {
                 column_ids,
                 ..
             } => {
-                let names: Vec<String> = column_ids
+                let names: Vec<rustdb_common::ByteString> = column_ids
                     .iter()
                     .map(|&index| description.columns[index].name.clone())
                     .collect();
                 let query = insert_query(description, APPENDED_DATA_TABLE, &names);
-                parse_with_appended_data(&query, collection, APPENDED_DATA_TABLE, names)
+                parse_with_appended_data(&query, collection, APPENDED_DATA_TABLE.as_bytes(), names)
             }
             AppenderTarget::Query {
                 query,
@@ -527,11 +555,11 @@ impl Appender {
                 table_name,
             } => {
                 let alias = if table_name.is_empty() {
-                    "appended_data"
+                    b"appended_data".as_slice()
                 } else {
-                    table_name
+                    table_name.as_bytes()
                 };
-                parse_with_appended_data(query, collection, alias, names.clone())
+                parse_with_appended_data(query.as_bytes(), collection, alias, names.clone())
             }
         }
     }
@@ -553,7 +581,8 @@ impl Appender {
 
     /// Appends to column `name` too (`AddColumn`): the appended columns are those added,
     /// in order of addition, and the others get their defaults.
-    pub fn add_column(&mut self, connection: &mut Connection, name: &str) -> Result<()> {
+    pub fn add_column(&mut self, connection: &mut Connection, name: impl AsRef<[u8]>) -> Result<()> {
+        let name = name.as_ref();
         if !matches!(self.target, AppenderTarget::Table { .. }) {
             return Err(Error::not_implemented(
                 "AddColumn is only supported when directly appending to a table",
@@ -568,7 +597,11 @@ impl Appender {
         else {
             unreachable!("checked to be a table appender above")
         };
-        let Some(index) = description.columns.iter().position(|column| column.name == name) else {
+        let Some(index) = description
+            .columns
+            .iter()
+            .position(|column| column.name.as_bytes() == name)
+        else {
             return Err(invalid_input("the column must exist in the table"));
         };
         let column = &description.columns[index];
@@ -603,26 +636,30 @@ impl Appender {
 
 /// `INSERT INTO [database.][schema.]table[(names)] FROM table_name`
 /// (`Appender::ConstructQuery`).
-fn insert_query(description: &TableDescription, table_name: &str, names: &[String]) -> String {
-    let quoted = rustdb_ast::keyword::write_optionally_quoted;
-    let mut query = String::from("INSERT INTO ");
+fn insert_query(
+    description: &TableDescription,
+    table_name: &str,
+    names: &[rustdb_common::ByteString],
+) -> rustdb_common::ByteString {
+    let quoted = rustdb_ast::keyword::write_optionally_quoted_bytes;
+    let mut query = rustdb_common::ByteString::from("INSERT INTO ");
     if !description.database.is_empty() {
-        query.push_str(&quoted(&description.database));
-        query.push('.');
+        query.push_bytes(quoted(&description.database));
+        query.push(b'.');
     }
     if !description.schema.is_empty() {
-        query.push_str(&quoted(&description.schema));
-        query.push('.');
+        query.push_bytes(quoted(&description.schema));
+        query.push(b'.');
     }
-    query.push_str(&quoted(&description.table));
+    query.push_bytes(quoted(&description.table));
     if !names.is_empty() {
-        let names: Vec<String> = names.iter().map(|name| quoted(name)).collect();
-        query.push('(');
-        query.push_str(&names.join(", "));
-        query.push(')');
+        let names: Vec<rustdb_common::ByteString> = names.iter().map(|name| quoted(name)).collect();
+        query.push(b'(');
+        query.push_bytes(rustdb_common::ByteString::join(&names, b", "));
+        query.push(b')');
     }
-    query.push_str(" FROM ");
-    query.push_str(table_name);
+    query.push_bytes(b" FROM ");
+    query.push_bytes(table_name.as_bytes());
     query
 }
 
@@ -630,12 +667,12 @@ fn insert_query(description: &TableDescription, table_name: &str, names: &[Strin
 /// expression over the gathered rows, named `expected_names` (`BaseAppender::ParseStatement`
 /// with `GetColumnDataTableRef`).
 fn parse_with_appended_data(
-    query: &str,
+    query: &[u8],
     collection: ColumnDataCollection,
-    alias: &str,
-    expected_names: Vec<String>,
+    alias: &[u8],
+    expected_names: Vec<rustdb_common::ByteString>,
 ) -> Result<SqlStatement> {
-    let mut statements = rustdb_parser::parse(query)?;
+    let mut statements = rustdb_parser::parse_bytes(query)?;
     if statements.len() != 1 {
         return Err(invalid_input("Expected exactly one query for appending data."));
     }
@@ -644,7 +681,7 @@ fn parse_with_appended_data(
         expected_names,
         collection: Some(Box::new(collection)),
     }));
-    alias.clone_into(&mut table_ref.alias);
+    table_ref.alias = alias.into();
     let mut select = build::select_node();
     select.select_list.push(build::star());
     *select.from_table = table_ref;

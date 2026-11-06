@@ -9,7 +9,7 @@ use rustdb_types::{DataChunk, Date, Interval, LogicalType, Time, Timestamp, Valu
 
 use crate::data_chunk::DuckdbDataChunk;
 use crate::error_data::{DuckdbErrorData, ErrorDataWrapper};
-use crate::helper::{bytes, catch, opt_str, to_cstring};
+use crate::helper::{bytes, catch, opt_bytes, to_cstring};
 use crate::logical_types::{DuckdbLogicalType, type_ref, wrap_type};
 use crate::open::{DuckdbConnection, SharedConnection, connection_ref};
 use crate::types::*;
@@ -139,14 +139,19 @@ pub unsafe extern "C" fn duckdb_appender_create_ext(
     out_appender: *mut DuckdbAppender,
 ) -> DuckdbState {
     // SAFETY: `connection` is NULL or a live handle; the names are NULL or NUL-terminated.
-    let (Some(context), Some(table)) = (unsafe { (connection_ref(connection), opt_str(table)) }) else {
+    let (Some(context), Some(table)) = (unsafe { (connection_ref(connection), opt_bytes(table)) }) else {
         return DuckdbState::DuckDBError;
     };
     if out_appender.is_null() {
         return DuckdbState::DuckDBError;
     }
     // SAFETY: as above.
-    let (catalog, schema) = unsafe { (opt_str(catalog).unwrap_or(""), opt_str(schema).unwrap_or("main")) };
+    let (catalog, schema) = unsafe {
+        (
+            opt_bytes(catalog).unwrap_or(b""),
+            opt_bytes(schema).unwrap_or(b"main"),
+        )
+    };
     let appender = catch(|| Appender::new(&mut context.lock(), catalog, schema, table));
     // SAFETY: `out_appender` is non-NULL and writable per the API contract.
     unsafe { store_appender(context, appender, out_appender) }
@@ -167,7 +172,7 @@ pub unsafe extern "C" fn duckdb_appender_create_query(
     out_appender: *mut DuckdbAppender,
 ) -> DuckdbState {
     // SAFETY: `connection` is NULL or a live handle; `query` is NULL or NUL-terminated.
-    let (Some(context), Some(query)) = (unsafe { (connection_ref(connection), opt_str(query)) }) else {
+    let (Some(context), Some(query)) = (unsafe { (connection_ref(connection), opt_bytes(query)) }) else {
         return DuckdbState::DuckDBError;
     };
     if column_count == 0 || types.is_null() || out_appender.is_null() {
@@ -186,15 +191,15 @@ pub unsafe extern "C" fn duckdb_appender_create_query(
     if !column_names.is_null() {
         for index in 0..count {
             // SAFETY: `column_names` holds `column_count` NULL or NUL-terminated names.
-            let Some(name) = (unsafe { opt_str(*column_names.add(index)) }) else {
+            let Some(name) = (unsafe { opt_bytes(*column_names.add(index)) }) else {
                 return DuckdbState::DuckDBError;
             };
-            names.push(name.to_owned());
+            names.push(name.into());
         }
     }
     // SAFETY: `table_name` is NULL or NUL-terminated.
-    let table_name = unsafe { opt_str(table_name) }.unwrap_or_default().to_owned();
-    let appender = Appender::for_query(query.to_owned(), logical_types, names, table_name);
+    let table_name = unsafe { opt_bytes(table_name) }.unwrap_or_default().into();
+    let appender = Appender::for_query_bytes(query.into(), logical_types, names, table_name);
     // SAFETY: `out_appender` is non-NULL and writable per the API contract.
     unsafe { store_appender(context, Ok(appender), out_appender) }
 }
@@ -226,7 +231,7 @@ pub unsafe extern "C" fn duckdb_appender_add_column(
     name: *const c_char,
 ) -> DuckdbState {
     // SAFETY: `appender` is NULL or a live handle; `name` is NULL or NUL-terminated.
-    let (Some(wrapper), name) = (unsafe { (appender_ref(appender), opt_str(name)) }) else {
+    let (Some(wrapper), name) = (unsafe { (appender_ref(appender), opt_bytes(name)) }) else {
         return DuckdbState::DuckDBError;
     };
     wrapper.run(|appender, context| {

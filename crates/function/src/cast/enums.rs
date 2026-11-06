@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
+use rustdb_common::{ByteString, Error, Result};
 use rustdb_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType, Vector};
 
 use super::executor::{RowError, RowResult, addressable, cast_rows, try_map_strings};
@@ -79,16 +79,16 @@ pub(super) fn string_to_enum(target: &LogicalType) -> Option<BoundCastInfo> {
     }))
 }
 
-fn enum_text(values: &[String], index: usize) -> RowResult<&[u8]> {
+fn enum_text(values: &[ByteString], index: usize) -> RowResult<&[u8]> {
     values
         .get(index)
-        .map(String::as_bytes)
+        .map(ByteString::as_bytes)
         .ok_or_else(|| RowError::Fatal(Error::internal(format!("ENUM index {index} out of range"))))
 }
 
 /// ENUM -> VARCHAR: the dictionary string.
 fn enum_to_varchar(source_type: &LogicalType) -> Option<BoundCastInfo> {
-    let values: Arc<[String]> = source_type.enum_values()?.into();
+    let values: Arc<[ByteString]> = source_type.enum_values()?.into();
     with_index!(source_type, Index => BoundCastInfo::new(move |source, result, count, params| {
         let source = addressable(source, count);
         let indexes = source.values::<Index>();
@@ -102,7 +102,7 @@ fn enum_to_varchar(source_type: &LogicalType) -> Option<BoundCastInfo> {
 /// ENUM -> ENUM: re-looks up every string in the target dictionary. Missing strings are an
 /// error under `CAST` and NULL under `TRY_CAST`.
 fn enum_to_enum(source_type: &LogicalType, target: &LogicalType) -> Option<BoundCastInfo> {
-    let values: Arc<[String]> = source_type.enum_values()?.into();
+    let values: Arc<[ByteString]> = source_type.enum_values()?.into();
     let positions = positions(target);
     with_index!(source_type, Source => {
         with_index!(target, Target => {

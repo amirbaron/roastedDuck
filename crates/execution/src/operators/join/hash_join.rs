@@ -227,6 +227,11 @@ impl PhysicalOperator for PhysicalHashJoin {
     fn children(&self) -> &[PhysicalRef] {
         &self.children
     }
+    fn preallocate_output(&self) -> bool {
+        // Probe/outer results replace columns; reused gather vectors reset/grow
+        // their own storage to the number of selected rows.
+        false
+    }
     fn as_sink(&self) -> Option<&dyn ErasedSink> {
         Some(self)
     }
@@ -302,7 +307,7 @@ impl Drop for HashJoinGlobalSinkState {
                 .get_mut()
                 .unwrap_or_else(PoisonError::into_inner)
                 .total_probe_matches();
-            logger.log(
+            let _ = logger.log(
                 "PhysicalHashJoin",
                 "GetData",
                 &[("total_probe_matches", matches.to_string())],
@@ -476,7 +481,7 @@ impl Sink for PhysicalHashJoin {
                 "PhysicalHashJoin",
                 "Finalize",
                 &[("external", u8::from(external).to_string())],
-            );
+            )?;
         }
         if external {
             return self.finalize_external(ctx, global, locals);
@@ -730,7 +735,7 @@ impl PhysicalHashJoin {
                             RadixPartitioning::number_of_partitions(table.radix_bits()).to_string(),
                         ),
                     ],
-                );
+                )?;
             }
             for local in locals {
                 local.repartition_into(table)?;

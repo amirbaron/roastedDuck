@@ -274,11 +274,11 @@ pub(super) fn push_bloom_filter(
     target: &JoinFilterTarget,
     key: usize,
     bloom_filter: &Arc<BloomFilter>,
-    key_column_name: &str,
+    key_column_name: &[u8],
 ) {
     let filter = TableFilter::Expression(Arc::new(BloomTableFilter::new(
         Arc::clone(bloom_filter),
-        key_column_name.to_owned(),
+        key_column_name.into(),
     )));
     target.dynamic_filters.push_filter(
         key,
@@ -326,9 +326,13 @@ fn in_filter_values(
     let integral = storage_type.is_integral() && storage_type.id() != LogicalTypeId::UHugeInt;
     if integral {
         values.sort_by_key(|value| value.as_i128().unwrap_or_default());
-        let dense = values
-            .windows(2)
-            .all(|pair| pair[1].as_i128().zip(pair[0].as_i128()).map(|(b, a)| b - a) == Some(1));
+        let dense = values.windows(2).all(|pair| {
+            pair[1]
+                .as_i128()
+                .zip(pair[0].as_i128())
+                .and_then(|(b, a)| b.checked_sub(a))
+                == Some(1)
+        });
         if dense {
             return Ok(None);
         }

@@ -128,7 +128,7 @@ def gen_structs(m: M.Model) -> str:
         "//! The node structs of the Postgres parse tree.",
         "//!",
         "//! Field names follow `libpg_query`'s C structs (`targetList` becomes `target_list`).",
-        "//! Pointers become `Option`, lists become [`List`], C strings become `Option<String>`.",
+        "//! Pointers become `Option`, lists become [`List`], C strings become `Option<ByteString>`.",
         "",
         "use super::{",
         "    AExprKind, AlterDatabaseType, AlterTableType, BoolExprType, BoolTestType, ColumnCategory, ConstrType,",
@@ -139,6 +139,7 @@ def gen_structs(m: M.Model) -> str:
         "    SortByDir, SortByNulls, SubLinkType, TransactionStmtKind, TransactionStmtType, Value,",
         "    VariableSetKind, VariableSetScope, ViewCheckOption,",
         "};",
+        "use rustdb_common::ByteString;",
         "",
         "nodes! {",
     ]

@@ -215,10 +215,10 @@ fn comparison_join_params(
 ) -> RenderParams {
     let mut result = RenderParams::new();
     result.insert("Join Type".to_owned(), join_type.name().to_owned());
-    let conditions: Vec<String> = conditions
+    let conditions: Vec<rustdb_common::ByteString> = conditions
         .iter()
         .map(|condition| {
-            format!(
+            rustdb_common::byte_format!(
                 "{} {} {}",
                 condition.left.name(),
                 rustdb_ast::expression_type_to_operator(condition.comparison),
@@ -226,7 +226,10 @@ fn comparison_join_params(
             )
         })
         .collect();
-    result.insert("Conditions".to_owned(), conditions.join("\n"));
+    result.insert(
+        "Conditions".to_owned(),
+        rustdb_common::ByteString::join(&conditions, b"\n"),
+    );
     crate::operator::set_estimated_cardinality(&mut result, estimated_cardinality);
     result
 }

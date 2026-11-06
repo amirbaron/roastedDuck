@@ -418,7 +418,9 @@ impl CommonSubplanFinder {
         // The materialized columns: the primary occurrence's.
         let primary = node_at(plan, &paths[0])?;
         let types = primary.types.clone();
-        let column_names: Vec<String> = (1..=types.len()).map(|i| format!("{cte_name}_col_{i}")).collect();
+        let column_names: Vec<rustdb_common::ByteString> = (1..=types.len())
+            .map(|i| rustdb_common::byte_format!("{cte_name}_col_{i}"))
+            .collect();
         let primary_index: HashMap<ColumnBinding, usize> = info.subplans[0]
             .canonical_bindings
             .iter()
@@ -505,7 +507,7 @@ impl CommonSubplanFinder {
         let remainder = std::mem::replace(lca, LogicalOperator::new(LogicalKind::CrossProduct));
         let remainder_id = remainder.node_id();
         let cte = LogicalOperator::new(LogicalKind::MaterializedCte {
-            ctename: cte_name.to_owned(),
+            ctename: cte_name.into(),
             table_index: cte_index,
             column_count: types.len() as u64,
             materialize: CteMaterialize::CteMaterializeDefault,

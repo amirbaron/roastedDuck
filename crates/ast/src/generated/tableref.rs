@@ -13,11 +13,13 @@ use rustdb_types::{ColumnDataCollection, LogicalType};
 #[derive(Clone, Debug, PartialEq)]
 pub struct TableRef {
     /// `alias` (property 101).
-    pub alias: String,
+    pub alias: rustdb_common::ByteString,
     /// `sample` (property 102).
     pub sample: Option<Box<SampleOptions>>,
     /// `query_location` (property 103).
     pub query_location: Option<u64>,
+    /// External scan ownership, copied with the tree and never serialized.
+    pub external_dependency: crate::ExternalDependency,
     /// The subclass, serialized as `type` (property 100).
     pub kind: TableRefKind,
 }
@@ -101,7 +103,7 @@ impl SerializeObject for TableRef {
 impl DeserializeObject for TableRef {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
         let table_reference_type: TableReferenceType = deserializer.read_property(100, "type")?;
-        let alias: String = deserializer.read_property_with_default(101, "alias")?;
+        let alias: rustdb_common::ByteString = deserializer.read_property_with_default(101, "alias")?;
         let sample: Option<Box<SampleOptions>> = deserializer.read_property_with_default(102, "sample")?;
         let query_location: Option<u64> = deserializer
             .read_property_with_explicit_default(103, "query_location", OptionalIdx(None))?
@@ -145,6 +147,7 @@ impl DeserializeObject for TableRef {
             alias,
             sample,
             query_location,
+            external_dependency: crate::ExternalDependency::default(),
             kind,
         })
     }
@@ -156,13 +159,13 @@ rustdb_serde::impl_pointee_serde!(TableRef);
 #[derive(Clone, Debug, PartialEq)]
 pub struct BaseTableRef {
     /// `schema_name` (property 200).
-    pub schema_name: String,
+    pub schema_name: rustdb_common::ByteString,
     /// `table_name` (property 201).
-    pub table_name: String,
+    pub table_name: rustdb_common::ByteString,
     /// `column_name_alias` (property 202).
-    pub column_name_alias: Vec<String>,
+    pub column_name_alias: Vec<rustdb_common::ByteString>,
     /// `catalog_name` (property 203).
-    pub catalog_name: String,
+    pub catalog_name: rustdb_common::ByteString,
     /// `at_clause` (property 204).
     pub at_clause: Option<Box<AtClause>>,
 }
@@ -180,11 +183,14 @@ impl SerializeObject for BaseTableRef {
 
 impl DeserializeObject for BaseTableRef {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let schema_name: String = deserializer.read_property_with_default(200, "schema_name")?;
-        let table_name: String = deserializer.read_property_with_default(201, "table_name")?;
-        let column_name_alias: Vec<String> =
+        let schema_name: rustdb_common::ByteString =
+            deserializer.read_property_with_default(200, "schema_name")?;
+        let table_name: rustdb_common::ByteString =
+            deserializer.read_property_with_default(201, "table_name")?;
+        let column_name_alias: Vec<rustdb_common::ByteString> =
             deserializer.read_property_with_default(202, "column_name_alias")?;
-        let catalog_name: String = deserializer.read_property_with_default(203, "catalog_name")?;
+        let catalog_name: rustdb_common::ByteString =
+            deserializer.read_property_with_default(203, "catalog_name")?;
         let at_clause: Option<Box<AtClause>> = deserializer.read_property_with_default(204, "at_clause")?;
         Ok(Self {
             schema_name,
@@ -210,7 +216,7 @@ pub struct JoinRef {
     /// `ref_type` (property 204).
     pub ref_type: JoinRefType,
     /// `using_columns` (property 205).
-    pub using_columns: Vec<String>,
+    pub using_columns: Vec<rustdb_common::ByteString>,
     /// `delim_flipped` (property 206).
     pub delim_flipped: bool,
     /// `duplicate_eliminated_columns` (property 207).
@@ -256,7 +262,8 @@ impl DeserializeObject for JoinRef {
             deserializer.read_property_with_default(202, "condition")?;
         let join_type: JoinType = deserializer.read_property(203, "join_type")?;
         let ref_type: JoinRefType = deserializer.read_property(204, "ref_type")?;
-        let using_columns: Vec<String> = deserializer.read_property_with_default(205, "using_columns")?;
+        let using_columns: Vec<rustdb_common::ByteString> =
+            deserializer.read_property_with_default(205, "using_columns")?;
         let delim_flipped: bool = deserializer.read_property_with_default(206, "delim_flipped")?;
         let duplicate_eliminated_columns: Vec<ParsedExpression> =
             deserializer.read_property_with_default(207, "duplicate_eliminated_columns")?;
@@ -281,7 +288,7 @@ pub struct SubqueryRef {
     /// `subquery` (property 200).
     pub subquery: Box<SelectStatement>,
     /// `column_name_alias` (property 201).
-    pub column_name_alias: Vec<String>,
+    pub column_name_alias: Vec<rustdb_common::ByteString>,
 }
 
 impl SerializeObject for SubqueryRef {
@@ -299,7 +306,7 @@ impl DeserializeObject for SubqueryRef {
             "SubqueryRef",
             "subquery",
         )?;
-        let column_name_alias: Vec<String> =
+        let column_name_alias: Vec<rustdb_common::ByteString> =
             deserializer.read_property_with_default(201, "column_name_alias")?;
         Ok(Self {
             subquery,
@@ -314,7 +321,7 @@ pub struct TableFunctionRef {
     /// `function` (property 200).
     pub function: Box<ParsedExpression>,
     /// `column_name_alias` (property 201).
-    pub column_name_alias: Vec<String>,
+    pub column_name_alias: Vec<rustdb_common::ByteString>,
     /// `with_ordinality` (property 202).
     pub with_ordinality: OrdinalityType,
 }
@@ -340,7 +347,7 @@ impl DeserializeObject for TableFunctionRef {
             "TableFunctionRef",
             "function",
         )?;
-        let column_name_alias: Vec<String> =
+        let column_name_alias: Vec<rustdb_common::ByteString> =
             deserializer.read_property_with_default(201, "column_name_alias")?;
         let with_ordinality: OrdinalityType = deserializer.read_property_with_explicit_default(
             202,
@@ -359,7 +366,7 @@ impl DeserializeObject for TableFunctionRef {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExpressionListRef {
     /// `expected_names` (property 200).
-    pub expected_names: Vec<String>,
+    pub expected_names: Vec<rustdb_common::ByteString>,
     /// `expected_types` (property 201).
     pub expected_types: Vec<LogicalType>,
     /// `values` (property 202).
@@ -377,7 +384,8 @@ impl SerializeObject for ExpressionListRef {
 
 impl DeserializeObject for ExpressionListRef {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let expected_names: Vec<String> = deserializer.read_property_with_default(200, "expected_names")?;
+        let expected_names: Vec<rustdb_common::ByteString> =
+            deserializer.read_property_with_default(200, "expected_names")?;
         let expected_types: Vec<LogicalType> =
             deserializer.read_property_with_default(201, "expected_types")?;
         let values: Vec<Vec<ParsedExpression>> = deserializer.read_property_with_default(202, "values")?;
@@ -393,7 +401,7 @@ impl DeserializeObject for ExpressionListRef {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ColumnDataRef {
     /// `expected_names` (property 200).
-    pub expected_names: Vec<String>,
+    pub expected_names: Vec<rustdb_common::ByteString>,
     /// `collection` (property 202).
     pub collection: Option<Box<ColumnDataCollection>>,
 }
@@ -408,7 +416,8 @@ impl SerializeObject for ColumnDataRef {
 
 impl DeserializeObject for ColumnDataRef {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let expected_names: Vec<String> = deserializer.read_property_with_default(200, "expected_names")?;
+        let expected_names: Vec<rustdb_common::ByteString> =
+            deserializer.read_property_with_default(200, "expected_names")?;
         let collection: Option<Box<ColumnDataCollection>> =
             deserializer.read_property_with_default(202, "collection")?;
         Ok(Self {
@@ -426,13 +435,13 @@ pub struct PivotRef {
     /// `aggregates` (property 201).
     pub aggregates: Vec<ParsedExpression>,
     /// `unpivot_names` (property 202).
-    pub unpivot_names: Vec<String>,
+    pub unpivot_names: Vec<rustdb_common::ByteString>,
     /// `pivots` (property 203).
     pub pivots: Vec<PivotColumn>,
     /// `groups` (property 204).
-    pub groups: Vec<String>,
+    pub groups: Vec<rustdb_common::ByteString>,
     /// `column_name_alias` (property 205).
-    pub column_name_alias: Vec<String>,
+    pub column_name_alias: Vec<rustdb_common::ByteString>,
     /// `include_nulls` (property 206).
     pub include_nulls: bool,
     /// `bound_*`: set on a pivot the binder rewrote; never serialized.
@@ -460,10 +469,12 @@ impl DeserializeObject for PivotRef {
             "source",
         )?;
         let aggregates: Vec<ParsedExpression> = deserializer.read_property_with_default(201, "aggregates")?;
-        let unpivot_names: Vec<String> = deserializer.read_property_with_default(202, "unpivot_names")?;
+        let unpivot_names: Vec<rustdb_common::ByteString> =
+            deserializer.read_property_with_default(202, "unpivot_names")?;
         let pivots: Vec<PivotColumn> = deserializer.read_property_with_default(203, "pivots")?;
-        let groups: Vec<String> = deserializer.read_property_with_default(204, "groups")?;
-        let column_name_alias: Vec<String> =
+        let groups: Vec<rustdb_common::ByteString> =
+            deserializer.read_property_with_default(204, "groups")?;
+        let column_name_alias: Vec<rustdb_common::ByteString> =
             deserializer.read_property_with_default(205, "column_name_alias")?;
         let include_nulls: bool = deserializer.read_property_with_default(206, "include_nulls")?;
         Ok(Self {
@@ -483,15 +494,15 @@ impl DeserializeObject for PivotRef {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShowRef {
     /// `table_name` (property 200).
-    pub table_name: String,
+    pub table_name: rustdb_common::ByteString,
     /// `query` (property 201).
     pub query: Option<Box<QueryNode>>,
     /// `show_type` (property 202).
     pub show_type: ShowType,
     /// `catalog_name` (property 203).
-    pub catalog_name: String,
+    pub catalog_name: rustdb_common::ByteString,
     /// `schema_name` (property 204).
-    pub schema_name: String,
+    pub schema_name: rustdb_common::ByteString,
 }
 
 impl SerializeObject for ShowRef {
@@ -507,11 +518,14 @@ impl SerializeObject for ShowRef {
 
 impl DeserializeObject for ShowRef {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let table_name: String = deserializer.read_property_with_default(200, "table_name")?;
+        let table_name: rustdb_common::ByteString =
+            deserializer.read_property_with_default(200, "table_name")?;
         let query: Option<Box<QueryNode>> = deserializer.read_property_with_default(201, "query")?;
         let show_type: ShowType = deserializer.read_property(202, "show_type")?;
-        let catalog_name: String = deserializer.read_property_with_default(203, "catalog_name")?;
-        let schema_name: String = deserializer.read_property_with_default(204, "schema_name")?;
+        let catalog_name: rustdb_common::ByteString =
+            deserializer.read_property_with_default(203, "catalog_name")?;
+        let schema_name: rustdb_common::ByteString =
+            deserializer.read_property_with_default(204, "schema_name")?;
         Ok(Self {
             table_name,
             query,
@@ -526,7 +540,7 @@ impl DeserializeObject for ShowRef {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AtClause {
     /// `unit` (property 1).
-    pub unit: String,
+    pub unit: rustdb_common::ByteString,
     /// `expr` (property 2).
     pub expr: Box<ParsedExpression>,
 }
@@ -541,7 +555,7 @@ impl SerializeObject for AtClause {
 
 impl DeserializeObject for AtClause {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let unit: String = deserializer.read_property_with_default(1, "unit")?;
+        let unit: rustdb_common::ByteString = deserializer.read_property_with_default(1, "unit")?;
         let expr: Box<ParsedExpression> = required(
             deserializer.read_property_with_default(2, "expr")?,
             "AtClause",

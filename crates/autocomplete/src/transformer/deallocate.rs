@@ -12,9 +12,9 @@ impl PegTransformer {
         let name = parse_result.list()?.identifier(2)?.to_owned();
         Ok(SqlStatement::new(SqlStatementKind::Drop(Box::new(DropInfo {
             catalog_type: CatalogType::PreparedStatement,
-            catalog: String::new(),
-            schema: String::new(),
-            name,
+            catalog: String::new().into(),
+            schema: String::new().into(),
+            name: name.into(),
             if_not_found: OnEntryNotFound::ThrowException,
             cascade: false,
             allow_drop_internal: false,

@@ -182,7 +182,7 @@ def rust_type(ty: Ty) -> str:
         "node": "Option<Node>",
         "list": "List",
         "value": "Value" if not ty.nullable else "Option<Value>",
-        "str": "Option<String>",
+        "str": "Option<ByteString>",
         "u8": "u8",
         "bool": "bool",
         "int": "i32",

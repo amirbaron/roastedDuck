@@ -28,7 +28,7 @@ impl PegTransformer {
     pub(super) fn transform_create_type(&mut self, parse_result: &ParseResult) -> Result<CreateTypeInfo> {
         let choice = parse_result.list()?.choice(0)?;
         let mut result = CreateTypeInfo {
-            name: String::new(),
+            name: String::new().into(),
             logical_type: LogicalType::INVALID,
             query: None,
         };

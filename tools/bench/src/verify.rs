@@ -31,10 +31,34 @@ pub enum ValueKind {
 /// A result column.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResultColumn {
-    pub name: String,
+    #[serde(with = "column_name_bytes")]
+    pub name: Vec<u8>,
     /// DuckDB's `LogicalType::ToString`, e.g. `DECIMAL(15,2)`.
     pub type_name: String,
     pub kind: ValueKind,
+}
+
+// Preserve the existing JSON string representation for valid text and exact bytes otherwise.
+mod column_name_bytes {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    pub fn serialize<S: Serializer>(value: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        match std::str::from_utf8(value) {
+            Ok(text) => serializer.serialize_str(text),
+            Err(_) => value.serialize(serializer),
+        }
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Name {
+            Text(String),
+            Bytes(Vec<u8>),
+        }
+        Ok(match Name::deserialize(deserializer)? {
+            Name::Text(text) => text.into_bytes(),
+            Name::Bytes(bytes) => bytes,
+        })
+    }
 }
 
 /// A query result rendered to strings (`Value::ToString`); `None` is SQL `NULL`.
@@ -52,7 +76,7 @@ impl ResultTable {
         let header: Vec<String> = self
             .columns
             .iter()
-            .map(|c| format!("{} {}", c.name, c.type_name))
+            .map(|c| format!("{} {}", String::from_utf8_lossy(&c.name), c.type_name))
             .collect();
         out.push_str(&header.join("\t"));
         for row in self.rows.iter().take(MAX_ROWS) {
@@ -355,13 +379,30 @@ fn parse_bool(s: &str) -> Option<bool> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn column_name_metadata_roundtrips_native_bytes() {
+        for name in [b"plain".as_slice(), "雪".as_bytes(), b"a\0b", b"bad\xff"] {
+            let column = ResultColumn {
+                name: name.to_vec(),
+                type_name: "INTEGER".into(),
+                kind: ValueKind::Integer,
+            };
+            let encoded = serde_json::to_string(&column).unwrap();
+            let decoded: ResultColumn = serde_json::from_str(&encoded).unwrap();
+            assert_eq!(decoded, column);
+            if std::str::from_utf8(name).is_ok() {
+                assert!(encoded.contains("\"name\":\""));
+            }
+        }
+    }
+
     fn table(kinds: &[ValueKind], rows: &[&[Option<&str>]]) -> ResultTable {
         ResultTable {
             columns: kinds
                 .iter()
                 .enumerate()
                 .map(|(i, &kind)| ResultColumn {
-                    name: format!("c{i}"),
+                    name: format!("c{i}").into_bytes(),
                     type_name: format!("{kind:?}"),
                     kind,
                 })

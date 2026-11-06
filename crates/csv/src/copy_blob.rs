@@ -26,20 +26,22 @@ impl FunctionData for WriteBlobData {
 }
 
 /// `ParseStringOption`: a string, or a list of exactly one string.
-fn parse_string_option(value: &Value, option: &str) -> Result<String> {
+fn parse_string_option(value: &Value, option: &[u8]) -> Result<String> {
     if value.is_null() {
         return Ok(String::new());
     }
     if value.logical_type().id() == LogicalTypeId::List {
         return match value.children().unwrap_or_default() {
             [single] => parse_string_option(single, option),
-            _ => Err(Error::binder(format!(
+            _ => Err(Error::binder(rustdb_common::byte_format!(
                 "\"{option}\" expects a single argument as a string value"
             ))),
         };
     }
     if value.logical_type().id() != LogicalTypeId::Varchar {
-        return Err(Error::binder(format!("\"{option}\" expects a string argument!")));
+        return Err(Error::binder(rustdb_common::byte_format!(
+            "\"{option}\" expects a string argument!"
+        )));
     }
     value.to_varchar()
 }
@@ -47,7 +49,7 @@ fn parse_string_option(value: &Value, option: &str) -> Result<String> {
 /// `WriteBlobBind`.
 fn write_blob_bind(
     input: &mut CopyFunctionBindInput<'_>,
-    _: &[String],
+    _: &[rustdb_common::ByteString],
     types: &[LogicalType],
 ) -> Result<Arc<dyn FunctionData>> {
     if !matches!(types, [ty] if ty.id() == LogicalTypeId::Blob) {
@@ -61,7 +63,7 @@ fn write_blob_bind(
             let value = values.first().cloned().unwrap_or_default();
             compression = FileCompressionType::from_string(&parse_string_option(&value, name)?)?;
         } else {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Unrecognized option for COPY (FORMAT BLOB): \"{name}\""
             )));
         }
@@ -75,7 +77,7 @@ fn write_blob_bind(
 /// `WriteBlobGlobalState`: the open file.
 struct WriteBlobGlobal {
     sink: Mutex<CsvSink>,
-    path: String,
+    path: rustdb_common::ByteString,
 }
 
 fn global_state(state: &CopyGlobalState) -> Result<&WriteBlobGlobal> {
@@ -84,10 +86,13 @@ fn global_state(state: &CopyGlobalState) -> Result<&WriteBlobGlobal> {
         .ok_or_else(|| Error::internal("blob write without its file"))
 }
 
-fn write_error(path: &str, error: &std::io::Error) -> Error {
-    Error::new(
+fn write_error(path: &[u8], error: &std::io::Error) -> Error {
+    if let Some(error) = rustdb_function::registered_files::callback_error(error) {
+        return error;
+    }
+    Error::new_bytes(
         rustdb_common::ErrorKind::Io,
-        format!("Could not write file \"{path}\": {error}"),
+        rustdb_common::byte_format!("Could not write file \"{path}\": {error}"),
     )
 }
 
@@ -104,7 +109,7 @@ pub fn blob_copy_function() -> CopyFunction {
         let sink = CsvSink::create(path, data.compression, data.client.as_deref())?;
         Ok(Box::new(WriteBlobGlobal {
             sink: Mutex::new(sink),
-            path: path.to_owned(),
+            path: path.into(),
         }) as CopyGlobalState)
     }));
     // `WriteBlobSink`: every valid blob, in order.
@@ -115,7 +120,8 @@ pub fn blob_copy_function() -> CopyFunction {
         for row in 0..chunk.len() {
             let value = column.get_value(row);
             if let Some(bytes) = value.as_bytes().filter(|_| !value.is_null()) {
-                sink.write(bytes).map_err(|error| write_error(&global.path, &error))?;
+                sink.write(bytes)
+                    .map_err(|error| write_error(&global.path, &error))?;
             }
         }
         Ok(())

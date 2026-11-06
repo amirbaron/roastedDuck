@@ -115,6 +115,13 @@ impl<'a, E: Engine> Runner<'a, E> {
     /// The runner constructor: the test configuration plus the runner's own settings.
     pub fn new(engine: &'a E, environment: &'a TestEnvironment) -> TestResult<Self> {
         let mut config = engine.test_config().map_err(Failure::new)?;
+        // Native corpus runs can use the same default memory budget as a bounded
+        // VM. This applies to both backends; tests may still set their own limit.
+        if let Ok(limit) = std::env::var("SLT_MEMORY_LIMIT") {
+            engine
+                .set_option(&mut config, "memory_limit", &limit)
+                .map_err(Failure::new)?;
+        }
         // Autoloading mode is always NONE (no test configuration file); LOCAL_EXTENSION_REPO
         // still enables autoloading from a local repository like in DuckDB's runner.
         let local_extension_repo = std::env::var("LOCAL_EXTENSION_REPO").unwrap_or_default();
@@ -268,11 +275,11 @@ impl<'a, E: Engine> Runner<'a, E> {
             }
         }
         if load_extensions {
-            let database = self.database()?;
-            for extension in &self.extensions {
-                self.engine
-                    .load_extension(database, extension)
-                    .map_err(Failure::new)?;
+            // Reopened databases need the same explicit external dependencies
+            // as the first require, including their main-connection state.
+            let extensions: Vec<_> = self.extensions.iter().cloned().collect();
+            for extension in extensions {
+                self.load_extension(&extension).map_err(Failure::new)?;
             }
         }
         Ok(())
@@ -848,9 +855,50 @@ impl<'a, E: Engine> Runner<'a, E> {
     }
 
     /// `SQLLogicTestRunner::LoadExtension` in the default (non-autoloading) test mode.
-    fn load_extension(&self, name: &str) -> Result<ExtensionLoad, String> {
+    fn load_extension(&mut self, name: &str) -> Result<ExtensionLoad, String> {
         let database = self.db.as_ref().ok_or("no open database")?;
-        self.engine.load_extension(database, name)
+        let loaded = self.engine.load_extension(database, name)?;
+        if loaded != ExtensionLoad::NotLoaded {
+            return Ok(loaded);
+        }
+        // The linked helper excludes externally supplied modules. Recognize an
+        // actual preload, or load an explicitly configured trusted test module
+        // at this require directive, preserving initially unloaded test states.
+        // LOAD may initialize connection-local crypto state. Use the test's
+        // main connection, as an explicit LOAD statement in the file would.
+        let engine = self.engine;
+        let connection = self.con.as_mut().ok_or("no open connection")?;
+        let quoted_name = name.replace('\'', "''");
+        let query =
+            format!("SELECT 1 FROM duckdb_extensions() WHERE extension_name='{quoted_name}' AND loaded");
+        let is_loaded = |connection: &mut E::Connection| -> Result<bool, String> {
+            let result = engine.query(connection, &query);
+            if let Some(error) = crate::backend::QueryResult::error(&result) {
+                return Err(error.to_owned());
+            }
+            Ok(crate::backend::QueryResult::row_count(&result) > 0)
+        };
+        if is_loaded(connection)? {
+            return Ok(ExtensionLoad::Loaded);
+        }
+        let Ok(paths) = std::env::var("SLT_REQUIRE_EXTENSION_PATHS") else {
+            return Ok(ExtensionLoad::NotLoaded);
+        };
+        let paths: BTreeMap<String, String> = serde_json::from_str(&paths)
+            .map_err(|error| format!("Invalid SLT_REQUIRE_EXTENSION_PATHS: {error}"))?;
+        let Some(path) = paths.get(name) else {
+            return Ok(ExtensionLoad::NotLoaded);
+        };
+        let result = engine.query(connection, &format!("LOAD '{}'", path.replace('\'', "''")));
+        if let Some(error) = crate::backend::QueryResult::error(&result) {
+            return Err(error.to_owned());
+        }
+        if !is_loaded(connection)? {
+            return Err(format!(
+                "Configured extension '{name}' did not register as loaded"
+            ));
+        }
+        Ok(ExtensionLoad::Loaded)
     }
 }
 

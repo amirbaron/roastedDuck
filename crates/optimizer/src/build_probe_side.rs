@@ -289,7 +289,9 @@ fn build_size(types: &[LogicalType], cardinality: u64) -> f64 {
         });
     }
     row_width += 3 * HT_ENTRY_SIZE;
-    (row_width as u64 * cardinality) as f64
+    // C++ multiplies unsigned idx_t values before converting the result to double.
+    // Preserve that wrapping behavior in overflow-checked development builds too.
+    (row_width as u64).wrapping_mul(cardinality) as f64
 }
 
 /// DuckDB's physical type, where BIT values are strings.

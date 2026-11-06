@@ -12,17 +12,17 @@ const MAX_WIDTH_DECIMAL: usize = 38;
 
 /// `TypeExpression(catalog, schema, name, children)`.
 pub(super) fn type_expression(
-    catalog: &str,
-    schema: &str,
-    name: &str,
+    catalog: impl Into<ByteString>,
+    schema: impl Into<ByteString>,
+    name: impl Into<ByteString>,
     children: Vec<ParsedExpression>,
 ) -> ParsedExpression {
     ParsedExpression::new(
         ExpressionType::Type,
         ParsedExpressionKind::Type(Box::new(TypeExpression {
-            catalog: catalog.to_owned(),
-            schema: schema.to_owned(),
-            type_name: name.to_owned(),
+            catalog: catalog.into(),
+            schema: schema.into(),
+            type_name: name.into(),
             children,
         })),
     )
@@ -100,7 +100,7 @@ fn type_expression_from_info(info: &UnboundTypeInfo) -> ParsedExpression {
                 TypeParameterValue::Constant(value) => ParsedExpression::constant(value.clone()),
                 TypeParameterValue::Type(inner) => type_expression_from_info(inner),
             };
-            parameter.name.clone_into(&mut child.alias);
+            child.alias.clone_from(&parameter.name);
             child.query_location = parameter.query_location;
             child
         })

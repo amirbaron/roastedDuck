@@ -86,10 +86,10 @@ fn sql_auto_complete_bind(
     let sql = sql_argument(input)?;
     let mut parameters = AutoCompleteParameters::default();
     for (name, value) in input.named_parameters {
-        match name.as_str() {
-            "max_suggestion_count" => parameters.max_suggestion_count = count_parameter(value),
-            "max_file_suggestion_count" => parameters.max_file_suggestion_count = count_parameter(value),
-            "max_exact_suggestion_count" => parameters.max_exact_suggestion_count = count_parameter(value),
+        match name.as_bytes() {
+            b"max_suggestion_count" => parameters.max_suggestion_count = count_parameter(value),
+            b"max_file_suggestion_count" => parameters.max_file_suggestion_count = count_parameter(value),
+            b"max_exact_suggestion_count" => parameters.max_exact_suggestion_count = count_parameter(value),
             _ => return Err(Error::internal("Unsupported parameter for SQL auto complete")),
         }
     }
@@ -113,7 +113,7 @@ fn sql_auto_complete_bind(
             "suggestion_score",
             "extra_char",
         ]
-        .map(str::to_owned)
+        .map(Into::into)
         .to_vec(),
         bind_data: Some(Arc::new(SqlAutoCompleteFunctionData { suggestions })),
     })
@@ -145,7 +145,7 @@ fn sql_auto_complete_scan(
         .collect();
     for (row, entry) in data.suggestions[start..end].iter().enumerate() {
         let values = [
-            Value::varchar(&entry.text),
+            Value::try_varchar(&entry.text)?,
             Value::integer(i32::try_from(entry.pos).unwrap_or(i32::MAX)),
             Value::varchar(entry.suggestion_type),
             Value::ubigint(entry.score as u64),
@@ -193,7 +193,7 @@ impl TokenizerCallbacks for ParserTokenizer {
 fn check_peg_parser_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOutput> {
     let output = TableFunctionBindOutput {
         return_types: vec![LogicalType::BOOLEAN],
-        names: vec!["success".to_owned()],
+        names: vec!["success".to_owned().into()],
         bind_data: None,
     };
     let sql = sql_argument(input)?;
@@ -253,7 +253,7 @@ fn peg_parser_switch(name: &'static str, setting: &'static str) -> TableFunction
         .with_bind(|input| {
             Ok(TableFunctionBindOutput {
                 return_types: vec![LogicalType::BOOLEAN],
-                names: vec!["success".to_owned()],
+                names: vec!["success".to_owned().into()],
                 bind_data: Some(Arc::new(PegParserSwitchData {
                     client: Arc::clone(&client_context(input)?.function_client),
                 })),

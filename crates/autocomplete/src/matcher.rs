@@ -54,7 +54,7 @@ pub enum CandidateType {
 /// A possible completion before scoring (DuckDB's `AutoCompleteCandidate`).
 #[derive(Clone, Debug)]
 pub struct AutoCompleteCandidate {
-    pub candidate: String,
+    pub candidate: rustdb_common::ByteString,
     /// The type being suggested.
     pub suggestion_type: SuggestionState,
     /// The higher the bonus, the better the candidate ranks.
@@ -70,7 +70,7 @@ pub struct AutoCompleteCandidate {
 
 impl AutoCompleteCandidate {
     pub fn new(
-        candidate: impl Into<String>,
+        candidate: impl Into<rustdb_common::ByteString>,
         suggestion_type: SuggestionState,
         score_bonus: i32,
         candidate_type: CandidateType,
@@ -88,7 +88,7 @@ impl AutoCompleteCandidate {
 
     /// An identifier candidate (the defaults of DuckDB's constructor).
     pub fn identifier(
-        candidate: impl Into<String>,
+        candidate: impl Into<rustdb_common::ByteString>,
         suggestion_type: SuggestionState,
         score_bonus: i32,
     ) -> Self {
@@ -1149,15 +1149,15 @@ mod tests {
         let tokens = tokens(&["SELECT", "*"]);
         let mut ctx = MatchContext::new(&tokens);
         grammar.match_root(&mut ctx, &mut MatchState::default()).unwrap();
-        let keywords: Vec<&str> = ctx
+        let keywords: Vec<&[u8]> = ctx
             .suggestions
             .iter()
             .filter_map(|suggestion| match suggestion {
-                MatcherSuggestion::Keyword(candidate) => Some(candidate.candidate.as_str()),
+                MatcherSuggestion::Keyword(candidate) => Some(candidate.candidate.as_bytes()),
                 MatcherSuggestion::Entries(_) => None,
             })
             .collect();
-        assert!(keywords.contains(&"FROM"), "{keywords:?}");
+        assert!(keywords.contains(&b"FROM".as_slice()), "{keywords:?}");
     }
 
     #[test]

@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use rustdb_ast::{QueryNode, ShowRef, ShowType, SqlStatementKind, SubqueryRef};
 use rustdb_catalog::EntryKind;
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use rustdb_common::{ByteString, Error, Result, STANDARD_VECTOR_SIZE};
 use rustdb_types::{DataChunk, LogicalType, Value};
 
 use super::bind_subquery_ref;
@@ -76,7 +76,7 @@ fn table_column_info(table: &rustdb_catalog::TableEntry, column: usize) -> Resul
             constraint
                 .columns
                 .iter()
-                .any(|name| name.eq_ignore_ascii_case(&definition.name))
+                .any(|name| definition.name.eq_ignore_ascii_case(name))
         } else {
             constraint.index.0 == column as u64
         };
@@ -97,17 +97,17 @@ fn table_column_info(table: &rustdb_catalog::TableEntry, column: usize) -> Resul
         null.clone()
     };
     // `DefaultValue`: the generated expression or the default.
-    let default = definition
+    let default = match definition
         .generated
         .as_ref()
         .or(definition.default_value.as_ref())
-        .map_or_else(
-            || null.clone(),
-            |expression| Value::varchar(expression.to_string()),
-        );
+    {
+        Some(expression) => Value::try_varchar(expression.to_sql_bytes().as_bytes())?,
+        None => null.clone(),
+    };
     Ok([
-        Value::varchar(definition.name.clone()),
-        Value::varchar(definition.logical_type.to_string()),
+        Value::try_varchar(definition.name.as_bytes())?,
+        Value::try_varchar(definition.logical_type.to_bytes().as_bytes())?,
         Value::varchar(if table.not_null_columns.contains(&column) {
             "NO"
         } else {
@@ -131,7 +131,7 @@ fn bind_show_query(scope: &mut BindScope<'_>, query: &mut QueryNode) -> Result<B
     };
     crate::operator::sync_column_ids(&mut plan.plan);
     let names = ["column_name", "column_type", "null", "key", "default", "extra"]
-        .map(str::to_owned)
+        .map(ByteString::from)
         .to_vec();
     let types = vec![LogicalType::VARCHAR; 6];
     let bindings = plan.plan.column_bindings();
@@ -148,12 +148,12 @@ fn bind_show_query(scope: &mut BindScope<'_>, query: &mut QueryNode) -> Result<B
                 };
                 let mut row = table_column_info(table, column)?;
                 // The alias replaces the base column's name.
-                row[0] = Value::varchar(alias.clone());
+                row[0] = Value::try_varchar(alias.as_bytes())?;
                 row
             }
             None => [
-                Value::varchar(alias.clone()),
-                Value::varchar(ty.to_string()),
+                Value::try_varchar(alias.as_bytes())?,
+                Value::try_varchar(ty.to_bytes().as_bytes())?,
                 Value::varchar("YES"),
                 Value::null(LogicalType::VARCHAR),
                 Value::null(LogicalType::VARCHAR),
@@ -205,40 +205,56 @@ pub const SHOW_TABLES_EXPANDED: &str = "\n\tSELECT\n\t\tt.database_name AS datab
                                      (v.view_oid=c.table_oid)\n\tGROUP BY database, schema, name\n\n\tORDER BY database, \
                                      schema, name\n\t";
 
+// C++ reparses SHOW's generated filter as a VARCHAR literal. Keep the catalog
+// identity raw, and validate only this literal boundary (like Value(string)).
+fn show_filter_literal(bytes: &[u8]) -> Result<String> {
+    let value = Value::try_varchar(bytes)?;
+    let text = value
+        .as_str()
+        .ok_or_else(|| Error::internal("validated SHOW literal is not VARCHAR text"))?;
+    Ok(sql_string(text))
+}
+
 /// DuckDB's `PragmaShowTables(database, schema)`.
-fn pragma_show_tables(database: &str, schema: &str) -> String {
+fn pragma_show_tables(database: &[u8], schema: &[u8]) -> Result<String> {
     let mut conditions = Vec::new();
     if !database.is_empty() {
-        conditions.push(format!("lower(database_name) = lower({})", sql_string(database)));
+        conditions.push(format!(
+            "lower(database_name) = lower({})",
+            show_filter_literal(database)?
+        ));
     }
     if !schema.is_empty() {
-        conditions.push(format!("lower(schema_name) = lower({})", sql_string(schema)));
+        conditions.push(format!(
+            "lower(schema_name) = lower({})",
+            show_filter_literal(schema)?
+        ));
     }
     if conditions.is_empty() {
         conditions.push("in_search_path(database_name, schema_name)".to_owned());
     }
     let where_clause = format!("WHERE {}", conditions.join(" AND "));
-    format!(
+    Ok(format!(
         "\n\twith \"tables\" as\n\t(\n\t\tSELECT table_name as \"name\"\n\t\tFROM duckdb_tables\n\t\t{where_clause}\n\t), \
          \"views\" as\n\t(\n\t\tSELECT view_name as \"name\"\n\t\tFROM duckdb_views\n\t\t{where_clause}\n\t), db_objects \
          as\n\t(\n\t\tSELECT \"name\" FROM \"tables\"\n\t\tUNION ALL\n\t\tSELECT \"name\" FROM \"views\"\n\t)\n\tSELECT \
          \"name\"\n\tFROM db_objects\n\tORDER BY \"name\";"
-    )
+    ))
 }
 
 /// `SHOW TABLES`, `SHOW <table>` and friends (DuckDB's `Binder::BindShowTable`).
 fn bind_show_table(scope: &mut BindScope<'_>, show: &ShowRef) -> Result<BoundStatement> {
-    let lname = show.table_name.to_lowercase();
-    let sql = match lname.as_str() {
-        "\"databases\"" => "SELECT database_name FROM duckdb_databases() WHERE NOT internal ORDER BY database_name;".to_owned(),
-        "\"schemas\"" => "SELECT  schema.database_name,  schema.schema_name,  ((select current_schema() = \
+    let lname = show.table_name.to_ascii_lowercase();
+    let sql = match lname.as_bytes() {
+        b"\"databases\"" => "SELECT database_name FROM duckdb_databases() WHERE NOT internal ORDER BY database_name;".to_owned(),
+        b"\"schemas\"" => "SELECT  schema.database_name,  schema.schema_name,  ((select current_schema() = \
                           schema.schema_name)   and (select current_database() = schema.database_name)) \"current\" \
                           FROM duckdb_schemas() schema JOIN duckdb_databases dbs USING (database_oid) WHERE \
                           dbs.internal = false ORDER BY all;"
             .to_owned(),
-        "\"tables\"" => pragma_show_tables("", ""),
+        b"\"tables\"" => pragma_show_tables(b"", b"")?,
         _ if show.show_type == ShowType::ShowFrom => {
-            let (mut catalog, mut schema) = (show.catalog_name.clone(), show.schema_name.clone());
+            let (mut catalog, mut schema): (ByteString, ByteString) = (show.catalog_name.clone(), show.schema_name.clone());
             if catalog.is_empty() && !schema.is_empty() && scope.context.catalog(&schema).is_some() {
                 catalog = std::mem::take(&mut schema);
             }
@@ -256,7 +272,7 @@ fn bind_show_table(scope: &mut BindScope<'_>, show: &ShowRef) -> Result<BoundSta
                 let lookup = if catalog.is_empty() {
                     &scope.context.default_catalog()
                 } else {
-                    catalog.as_str()
+                    &catalog
                 };
                 let exists = scope
                     .context
@@ -264,16 +280,16 @@ fn bind_show_table(scope: &mut BindScope<'_>, show: &ShowRef) -> Result<BoundSta
                     .and_then(|entry| entry.schema(&scope.context.transaction, &schema))
                     .is_some();
                 if !exists {
-                    return Err(Error::catalog(format!(
+                    return Err(Error::catalog(rustdb_common::byte_format!(
                         "SHOW TABLES FROM: No catalog + schema named \"{catalog}.{schema}\" found."
                     )));
                 }
             }
-            pragma_show_tables(&catalog, &schema)
+            pragma_show_tables(&catalog, &schema)?
         }
-        "\"variables\"" => "SELECT * FROM duckdb_variables() ORDER BY name".to_owned(),
-        "__show_tables_expanded" => SHOW_TABLES_EXPANDED.to_owned(),
-        _ => format!("SELECT * FROM pragma_show({});", sql_string(&show.table_name)),
+        b"\"variables\"" => "SELECT * FROM duckdb_variables() ORDER BY name".to_owned(),
+        b"__show_tables_expanded" => SHOW_TABLES_EXPANDED.to_owned(),
+        _ => format!("SELECT * FROM pragma_show({});", show_filter_literal(&show.table_name)?),
     };
     let mut statements = rustdb_parser::parse(&sql)?;
     let Some(statement) = statements.pop() else {
@@ -286,7 +302,7 @@ fn bind_show_table(scope: &mut BindScope<'_>, show: &ShowRef) -> Result<BoundSta
         subquery: Box::new(select),
         column_name_alias: Vec::new(),
     };
-    bind_subquery_ref(scope, &mut subquery, "")
+    bind_subquery_ref(scope, &mut subquery, b"")
 }
 
 /// `SummarizeWrapUnnest`: `unnest(list_value(children...)) AS alias`.
@@ -313,7 +329,7 @@ fn summarize_cast(child: rustdb_ast::ParsedExpression, ty: LogicalType) -> rustd
 /// `SummarizeCreateAggregate`: `CAST(aggregate(column[, modifier]) AS VARCHAR)`.
 fn summarize_aggregate(
     aggregate: &str,
-    column: &str,
+    column: &[u8],
     modifier: Option<Value>,
 ) -> rustdb_ast::ParsedExpression {
     let mut children = vec![rustdb_ast::ParsedExpression::column_ref([column])];
@@ -332,7 +348,7 @@ fn summarize_count_star() -> rustdb_ast::ParsedExpression {
 
 /// `SummarizeCreateNullPercentage`: `CAST(CASE WHEN count_star() > 0 THEN (1 - count(x) /
 /// count_star()) * 100 ELSE NULL END AS DECIMAL(9, 2))` on DOUBLEs.
-fn summarize_null_percentage(column: &str) -> rustdb_ast::ParsedExpression {
+fn summarize_null_percentage(column: &[u8]) -> rustdb_ast::ParsedExpression {
     use crate::expression_binder::function_call;
     use rustdb_ast::{ExpressionType, ParsedExpression, ParsedExpressionKind};
     let count_star = summarize_cast(summarize_count_star(), LogicalType::DOUBLE);
@@ -404,8 +420,10 @@ fn bind_summarize(scope: &mut BindScope<'_>, show: &ShowRef) -> Result<BoundStat
     for (name, ty) in names.iter().zip(&types) {
         let null = || ParsedExpression::constant(Value::null(LogicalType::SQLNULL));
         let numeric_or_temporal = ty.is_numeric() || is_temporal(ty);
-        lists[0].push(ParsedExpression::constant(Value::varchar(name)));
-        lists[1].push(ParsedExpression::constant(Value::varchar(ty.to_string())));
+        lists[0].push(ParsedExpression::constant(Value::try_varchar(name.as_bytes())?));
+        lists[1].push(ParsedExpression::constant(Value::try_varchar(
+            ty.to_bytes().as_bytes(),
+        )?));
         lists[2].push(summarize_aggregate("min", name, None));
         lists[3].push(summarize_aggregate("max", name, None));
         lists[4].push(summarize_cast(
@@ -452,7 +470,8 @@ fn bind_summarize(scope: &mut BindScope<'_>, show: &ShowRef) -> Result<BoundStat
         .map(|(children, alias)| summarize_unnest(children, alias))
         .collect();
     let from_table = TableRef {
-        alias: "summarize_tbl".to_owned(),
+        external_dependency: rustdb_ast::ExternalDependency::default(),
+        alias: "summarize_tbl".into(),
         sample: None,
         query_location: None,
         kind: TableRefKind::Subquery(SubqueryRef {
@@ -485,7 +504,7 @@ fn bind_summarize(scope: &mut BindScope<'_>, show: &ShowRef) -> Result<BoundStat
         }),
         column_name_alias: Vec::new(),
     };
-    bind_subquery_ref(scope, &mut subquery, "")
+    bind_subquery_ref(scope, &mut subquery, b"")
 }
 
 /// DuckDB's `Binder::Bind(ShowRef &)`.

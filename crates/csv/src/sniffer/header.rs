@@ -2,10 +2,9 @@
 //! and the column names.
 
 use std::collections::HashMap;
-use std::fmt::Write as _;
 
 use rustdb_ast::keyword::{KeywordCategory, keyword_category};
-use rustdb_common::{Error, Result};
+use rustdb_common::{ByteString, Error, Result, byte_write};
 use rustdb_function::cast::CastFunctionSet;
 use rustdb_types::LogicalType;
 use unicode_normalization::UnicodeNormalization;
@@ -87,7 +86,7 @@ fn normalize_column_name(col_name: &str) -> String {
 
 /// `ReplaceNames`: applies the names the user gave.
 fn replace_names(
-    detected_names: &mut Vec<String>,
+    detected_names: &mut Vec<ByteString>,
     state_machine: &mut CsvStateMachine,
     best_sql_types_candidates_per_column_idx: &mut Vec<Vec<LogicalType>>,
     options: &CsvReaderOptions,
@@ -114,7 +113,7 @@ fn replace_names(
     if options.name_list.len() as u64 > num_cols {
         if options.null_padding {
             for (col, i) in (num_cols as usize..options.name_list.len()).enumerate() {
-                detected_names.push(generate_column_name(options.name_list.len() as u64, col as u64));
+                detected_names.push(generate_column_name(options.name_list.len() as u64, col as u64).into());
                 if i >= best_sql_types_candidates_per_column_idx.len() {
                     best_sql_types_candidates_per_column_idx.resize(i + 1, Vec::new());
                 }
@@ -159,15 +158,15 @@ fn detect_header_with_set_column(
         return Ok(false);
     }
     let mut has_header = true;
-    let mut error = String::new();
+    let mut error = ByteString::new();
     for (i, header) in best_header_row.iter().enumerate().take(size) {
         let Some(value) = header else {
             return Ok(false);
         };
         if *value != set_columns.names[i] {
-            let _ = writeln!(error, "Header mismatch at position: {i}");
-            let _ = write!(error, "Expected name: \"{}\", ", set_columns.names[i]);
-            let _ = writeln!(error, "Actual name: \"{value}\".");
+            let _ = byte_write!(error, "Header mismatch at position: {i}\n");
+            let _ = byte_write!(error, "Expected name: \"{}\", ", set_columns.names[i]);
+            let _ = byte_write!(error, "Actual name: \"{value}\".\n");
             has_header = false;
             break;
         }
@@ -194,7 +193,7 @@ fn detect_header_with_set_column(
             }
         }
         if !first_row_consistent {
-            options.sniffer_user_mismatch_error += &error;
+            options.sniffer_user_mismatch_error.push_bytes(&error);
         }
         if all_varchar {
             return Ok(true);
@@ -231,13 +230,13 @@ pub(super) fn detect_header_internal(
     options: &mut CsvReaderOptions,
     file_options: &MultiFileOptionsView,
     error_handler: &CsvErrorHandler,
-) -> Result<Vec<String>> {
+) -> Result<Vec<ByteString>> {
     let mut detected_names = Vec::new();
     state_machine.dialect_options.num_cols = best_sql_types_candidates_per_column_idx.len() as u64;
     let num_cols = state_machine.dialect_options.num_cols;
     let generated = |num_cols: u64| {
         (0..num_cols)
-            .map(|col| generate_column_name(num_cols, col))
+            .map(|col| ByteString::from(generate_column_name(num_cols, col)))
             .collect::<Vec<_>>()
     };
     if best_header_row.is_empty() {
@@ -340,16 +339,16 @@ pub(super) fn detect_header_internal(
             } else {
                 trim_whitespace(&col_name)
             };
-            while let Some(count) = name_collision_count.get_mut(&col_name.to_lowercase()) {
+            while let Some(count) = name_collision_count.get_mut(&col_name.to_ascii_lowercase()) {
                 *count += 1;
                 col_name = format!("{col_name}_{count}");
             }
-            name_collision_count.insert(col_name.to_lowercase(), 0);
-            detected_names.push(col_name);
+            name_collision_count.insert(col_name.to_ascii_lowercase(), 0);
+            detected_names.push(col_name.into());
         }
         if (best_header_row.len() as u64) < num_cols && options.null_padding {
             for col in best_header_row.len() as u64..num_cols {
-                detected_names.push(generate_column_name(num_cols, col));
+                detected_names.push(generate_column_name(num_cols, col).into());
             }
         } else if (best_header_row.len() as u64) < num_cols {
             return Err(Error::internal(

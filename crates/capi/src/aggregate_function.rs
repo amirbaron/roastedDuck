@@ -180,6 +180,12 @@ fn state_array(states: &[StatePtr]) -> *mut DuckdbAggregateState {
 }
 
 impl AggregateOps for CAggregateOps {
+    fn has_simple_update(&self) -> bool {
+        // CAPIAggregateFunction installs shared scatter callbacks and no simple
+        // update callback. Its Rust fallback does not change physical selection.
+        false
+    }
+
     fn verify_state_layout(&self) -> Result<()> {
         let _ = self.state_layout();
         self.check_deferred()

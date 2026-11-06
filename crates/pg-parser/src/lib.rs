@@ -49,8 +49,8 @@ use rustdb_common::Result;
 
 pub use keywords::{Keyword, KeywordCategory};
 pub use nodes::{Node, RawStmt};
-pub use tokenize::{SimplifiedToken, SimplifiedTokenType, tokenize};
-pub use unicode_space::strip_unicode_spaces;
+pub use tokenize::{SimplifiedToken, SimplifiedTokenType, tokenize, tokenize_bytes};
+pub use unicode_space::{strip_unicode_spaces, strip_unicode_spaces_bytes};
 
 use crate::scanner::{ScanOptions, Scanner};
 
@@ -85,7 +85,16 @@ pub fn parse(sql: &str) -> Result<Vec<RawStmt>> {
 /// Errors are parser errors whose message and query location match DuckDB's
 /// (`syntax error at or near "..."`, `unterminated quoted string ...`, ...).
 pub fn parse_with_options(sql: &str, options: &ParserOptions) -> Result<Vec<RawStmt>> {
-    let mut scanner = Scanner::new(
+    parse_bytes_with_options(sql.as_bytes(), options)
+}
+
+/// Parses native SQL bytes; input stops at the first NUL like `libpg_query`.
+pub fn parse_bytes(sql: &[u8]) -> Result<Vec<RawStmt>> {
+    parse_bytes_with_options(sql, &ParserOptions::default())
+}
+
+pub fn parse_bytes_with_options(sql: &[u8], options: &ParserOptions) -> Result<Vec<RawStmt>> {
+    let mut scanner = Scanner::new_bytes(
         sql,
         ScanOptions {
             preserve_identifier_case: options.preserve_identifier_case,

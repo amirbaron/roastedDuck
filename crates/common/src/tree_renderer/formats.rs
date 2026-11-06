@@ -2,22 +2,22 @@
 //! `HTMLTreeRenderer`, `GRAPHVIZTreeRenderer`, `YAMLTreeRenderer` and
 //! `MermaidTreeRenderer`).
 
-use std::fmt::Write as _;
+use crate::{ByteString, byte_format, byte_write};
 
-use super::{RenderTree, RenderTreeNode};
+use super::{RenderTree, RenderTreeNode, split_newlines};
 
 /// Escapes text for a JSON string (DuckDB's `QueryProfiler::JSONSanitize`).
-pub(super) fn json_sanitize(text: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-    for c in text.chars() {
+pub(super) fn json_sanitize(text: &[u8]) -> ByteString {
+    let mut result = ByteString::new();
+    for &c in text {
         match c {
-            '\u{8}' => result.push_str("\\b"),
-            '\u{c}' => result.push_str("\\f"),
-            '\n' => result.push_str("\\n"),
-            '\r' => result.push_str("\\r"),
-            '\t' => result.push_str("\\t"),
-            '"' => result.push_str("\\\""),
-            '\\' => result.push_str("\\\\"),
+            8 => result.push_bytes("\\b"),
+            12 => result.push_bytes("\\f"),
+            b'\n' => result.push_bytes("\\n"),
+            b'\r' => result.push_bytes("\\r"),
+            b'\t' => result.push_bytes("\\t"),
+            b'"' => result.push_bytes("\\\""),
+            b'\\' => result.push_bytes("\\\\"),
             c => result.push(c),
         }
     }
@@ -25,7 +25,7 @@ pub(super) fn json_sanitize(text: &str) -> String {
 }
 
 /// `RenderTree` as a Graphviz digraph (DuckDB's `GRAPHVIZTreeRenderer::ToStreamInternal`).
-pub(super) fn render_graphviz(tree: &RenderTree) -> String {
+pub(super) fn render_graphviz(tree: &RenderTree) -> ByteString {
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
     for y in 0..tree.height {
@@ -35,67 +35,72 @@ pub(super) fn render_graphviz(tree: &RenderTree) -> String {
             };
             let mut body = vec![node.name.clone()];
             for (key, value) in node.extra_text.iter() {
-                body.push(format!("{key}:\\n{}", json_sanitize(value)));
+                body.push(byte_format!("{key}:\\n{}", json_sanitize(value)));
             }
-            nodes.push(format!(
+            nodes.push(byte_format!(
                 "    node_{x}_{y} [label=\"{}\"];",
-                body.join("\\n───\\n")
+                ByteString::join(&body, "\\n───\\n")
             ));
             for (child_x, child_y) in &node.child_positions {
-                edges.push(format!("    node_{x}_{y} -> node_{child_x}_{child_y};"));
+                edges.push(byte_format!("    node_{x}_{y} -> node_{child_x}_{child_y};"));
             }
         }
     }
-    format!(
+    byte_format!(
         "\ndigraph G {{\n    node [shape=box, style=rounded, fontname=\"Courier New\", fontsize=10];\n{}\n{}\n}}\n\t",
-        nodes.join("\n"),
-        edges.join("\n")
+        ByteString::join(&nodes, b"\n"),
+        ByteString::join(&edges, b"\n")
     )
 }
 
 /// A string as a double-quoted YAML scalar (DuckDB's `EscapedString`).
-fn yaml_escaped(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 2);
-    out.push('"');
-    for c in text.chars() {
+fn yaml_escaped(text: &[u8]) -> ByteString {
+    let mut out = ByteString::new();
+    out.push(b'"');
+    for &c in text {
         match c {
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
+            8 => out.push_bytes("\\b"),
+            12 => out.push_bytes("\\f"),
+            b'\n' => out.push_bytes("\\n"),
+            b'\r' => out.push_bytes("\\r"),
+            b'\t' => out.push_bytes("\\t"),
+            b'"' => out.push_bytes("\\\""),
+            b'\\' => out.push_bytes("\\\\"),
             c if (c as u32) < 0x20 => {
-                let _ = write!(out, "\\u{:04x}", c as u32);
+                out.push_bytes(format!("\\u{c:04x}"));
             }
             c => out.push(c),
         }
     }
-    out.push('"');
+    out.push(b'"');
     out
 }
 
-fn render_yaml_node(tree: &RenderTree, out: &mut String, indent: usize, x: usize, y: usize) {
+fn render_yaml_node(tree: &RenderTree, out: &mut ByteString, indent: usize, x: usize, y: usize) {
     let Some(node) = tree.node(x, y) else {
         return;
     };
-    let _ = writeln!(out, "{}- name: {}", " ".repeat(indent), yaml_escaped(&node.name));
+    let _ = byte_write!(
+        out,
+        "{}- name: {}\n",
+        " ".repeat(indent),
+        yaml_escaped(&node.name)
+    );
     let indent = indent + 2;
     for (key, value) in node.extra_text.iter() {
-        let splits: Vec<&str> = value.split('\n').collect();
-        let _ = write!(out, "{}{}:", " ".repeat(indent), yaml_escaped(key));
+        let splits: Vec<&[u8]> = split_newlines(value);
+        let _ = byte_write!(out, "{}{}:", " ".repeat(indent), yaml_escaped(key));
         if splits.len() > 1 {
-            out.push('\n');
+            out.push(b'\n');
             for split in splits {
-                let _ = writeln!(out, "{}- {}", " ".repeat(indent + 2), yaml_escaped(split));
+                let _ = byte_write!(out, "{}- {}\n", " ".repeat(indent + 2), yaml_escaped(split));
             }
         } else {
-            let _ = writeln!(out, " {}", yaml_escaped(value));
+            let _ = byte_write!(out, " {}\n", yaml_escaped(value));
         }
     }
     if !node.child_positions.is_empty() {
-        let _ = writeln!(out, "{}children: ", " ".repeat(indent));
+        let _ = byte_write!(out, "{}children: \n", " ".repeat(indent));
         for &(child_x, child_y) in &node.child_positions {
             render_yaml_node(tree, out, indent + 2, child_x, child_y);
         }
@@ -103,23 +108,23 @@ fn render_yaml_node(tree: &RenderTree, out: &mut String, indent: usize, x: usize
 }
 
 /// `RenderTree` as YAML (DuckDB's `YAMLTreeRenderer::ToStreamInternal`).
-pub(super) fn render_yaml(tree: &RenderTree) -> String {
-    let mut out = String::new();
+pub(super) fn render_yaml(tree: &RenderTree) -> ByteString {
+    let mut out = ByteString::new();
     render_yaml_node(tree, &mut out, 0, 0, 0);
     out
 }
 
 /// Escapes text for a Mermaid label (DuckDB's `SanitizeMermaidLabel`).
-fn sanitize_mermaid_label(text: &str) -> String {
-    let mut result = String::with_capacity(text.len() * 2);
-    let mut chars = text.chars().peekable();
+fn sanitize_mermaid_label(text: &[u8]) -> ByteString {
+    let mut result = ByteString::new();
+    let mut chars = text.iter().copied().peekable();
     while let Some(c) = chars.next() {
         match c {
-            '`' => result.push_str("\\`"),
-            '"' => result.push_str("\\\""),
-            '\\' if chars.peek() == Some(&'n') => {
+            b'`' => result.push_bytes("\\`"),
+            b'"' => result.push_bytes("\\\""),
+            b'\\' if chars.peek() == Some(&b'n') => {
                 chars.next();
-                result.push_str("\n\t");
+                result.push_bytes("\n\t");
             }
             c => result.push(c),
         }
@@ -127,8 +132,23 @@ fn sanitize_mermaid_label(text: &str) -> String {
     result
 }
 
+// StringUtil::RTrim tests plain C++ char > 0 before keeping a trailing byte.
+// Follow the target C ABI, including removal of trailing non-ASCII bytes on macOS.
+fn trim_mermaid_name(mut text: &[u8]) -> &[u8] {
+    while text.first().is_some_and(u8::is_ascii_whitespace) {
+        text = &text[1..];
+    }
+    while text
+        .last()
+        .is_some_and(|byte| (*byte as std::ffi::c_char as i32) <= 0 || byte.is_ascii_whitespace())
+    {
+        text = &text[..text.len() - 1];
+    }
+    text
+}
+
 /// `RenderTree` as a Mermaid flowchart (DuckDB's `MermaidTreeRenderer::ToStreamInternal`).
-pub(super) fn render_mermaid(tree: &RenderTree) -> String {
+pub(super) fn render_mermaid(tree: &RenderTree) -> ByteString {
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
     for y in 0..tree.height {
@@ -136,31 +156,31 @@ pub(super) fn render_mermaid(tree: &RenderTree) -> String {
             let Some(node) = tree.node(x, y) else {
                 continue;
             };
-            let mut extra_info = String::new();
+            let mut extra_info = ByteString::new();
             for (key, value) in node.extra_text.iter() {
-                let _ = write!(
+                let _ = byte_write!(
                     extra_info,
                     "\n\t{key}: {}",
                     sanitize_mermaid_label(&json_sanitize(value))
                 );
             }
-            nodes.push(format!(
+            nodes.push(byte_format!(
                 "    node_{x}_{y}[\"`**{}**{extra_info}`\"]",
-                sanitize_mermaid_label(node.name.trim())
+                sanitize_mermaid_label(trim_mermaid_name(&node.name))
             ));
             for (child_x, child_y) in &node.child_positions {
-                edges.push(format!("    node_{x}_{y} --> node_{child_x}_{child_y}"));
+                edges.push(byte_format!("    node_{x}_{y} --> node_{child_x}_{child_y}"));
             }
         }
     }
-    let mut out = String::from("flowchart TD\n");
+    let mut out = ByteString::from("flowchart TD\n");
     for node in nodes {
-        out.push_str(&node);
-        out.push_str("\n\n");
+        out.push_bytes(&node);
+        out.push_bytes("\n\n");
     }
     for edge in edges {
-        out.push_str(&edge);
-        out.push('\n');
+        out.push_bytes(&edge);
+        out.push(b'\n');
     }
     out
 }
@@ -273,56 +293,58 @@ function toggleDisplay(button) {
 ";
 
 /// The boxes of a node's key-value lines (DuckDB's `CreateGridItemContent`).
-fn html_item_content(node: &RenderTreeNode) -> String {
+fn html_item_content(node: &RenderTreeNode) -> ByteString {
     let mut items = Vec::new();
     for (key, value) in node.extra_text.iter() {
         if value.is_empty() {
             continue;
         }
-        items.push(format!("                <div class=\"sub-title\">{key}</div>"));
-        for split in value.split('\n') {
-            items.push(format!("                <div class=\"value\">{split}</div>"));
+        items.push(byte_format!(
+            "                <div class=\"sub-title\">{key}</div>"
+        ));
+        for split in split_newlines(value) {
+            items.push(byte_format!("                <div class=\"value\">{split}</div>"));
         }
     }
-    let mut result = String::new();
+    let mut result = ByteString::new();
     if !items.is_empty() {
-        result = format!(
+        result = byte_format!(
             "\n            <div class=\"content\">\n{}\n            </div>\n    ",
-            items.join("\n")
+            ByteString::join(&items, b"\n")
         );
     }
     if !node.child_positions.is_empty() {
-        result.push_str("<button class=\"collapse_button\", onclick=\"toggleDisplay(this)\">-</button>");
+        result.push_bytes("<button class=\"collapse_button\", onclick=\"toggleDisplay(this)\">-</button>");
     }
     result
 }
 
 /// DuckDB's `CreateTreeRecursive`.
-fn html_tree(tree: &RenderTree, x: usize, y: usize, out: &mut String) {
-    out.push_str("<li>");
+fn html_tree(tree: &RenderTree, x: usize, y: usize, out: &mut ByteString) {
+    out.push_bytes("<li>");
     if let Some(node) = tree.node(x, y) {
-        let _ = write!(
+        let _ = byte_write!(
             out,
             "\n        <div class=\"tf-nc\">\n            <div class=\"title\">{}</div>{}\n        </div>\n    ",
             node.name,
             html_item_content(node)
         );
         if !node.child_positions.is_empty() {
-            out.push_str("<ul class=\"list-inline\">");
+            out.push_bytes("<ul class=\"list-inline\">");
             for &(child_x, child_y) in &node.child_positions {
                 html_tree(tree, child_x, child_y, out);
             }
-            out.push_str("</ul>");
+            out.push_bytes("</ul>");
         }
     }
-    out.push_str("</li>");
+    out.push_bytes("</li>");
 }
 
 /// `RenderTree` as an HTML page (DuckDB's `HTMLTreeRenderer::ToStreamInternal`).
-pub(super) fn render_html(tree: &RenderTree) -> String {
-    let mut body = String::new();
+pub(super) fn render_html(tree: &RenderTree) -> ByteString {
+    let mut body = ByteString::new();
     html_tree(tree, 0, 0, &mut body);
-    format!(
+    byte_format!(
         "\n<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <link rel=\"stylesheet\" href=\"https://unpkg.com/treeflex/dist/css/treeflex.css\">\n    <title>DuckDB Query Plan</title>\n    {HTML_STYLE}\n</head>\n    \n<body>\n    <div class=\"tf-tree\">\n        <ul>{body}</ul>\n    </div>\n{HTML_SCRIPT}\n</body>\n</html>\n    "
     )
 }

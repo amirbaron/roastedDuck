@@ -66,7 +66,7 @@ fn fold_negated_constant(expr: ParsedExpression) -> Result<ParsedExpression> {
     };
     let mut func_expr = *func_expr;
     if func_expr.function_name != "-" {
-        return Err(Error::invalid_input(format!(
+        return Err(Error::invalid_input(byte_format!(
             "Expected a minus function instead of {}",
             func_expr.function_name
         )));
@@ -100,7 +100,7 @@ fn duplicate_option_error(name: &str) -> Error {
     if let Some(first) = seq_option_capital.get_mut(..1) {
         first.make_ascii_uppercase();
     }
-    Error::parser(format!("{seq_option_capital} should be passed at most once"))
+    Error::parser(byte_format!("{seq_option_capital} should be passed at most once"))
 }
 
 impl PegTransformer {
@@ -187,7 +187,7 @@ impl PegTransformer {
                 }
                 "cycle" => info.cycle = bool_value(option_value(option)?)?,
                 _ => {
-                    return Err(Error::parser(format!(
+                    return Err(Error::parser(byte_format!(
                         "Unrecognized option \"{name}\" for CREATE SEQUENCE"
                     )));
                 }
@@ -201,21 +201,24 @@ impl PegTransformer {
             };
         }
         if info.max_value <= info.min_value {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(byte_format!(
                 "MINVALUE ({}) must be less than MAXVALUE ({})",
-                info.min_value, info.max_value
+                info.min_value,
+                info.max_value
             )));
         }
         if info.start_value < info.min_value {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(byte_format!(
                 "START value ({}) cannot be less than MINVALUE ({})",
-                info.start_value, info.min_value
+                info.start_value,
+                info.min_value
             )));
         }
         if info.start_value > info.max_value {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(byte_format!(
                 "START value ({}) cannot be greater than MAXVALUE ({})",
-                info.start_value, info.max_value
+                info.start_value,
+                info.max_value
             )));
         }
         let mut result = create_info(&qualified_name.schema, CreateInfoKind::Sequence(Box::new(info)));

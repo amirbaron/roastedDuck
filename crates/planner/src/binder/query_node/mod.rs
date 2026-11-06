@@ -61,7 +61,7 @@ pub struct BoundSelectNode {
     pub qualify: Option<Expression>,
     pub sample_options: Option<Box<SampleOptions>>,
     pub modifiers: Vec<BoundResultModifier>,
-    pub names: Vec<String>,
+    pub names: Vec<rustdb_common::ByteString>,
     pub types: Vec<LogicalType>,
     /// The number of result columns.
     pub column_count: usize,
@@ -84,7 +84,7 @@ pub struct BoundSelectNode {
 /// A CTE being bound with the node it is attached to (DuckDB's `BoundCTEData`).
 #[derive(Debug)]
 struct BoundCteData {
-    name: String,
+    name: rustdb_common::ByteString,
     materialized: CteMaterialize,
     setop_index: u64,
     bind_state: Arc<Mutex<CteBindState>>,
@@ -92,7 +92,7 @@ struct BoundCteData {
 
 /// Binds and plans a query node with its CTEs (DuckDB's `Binder::BindNode(QueryNode &)`).
 pub fn bind_node(scope: &mut BindScope<'_>, node: &mut QueryNode) -> Result<BoundStatement> {
-    let ctes: Vec<(String, CommonTableExpressionInfo)> = node
+    let ctes: Vec<(rustdb_common::ByteString, CommonTableExpressionInfo)> = node
         .cte_map
         .map
         .iter()
@@ -106,7 +106,7 @@ pub fn bind_node(scope: &mut BindScope<'_>, node: &mut QueryNode) -> Result<Boun
 fn bind_node_with_ctes(
     scope: &mut BindScope<'_>,
     node: &mut QueryNode,
-    ctes: &[(String, CommonTableExpressionInfo)],
+    ctes: &[(rustdb_common::ByteString, CommonTableExpressionInfo)],
 ) -> Result<BoundStatement> {
     bind_with_ctes(scope, ctes, &mut |scope| bind_node_kind(scope, node))
 }
@@ -118,7 +118,7 @@ pub fn bind_statement_with_ctes(
     cte_map: &rustdb_ast::CommonTableExpressionMap,
     bind_inner: &mut dyn FnMut(&mut BindScope<'_>) -> Result<BoundStatement>,
 ) -> Result<BoundStatement> {
-    let ctes: Vec<(String, CommonTableExpressionInfo)> = cte_map
+    let ctes: Vec<(rustdb_common::ByteString, CommonTableExpressionInfo)> = cte_map
         .map
         .iter()
         .map(|(name, info)| (name.to_owned(), info.clone()))
@@ -130,7 +130,7 @@ pub fn bind_statement_with_ctes(
 /// then wraps the result in the materialized CTE if it was referenced.
 fn bind_with_ctes(
     scope: &mut BindScope<'_>,
-    ctes: &[(String, CommonTableExpressionInfo)],
+    ctes: &[(rustdb_common::ByteString, CommonTableExpressionInfo)],
     bind_inner: &mut dyn FnMut(&mut BindScope<'_>) -> Result<BoundStatement>,
 ) -> Result<BoundStatement> {
     let Some(((name, info), rest)) = ctes.split_first() else {
@@ -161,7 +161,11 @@ fn bind_with_ctes(
 }
 
 /// DuckDB's `Binder::PrepareCTE`: the CTE is bound lazily, on first reference.
-fn prepare_cte(scope: &mut BindScope<'_>, name: &str, info: &CommonTableExpressionInfo) -> BoundCteData {
+fn prepare_cte(
+    scope: &mut BindScope<'_>,
+    name: &rustdb_common::ByteString,
+    info: &CommonTableExpressionInfo,
+) -> BoundCteData {
     let setop_index = scope.generate_table_index();
     BoundCteData {
         name: name.to_owned(),

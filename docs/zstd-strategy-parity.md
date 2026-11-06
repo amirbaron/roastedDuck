@@ -1,6 +1,21 @@
 # ZSTD strategy parity
 
-The live completion audit confirms `crates/zstd/src/cctx.rs::effective_params`
+Final-candidate status (2026-11-03): current `effective_params` returns
+`get_cparams(level, src_size)` directly; the DFast fallback described in the
+historical initial finding below has been replaced. The staged implementation
+and older native receipts are retained here with their original scope.
+
+Refresh 2232 is prepared for signed macOS 2088 and Linux ARM64/x86_64 2080 on
+source 2078. Each target will rerun all 20 original Parquet files, their 20 own
+and 20 opposite-engine reads, levels 1/3/4/5/9/13/16/19/22, and the 70-MiB
+level-22 value that reaches automatic LDM. Original worker SQL and assertions
+remain unchanged. This runs serially with the FSST storage refresh before
+current encrypted-storage verification. No refreshed runtime or performance
+acceptance is claimed; historical native images do not satisfy this gate.
+
+## Historical initial finding
+
+The initial completion audit confirmed `crates/zstd/src/cctx.rs::effective_params`
 replaces Greedy/Lazy/Lazy2/binary-tree/optimal strategies with DFast and caps hash/
 chain tables. `block.rs` dispatches only Fast or DFast. This is the documented
 compression-level gap; valid cross-readable frames alone do not implement the

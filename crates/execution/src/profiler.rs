@@ -42,7 +42,7 @@ pub struct QueryProfiler {
     start: Instant,
     operators: Mutex<HashMap<usize, OperatorProfile>>,
     /// Parameters sources report once exhausted (`OperatorInformation::extra_info`).
-    extra_info: Mutex<HashMap<usize, Vec<(String, String)>>>,
+    extra_info: Mutex<HashMap<usize, Vec<(rustdb_common::ByteString, rustdb_common::ByteString)>>>,
     /// What the table scans read, by operator.
     scans: Mutex<HashMap<usize, ScanMetrics>>,
     /// The metrics of the query the threads record into while they work on it.
@@ -149,7 +149,11 @@ impl QueryProfiler {
 
     /// Records parameters of operator `key`, replacing earlier values of the same
     /// names (`FinalizeSourceProfiling`).
-    pub(crate) fn record_extra_info(&self, key: usize, params: Vec<(String, String)>) {
+    pub(crate) fn record_extra_info(
+        &self,
+        key: usize,
+        params: Vec<(rustdb_common::ByteString, rustdb_common::ByteString)>,
+    ) {
         let mut extra_info = self.extra_info.lock().unwrap_or_else(PoisonError::into_inner);
         let entry = extra_info.entry(key).or_default();
         for (name, value) in params {
@@ -178,12 +182,18 @@ impl QueryProfiler {
     }
 
     /// The parameters operator `op` reported while running.
-    pub fn extra_info(&self, op: &dyn PhysicalOperator) -> Vec<(String, String)> {
+    pub fn extra_info(
+        &self,
+        op: &dyn PhysicalOperator,
+    ) -> Vec<(rustdb_common::ByteString, rustdb_common::ByteString)> {
         self.extra_info_by_key(operator_key(op))
     }
 
     /// The parameters the operator with [`operator_key`] `key` reported while running.
-    pub fn extra_info_by_key(&self, key: usize) -> Vec<(String, String)> {
+    pub fn extra_info_by_key(
+        &self,
+        key: usize,
+    ) -> Vec<(rustdb_common::ByteString, rustdb_common::ByteString)> {
         self.extra_info
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

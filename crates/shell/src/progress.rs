@@ -311,17 +311,17 @@ impl ProgressDisplay {
         is_finished: bool,
     ) {
         let terminal_width = printer::terminal_width();
-        let mut result = String::new();
+        let mut result = rustdb_common::ByteString::new();
         if let Some(previous) = self.previous_terminal_width
             && terminal_width < previous
         {
             // The terminal got narrower: the status line wrapped onto more lines.
             let line_count = previous.div_ceil(terminal_width);
             for _ in 1..line_count {
-                result += "\r\x1b[0K\x1b[1A";
+                result.push_bytes(b"\r\x1b[0K\x1b[1A");
             }
         }
-        result += "\r\x1b[0K";
+        result.push_bytes(b"\r\x1b[0K");
         self.previous_terminal_width = Some(terminal_width);
         if !is_finished {
             let status = ProgressStatus {
@@ -339,8 +339,8 @@ impl ProgressDisplay {
                     )
                 });
             match line {
-                Ok(line) => result += &line,
-                Err(error) => result += &error.to_string(),
+                Ok(line) => result.push_bytes(&line),
+                Err(error) => result.push_bytes(error.to_bytes()),
             }
         }
         printer::write_stdout(result.as_bytes());

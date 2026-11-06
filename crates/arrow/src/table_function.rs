@@ -28,9 +28,9 @@ use crate::ffi::{
 #[derive(Clone, Debug, Default)]
 pub struct ArrowProjectedColumns {
     /// The name of the column at each scanned position.
-    pub projection_map: HashMap<usize, String>,
+    pub projection_map: HashMap<usize, rustdb_common::ByteString>,
     /// The names of the scanned columns, in order.
-    pub columns: Vec<String>,
+    pub columns: Vec<rustdb_common::ByteString>,
     /// The column of each scanned position, which filters are keyed by.
     pub filter_to_col: HashMap<usize, usize>,
 }
@@ -68,6 +68,7 @@ struct ArrowScanFunctionData {
     projection_pushdown_enabled: bool,
     /// The filters pushed into the scan, for the producer.
     filters: Option<TableFilterSet>,
+    _factory_owner: Option<Arc<dyn FunctionData>>,
 }
 
 impl FunctionData for ArrowScanFunctionData {
@@ -102,7 +103,7 @@ pub unsafe fn populate_arrow_table_schema(
         // SAFETY: as above.
         let name = unsafe { schema.name_string() };
         names.push(if name.is_empty() {
-            format!("v{index}")
+            rustdb_common::byte_format!("v{index}")
         } else {
             name
         });
@@ -174,6 +175,7 @@ fn arrow_scan_bind(
             arrow_table: Arc::new(arrow_table),
             projection_pushdown_enabled,
             filters: None,
+            _factory_owner: None,
         })),
     })
 }
@@ -390,7 +392,12 @@ fn arrow_scan_parallel(
     } else {
         &[]
     };
-    let columns = arrow_to_duckdb(state, data, conversion_ids, column_ids.len(), output_size)?;
+    let column_count = if data.projection_pushdown_enabled {
+        column_ids.len()
+    } else {
+        data.all_types.len()
+    };
+    let columns = arrow_to_duckdb(state, data, conversion_ids, column_count, output_size)?;
     *output = DataChunk::new(columns, output_size);
     state.chunk_offset += output_size;
     Ok(true)
@@ -457,6 +464,91 @@ fn arrow_scan_pushdown_filters(
     }))
 }
 
+/// Retain an external factory through all cloned/rebound scan data.
+pub fn retain_factory_owner(
+    data: &dyn FunctionData,
+    owner: Arc<dyn FunctionData>,
+) -> Result<Arc<dyn FunctionData>> {
+    let data = bind_data(Some(data))?;
+    Ok(Arc::new(ArrowScanFunctionData {
+        _factory_owner: Some(owner),
+        ..data.clone()
+    }))
+}
+fn arrow_type_has_view(ty: &ArrowType) -> bool {
+    use crate::duck_schema::ArrowVariableSizeType as V;
+    use rustdb_types::LogicalTypeId as L;
+    if ty.dictionary().is_some_and(arrow_type_has_view) {
+        return true;
+    }
+    match ty.duck_type(false).id() {
+        L::Varchar | L::Blob => ty.string_info().is_ok_and(|(size, _)| size == V::View),
+        L::Struct | L::Union => ty
+            .struct_children()
+            .is_ok_and(|children| children.iter().any(arrow_type_has_view)),
+        L::List | L::Map => ty
+            .list_info()
+            .is_ok_and(|(child, _, _)| arrow_type_has_view(child)),
+        L::Array => ty.array_info().is_ok_and(|(child, _)| arrow_type_has_view(child)),
+        _ => false,
+    }
+}
+fn arrow_type_can_filter(ty: &ArrowType) -> bool {
+    use rustdb_types::{LogicalTypeId as L, PhysicalType};
+    let ty = ty.dictionary().unwrap_or(ty);
+    match ty.duck_type(true).id() {
+        L::Boolean
+        | L::TinyInt
+        | L::SmallInt
+        | L::Integer
+        | L::BigInt
+        | L::Date
+        | L::Time
+        | L::TimeNs
+        | L::Timestamp
+        | L::TimestampMs
+        | L::TimestampNs
+        | L::TimestampSec
+        | L::TimestampTz
+        | L::UTinyInt
+        | L::USmallInt
+        | L::UInteger
+        | L::UBigInt
+        | L::Float
+        | L::Double
+        | L::Varchar
+        | L::Blob => true,
+        L::Decimal => ty.duck_type(true).physical_type() == PhysicalType::Int128,
+        L::Struct => ty
+            .struct_children()
+            .is_ok_and(|children| children.iter().all(arrow_type_can_filter)),
+        _ => false,
+    }
+}
+fn arrow_filter_supported(data: &dyn FunctionData, column: usize, filter: &dyn Any) -> bool {
+    use rustdb_storage::TableFilter as F;
+    fn supported(filter: &F) -> bool {
+        match filter {
+            F::Expression(_) => false,
+            F::And(children) | F::Or(children) => children.iter().all(supported),
+            F::StructExtract { child_filter, .. } => supported(child_filter),
+            F::Optional(Some(child)) => supported(child),
+            F::SelectivityOptional(child) => supported(&child.child),
+            _ => true,
+        }
+    }
+    let Ok(data) = bind_data(Some(data)) else {
+        return false;
+    };
+    let Some(ty) = data.arrow_table.columns().get(column) else {
+        return false;
+    };
+    if data.arrow_table.columns().iter().any(arrow_type_has_view) || !arrow_type_can_filter(ty) {
+        return false;
+    }
+    filter.downcast_ref::<F>().is_some_and(supported)
+}
+
 /// The scan by several threads, each taking whole Arrow arrays.
 fn arrow_scan_parallel_scan() -> ParallelTableScan {
     ParallelTableScan {
@@ -484,12 +576,13 @@ fn arrow_scan_function(name: &str, projection_pushdown: bool) -> TableFunction {
         .with_bind(move |input| arrow_scan_bind(input, projection_pushdown))
         .with_scan(arrow_scan);
     function.parallel_scan = Some(arrow_scan_parallel_scan());
-    function.projected_output = true;
+    function.projected_output = projection_pushdown;
     function.projection_pushdown = projection_pushdown;
     function.filter_pushdown = projection_pushdown;
     function.filter_prune = projection_pushdown;
     if projection_pushdown {
         function.pushdown_filters = Some(Arc::new(arrow_scan_pushdown_filters));
+        function.filter_support = Some(Arc::new(arrow_filter_supported));
     }
     function
 }

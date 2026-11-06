@@ -392,7 +392,6 @@ pub unsafe extern "C" fn duckdb_array_vector_get_child(vector: DuckdbVector) -> 
 }
 
 /// `bool duckdb_validity_row_is_valid(uint64_t *validity, idx_t row)` (capi/data_chunk-c.cpp)
-#[unsafe(no_mangle)]
 pub unsafe extern "C" fn duckdb_validity_row_is_valid(validity: *mut u64, row: Idx) -> bool {
     if validity.is_null() {
         return true;
@@ -400,6 +399,17 @@ pub unsafe extern "C" fn duckdb_validity_row_is_valid(validity: *mut u64, row: I
     // SAFETY: `validity` covers `row` per the API contract.
     let word = unsafe { *validity.add(row as usize / 64) };
     word & (1 << (row % 64)) != 0
+}
+
+// Keep the exported C boolean's entire byte canonical. The optimized x86_64
+// boolean implementation can return a shifted word with only bit zero defined;
+// C callers compiled by GCC test the whole byte. Returning u8 at this boundary
+// forces zero-extension to the C bool representation, without changing duckdb.h
+// or the Rust-facing function's signature.
+#[unsafe(export_name = "duckdb_validity_row_is_valid")]
+unsafe extern "C" fn validity_row_is_valid_c(validity: *mut u64, row: Idx) -> u8 {
+    // SAFETY: the exported function has the same pointer contract as the helper.
+    u8::from(unsafe { duckdb_validity_row_is_valid(validity, row) })
 }
 
 /// `void duckdb_validity_set_row_validity(uint64_t *validity, idx_t row, bool valid)`

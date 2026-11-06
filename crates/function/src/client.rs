@@ -15,8 +15,8 @@ use crate::random::RandomEngine;
 #[derive(Clone, Debug)]
 pub struct SettingInfo {
     pub name: String,
-    /// The current value (`Value::ToString`).
-    pub value: String,
+    /// The current value cast to VARCHAR, preserving SQL NULL.
+    pub value: Option<String>,
     pub description: String,
     pub input_type: String,
     /// `GLOBAL` (else `LOCAL`) scope.
@@ -77,7 +77,8 @@ pub trait SettingsSource: Send + Sync + std::fmt::Debug {
 /// the parsed footers of Parquet files.
 #[derive(Default)]
 pub struct ObjectCache {
-    entries: Mutex<std::collections::HashMap<String, Arc<dyn std::any::Any + Send + Sync>>>,
+    entries:
+        Mutex<std::collections::HashMap<rustdb_common::ByteString, Arc<dyn std::any::Any + Send + Sync>>>,
 }
 
 impl std::fmt::Debug for ObjectCache {
@@ -87,23 +88,39 @@ impl std::fmt::Debug for ObjectCache {
 }
 
 impl ObjectCache {
+    /// Atomically obtains a database-local registry, constructing it only once.
+    pub fn get_or_insert_with<T: Send + Sync + 'static>(
+        &self,
+        key: impl Into<rustdb_common::ByteString>,
+        create: impl FnOnce() -> T,
+    ) -> Arc<T> {
+        let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        let key = key.into();
+        if let Some(value) = entries.get(&key).and_then(|v| Arc::clone(v).downcast::<T>().ok()) {
+            return value;
+        }
+        let value = Arc::new(create());
+        entries.insert(key, value.clone());
+        value
+    }
+
     /// The object stored under `key`, if it has type `T`.
-    pub fn get<T: Send + Sync + 'static>(&self, key: &str) -> Option<Arc<T>> {
+    pub fn get<T: Send + Sync + 'static>(&self, key: impl AsRef<[u8]>) -> Option<Arc<T>> {
         let entry = self
             .entries
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .get(key)
+            .get(key.as_ref())
             .cloned()?;
         entry.downcast::<T>().ok()
     }
 
     /// Stores `value` under `key`, replacing what was there.
-    pub fn put<T: Send + Sync + 'static>(&self, key: String, value: Arc<T>) {
+    pub fn put<T: Send + Sync + 'static>(&self, key: impl Into<rustdb_common::ByteString>, value: Arc<T>) {
         self.entries
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(key, value);
+            .insert(key.into(), value);
     }
 }
 
@@ -125,10 +142,74 @@ pub enum ClientRequest {
     /// Sets a database-wide option (`DBConfig::SetOptionByName`), e.g. the
     /// `allow_parser_override_extension` of `enable_peg_parser()`.
     SetGlobalOption { name: String, value: Value },
+    /// Performs a checkpoint requested by the executing table function, before
+    /// statement/profile finalization, including prepared/pending execution.
+    Checkpoint {
+        database: Option<rustdb_common::ByteString>,
+        force: bool,
+    },
 }
 
 /// Connection ids handed out so far (DuckDB's `ConnectionManager` counter).
 static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(0);
+
+/// HTTP requests issued by one connection's current query, including binding I/O.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HttpStats {
+    /// The connection has created its HTTP state, retained across query resets.
+    pub active: bool,
+    pub received: u64,
+    pub sent: u64,
+    pub head: u64,
+    pub get: u64,
+    pub put: u64,
+    pub post: u64,
+    pub delete: u64,
+}
+
+impl HttpStats {
+    pub fn is_empty(self) -> bool {
+        self.received == 0
+            && self.sent == 0
+            && self.head == 0
+            && self.get == 0
+            && self.put == 0
+            && self.post == 0
+            && self.delete == 0
+    }
+
+    /// `HTTPState::WriteProfilingInformation`, shared by EXPLAIN and query profiles.
+    pub fn render(self) -> rustdb_common::ByteString {
+        let mut out = rustdb_common::ByteString::new();
+        if !self.active {
+            return out;
+        }
+        out.push_bytes("┌─────────────────────────────────────┐\n│┌───────────────────────────────────┐│\n");
+        for line in [
+            "HTTPFS HTTP Stats".to_owned(),
+            String::new(),
+            format!("in: {}", rustdb_buffer::format_bytes(self.received)),
+            format!("out: {}", rustdb_buffer::format_bytes(self.sent)),
+            format!("#HEAD: {}", self.head),
+            format!("#GET: {}", self.get),
+            format!("#PUT: {}", self.put),
+            format!("#POST: {}", self.post),
+            format!("#DELETE: {}", self.delete),
+        ] {
+            let padding = 35_usize.saturating_sub(line.chars().count());
+            let left = padding / 2 + padding % 2;
+            let _ = rustdb_common::byte_write!(
+                out,
+                "││{}{}{}││\n",
+                " ".repeat(left),
+                line,
+                " ".repeat(padding - left)
+            );
+        }
+        out.push_bytes("│└───────────────────────────────────┘│\n└─────────────────────────────────────┘\n");
+        out
+    }
+}
 
 /// Per-connection state shared by the functions a connection runs.
 #[derive(Debug)]
@@ -138,11 +219,12 @@ pub struct FunctionClient {
     /// epoch (DuckDB's `MetaTransaction::start_timestamp`).
     transaction: Mutex<Option<(u64, i64)>>,
     /// The text of the query being run (DuckDB's `ClientContext::GetCurrentQuery`).
-    query: Mutex<String>,
+    query: Mutex<rustdb_common::ByteString>,
     /// The number of statements run so far (DuckDB's query id).
     query_id: AtomicU64,
+    http_stats: Mutex<HttpStats>,
     /// The default database (DuckDB's `DatabaseManager::GetDefaultDatabase`).
-    database: Mutex<String>,
+    database: Mutex<rustdb_common::ByteString>,
     connection_id: u64,
     /// The configuration of the statement being run.
     settings: Mutex<Option<Arc<dyn SettingsSource>>>,
@@ -187,7 +269,8 @@ impl Default for FunctionClient {
             transaction: Mutex::default(),
             query: Mutex::default(),
             query_id: AtomicU64::new(0),
-            database: Mutex::new("memory".to_owned()),
+            http_stats: Mutex::default(),
+            database: Mutex::new("memory".into()),
             connection_id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
             settings: Mutex::default(),
             connections: Mutex::default(),
@@ -228,13 +311,20 @@ impl FunctionClient {
     }
 
     /// Records the text of the statement about to run.
-    pub fn set_query(&self, query: &str) {
-        query.clone_into(&mut self.query.lock().unwrap_or_else(PoisonError::into_inner));
-        self.query_id.fetch_add(1, Ordering::Relaxed);
+    pub fn set_query(&self, query: impl AsRef<[u8]>) {
+        {
+            let mut stats = self.http_stats.lock().unwrap_or_else(PoisonError::into_inner);
+            self.query_id.fetch_add(1, Ordering::Relaxed);
+            *stats = HttpStats {
+                active: stats.active,
+                ..HttpStats::default()
+            };
+        }
+        *self.query.lock().unwrap_or_else(PoisonError::into_inner) = query.as_ref().into();
     }
 
     /// The text of the running query (`current_query()`).
-    pub fn query(&self) -> String {
+    pub fn query(&self) -> rustdb_common::ByteString {
         self.query.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
@@ -243,13 +333,41 @@ impl FunctionClient {
         self.query_id.load(Ordering::Relaxed)
     }
 
+    pub fn record_http_request(&self, method: &str, body_length: u64) {
+        let mut stats = self.http_stats.lock().unwrap_or_else(PoisonError::into_inner);
+        stats.active = true;
+        if matches!(method, "PUT" | "POST") {
+            stats.sent += body_length;
+        }
+        let count = match method {
+            "HEAD" => &mut stats.head,
+            "GET" => &mut stats.get,
+            "PUT" => &mut stats.put,
+            "POST" => &mut stats.post,
+            "DELETE" => &mut stats.delete,
+            _ => return,
+        };
+        *count += 1;
+    }
+
+    pub fn http_stats(&self) -> HttpStats {
+        *self.http_stats.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn record_http_received(&self, query_id: u64, bytes: u64) {
+        let mut stats = self.http_stats.lock().unwrap_or_else(PoisonError::into_inner);
+        if query_id == self.query_id() {
+            stats.received += bytes;
+        }
+    }
+
     /// Sets the default database name.
-    pub fn set_database(&self, name: &str) {
-        name.clone_into(&mut self.database.lock().unwrap_or_else(PoisonError::into_inner));
+    pub fn set_database(&self, name: impl AsRef<[u8]>) {
+        *self.database.lock().unwrap_or_else(PoisonError::into_inner) = name.as_ref().into();
     }
 
     /// The default database (`current_database()`).
-    pub fn database(&self) -> String {
+    pub fn database(&self) -> rustdb_common::ByteString {
         self.database
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

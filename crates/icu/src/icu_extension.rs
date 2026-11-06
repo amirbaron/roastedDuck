@@ -112,7 +112,7 @@ pub(crate) fn icu_calendar_names() -> TableFunctionSet {
         .with_bind(|_| {
             Ok(TableFunctionBindOutput {
                 return_types: vec![LogicalType::VARCHAR],
-                names: vec!["name".to_owned()],
+                names: vec!["name".to_owned().into()],
                 bind_data: None,
             })
         })

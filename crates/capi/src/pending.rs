@@ -203,10 +203,22 @@ pub unsafe extern "C" fn duckdb_execute_pending(
     let Some(statement) = wrapper.statement.take() else {
         return DuckdbState::DuckDBError;
     };
-    let outcome = match statement {
-        Ok(pending) => catch(|| wrapper.context.lock().execute_pending(&pending)),
-        Err(error) => Err(error.error),
+    let (outcome, properties) = {
+        let mut connection = wrapper.context.lock();
+        let outcome = match statement {
+            Ok(pending) => catch(|| connection.execute_pending(&pending)),
+            Err(error) => {
+                // PendingQueryResult::CheckExecutableInternal rejects a result
+                // whose error was already observed by ExecuteTask/CheckPulse.
+                // Execute without prior task failure still returns its own error.
+                let mut message =
+                    b"Attempting to execute an unsuccessful or closed pending query result\nError: ".to_vec();
+                message.extend_from_slice(&error.error.to_bytes());
+                Err(rustdb::Error::invalid_input(message))
+            }
+        };
+        (outcome, connection.client_properties())
     };
     // SAFETY: checked non-null above.
-    unsafe { translate_result(&wrapper.context, outcome, out_result) }
+    unsafe { translate_result(&wrapper.context, outcome, properties, out_result) }
 }

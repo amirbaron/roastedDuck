@@ -88,7 +88,8 @@ fn cpu_seconds() -> f64 {
         libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr());
         usage.assume_init()
     };
-    let seconds = |time: libc::timeval| time.tv_sec as f64 + f64::from(time.tv_usec) / 1e6;
+    #[allow(clippy::cast_lossless, reason = "tv_usec is i64 on Linux and i32 on Darwin")]
+    let seconds = |time: libc::timeval| time.tv_sec as f64 + time.tv_usec as f64 / 1e6;
     seconds(usage.ru_utime) + seconds(usage.ru_stime)
 }
 

@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 fn plus(left: Expression, right: Expression) -> Expression {
     let set = rustdb_functions::builtin_scalar_functions()
         .into_iter()
-        .find(|set| &*set.name == "+")
+        .find(|set| set.name.as_bytes() == b"+")
         .unwrap();
     let function = set
         .functions
@@ -87,7 +87,7 @@ fn errors_propagate_out_of_the_pipeline() {
 fn function(name: &str, ty: &LogicalType, children: Vec<Expression>) -> Expression {
     let set = rustdb_functions::builtin_scalar_functions()
         .into_iter()
-        .find(|set| &*set.name == name)
+        .find(|set| set.name.as_bytes() == name.as_bytes())
         .unwrap();
     let function = set.functions.into_iter().find(|f| &f.arguments[0] == ty).unwrap();
     Expression::function(function, children, None, true)

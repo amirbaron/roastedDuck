@@ -4,10 +4,9 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rustdb_ast::QueryNode;
-use rustdb_ast::keyword::write_optionally_quoted;
+use rustdb_ast::keyword::write_optionally_quoted_bytes;
 use rustdb_catalog::CatalogEntry;
-use rustdb_common::string_util::candidates_error_message;
-use rustdb_common::{CaseInsensitiveMap, Error, Result};
+use rustdb_common::{ByteString, CaseInsensitiveMap, Error, ErrorKind, Result, byte_format};
 use rustdb_types::LogicalType;
 
 use super::BoundStatement;
@@ -21,28 +20,24 @@ pub const DUMMY_NAME: &str = "0_macro_parameters";
 /// A possibly qualified table name `[catalog.][schema.]alias` (DuckDB's `BindingAlias`).
 #[derive(Clone, Debug, Default)]
 pub struct BindingAlias {
-    pub catalog: String,
-    pub schema: String,
-    pub alias: String,
+    pub catalog: ByteString,
+    pub schema: ByteString,
+    pub alias: ByteString,
 }
 
 impl BindingAlias {
-    pub fn new(alias: impl Into<String>) -> Self {
+    pub fn new(alias: impl AsRef<[u8]>) -> Self {
         Self {
-            alias: alias.into(),
+            alias: alias.as_ref().into(),
             ..Self::default()
         }
     }
 
-    pub fn qualified(
-        catalog: impl Into<String>,
-        schema: impl Into<String>,
-        alias: impl Into<String>,
-    ) -> Self {
+    pub fn qualified(catalog: impl AsRef<[u8]>, schema: impl AsRef<[u8]>, alias: impl AsRef<[u8]>) -> Self {
         Self {
-            catalog: catalog.into(),
-            schema: schema.into(),
-            alias: alias.into(),
+            catalog: catalog.as_ref().into(),
+            schema: schema.as_ref().into(),
+            alias: alias.as_ref().into(),
         }
     }
 
@@ -67,14 +62,30 @@ impl PartialEq for BindingAlias {
     }
 }
 
-impl std::fmt::Display for BindingAlias {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl BindingAlias {
+    pub fn to_bytes(&self) -> ByteString {
+        let mut out = ByteString::new();
         for part in [&self.catalog, &self.schema] {
             if !part.is_empty() {
-                write!(f, "{}.", write_optionally_quoted(part))?;
+                out.push_bytes(write_optionally_quoted_bytes(part));
+                out.push(b'.');
             }
         }
-        f.write_str(&write_optionally_quoted(&self.alias))
+        out.push_bytes(write_optionally_quoted_bytes(&self.alias));
+        out
+    }
+}
+
+impl rustdb_common::byte_format::NativeByteFormat for BindingAlias {
+    fn append_native_bytes(&self, out: &mut ByteString) {
+        out.push_bytes(self.to_bytes());
+    }
+}
+
+impl std::fmt::Display for BindingAlias {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let bytes = self.to_bytes();
+        f.write_str(bytes.to_str().map_err(|_| std::fmt::Error)?)
     }
 }
 
@@ -84,7 +95,7 @@ pub struct CteBindState {
     /// The CTE's definition.
     pub definition: QueryNode,
     /// Column names given as `cte(a, b)`.
-    pub aliases: Vec<String>,
+    pub aliases: Vec<ByteString>,
     /// The bound query, once the CTE has been referenced.
     pub bound: Option<BoundStatement>,
     /// The binder that bound the query (its correlated columns are needed later).
@@ -101,7 +112,7 @@ pub enum BindingKind {
         bound_column_ids: SharedColumnIds,
         entry: Option<Arc<CatalogEntry>>,
         /// `rowid` and similar columns: `(column id, name, type)`.
-        virtual_columns: Vec<(u64, String, LogicalType)>,
+        virtual_columns: Vec<(u64, rustdb_common::ByteString, LogicalType)>,
     },
     /// Macro parameters or lambda parameters.
     Dummy {
@@ -126,11 +137,11 @@ pub struct Binding {
     /// The table index of the relation's columns.
     pub index: u64,
     pub types: Vec<LogicalType>,
-    pub names: Vec<String>,
-    name_map: CaseInsensitiveMap<u64>,
+    pub names: Vec<rustdb_common::ByteString>,
+    name_map: CaseInsensitiveMap<u64, rustdb_common::ByteString>,
     /// The catalog and schema of the binding's catalog entry (DuckDB reads them from
     /// `GetStandardEntry()->ParentCatalog()` / `ParentSchema()`), whatever its alias.
-    pub entry_parent: Option<(String, String)>,
+    pub entry_parent: Option<(ByteString, ByteString)>,
 }
 
 impl Binding {
@@ -139,7 +150,7 @@ impl Binding {
         kind: BindingKind,
         alias: BindingAlias,
         types: Vec<LogicalType>,
-        names: Vec<String>,
+        names: Vec<rustdb_common::ByteString>,
         index: u64,
     ) -> Result<Self> {
         let mut binding = Self {
@@ -165,10 +176,17 @@ impl Binding {
     fn initialize(&mut self) -> Result<()> {
         for (i, name) in self.names.iter().enumerate() {
             if self.name_map.contains_key(name) {
-                return Err(Error::binder(format!(
-                    "table \"{}\" has duplicate column name \"{name}\"",
-                    self.alias.alias
-                )));
+                return Err(Error::new_bytes(
+                    rustdb_common::ErrorKind::Binder,
+                    [
+                        b"table \"".as_slice(),
+                        self.alias.alias.as_bytes(),
+                        b"\" has duplicate column name \"",
+                        name.as_bytes(),
+                        b"\"",
+                    ]
+                    .concat(),
+                ));
             }
             self.name_map.insert(name.clone(), i as u64);
         }
@@ -176,12 +194,16 @@ impl Binding {
     }
 
     /// Macro parameter bindings (DuckDB's `DummyBinding`).
-    pub fn dummy(types: Vec<LogicalType>, names: Vec<String>, dummy_name: &str) -> Result<Self> {
+    pub fn dummy(
+        types: Vec<LogicalType>,
+        names: Vec<ByteString>,
+        dummy_name: impl AsRef<[u8]>,
+    ) -> Result<Self> {
         Self::new(
             BindingKind::Dummy {
                 arguments: Vec::new(),
             },
-            BindingAlias::new(format!("{DUMMY_NAME}{dummy_name}")),
+            BindingAlias::new(byte_format!("{DUMMY_NAME}{}", dummy_name.as_ref())),
             types,
             names,
             u64::MAX,
@@ -189,39 +211,63 @@ impl Binding {
     }
 
     /// The alias (DuckDB's `GetAlias`).
-    pub fn alias_name(&self) -> &str {
+    pub fn alias_name(&self) -> &ByteString {
         &self.alias.alias
     }
 
     /// The index of `column_name` (case-insensitive).
-    pub fn binding_index(&self, column_name: &str) -> Option<u64> {
+    pub fn binding_index(&self, column_name: impl AsRef<[u8]>) -> Option<u64> {
         self.name_map.get(column_name).copied()
     }
 
-    pub fn has_matching_binding(&self, column_name: &str) -> bool {
+    pub fn has_matching_binding(&self, column_name: impl AsRef<[u8]>) -> bool {
         self.binding_index(column_name).is_some()
     }
 
     /// The error for a column this binding lacks (DuckDB's `ColumnNotFoundError`).
-    pub fn column_not_found_error(&self, column_name: &str) -> Error {
+    pub fn column_not_found_error(&self, column_name: impl AsRef<[u8]>) -> Error {
+        let column_name = column_name.as_ref();
         match &self.kind {
             BindingKind::Table { .. } => {
-                let candidates = candidates_error_message(&self.names, column_name, "Candidate bindings: ");
-                Error::binder(format!(
-                    "Table \"{}\" does not have a column named \"{column_name}\"\n{candidates}",
-                    self.alias.alias
-                ))
+                let candidates = rustdb_common::string_util::candidates_error_message_bytes(
+                    &self.names,
+                    column_name,
+                    b"Candidate bindings: ",
+                );
+                Error::new_bytes(
+                    rustdb_common::ErrorKind::Binder,
+                    [
+                        b"Table \"".as_slice(),
+                        self.alias.alias.as_bytes(),
+                        b"\" does not have a column named \"",
+                        column_name,
+                        b"\"\n",
+                        candidates.as_bytes(),
+                    ]
+                    .concat(),
+                )
             }
-            _ => Error::binder(format!(
-                "Values list \"{}\" does not have a column named \"{column_name}\"",
-                self.alias.alias
-            )),
+            _ => Error::new_bytes(
+                ErrorKind::Binder,
+                byte_format!(
+                    "Values list \"{}\" does not have a column named \"{column_name}\"",
+                    self.alias.alias
+                )
+                .into_bytes(),
+            ),
         }
     }
 
     /// Binds `column_name` (the last part of `names`) to a column reference
     /// (DuckDB's `Binding::Bind`); `alias` is the reference's alias, if any.
-    pub fn bind(&mut self, column_name: &str, alias: &str, depth: u64) -> Result<Expression, Error> {
+    pub fn bind(
+        &mut self,
+        column_name: impl AsRef<[u8]>,
+        alias: impl AsRef<[u8]>,
+        depth: u64,
+    ) -> Result<Expression, Error> {
+        let column_name = column_name.as_ref();
+        let alias = alias.as_ref();
         let Some(column_index) = self.binding_index(column_name) else {
             return Err(self.column_not_found_error(column_name));
         };
@@ -236,9 +282,9 @@ impl Binding {
             (
                 ty,
                 if alias.is_empty() {
-                    column_name.to_owned()
+                    rustdb_common::ByteString::from(column_name)
                 } else {
-                    alias.to_owned()
+                    rustdb_common::ByteString::from(alias)
                 },
             )
         } else {
@@ -247,7 +293,7 @@ impl Binding {
             let name = if alias.is_empty() {
                 self.names.get(index).cloned().unwrap_or_default()
             } else {
-                alias.to_owned()
+                rustdb_common::ByteString::from(alias)
             };
             (ty, name)
         };
@@ -270,27 +316,38 @@ impl Binding {
     }
 
     /// The macro argument for a parameter reference (DuckDB's `DummyBinding::ParamToArg`).
-    pub fn param_to_arg(&self, column_name: &str, alias: &str) -> Result<rustdb_ast::ParsedExpression> {
-        let index = self
-            .binding_index(column_name)
-            .ok_or_else(|| Error::internal(format!("Column {column_name} not found in macro")))?;
+    pub fn param_to_arg(
+        &self,
+        column_name: impl AsRef<[u8]>,
+        alias: impl AsRef<[u8]>,
+    ) -> Result<rustdb_ast::ParsedExpression> {
+        let column_name = column_name.as_ref();
+        let alias = alias.as_ref();
+        let index = self.binding_index(column_name).ok_or_else(|| {
+            Error::new_bytes(
+                ErrorKind::Internal,
+                byte_format!("Column {column_name} not found in macro").into_bytes(),
+            )
+        })?;
         let BindingKind::Dummy { arguments } = &self.kind else {
             return Err(Error::internal(
                 "parameter of a binding that is not a macro binding",
             ));
         };
-        let mut argument = arguments
-            .get(index as usize)
-            .cloned()
-            .ok_or_else(|| Error::internal(format!("Column {column_name} not found in macro")))?;
-        alias.clone_into(&mut argument.alias);
+        let mut argument = arguments.get(index as usize).cloned().ok_or_else(|| {
+            Error::new_bytes(
+                ErrorKind::Internal,
+                byte_format!("Column {column_name} not found in macro").into_bytes(),
+            )
+        })?;
+        argument.alias = alias.into();
         Ok(argument)
     }
 
     /// Records the catalog and schema the binding's catalog entry belongs to.
     #[must_use]
-    pub fn with_entry_parent(mut self, catalog: &str, schema: &str) -> Self {
-        self.entry_parent = Some((catalog.to_owned(), schema.to_owned()));
+    pub fn with_entry_parent(mut self, catalog: impl AsRef<[u8]>, schema: impl AsRef<[u8]>) -> Self {
+        self.entry_parent = Some((catalog.as_ref().into(), schema.as_ref().into()));
         self
     }
 
@@ -320,7 +377,11 @@ impl Binding {
     }
 
     /// Sets names and types once a lazily bound CTE is known.
-    pub fn set_columns(&mut self, names: Vec<String>, types: Vec<LogicalType>) -> Result<()> {
+    pub fn set_columns(
+        &mut self,
+        names: Vec<rustdb_common::ByteString>,
+        types: Vec<LogicalType>,
+    ) -> Result<()> {
         self.names = names;
         self.types = types;
         self.name_map = CaseInsensitiveMap::default();

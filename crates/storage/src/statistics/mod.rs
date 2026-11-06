@@ -21,7 +21,7 @@ pub use variant::{
 
 use std::fmt;
 
-use rustdb_common::Result;
+use rustdb_common::{ByteString, Result};
 use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Value};
 
 /// What a filter evaluates to on a set of values, judged from statistics
@@ -177,9 +177,10 @@ fn bound_text(bytes: &[u8]) -> String {
     result
 }
 
-impl fmt::Display for BaseStatistics {
+impl BaseStatistics {
     /// DuckDB's `BaseStatistics::ToString`.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn write_statistics_bytes(&self, f: &mut ByteString) -> fmt::Result {
+        use rustdb_common::byte_write as write;
         match &self.data {
             StatsData::Base => {}
             StatsData::Numeric(numeric) => write!(
@@ -204,16 +205,18 @@ impl fmt::Display for BaseStatistics {
             StatsData::Variant(variant) => write!(f, "{variant}")?,
             StatsData::List(child) | StatsData::Array(child) => write!(f, "[{child}]")?,
             StatsData::Struct(children) => {
-                f.write_str(" {")?;
+                f.write_bytes(" {")?;
                 let names = self.ty.struct_children().unwrap_or_default();
                 for (index, child) in children.iter().enumerate() {
                     if index > 0 {
-                        f.write_str(", ")?;
+                        f.write_bytes(", ")?;
                     }
-                    let name = names.get(index).map_or("", |(name, _)| name.as_str());
+                    let name = names
+                        .get(index)
+                        .map_or(b"".as_slice(), |(name, _)| name.as_bytes());
                     write!(f, "{name}: {child}")?;
                 }
-                f.write_str("}")?;
+                f.write_bytes("}")?;
             }
         }
         write!(
@@ -225,6 +228,34 @@ impl fmt::Display for BaseStatistics {
             write!(f, "[Approx Unique: {}]", self.distinct_count)?;
         }
         Ok(())
+    }
+}
+
+trait StatisticsByteWriter {
+    fn write_bytes(&mut self, bytes: impl AsRef<[u8]>) -> fmt::Result;
+}
+impl StatisticsByteWriter for ByteString {
+    fn write_bytes(&mut self, bytes: impl AsRef<[u8]>) -> fmt::Result {
+        self.push_bytes(bytes);
+        Ok(())
+    }
+}
+impl BaseStatistics {
+    pub fn to_bytes(&self) -> ByteString {
+        let mut out = ByteString::new();
+        let _ = self.write_statistics_bytes(&mut out);
+        out
+    }
+}
+impl rustdb_common::byte_format::NativeByteFormat for BaseStatistics {
+    fn append_native_bytes(&self, output: &mut ByteString) {
+        let _ = self.write_statistics_bytes(output);
+    }
+}
+impl fmt::Display for BaseStatistics {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let bytes = self.to_bytes();
+        f.write_str(bytes.to_str().map_err(|_| fmt::Error)?)
     }
 }
 

@@ -57,9 +57,8 @@ impl<'a> Scanner<'a> {
     }
 
     /// Takes the literal buffer as a string.
-    fn take_literal(&mut self) -> Result<String> {
-        String::from_utf8(std::mem::take(&mut self.lit))
-            .map_err(|_| crate::error::internal("string literal is not valid UTF-8"))
+    fn take_literal(&mut self) -> rustdb_common::ByteString {
+        std::mem::take(&mut self.lit).into()
     }
 
     /// `{xqstart}`: a standard string `'...'`; `body` is just past the opening quote.
@@ -82,7 +81,7 @@ impl<'a> Scanner<'a> {
                 i = next;
             } else {
                 self.pos = i + 1;
-                let text = self.take_literal()?;
+                let text = self.take_literal();
                 return Ok(self.token(token::SCONST, SemValue::Str(Some(text)), start));
             }
         }
@@ -113,7 +112,7 @@ impl<'a> Scanner<'a> {
                 continue;
             }
             self.pos = i + 1;
-            let text = self.take_literal()?;
+            let text = self.take_literal();
             let code = if marker == b'b' {
                 token::BCONST
             } else {
@@ -144,7 +143,7 @@ impl<'a> Scanner<'a> {
                         if saw_non_ascii {
                             return Err(unimplemented("pg_verifymbstr"));
                         }
-                        let text = self.take_literal()?;
+                        let text = self.take_literal();
                         return Ok(self.token(token::SCONST, SemValue::Str(Some(text)), start));
                     }
                 }
@@ -287,7 +286,7 @@ impl<'a> Scanner<'a> {
             if self.lit.is_empty() {
                 return Err(self.yyerror("zero-length delimited identifier", start, self.pos));
             }
-            let text = self.take_literal()?;
+            let text = self.take_literal();
             return Ok(self.token(token::IDENT, SemValue::Str(Some(text)), start));
         }
     }

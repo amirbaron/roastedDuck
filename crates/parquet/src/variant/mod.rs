@@ -48,7 +48,7 @@ fn read_le(length_in_bytes: usize, data: &[u8], offset: &mut usize) -> Result<us
 /// The dictionary of a variant `metadata` buffer (`VariantMetadata`).
 #[derive(Debug)]
 pub struct VariantMetadata {
-    pub strings: Vec<String>,
+    pub strings: Vec<rustdb_common::ByteString>,
     /// The length of the metadata in its buffer (`total_size`).
     pub total_size: usize,
 }
@@ -83,7 +83,7 @@ impl VariantMetadata {
             let Some(bytes) = start.zip(end).and_then(|(start, end)| metadata.get(start..end)) else {
                 return Err(io_error("Corrupted VARIANT 'metadata' buffer"));
             };
-            strings.push(String::from_utf8_lossy(bytes).into_owned());
+            strings.push(bytes.into());
             last_offset = next_offset;
         }
         Ok(Self {
@@ -272,8 +272,8 @@ fn element_count(data: &[u8], offset: usize, is_large: bool) -> Result<(usize, u
 /// `GetParquetVariantType`: the Parquet layout of an unshredded VARIANT.
 fn parquet_variant_type() -> LogicalType {
     LogicalType::struct_type(vec![
-        ("metadata".to_owned(), LogicalType::BLOB),
-        ("value".to_owned(), LogicalType::BLOB),
+        ("metadata".into(), LogicalType::BLOB),
+        ("value".into(), LogicalType::BLOB),
     ])
     .with_alias("PARQUET_VARIANT")
 }
@@ -289,7 +289,7 @@ pub fn functions() -> Vec<ScalarFunctionSet> {
             let input = args.column(0);
             let count = args.len();
             let rows = (0..count)
-                .map(|row| VariantData::from_value(&input.get_value(row)))
+                .map(|row| VariantData::from_vector(input, row))
                 .collect::<Result<Vec<_>>>()?;
             let ty = parquet_variant_type();
             let values = write::to_parquet_variant(&rows, None, &ty)?;

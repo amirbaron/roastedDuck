@@ -3,7 +3,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use rustdb_common::tree_renderer::{RenderParams, RenderTreeNode};
-use rustdb_common::{Error, Result};
+use rustdb_common::{ByteString, Error, Result};
 use rustdb_types::{DataChunk, LogicalType, Value};
 
 use crate::ExecutionContext;
@@ -135,6 +135,13 @@ pub trait PhysicalOperator: OperatorAny + Send + Sync + fmt::Debug + 'static {
     fn types(&self) -> &[LogicalType];
     fn children(&self) -> &[PhysicalRef];
 
+    /// Whether pipeline output vectors need writable row storage before execution.
+    /// Operators returning complete replacement vectors can start with typed empty
+    /// vectors instead of allocating buffers that they immediately discard.
+    fn preallocate_output(&self) -> bool {
+        true
+    }
+
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         None
     }
@@ -257,48 +264,54 @@ pub fn set_estimated_cardinality(result: &mut RenderParams, estimated_cardinalit
 
 /// The names of aggregates with their filters, one per line (the aggregate loops of
 /// DuckDB's aggregate `ParamsToString`).
-pub fn aggregate_names(aggregates: &[rustdb_planner::expression::BoundAggregateExpression]) -> String {
-    aggregates
-        .iter()
-        .map(|aggregate| {
-            let filter = aggregate.filter.as_ref().map(rustdb_planner::Expression::name);
-            let expression = rustdb_planner::Expression::new(
-                rustdb_planner::ExpressionType::BoundAggregate,
-                aggregate.function.return_type.clone(),
-                rustdb_planner::ExpressionKind::Aggregate(Box::new(aggregate.clone())),
-            );
-            match filter {
-                Some(filter) => format!("{} Filter: {filter}", expression.name()),
-                None => expression.name(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+pub fn aggregate_names(aggregates: &[rustdb_planner::expression::BoundAggregateExpression]) -> ByteString {
+    ByteString::join(
+        &aggregates
+            .iter()
+            .map(|aggregate| {
+                let filter = aggregate.filter.as_ref().map(rustdb_planner::Expression::name);
+                let expression = rustdb_planner::Expression::new(
+                    rustdb_planner::ExpressionType::BoundAggregate,
+                    aggregate.function.return_type.clone(),
+                    rustdb_planner::ExpressionKind::Aggregate(Box::new(aggregate.clone())),
+                );
+                match filter {
+                    Some(filter) => rustdb_common::byte_format!("{} Filter: {filter}", expression.name()),
+                    None => expression.name(),
+                }
+            })
+            .collect::<Vec<_>>(),
+        b"\n",
+    )
 }
 
 /// Sort keys as `expression ASC|DESC`, one per line (DuckDB's `PhysicalOrder::ParamsToString`).
-pub fn order_names(orders: &[rustdb_planner::expression::BoundOrderByNode]) -> String {
-    orders
-        .iter()
-        .map(|order| {
-            let direction = if order.order_type == rustdb_ast::OrderType::Descending {
-                "DESC"
-            } else {
-                "ASC"
-            };
-            format!("{} {direction}", order.expression)
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+pub fn order_names(orders: &[rustdb_planner::expression::BoundOrderByNode]) -> ByteString {
+    ByteString::join(
+        &orders
+            .iter()
+            .map(|order| {
+                let direction = if order.order_type == rustdb_ast::OrderType::Descending {
+                    "DESC"
+                } else {
+                    "ASC"
+                };
+                rustdb_common::byte_format!("{} {direction}", order.expression.to_bytes())
+            })
+            .collect::<Vec<_>>(),
+        b"\n",
+    )
 }
 
 /// The names of expressions, one per line (the `GetName` loops of `ParamsToString`).
-pub fn expression_names(expressions: &[rustdb_planner::Expression]) -> String {
-    expressions
-        .iter()
-        .map(rustdb_planner::Expression::name)
-        .collect::<Vec<_>>()
-        .join("\n")
+pub fn expression_names(expressions: &[rustdb_planner::Expression]) -> ByteString {
+    ByteString::join(
+        &expressions
+            .iter()
+            .map(rustdb_planner::Expression::name)
+            .collect::<Vec<_>>(),
+        b"\n",
+    )
 }
 
 /// Data materialised by a sink and read by scans elsewhere in the plan.
@@ -336,7 +349,11 @@ pub trait Source: PhysicalOperator {
 
     /// What `EXPLAIN ANALYZE` adds to the operator's parameters once a thread has
     /// exhausted the source (`ExtraSourceParams`).
-    fn extra_source_params(&self, global: &Self::Global, local: &Self::Local) -> Vec<(String, String)> {
+    fn extra_source_params(
+        &self,
+        global: &Self::Global,
+        local: &Self::Local,
+    ) -> Vec<(rustdb_common::ByteString, rustdb_common::ByteString)> {
         let _ = (global, local);
         Vec::new()
     }
@@ -543,7 +560,7 @@ pub trait ErasedSource {
         &self,
         global: &(dyn Any + Send + Sync),
         local: &(dyn Any + Send),
-    ) -> Result<Vec<(String, String)>>;
+    ) -> Result<Vec<(rustdb_common::ByteString, rustdb_common::ByteString)>>;
     fn scan_metrics(
         &self,
         global: &(dyn Any + Send + Sync),
@@ -609,7 +626,7 @@ impl<T: Source> ErasedSource for T {
         &self,
         global: &(dyn Any + Send + Sync),
         local: &(dyn Any + Send),
-    ) -> Result<Vec<(String, String)>> {
+    ) -> Result<Vec<(rustdb_common::ByteString, rustdb_common::ByteString)>> {
         let name = self.name();
         let local = local
             .downcast_ref::<T::Local>()

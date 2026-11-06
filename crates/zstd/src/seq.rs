@@ -162,7 +162,7 @@ impl SeqStore {
 }
 
 /// `ZSTD_LLcode`.
-fn ll_code(lit_length: u32) -> u32 {
+pub(crate) fn ll_code(lit_length: u32) -> u32 {
     #[rustfmt::skip]
     const LL_CODE: [u8; 64] = [
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
@@ -178,7 +178,7 @@ fn ll_code(lit_length: u32) -> u32 {
 }
 
 /// `ZSTD_MLcode` of a match length minus `MINMATCH`.
-fn ml_code(ml_base: u32) -> u32 {
+pub(crate) fn ml_code(ml_base: u32) -> u32 {
     #[rustfmt::skip]
     const ML_CODE: [u8; 128] = [
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,

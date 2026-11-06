@@ -123,11 +123,9 @@ pub unsafe extern "C" fn duckdb_to_arrow_schema(
         };
         schema_types.push(ty.clone());
         // SAFETY: as above, each name is a C string.
-        schema_names.push(if name.is_null() {
-            String::new()
-        } else {
-            unsafe { lossy_str(name) }
-        });
+        schema_names.push(rustdb_common::ByteString::from(
+            unsafe { crate::helper::opt_bytes(name) }.unwrap_or_default(),
+        ));
     }
     match catch(|| {
         rustdb_arrow::to_arrow_schema(out_schema, &schema_types, &schema_names, &options.properties)
@@ -258,14 +256,14 @@ pub unsafe extern "C" fn duckdb_connection_get_arrow_options(
 }
 
 /// `duckdb_arrow_options duckdb_result_get_arrow_options(duckdb_result *result)`
-/// (capi/result-c.cpp): the options of the connection the result came from.
+/// (capi/result-c.cpp): the conversion options captured when the result was produced.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn duckdb_result_get_arrow_options(result: *mut DuckdbResult) -> DuckdbArrowOptions {
     // SAFETY: `result` is NULL or a result filled in by this library.
     let Some(data) = (unsafe { result_data(result) }) else {
         return std::ptr::null_mut();
     };
-    let properties = data.context().lock().client_properties();
+    let properties = data.properties.clone();
     Box::into_raw(Box::new(ArrowOptionsWrapper { properties }))
 }
 
@@ -302,8 +300,16 @@ pub unsafe extern "C" fn duckdb_query_arrow(
     if out_result.is_null() {
         return DuckdbState::DuckDBError;
     }
-    let outcome = catch(|| context.lock().query(sql));
-    let properties = context.lock().client_properties();
+    let (outcome, properties) = {
+        let mut connection = context.lock();
+        let outcome = catch(|| connection.query(sql));
+        let properties = if outcome.is_ok() {
+            connection.client_properties()
+        } else {
+            ClientProperties::default()
+        };
+        (outcome, properties)
+    };
     let wrapper = ArrowResultWrapper::new(outcome, properties);
     let state = DuckdbState::from_ok(wrapper.result.is_ok());
     // SAFETY: checked non-null above.
@@ -355,7 +361,7 @@ pub unsafe extern "C" fn duckdb_prepared_arrow_schema(
     let properties = wrapper.context.lock().client_properties();
     let count = statement.parameter_count();
     let types = vec![LogicalType::SQLNULL; count];
-    let names: Vec<String> = (0..count).map(|index| index.to_string()).collect();
+    let names: Vec<rustdb_common::ByteString> = (0..count).map(|index| index.to_string().into()).collect();
     // SAFETY: `out_schema` points to NULL or an Arrow schema.
     let Some(schema) = (unsafe { (*out_schema).as_mut() }) else {
         return DuckdbState::DuckDBError;
@@ -410,7 +416,7 @@ pub unsafe extern "C" fn duckdb_query_arrow_array(
 
 /// `void duckdb_result_arrow_array(duckdb_result result, duckdb_data_chunk chunk,
 /// duckdb_arrow_array *out_array)` (capi/arrow-c.cpp): a chunk of the result as an Arrow
-/// array, converted with the options of the result's connection.
+/// array, converted with the options captured in the result.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn duckdb_result_arrow_array(
     result: DuckdbResult,
@@ -431,9 +437,8 @@ pub unsafe extern "C" fn duckdb_result_arrow_array(
     }) else {
         return;
     };
-    let properties = data.context().lock().client_properties();
     // DuckDB lets a failed conversion escape; the array is then left alone.
-    if let Ok(array) = catch(|| rustdb_arrow::to_arrow_array(chunk, &properties)) {
+    if let Ok(array) = catch(|| rustdb_arrow::to_arrow_array(chunk, &data.properties)) {
         *target = array;
     }
 }
@@ -536,14 +541,21 @@ pub unsafe extern "C" fn duckdb_execute_prepared_arrow(
     let (Ok(statement), false) = (&wrapper.statement, out_result.is_null()) else {
         return DuckdbState::DuckDBError;
     };
-    let outcome = catch(|| {
+    let (outcome, properties) = {
         let mut connection = wrapper.context.lock();
-        match connection.execute_prepared(statement, &wrapper.values, false)? {
-            QueryResult::Materialized(result) => Ok(result),
-            QueryResult::Stream(stream) => connection.materialize(&stream),
-        }
-    });
-    let properties = wrapper.context.lock().client_properties();
+        let outcome = catch(
+            || match connection.execute_prepared(statement, &wrapper.values, false)? {
+                QueryResult::Materialized(result) => Ok(result),
+                QueryResult::Stream(stream) => connection.materialize(&stream),
+            },
+        );
+        let properties = if outcome.is_ok() {
+            connection.client_properties()
+        } else {
+            ClientProperties::default()
+        };
+        (outcome, properties)
+    };
     let arrow_wrapper = ArrowResultWrapper::new(outcome, properties);
     let state = DuckdbState::from_ok(arrow_wrapper.result.is_ok());
     // SAFETY: checked non-null above.
@@ -839,7 +851,7 @@ mod tests {
         let types = vec![LogicalType::INTEGER, LogicalType::VARCHAR];
         let options = ClientProperties::default();
         let mut schema = ArrowSchema::empty();
-        to_arrow_schema(&mut schema, &types, &["i".to_owned(), "s".to_owned()], &options).unwrap();
+        to_arrow_schema(&mut schema, &types, &["i".into(), "s".into()], &options).unwrap();
         let mut appender =
             ArrowAppender::new(types.clone(), chunk_count * STANDARD_VECTOR_SIZE, options).unwrap();
         for chunk_index in 0..chunk_count {

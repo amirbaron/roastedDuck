@@ -5,9 +5,10 @@ use rustdb_ast::{
     InsertStatement, ParsedExpression, ParsedExpressionKind, QueryNode, QueryNodeKind, SelectNode,
     StarExpression, TableRef, TableRefKind,
 };
+use rustdb_buffer::parse_memory_limit;
 use rustdb_catalog::{CatalogType, EntryKind};
-use rustdb_common::string_util::candidates_message;
-use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
+use rustdb_common::string_util::candidates_message_bytes;
+use rustdb_common::{ByteString, CaseInsensitiveMap, Error, ErrorKind, Result};
 use rustdb_function::cast::{ValueCast, implicit_cast_cost};
 use rustdb_function::copy::{CopyFromBindInput, CopyFunctionBindInput, CopyToSelectInput, CopyToType};
 use rustdb_function::{CopyFunction, CopyOption, CopyOptionMode};
@@ -37,7 +38,7 @@ fn boolean_arg(scope: &BindScope<'_>, values: &[Value]) -> Result<bool> {
 /// `BindCopyOption`: evaluates one option to its values.
 fn bind_copy_option(
     scope: &mut BindScope<'_>,
-    name: &str,
+    name: &[u8],
     expr: Option<&ParsedExpression>,
 ) -> Result<Vec<Value>> {
     let Some(expr) = expr else {
@@ -54,7 +55,7 @@ fn bind_copy_option(
     {
         return Ok(vec![Value::varchar("*")]);
     }
-    let is_partition_by = name.eq_ignore_ascii_case("partition_by");
+    let is_partition_by = name.eq_ignore_ascii_case(b"partition_by");
     let mut expr = expr.clone();
     let bound = {
         let (inner, outer) = scope.split();
@@ -69,7 +70,7 @@ fn bind_copy_option(
     }
     let value = scope.context.evaluator.evaluate_scalar(&bound)?;
     if value.is_null() {
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "NULL is not supported as a valid option for COPY option \"{name}\""
         )));
     }
@@ -89,23 +90,23 @@ fn bind_copy_option(
     clippy::case_sensitive_file_extension_comparisons,
     reason = "the path is lowercased"
 )]
-fn extract_format(file_path: &str) -> String {
-    let mut format = file_path.to_lowercase();
-    if format.ends_with(".gz") {
+fn extract_format(file_path: &[u8]) -> ByteString {
+    let mut format = file_path.to_ascii_lowercase();
+    if format.ends_with(b".gz") {
         format.truncate(format.len() - 3);
-    } else if format.ends_with(".zst") {
+    } else if format.ends_with(b".zst") {
         format.truncate(format.len() - 4);
     }
-    match format.rfind('.') {
-        Some(dot) if dot + 1 < format.len() => format[dot + 1..].to_owned(),
-        _ => String::new(),
+    match format.iter().rposition(|byte| *byte == b'.') {
+        Some(dot) if dot + 1 < format.len() => format[dot + 1..].into(),
+        _ => ByteString::new(),
     }
 }
 
 /// `BindCopyOptions`: evaluates the file name and the options.
 pub(super) fn bind_copy_options(scope: &mut BindScope<'_>, info: &mut CopyInfo) -> Result<()> {
     if let Some(expr) = info.file_path_expression.take() {
-        let inputs = bind_copy_option(scope, "filename", Some(&expr))?;
+        let inputs = bind_copy_option(scope, b"filename", Some(&expr))?;
         if inputs.len() != 1 || inputs[0].logical_type().id() != LogicalTypeId::Varchar {
             return Err(Error::internal(
                 "Unsupported parameter type for filename: expected e.g. TARGET 'file.parquet'",
@@ -116,7 +117,7 @@ pub(super) fn bind_copy_options(scope: &mut BindScope<'_>, info: &mut CopyInfo) 
                 "Both a file path and a file path expression were provided for COPY - only one of the two can be provided",
             ));
         }
-        info.file_path = inputs[0].to_varchar()?;
+        info.file_path = inputs[0].to_varchar_bytes()?;
     }
     let parsed = std::mem::take(&mut info.parsed_options);
     for (name, expr) in parsed.iter() {
@@ -127,7 +128,7 @@ pub(super) fn bind_copy_options(scope: &mut BindScope<'_>, info: &mut CopyInfo) 
                     "Unsupported parameter type for FORMAT: expected e.g. FORMAT 'csv', 'parquet'",
                 ));
             }
-            info.format = inputs[0].to_varchar()?.to_lowercase();
+            info.format = inputs[0].to_varchar_bytes()?.to_ascii_lowercase();
             info.is_format_auto_detected = false;
             continue;
         }
@@ -140,7 +141,7 @@ pub(super) fn bind_copy_options(scope: &mut BindScope<'_>, info: &mut CopyInfo) 
 }
 
 /// `IsFormatExtensionKnown`.
-fn format_extension_error(format: &str) -> Option<Error> {
+fn format_extension_error(format: &[u8]) -> Option<Error> {
     const POSTFIXES: [(&str, &str); 9] = [
         ("parquet", "parquet"),
         ("json", "json"),
@@ -152,8 +153,8 @@ fn format_extension_error(format: &str) -> Option<Error> {
         ("xlsx", "excel"),
         ("avro", "avro"),
     ];
-    POSTFIXES.iter().find(|(name, _)| *name == format).map(|(name, extension)| {
-        Error::catalog(format!(
+    POSTFIXES.iter().find(|(name, _)| name.as_bytes() == format).map(|(name, extension)| {
+        Error::catalog(rustdb_common::byte_format!(
             "Copy Function with name \"{name}\" is not in the catalog, but it exists in the {extension} extension."
         ))
     })
@@ -162,7 +163,7 @@ fn format_extension_error(format: &str) -> Option<Error> {
 /// Looks up a COPY format in the system catalog.
 pub(super) fn copy_function(
     scope: &BindScope<'_>,
-    format: &str,
+    format: &[u8],
     if_exists: bool,
 ) -> Result<Option<CopyFunction>> {
     let found = scope
@@ -215,11 +216,11 @@ fn check_copy_options(scope: &BindScope<'_>, function: &CopyFunction, info: &mut
     for (provided_option, values) in options.iter_mut() {
         let Some(copy_option) = copy_options.get(provided_option) else {
             let candidates: Vec<String> = copy_options.iter().map(|(name, _)| name.to_owned()).collect();
-            let candidate_str = candidates_message(
+            let candidate_str = candidates_message_bytes(
                 &rustdb_common::string_util::top_n_jaro_winkler(&candidates, provided_option),
-                "Candidate options",
+                b"Candidate options",
             );
-            return Err(Error::not_implemented(format!(
+            return Err(Error::not_implemented(rustdb_common::byte_format!(
                 "Unrecognized option \"{provided_option}\" for {}\n{candidate_str}",
                 info.format
             )));
@@ -230,7 +231,7 @@ fn check_copy_options(scope: &BindScope<'_>, function: &CopyFunction, info: &mut
             } else {
                 ("writing", "reading")
             };
-            return Err(Error::invalid_input(format!(
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "Option \"{provided_option}\" is not supported for {doing} - only for {only}"
             )));
         }
@@ -241,13 +242,13 @@ fn check_copy_options(scope: &BindScope<'_>, function: &CopyFunction, info: &mut
             if copy_option.ty.id() == LogicalTypeId::Boolean {
                 continue;
             }
-            return Err(Error::invalid_input(format!(
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "Copy option \"{provided_option}\" requires an argument of type {}",
                 copy_option.ty
             )));
         }
         if values.len() > 1 {
-            return Err(Error::invalid_input(format!(
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "Copy option \"{provided_option}\" did not expect a list as argument"
             )));
         }
@@ -275,7 +276,7 @@ fn check_copy_options(scope: &BindScope<'_>, function: &CopyFunction, info: &mut
             None
         };
         let Some(new_value) = cast else {
-            return Err(Error::invalid_input(format!(
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "Copy option \"{provided_option}\" expected an argument of type {} - the argument \"{}\" of type {original_type} could not be cast as this type",
                 copy_option.ty,
                 original.to_varchar().unwrap_or_default()
@@ -288,20 +289,20 @@ fn check_copy_options(scope: &BindScope<'_>, function: &CopyFunction, info: &mut
 }
 
 /// `ParseColumnsOrdered`: the positions of the named columns, in the given order.
-fn parse_columns_ordered(values: &[Value], names: &[String], option: &str) -> Result<Vec<usize>> {
+fn parse_columns_ordered(values: &[Value], names: &[ByteString], option: &str) -> Result<Vec<usize>> {
     if values.len() == 1 && values[0].as_str() == Some("*") {
         return Ok((0..names.len()).collect());
     }
     if values.is_empty() {
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "\"{option}\" expects a column list or * as parameter"
         )));
     }
     let mut result = Vec::with_capacity(values.len());
     for value in values {
-        let text = value.to_varchar()?;
+        let text = value.to_varchar_bytes()?;
         let Some(index) = names.iter().position(|name| name.eq_ignore_ascii_case(&text)) else {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "\"{option}\" expected to find {text}, but it was not found in the table"
             )));
         };
@@ -311,43 +312,13 @@ fn parse_columns_ordered(values: &[Value], names: &[String], option: &str) -> Re
 }
 
 /// A memory size like `'1MB'` (DuckDB's `DBConfig::ParseMemoryLimit`).
-fn parse_memory_limit(text: &str) -> Result<u64> {
-    let text = text.trim().to_lowercase();
-    let split = text
-        .find(|c: char| !c.is_ascii_digit() && c != '.')
-        .unwrap_or(text.len());
-    let (number, unit) = text.split_at(split);
-    let number: f64 = number
-        .parse()
-        .map_err(|_| Error::parser(format!("Unable to parse memory limit \"{text}\"")))?;
-    let multiplier: f64 = match unit.trim() {
-        "" | "b" | "byte" | "bytes" => 1.0,
-        "kb" | "kilobyte" | "kilobytes" => 1000.0,
-        "mb" | "megabyte" | "megabytes" => 1e6,
-        "gb" | "gigabyte" | "gigabytes" => 1e9,
-        "tb" | "terabyte" | "terabytes" => 1e12,
-        "kib" => 1024.0,
-        "mib" => 1024.0 * 1024.0,
-        "gib" => 1024.0 * 1024.0 * 1024.0,
-        "tib" => 1024.0 * 1024.0 * 1024.0 * 1024.0,
-        _ => {
-            return Err(Error::parser(format!(
-                "Unknown unit for memory limit: {}",
-                unit.trim()
-            )));
-        }
-    };
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    Ok((number * multiplier) as u64)
-}
-
 /// `SELECT * FROM table` (or the listed columns) for `COPY table TO ...`.
 fn table_select(info: &CopyInfo) -> QueryNode {
     let select_list = if info.select_list.is_empty() {
         vec![ParsedExpression::new(
             ExpressionType::Star,
             ParsedExpressionKind::Star(Box::new(StarExpression {
-                relation_name: String::new(),
+                relation_name: ByteString::new(),
                 exclude_list: Vec::new(),
                 replace_list: CaseInsensitiveMap::default(),
                 rename_list: rustdb_common::OrderedMap::default(),
@@ -367,7 +338,8 @@ fn table_select(info: &CopyInfo) -> QueryNode {
         kind: QueryNodeKind::Select(Box::new(SelectNode {
             select_list,
             from_table: Box::new(TableRef {
-                alias: String::new(),
+                external_dependency: rustdb_ast::ExternalDependency::default(),
+                alias: ByteString::new(),
                 sample: None,
                 query_location: None,
                 kind: TableRefKind::BaseTable(Box::new(rustdb_ast::BaseTableRef {
@@ -404,15 +376,16 @@ pub fn bind_copy_as(
     if !info.is_from && info.select_statement.is_none() {
         info.select_statement = Some(Box::new(table_select(info)));
     }
-    let function =
-        if let Some(function) = copy_function(scope, &info.format.clone(), info.is_format_auto_detected)? {
-            function
-        } else {
-            if let Some(error) = format_extension_error(&info.format) {
-                return Err(error);
-            }
-            copy_function(scope, "csv", false)?.ok_or_else(|| Error::internal("csv copy function missing"))?
-        };
+    let function = if let Some(function) =
+        copy_function(scope, &info.format.clone(), info.is_format_auto_detected)?
+    {
+        function
+    } else {
+        if let Some(error) = format_extension_error(&info.format) {
+            return Err(error);
+        }
+        copy_function(scope, b"csv", false)?.ok_or_else(|| Error::internal("csv copy function missing"))?
+    };
     // Formats without an option list (DuckDB's `copy_options == nullptr`) check their
     // options themselves.
     if !function.options.is_empty() {
@@ -457,10 +430,10 @@ fn bind_copy_plan(
         types: &bound.types,
         options: &info.options,
     })?;
-    let select_list =
-        rustdb_parser::parse_expression_list(&rewrite.select_list, &rustdb_parser::ParserOptions::default())?;
+    let select_list = rewrite.select_list;
     let subquery = TableRef {
-        alias: String::new(),
+        external_dependency: rustdb_ast::ExternalDependency::default(),
+        alias: ByteString::new(),
         sample: None,
         query_location: None,
         kind: TableRefKind::Subquery(rustdb_ast::SubqueryRef {
@@ -507,7 +480,7 @@ fn bind_copy_to(
         .ok_or_else(|| Error::internal("COPY TO without a query"))?;
     let mut select_node = bind_node(scope, &mut node)?;
     let Some(copy_to_bind) = function.copy_to_bind.clone() else {
-        return Err(Error::not_implemented(format!(
+        return Err(Error::not_implemented(rustdb_common::byte_format!(
             "COPY TO is not supported for FORMAT \"{}\"",
             info.format
         )));
@@ -529,12 +502,12 @@ fn bind_copy_to(
     let mut file_extension = function.extension.clone();
     let original_options = std::mem::take(&mut info.options);
     for (name, values) in original_options.iter() {
-        match name.to_lowercase().as_str() {
-            "use_tmp_file" => {
+        match name.to_ascii_lowercase().as_bytes() {
+            b"use_tmp_file" => {
                 use_tmp_file = boolean_arg(scope, values)?;
                 user_set_use_tmp_file = true;
             }
-            loption @ ("overwrite_or_ignore" | "overwrite" | "append") => {
+            loption @ (b"overwrite_or_ignore" | b"overwrite" | b"append") => {
                 if seen_overwrite_mode {
                     return Err(Error::binder(
                         "Can only set one of OVERWRITE_OR_IGNORE, OVERWRITE or APPEND",
@@ -543,8 +516,8 @@ fn bind_copy_to(
                 seen_overwrite_mode = true;
                 if boolean_arg(scope, values)? {
                     overwrite_mode = match loption {
-                        "overwrite_or_ignore" => CopyOverwriteMode::OverwriteOrIgnore,
-                        "overwrite" => CopyOverwriteMode::Overwrite,
+                        b"overwrite_or_ignore" => CopyOverwriteMode::OverwriteOrIgnore,
+                        b"overwrite" => CopyOverwriteMode::Overwrite,
                         _ => {
                             if !seen_filepattern {
                                 filename_pattern.set_pattern("{uuid}");
@@ -554,54 +527,60 @@ fn bind_copy_to(
                     };
                 }
             }
-            "filename_pattern" => {
+            b"filename_pattern" => {
                 let Some(value) = values.first() else {
                     return Err(Error::new(ErrorKind::Io, "FILENAME_PATTERN cannot be empty"));
                 };
                 filename_pattern.set_pattern(&value.to_varchar()?);
                 seen_filepattern = true;
             }
-            "file_extension" => {
+            b"file_extension" => {
                 let Some(value) = values.first() else {
                     return Err(Error::new(ErrorKind::Io, "FILE_EXTENSION cannot be empty"));
                 };
                 file_extension = value.to_varchar()?;
             }
-            "per_thread_output" => per_thread_output = boolean_arg(scope, values)?,
-            "file_size_bytes" => {
+            b"per_thread_output" => per_thread_output = boolean_arg(scope, values)?,
+            b"file_size_bytes" => {
                 let Some(value) = values.first() else {
                     return Err(Error::binder("FILE_SIZE_BYTES cannot be empty"));
                 };
                 if function.copy_to_file_size.is_none() {
-                    return Err(Error::not_implemented(format!(
+                    return Err(Error::not_implemented(rustdb_common::byte_format!(
                         "FILE_SIZE_BYTES not implemented for FORMAT \"{}\"",
                         info.format
                     )));
                 }
-                file_size_bytes = Some(if value.logical_type().id() == LogicalTypeId::Varchar {
+                let size = if value.logical_type().id() == LogicalTypeId::Varchar {
                     parse_memory_limit(&value.to_varchar()?)?
                 } else {
                     let value = value.try_cast_as(&scope.context.casts, &LogicalType::UBIGINT, false)?;
                     value.as_u64().unwrap_or(0)
-                });
+                };
+                if size == u64::MAX {
+                    return Err(Error::internal(
+                        "optional_idx cannot be initialized with an invalid index",
+                    ));
+                }
+                file_size_bytes = Some(size);
             }
-            "partition_by" => {
+            b"partition_by" => {
                 partition_cols = parse_columns_ordered(values, &select_node.names, "partition_by")?;
             }
-            "return_files" => {
+            b"return_files" => {
                 if boolean_arg(scope, values)? {
                     return_type = CopyFunctionReturnType::ChangedRowsAndFileList;
                 }
             }
-            "preserve_order" => preserve_order = Some(boolean_arg(scope, values)?),
-            "return_stats" => {
+            b"preserve_order" => preserve_order = Some(boolean_arg(scope, values)?),
+            b"return_stats" => {
                 if boolean_arg(scope, values)? {
                     return_type = CopyFunctionReturnType::WrittenFileStatistics;
                 }
             }
-            "write_partition_columns" => write_partition_columns = boolean_arg(scope, values)?,
-            "write_empty_file" => write_empty_file = boolean_arg(scope, values)?,
-            "hive_file_pattern" => hive_file_pattern = boolean_arg(scope, values)?,
+            b"write_partition_columns" => write_partition_columns = boolean_arg(scope, values)?,
+            b"write_empty_file" => write_empty_file = boolean_arg(scope, values)?,
+            b"hive_file_pattern" => hive_file_pattern = boolean_arg(scope, values)?,
             _ => {
                 info.options.insert(name.to_owned(), values.clone());
             }
@@ -642,10 +621,22 @@ fn bind_copy_to(
             "No column to write as all columns are specified as partition columns. WRITE_PARTITION_COLUMNS option can be used to write partition columns.",
         ));
     }
-    let is_file_and_exists = std::path::Path::new(&info.file_path).is_file();
-    let is_stdout = info.file_path == "/dev/stdout";
-    if !user_set_use_tmp_file {
-        use_tmp_file = is_file_and_exists && !per_thread_output && partition_cols.is_empty() && !is_stdout;
+    if rustdb_function::file_system::is_remote_file(&info.file_path) {
+        // Remote filesystems do not provide the atomic rename used by local COPY.
+        // Like C++, disable temporary output even when explicitly requested.
+        use_tmp_file = false;
+    } else {
+        let is_file_and_exists = if let Some(fs) = rustdb_function::registered_files::lookup(&info.file_path)
+        {
+            fs.is_file(&info.file_path)?
+        } else {
+            rustdb_function::file_system::native_path(&info.file_path)?.is_file()
+        };
+        let is_stdout = info.file_path == "/dev/stdout";
+        if !user_set_use_tmp_file {
+            use_tmp_file =
+                is_file_and_exists && !per_thread_output && partition_cols.is_empty() && !is_stdout;
+        }
     }
     // The format may cast columns it cannot write (`copy_to_select`): a projection on
     // top of the query.
@@ -728,7 +719,7 @@ fn bind_copy_to(
     if return_type == CopyFunctionReturnType::WrittenFileStatistics
         && function.copy_to_get_written_statistics.is_none()
     {
-        return Err(Error::not_implemented(format!(
+        return Err(Error::not_implemented(rustdb_common::byte_format!(
             "RETURN_STATS is not supported for the \"{}\" copy format",
             info.format
         )));
@@ -784,7 +775,7 @@ fn bind_copy_from(
         function.copy_from_bind.clone(),
         function.copy_from_function.clone(),
     ) else {
-        return Err(Error::not_implemented(format!(
+        return Err(Error::not_implemented(rustdb_common::byte_format!(
             "COPY FROM is not supported for FORMAT \"{}\"",
             info.format
         )));
@@ -810,7 +801,7 @@ fn bind_copy_from(
         return Err(Error::internal("COPY FROM target is not a table"));
     };
     let expected_types = bound_insert.expected_types.clone();
-    let mut expected_names = vec![String::new(); expected_types.len()];
+    let mut expected_names = vec![ByteString::new(); expected_types.len()];
     if bound_insert.column_index_map.is_empty() {
         expected_names = table
             .physical_columns()
@@ -861,7 +852,7 @@ fn bind_copy_from(
     scope.with_properties(|properties| properties.return_type = StatementReturnType::ChangedRows);
     Ok(BoundStatement::new(
         bound.plan,
-        vec!["Count".to_owned()],
+        vec!["Count".into()],
         vec![LogicalType::BIGINT],
     ))
 }

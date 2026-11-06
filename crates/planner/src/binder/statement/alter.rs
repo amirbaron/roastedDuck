@@ -10,7 +10,7 @@ use rustdb_ast::{
     OnEntryNotFound, ParsedExpression, ParsedExpressionKind, TableColumnType, UniqueConstraint,
 };
 use rustdb_catalog::{CatalogType, EntryKind, TableColumn, TableEntry};
-use rustdb_common::{Error, LogicalIndex, Result};
+use rustdb_common::{ByteString, Error, LogicalIndex, Result};
 use rustdb_types::{LogicalType, LogicalTypeId};
 
 use super::super::expression::bind_logical_type_in_schema;
@@ -38,7 +38,7 @@ pub fn bind_alter(scope: &mut BindScope<'_>, info: &mut AlterInfo) -> Result<Bou
         AlterInfoKind::AlterDatabase(_) => {
             return Ok(BoundStatement::new(
                 LogicalOperator::new(LogicalKind::AlterDatabase(info.clone())),
-                vec!["Success".to_owned()],
+                vec!["Success".into()],
                 vec![LogicalType::BOOLEAN],
             ));
         }
@@ -81,7 +81,7 @@ pub fn bind_alter(scope: &mut BindScope<'_>, info: &mut AlterInfo) -> Result<Bou
                     let EntryKind::Table(table) = &found.entry.kind else {
                         if is_add_primary_key(alter) {
                             // `Binder::BindAlterAddIndex`.
-                            return Err(Error::binder(format!(
+                            return Err(Error::binder(rustdb_common::byte_format!(
                                 "Cannot execute the `ALTER TABLE` statement on `{}`, only `Table` entries are accepted.",
                                 found.entry.catalog_type().display_name()
                             )));
@@ -117,13 +117,13 @@ pub fn bind_alter(scope: &mut BindScope<'_>, info: &mut AlterInfo) -> Result<Bou
     };
     Ok(BoundStatement::new(
         LogicalOperator::new(LogicalKind::Alter(Box::new(plan))),
-        vec!["Success".to_owned()],
+        vec!["Success".into()],
         vec![LogicalType::BOOLEAN],
     ))
 }
 
 /// The logical index of column `name`; a missing column is an error.
-fn column_index(table: &TableEntry, table_name: &str, name: &str) -> Result<usize> {
+fn column_index(table: &TableEntry, table_name: &[u8], name: &[u8]) -> Result<usize> {
     table
         .column(name)
         .map(|(index, _)| index)
@@ -149,7 +149,7 @@ fn definition(columns: Vec<TableColumn>, constraints: Vec<Constraint>) -> TableE
 }
 
 /// The key column names of a foreign key on this table's side.
-fn foreign_key_columns(fk: &rustdb_ast::ForeignKeyConstraint) -> Vec<String> {
+fn foreign_key_columns(fk: &rustdb_ast::ForeignKeyConstraint) -> Vec<ByteString> {
     match fk.fk_type {
         ForeignKeyType::FkTypeForeignKeyTable => fk.fk_columns.clone(),
         ForeignKeyType::FkTypeSelfReferenceTable => {
@@ -164,8 +164,8 @@ fn foreign_key_columns(fk: &rustdb_ast::ForeignKeyConstraint) -> Vec<String> {
 /// `DuckTableEntry::AlterEntry` for `ALTER TABLE`.
 fn bind_alter_table(
     scope: &mut BindScope<'_>,
-    table_schema: (&str, &str),
-    table_name: &str,
+    table_schema: (&[u8], &[u8]),
+    table_name: &[u8],
     table: &TableEntry,
     alter: &AlterTableInfo,
 ) -> Result<AlterAction> {
@@ -187,10 +187,15 @@ fn bind_alter_table(
             let mut columns = table.columns.clone();
             let column = &mut columns[index];
             if column.generated.is_some() {
-                return Err(Error::binder(format!(
-                    "Cannot SET DEFAULT for generated column \"{}\"",
-                    column.name
-                )));
+                return Err(Error::new_bytes(
+                    rustdb_common::ErrorKind::Binder,
+                    [
+                        "Cannot SET DEFAULT for generated column \"".as_bytes(),
+                        column.name.as_bytes(),
+                        "\"".as_bytes(),
+                    ]
+                    .concat(),
+                ));
             }
             column.default_value = set.expression.as_deref().cloned();
             let ty = column.logical_type.clone();
@@ -285,10 +290,9 @@ fn bind_alter_table(
         AlterTableInfo::ResetTableOptions(_) => Err(Error::not_implemented(
             "RESET (<options>) is not supported for DuckDB tables",
         )),
-        other @ AlterTableInfo::ForeignKeyConstraint(_) => Err(Error::not_implemented(format!(
-            "ALTER TABLE {}",
-            other.alter_table_type().name()
-        ))),
+        other @ AlterTableInfo::ForeignKeyConstraint(_) => Err(Error::not_implemented(
+            rustdb_common::byte_format!("ALTER TABLE {}", other.alter_table_type().name()),
+        )),
     }
 }
 
@@ -296,9 +300,9 @@ fn bind_alter_table(
 /// (`ChangeColumnType` with the `remap_struct` expression); `None` changes nothing.
 fn field_change(
     scope: &mut BindScope<'_>,
-    table_schema: (&str, &str),
+    table_schema: (&[u8], &[u8]),
     table: &TableEntry,
-    table_name: &str,
+    table_name: &[u8],
     change: Option<super::alter_struct::FieldChange>,
 ) -> Result<AlterAction> {
     let Some(change) = change else {
@@ -318,7 +322,7 @@ fn field_change(
 /// The generated columns whose expressions reference column `index`, directly or through
 /// other generated columns (`ColumnDependencyManager::GetDependents`).
 fn generated_dependents(table: &TableEntry, index: usize) -> Vec<usize> {
-    let name_of = |i: usize| table.columns[i].name.as_str();
+    let name_of = |i: usize| table.columns[i].name.as_bytes();
     let mut dependents: Vec<usize> = Vec::new();
     let mut frontier = vec![index];
     while let Some(current) = frontier.pop() {
@@ -347,7 +351,7 @@ fn generated_dependents(table: &TableEntry, index: usize) -> Vec<usize> {
 
 /// Whether an expression references column `name`.
 struct FindColumnRef<'a> {
-    name: &'a str,
+    name: &'a [u8],
     found: bool,
 }
 
@@ -357,7 +361,7 @@ impl VisitorMut for FindColumnRef<'_> {
             && column
                 .column_names
                 .last()
-                .is_some_and(|last| last.eq_ignore_ascii_case(self.name))
+                .is_some_and(|last| last.as_bytes().eq_ignore_ascii_case(self.name))
         {
             self.found = true;
         }
@@ -367,24 +371,24 @@ impl VisitorMut for FindColumnRef<'_> {
 
 /// Renames column references to `old` in parsed expressions (`RenameExpression`).
 struct RenameColumnRefs<'a> {
-    old: &'a str,
-    new: &'a str,
+    old: &'a [u8],
+    new: &'a [u8],
 }
 
 impl VisitorMut for RenameColumnRefs<'_> {
     fn visit_expression(&mut self, expression: &mut ParsedExpression) {
         if let ParsedExpressionKind::ColumnRef(column) = &mut expression.kind
             && let Some(last) = column.column_names.last_mut()
-            && last == self.old
+            && last.as_bytes() == self.old
         {
-            self.new.clone_into(last);
+            *last = self.new.into();
         }
         walk_expression(self, expression);
     }
 }
 
 /// `DuckTableEntry::RenameColumn`.
-fn rename_column(table: &TableEntry, table_name: &str, old: &str, new: &str) -> Result<AlterAction> {
+fn rename_column(table: &TableEntry, table_name: &[u8], old: &[u8], new: &[u8]) -> Result<AlterAction> {
     let index = column_index(table, table_name, old)?;
     if table
         .columns
@@ -392,12 +396,14 @@ fn rename_column(table: &TableEntry, table_name: &str, old: &str, new: &str) -> 
         .enumerate()
         .any(|(i, column)| i != index && column.name.eq_ignore_ascii_case(new))
     {
-        return Err(Error::catalog(format!("Column with name {new} already exists!")));
+        return Err(Error::catalog(rustdb_common::byte_format!(
+            "Column with name {new} already exists!"
+        )));
     }
     let old = table.columns[index].name.clone();
     let dependents = generated_dependents(table, index);
     let mut columns = table.columns.clone();
-    new.clone_into(&mut columns[index].name);
+    columns[index].name = new.into();
     let mut renamer = RenameColumnRefs { old: &old, new };
     for dependent in dependents {
         if let Some(generated) = &mut columns[dependent].generated {
@@ -412,16 +418,25 @@ fn rename_column(table: &TableEntry, table_name: &str, old: &str, new: &str) -> 
             Constraint::Check(check) => renamer.visit_expression(&mut check.expression),
             Constraint::Unique(unique) => {
                 for column in &mut unique.columns {
-                    if *column == old {
-                        new.clone_into(column);
+                    if column.as_bytes() == old.as_bytes() {
+                        *column = new.into();
                     }
                 }
             }
             Constraint::ForeignKey(fk) => {
-                if foreign_key_columns(fk).contains(&old) {
-                    return Err(Error::catalog(format!(
-                        "Cannot rename column \"{old}\" because this is involved in the foreign key constraint"
-                    )));
+                if foreign_key_columns(fk)
+                    .iter()
+                    .any(|name| name.as_bytes() == old.as_bytes())
+                {
+                    return Err(Error::new_bytes(
+                        rustdb_common::ErrorKind::Catalog,
+                        [
+                            "Cannot rename column \"".as_bytes(),
+                            old.as_bytes(),
+                            "\" because this is involved in the foreign key constraint".as_bytes(),
+                        ]
+                        .concat(),
+                    ));
                 }
             }
         }
@@ -433,7 +448,7 @@ fn rename_column(table: &TableEntry, table_name: &str, old: &str, new: &str) -> 
 /// `DuckTableEntry::AddColumn`.
 fn add_column(
     scope: &mut BindScope<'_>,
-    (catalog, schema): (&str, &str),
+    (catalog, schema): (&[u8], &[u8]),
     table: &TableEntry,
     column: &rustdb_ast::ColumnDefinition,
     if_not_exists: bool,
@@ -442,10 +457,15 @@ fn add_column(
         if if_not_exists {
             return Ok(AlterAction::Nothing);
         }
-        return Err(Error::catalog(format!(
-            "Column with name {} already exists!",
-            column.name
-        )));
+        return Err(Error::new_bytes(
+            rustdb_common::ErrorKind::Catalog,
+            [
+                "Column with name ".as_bytes(),
+                column.name.as_bytes(),
+                " already exists!".as_bytes(),
+            ]
+            .concat(),
+        ));
     }
     if column.category == TableColumnType::Generated {
         return Err(Error::parser(
@@ -476,7 +496,7 @@ fn add_column(
 fn remove_column(
     scope: &mut BindScope<'_>,
     table: &TableEntry,
-    table_name: &str,
+    table_name: &[u8],
     remove: &rustdb_ast::RemoveColumnInfo,
 ) -> Result<AlterAction> {
     let Some((removed, _)) = table.column(&remove.removed_column) else {
@@ -545,7 +565,7 @@ fn remove_column(
             (Constraint::Check(_), BoundConstraint::Check { bound_columns, .. }) => {
                 if bound_columns.contains(&physical) {
                     if bound_columns.len() > 1 {
-                        return Err(Error::catalog(format!(
+                        return Err(Error::catalog(rustdb_common::byte_format!(
                             "Cannot drop column \"{removed_name}\" because there is a CHECK constraint that depends on it"
                         )));
                     }
@@ -558,22 +578,22 @@ fn remove_column(
                 if unique.index.0 != u64::MAX {
                     let index = usize::try_from(unique.index.0).unwrap_or(usize::MAX);
                     if index == removed {
-                        return Err(Error::catalog(format!(
+                        return Err(Error::catalog(rustdb_common::byte_format!(
                             "Cannot drop column \"{removed_name}\" because there is a UNIQUE constraint that depends on it"
                         )));
                     }
                     copy.index = LogicalIndex(adjust(index) as u64);
                 } else if unique.columns.iter().any(|name| name == removed_name) {
-                    return Err(Error::catalog(format!(
+                    return Err(Error::catalog(rustdb_common::byte_format!(
                         "Cannot drop column \"{removed_name}\" because it is referenced in unique constraint UNIQUE({})",
-                        unique.columns.join(", ")
+                        ByteString::join(&unique.columns, ", ")
                     )));
                 }
                 constraints.push(Constraint::Unique(copy));
             }
             (Constraint::ForeignKey(fk), _) => {
                 if foreign_key_columns(fk).iter().any(|name| name == removed_name) {
-                    return Err(Error::catalog(format!(
+                    return Err(Error::catalog(rustdb_common::byte_format!(
                         "Cannot drop column \"{removed_name}\" because there is a FOREIGN KEY constraint that depends on it"
                     )));
                 }
@@ -598,10 +618,10 @@ fn remove_column(
 /// `DuckTableEntry::ChangeColumnType`.
 fn alter_column_type(
     scope: &mut BindScope<'_>,
-    (catalog, schema): (&str, &str),
+    (catalog, schema): (&[u8], &[u8]),
     table: &TableEntry,
-    table_name: &str,
-    column_name: &str,
+    table_name: &[u8],
+    column_name: &[u8],
     target_type: &LogicalType,
     expression: Option<&ParsedExpression>,
 ) -> Result<AlterAction> {
@@ -630,10 +650,15 @@ fn alter_column_type(
         ));
     }
     if let Some(&dependent) = generated_dependents(table, index).first() {
-        return Err(Error::binder(format!(
-            "This column is referenced by the generated column \"{}\", so its type can not be changed",
-            table.columns[dependent].name
-        )));
+        return Err(Error::new_bytes(
+            rustdb_common::ErrorKind::Binder,
+            [
+                "This column is referenced by the generated column \"".as_bytes(),
+                table.columns[dependent].name.as_bytes(),
+                "\", so its type can not be changed".as_bytes(),
+            ]
+            .concat(),
+        ));
     }
     let target = match target.take() {
         Some(target) => target,
@@ -684,7 +709,7 @@ fn alter_column_type(
 }
 
 /// `UniqueConstraint::ToString`.
-fn unique_to_string(table: &TableEntry, unique: &UniqueConstraint) -> String {
+fn unique_to_string(table: &TableEntry, unique: &UniqueConstraint) -> ByteString {
     let mut names = unique.columns.clone();
     if names.is_empty()
         && let Some(column) = usize::try_from(unique.index.0)
@@ -693,16 +718,16 @@ fn unique_to_string(table: &TableEntry, unique: &UniqueConstraint) -> String {
     {
         names.push(column.name.clone());
     }
-    let names: Vec<String> = names
+    let names: Vec<ByteString> = names
         .iter()
-        .map(|name| rustdb_ast::keyword::write_optionally_quoted(name))
+        .map(|name| rustdb_ast::keyword::write_optionally_quoted_bytes(name))
         .collect();
     let base = if unique.is_primary_key {
         "PRIMARY KEY("
     } else {
         "UNIQUE("
     };
-    format!("{base}{})", names.join(", "))
+    rustdb_common::byte_format!("{base}{})", ByteString::join(&names, ", "))
 }
 
 /// `AlterInfo::IsAddPrimaryKey`.
@@ -713,7 +738,7 @@ fn is_add_primary_key(alter: &AlterTableInfo) -> bool {
 
 /// `ALTER TABLE ... ADD PRIMARY KEY` (`Binder::BindAlterAddIndex` with
 /// `DuckTableEntry::AddConstraint`).
-fn add_constraint(table: &TableEntry, table_name: &str, constraint: &Constraint) -> Result<AlterAction> {
+fn add_constraint(table: &TableEntry, table_name: &[u8], constraint: &Constraint) -> Result<AlterAction> {
     let Constraint::Unique(unique) = constraint else {
         return Err(Error::internal(
             "unsupported constraint type in ALTER TABLE statement",
@@ -733,7 +758,7 @@ fn add_constraint(table: &TableEntry, table_name: &str, constraint: &Constraint)
     } else {
         "UNIQUE"
     };
-    let index_name = format!("{kind}_{table_name}_{}", names.join("_"));
+    let index_name = rustdb_common::byte_format!("{kind}_{table_name}_{}", ByteString::join(&names, "_"));
     let existing = table.constraints.iter().find_map(|constraint| match constraint {
         Constraint::Unique(existing) if existing.is_primary_key => Some(unique_to_string(table, existing)),
         _ => None,

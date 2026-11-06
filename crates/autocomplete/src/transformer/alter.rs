@@ -16,9 +16,9 @@ const DEFAULT_SCHEMA: &str = "main";
 /// DuckDB's `AlterEntryData`: the entry an `ALTER` applies to.
 #[derive(Clone, Debug)]
 struct AlterEntryData {
-    catalog: String,
-    schema: String,
-    name: String,
+    catalog: ByteString,
+    schema: ByteString,
+    name: ByteString,
     if_not_found: OnEntryNotFound,
 }
 
@@ -50,9 +50,9 @@ impl AlterEntryData {
 /// uninitialized `if_not_found` is always overwritten by the callers).
 fn unnamed_alter_info(kind: AlterInfoKind) -> AlterInfo {
     AlterInfo {
-        catalog: String::new(),
-        schema: String::new(),
-        name: String::new(),
+        catalog: String::new().into(),
+        schema: String::new().into(),
+        name: String::new().into(),
         if_not_found: OnEntryNotFound::ThrowException,
         allow_internal: false,
         kind,
@@ -78,7 +78,7 @@ fn add_to_multi_statement(multi_statement: &mut Vec<SqlStatement>, alter_info: A
 /// expression`.
 fn add_update_to_multi_statement(
     multi_statement: &mut Vec<SqlStatement>,
-    column_name: &str,
+    column_name: &[u8],
     table_data: &AlterEntryData,
     original_expression: &ParsedExpression,
 ) {
@@ -94,7 +94,7 @@ fn add_update_to_multi_statement(
         from_table: None,
         set_info: Box::new(UpdateSetInfo {
             condition: None,
-            columns: vec![column_name.to_owned()],
+            columns: vec![column_name.to_owned().into()],
             expressions: vec![original_expression.clone()],
         }),
         returning_list: Vec::new(),
@@ -113,7 +113,7 @@ fn add_update_to_multi_statement(
 fn transform_and_materialize_alter(
     data: &AlterEntryData,
     info_with_null_placeholder: AlterInfo,
-    column_name: &str,
+    column_name: &[u8],
     expression: ParsedExpression,
 ) -> SqlStatement {
     let mut multi_statement = Vec::new();
@@ -126,7 +126,7 @@ fn transform_and_materialize_alter(
         &mut multi_statement,
         data.alter_info(AlterInfoKind::AlterTable(AlterTableInfo::SetDefault(
             SetDefaultInfo {
-                column_name: column_name.to_owned(),
+                column_name: column_name.to_owned().into(),
                 expression: Some(Box::new(expression)),
             },
         ))),
@@ -205,14 +205,16 @@ impl PegTransformer {
         let catalog_name = list.identifier(2)?.to_owned();
         let new_name = list.identifier(6)?.to_owned();
         let data = AlterEntryData {
-            catalog: catalog_name,
-            schema: String::new(),
-            name: String::new(),
+            catalog: catalog_name.into(),
+            schema: String::new().into(),
+            name: String::new().into(),
             if_not_found: not_found,
         };
         Ok(
             data.alter_info(AlterInfoKind::AlterDatabase(AlterDatabaseInfo::RenameDatabase(
-                RenameDatabaseInfo { new_name },
+                RenameDatabaseInfo {
+                    new_name: new_name.into(),
+                },
             ))),
         )
     }
@@ -277,7 +279,7 @@ impl PegTransformer {
         if let Some(schema) = self.transform_optional(list, 1)? {
             result.schema = schema;
         }
-        list.identifier(2)?.clone_into(&mut result.name);
+        result.name = list.identifier(2)?.into();
         Ok(result)
     }
 
@@ -303,7 +305,7 @@ impl PegTransformer {
                     return Err(Error::internal("Expected a qualified name for OWNED BY"));
                 };
                 let schema = if owned_by.schema.is_empty() {
-                    DEFAULT_SCHEMA.to_owned()
+                    ByteString::from(DEFAULT_SCHEMA)
                 } else {
                     owned_by.schema
                 };
@@ -462,7 +464,7 @@ impl PegTransformer {
     /// `TransformDropDefault`: `DROP DEFAULT`.
     pub(super) fn transform_drop_default(&mut self, _parse_result: &ParseResult) -> Result<AlterInfo> {
         Ok(alter_table_info(AlterTableInfo::SetDefault(SetDefaultInfo {
-            column_name: String::new(),
+            column_name: String::new().into(),
             expression: None,
         })))
     }
@@ -472,11 +474,11 @@ impl PegTransformer {
         let drop_or_set: String = self.transform_child(parse_result.list()?, 0)?;
         if drop_or_set.eq_ignore_ascii_case("drop") {
             return Ok(alter_table_info(AlterTableInfo::DropNotNull(DropNotNullInfo {
-                column_name: String::new(),
+                column_name: String::new().into(),
             })));
         }
         Ok(alter_table_info(AlterTableInfo::SetNotNull(SetNotNullInfo {
-            column_name: String::new(),
+            column_name: String::new().into(),
         })))
     }
 
@@ -493,7 +495,7 @@ impl PegTransformer {
         let expr: Option<ParsedExpression> = self.transform_optional(list, 3)?;
         Ok(alter_table_info(AlterTableInfo::AlterColumnType(
             ChangeColumnTypeInfo {
-                column_name: String::new(),
+                column_name: String::new().into(),
                 target_type,
                 expression: expr.map(Box::new),
             },
@@ -522,7 +524,7 @@ impl PegTransformer {
     pub(super) fn transform_add_default(&mut self, parse_result: &ParseResult) -> Result<AlterInfo> {
         let expr: ParsedExpression = self.transform_child(parse_result.list()?, 2)?;
         Ok(alter_table_info(AlterTableInfo::SetDefault(SetDefaultInfo {
-            column_name: String::new(),
+            column_name: String::new().into(),
             expression: Some(Box::new(expr)),
         })))
     }
@@ -536,12 +538,12 @@ impl PegTransformer {
         if let [old_name] = nested_column.column_names.as_slice() {
             return Ok(alter_table_info(AlterTableInfo::RenameColumn(RenameColumnInfo {
                 old_name: old_name.clone(),
-                new_name: new_column_name,
+                new_name: new_column_name.into(),
             })));
         }
         Ok(alter_table_info(AlterTableInfo::RenameField(RenameFieldInfo {
             column_path: nested_column.column_names,
-            new_name: new_column_name,
+            new_name: new_column_name.into(),
         })))
     }
 
@@ -549,7 +551,7 @@ impl PegTransformer {
     pub(super) fn transform_rename_alter(&mut self, parse_result: &ParseResult) -> Result<AlterInfo> {
         let new_table_name = parse_result.list()?.identifier(2)?.to_owned();
         Ok(alter_table_info(AlterTableInfo::RenameTable(RenameTableInfo {
-            new_table_name,
+            new_table_name: new_table_name.into(),
         })))
     }
 
@@ -612,7 +614,7 @@ impl PegTransformer {
 
     /// `TransformSetOptions`: `SET (name = value, ...)`.
     pub(super) fn transform_set_options(&mut self, parse_result: &ParseResult) -> Result<AlterInfo> {
-        let table_options: CaseInsensitiveMap<ParsedExpression> =
+        let table_options: CaseInsensitiveMap<ParsedExpression, ByteString> =
             self.transform_child(parse_result.list()?, 1)?;
         Ok(alter_table_info(AlterTableInfo::SetTableOptions(
             SetTableOptionsInfo { table_options },
@@ -621,18 +623,18 @@ impl PegTransformer {
 
     /// `TransformResetOptions`: `RESET (name, ...)`; the options cannot have values.
     pub(super) fn transform_reset_options(&mut self, parse_result: &ParseResult) -> Result<AlterInfo> {
-        let options_map: CaseInsensitiveMap<ParsedExpression> =
+        let options_map: CaseInsensitiveMap<ParsedExpression, ByteString> =
             self.transform_child(parse_result.list()?, 1)?;
         // A `case_insensitive_set_t`, filled in the iteration order of the options.
-        let mut option_names: CiHashMap<()> = CiHashMap::new();
+        let mut option_names: CiHashMap<(), ByteString> = CiHashMap::default();
         for (name, value) in options_map.iter() {
             let ParsedExpressionKind::Constant(const_expr) = &value.kind else {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "Reset option \"{name}\" cannot set any value. Did you mean to use SET?"
                 )));
             };
             if !const_expr.value.is_null() {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(rustdb_common::byte_format!(
                     "Reset option \"{name}\" cannot set any value. Did you mean to use SET?"
                 )));
             }

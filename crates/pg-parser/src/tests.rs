@@ -38,7 +38,7 @@ fn error(sql: &str) -> (String, Option<usize>) {
     (err.raw_message().into_owned(), err.query_location())
 }
 
-fn name(node: &Node) -> &str {
+fn name(node: &Node) -> &[u8] {
     node.str_val().expect("string value")
 }
 
@@ -73,19 +73,22 @@ fn select_from_where_order_limit() {
     let Node::RangeVar(table) = &select.from_clause[0] else {
         panic!()
     };
-    assert_eq!(table.schemaname.as_deref(), Some("s"));
-    assert_eq!(table.relname.as_deref(), Some("t"));
+    assert_eq!(table.schemaname.as_deref(), Some(b"s".as_slice()));
+    assert_eq!(table.relname.as_deref(), Some(b"t".as_slice()));
     let Node::ResTarget(second) = &select.target_list[1] else {
         panic!()
     };
     let Some(Node::ColumnRef(column)) = &second.val else {
         panic!()
     };
-    assert_eq!(column.fields.iter().map(name).collect::<Vec<_>>(), ["t", "b"]);
+    assert_eq!(
+        column.fields.iter().map(name).collect::<Vec<_>>(),
+        [b"t".as_slice(), b"b".as_slice()]
+    );
     let Some(Node::AExpr(cond)) = &select.where_clause else {
         panic!()
     };
-    assert_eq!((cond.kind, name(&cond.name[0])), (AExprKind::Op, ">"));
+    assert_eq!((cond.kind, name(&cond.name[0])), (AExprKind::Op, b">".as_slice()));
     assert_eq!(select.sort_clause.len(), 1);
     assert!(matches!(&select.limit_count, Some(Node::AConst(c)) if c.val == Value::Integer(3)));
     // with no OFFSET, insertSelectOptions marks the offset as "first"
@@ -97,7 +100,7 @@ fn identifier_case() {
     let Node::ColumnRef(column) = first_target("SELECT MyCol") else {
         panic!()
     };
-    assert_eq!(name(&column.fields[0]), "MyCol");
+    assert_eq!(name(&column.fields[0]), b"MyCol");
     let folded = parse_with_options(
         "SELECT MyCol, \"Quoted\"",
         &ParserOptions {
@@ -119,7 +122,7 @@ fn identifier_case() {
             other => panic!("{other:?}"),
         })
         .collect();
-    assert_eq!(names, ["mycol", "Quoted"]);
+    assert_eq!(names, [b"mycol".to_vec(), b"Quoted".to_vec()]);
 }
 
 #[test]
@@ -128,11 +131,11 @@ fn operator_precedence() {
     let Node::AExpr(plus) = first_target("SELECT 1 + 2 * 3") else {
         panic!()
     };
-    assert_eq!(name(&plus.name[0]), "+");
+    assert_eq!(name(&plus.name[0]), b"+");
     let Some(Node::AExpr(times)) = &plus.rexpr else {
         panic!("{plus:?}")
     };
-    assert_eq!(name(&times.name[0]), "*");
+    assert_eq!(name(&times.name[0]), b"*");
     // AND binds tighter than OR, and AND chains are flattened
     let Node::BoolExpr(or) = first_target("SELECT a OR b AND c AND d") else {
         panic!()
@@ -164,7 +167,7 @@ fn negative_constants_fold() {
     let Node::AExpr(minus) = first_target("SELECT -x") else {
         panic!()
     };
-    assert!(minus.lexpr.is_none() && name(&minus.name[0]) == "-");
+    assert!(minus.lexpr.is_none() && name(&minus.name[0]) == b"-");
 }
 
 #[test]
@@ -173,7 +176,10 @@ fn lookahead_tokens_change_the_parse() {
     let Node::AExpr(not_in) = first_target("SELECT x NOT IN (1, 2)") else {
         panic!()
     };
-    assert_eq!((not_in.kind, name(&not_in.name[0])), (AExprKind::In, "<>"));
+    assert_eq!(
+        (not_in.kind, name(&not_in.name[0])),
+        (AExprKind::In, b"<>".as_slice())
+    );
     assert!(matches!(&not_in.rexpr, Some(Node::List(items)) if items.len() == 2));
     // IN (subquery) becomes an ANY sublink
     let Node::SubLink(sublink) = first_target("SELECT x IN (SELECT 1)") else {
@@ -203,7 +209,7 @@ fn casts_and_functions() {
             .iter()
             .map(name)
             .collect::<Vec<_>>(),
-        ["int4"]
+        [b"int4".as_slice()]
     );
     let Node::FuncCall(call) = first_target("SELECT count(DISTINCT x) FILTER (WHERE x > 0)") else {
         panic!()
@@ -215,7 +221,10 @@ fn casts_and_functions() {
         agg_filter,
         ..
     } = *call;
-    assert_eq!(funcname.iter().map(name).collect::<Vec<_>>(), ["count"]);
+    assert_eq!(
+        funcname.iter().map(name).collect::<Vec<_>>(),
+        [b"count".as_slice()]
+    );
     assert!(agg_distinct && agg_filter.is_some() && args.len() == 1);
 }
 
@@ -264,7 +273,10 @@ fn other_statements() {
         panic!()
     };
     let relation = insert.relation.as_deref().expect("relation");
-    assert_eq!((relation.relname.as_deref(), relation.location), (Some("t"), 62));
+    assert_eq!(
+        (relation.relname.as_deref(), relation.location),
+        (Some(b"t".as_slice()), 62)
+    );
     // a statement starts right after the previous semicolon
     assert_eq!(stmts[1].stmt_location, 49);
 }
@@ -365,8 +377,10 @@ fn rule_actions_match_grammar() {
 fn nodes_render_as_json() {
     let json = crate::nodes::to_json(&statements("SELECT 'a\"b'"));
     assert!(
-        json.contains(r#""val":{"node":"AConst","val":{"node":"Value","str":"a\"b"},"location":7}"#),
-        "{json}"
+        json.to_str()
+            .unwrap()
+            .contains(r#""val":{"node":"AConst","val":{"node":"Value","str":"a\"b"},"location":7}"#),
+        "{json:?}"
     );
 }
 

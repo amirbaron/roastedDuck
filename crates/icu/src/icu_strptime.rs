@@ -183,7 +183,7 @@ fn strptime_bind(
         let Some(Some(format_value)) = input.constants.get(1) else {
             return Err(Error::invalid_input("strptime format must be a constant"));
         };
-        let try_parse = &*function.name == "try_strptime";
+        let try_parse = &*function.name == b"try_strptime";
         let mut icu_formats = None;
         if format_value.is_null() {
             // falls back

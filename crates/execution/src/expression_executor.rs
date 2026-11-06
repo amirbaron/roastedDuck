@@ -220,9 +220,10 @@ fn execute(
         ExpressionKind::Case(case) => execute_case(case, &expression.return_type, state, input, sel, count),
         ExpressionKind::Between(between) => execute_between(between, state, input, sel, count),
         ExpressionKind::Cast(cast) => execute_cast(expression, cast, state, input, sel, count),
-        ExpressionKind::ColumnRef(column) => Err(Error::internal(format!(
+        ExpressionKind::ColumnRef(column) => Err(Error::internal(rustdb_common::byte_format!(
             "Failed to bind column reference \"{}\" [{}] (bindings: {{}})",
-            expression.alias, column.binding
+            expression.alias,
+            column.binding
         ))),
         ExpressionKind::Aggregate(aggregate) => Err(Error::internal(format!(
             "Attempting to execute expression of unknown type! (aggregate {})",
@@ -286,16 +287,10 @@ fn execute_cast(
     if !cast.child.alias.is_empty() {
         parameters.source_column = Some(cast.child.alias.clone());
     }
+    parameters.query_location = expression.query_location;
     let mut result = Vector::flat(expression.return_type.clone(), count);
     cast.bound_cast
-        .execute(&child, &mut result, count, &mut parameters)
-        .map_err(|error| {
-            if error.kind() == ErrorKind::Conversion {
-                error.with_position(expression.query_location)
-            } else {
-                error
-            }
-        })?;
+        .execute(&child, &mut result, count, &mut parameters)?;
     Ok(result)
 }
 
@@ -879,4 +874,56 @@ fn conjoin(expression_type: ExpressionType, left: &Vector, right: &Vector, count
         *out.validity_mut() = validity;
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod empty_output_tests {
+    use super::*;
+    use rustdb_types::Value;
+
+    #[test]
+    fn projected_vectors_outlive_inputs_with_initially_empty_output() -> Result<()> {
+        let types = [LogicalType::HUGEINT, LogicalType::VARCHAR];
+        let mut executor = ExpressionExecutor::new(vec![
+            Expression::reference("n", types[0].clone(), 0),
+            Expression::reference("s", types[1].clone(), 1),
+        ]);
+        let mut output = DataChunk::with_types(&types, 0);
+        let mut snapshots = Vec::new();
+        for batch in 0..2 {
+            let mut numbers = Vector::flat(types[0].clone(), 3);
+            let mut strings = Vector::flat(types[1].clone(), 3);
+            for row in 0..3 {
+                numbers.set_value(row, &Value::hugeint((batch * 10 + row) as i128))?;
+                strings.set_value(row, &Value::varchar(format!("owned-{batch}-{row}-long-string")))?;
+            }
+            numbers.set_value(1, &Value::null(types[0].clone()))?;
+            strings.set_value(2, &Value::null(types[1].clone()))?;
+            let input = DataChunk::new(vec![numbers, strings], 3);
+            executor.execute(&input, &mut output)?;
+            drop(input);
+            snapshots.push(output.clone());
+        }
+        drop(executor);
+        drop(output);
+        for (batch, chunk) in snapshots.iter().enumerate() {
+            assert_eq!(chunk.len(), 3);
+            assert_eq!(chunk.column_count(), 2);
+            for row in 0..3 {
+                let number = if row == 1 {
+                    Value::null(types[0].clone())
+                } else {
+                    Value::hugeint((batch * 10 + row) as i128)
+                };
+                let string = if row == 2 {
+                    Value::null(types[1].clone())
+                } else {
+                    Value::varchar(format!("owned-{batch}-{row}-long-string"))
+                };
+                assert_eq!(chunk.column(0).get_value(row), number);
+                assert_eq!(chunk.column(1).get_value(row), string);
+            }
+        }
+        Ok(())
+    }
 }

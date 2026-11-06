@@ -11,7 +11,7 @@ impl PegTransformer {
     pub(super) fn transform_execute_statement(&mut self, parse_result: &ParseResult) -> Result<SqlStatement> {
         let list = parse_result.list()?;
         let name = list.identifier(1)?.to_owned();
-        let mut named_values: CiHashMap<ParsedExpression> = CiHashMap::new();
+        let mut named_values: CiHashMap<ParsedExpression, ByteString> = CiHashMap::default();
         if let Some(table_function) = list.optional(2)? {
             let mut param_idx = 0;
             let table_function_arguments: Vec<ParsedExpression> = self.transform(table_function)?;
@@ -28,7 +28,7 @@ impl PegTransformer {
                 }
                 let mut param_name = expr.alias.clone();
                 if expr.alias.is_empty() {
-                    param_name = (param_idx + 1).to_string();
+                    param_name = (param_idx + 1).to_string().into();
                     if param_idx != i {
                         return Err(Error::not_implemented(
                             "Mixing named parameters and positional parameters is not supported yet",
@@ -41,7 +41,7 @@ impl PegTransformer {
             }
         }
         Ok(SqlStatement::new(SqlStatementKind::Execute(ExecuteStatement {
-            name,
+            name: name.into(),
             named_values: named_values.into_ordered().into_iter().collect(),
         })))
     }

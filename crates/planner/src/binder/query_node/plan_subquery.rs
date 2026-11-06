@@ -98,7 +98,7 @@ fn replace_root(
 fn plan_uncorrelated_subquery(
     scope: &mut BindScope<'_>,
     subquery: &mut BoundSubqueryExpression,
-    name: String,
+    name: rustdb_common::ByteString,
     return_type: LogicalType,
     root: &mut LogicalOperator,
     plan: LogicalOperator,
@@ -299,7 +299,7 @@ fn perform_duplicate_elimination(scope: &BindScope<'_>, correlated_columns: &mut
     correlated_columns.add_column(CorrelatedColumnInfo {
         binding: ColumnBinding::new(scope.binder.generate_table_index(), 0),
         logical_type: LogicalType::BIGINT,
-        name: "delim_index".to_owned(),
+        name: "delim_index".into(),
         depth: 0,
     });
     correlated_columns.set_delim_index_to_zero();
@@ -310,7 +310,7 @@ fn perform_duplicate_elimination(scope: &BindScope<'_>, correlated_columns: &mut
 fn plan_correlated_subquery(
     scope: &mut BindScope<'_>,
     subquery: &mut BoundSubqueryExpression,
-    name: String,
+    name: rustdb_common::ByteString,
     return_type: LogicalType,
     root: &mut LogicalOperator,
     plan: LogicalOperator,

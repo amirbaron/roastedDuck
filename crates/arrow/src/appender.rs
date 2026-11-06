@@ -472,7 +472,10 @@ fn append_kind(ty: &LogicalType, options: &ClientProperties) -> Result<AppendKin
 }
 
 /// The children of a nested type, failing for a type without them.
-fn nested_children<'a>(ty: &'a LogicalType, what: &str) -> Result<&'a [(String, LogicalType)]> {
+fn nested_children<'a>(
+    ty: &'a LogicalType,
+    what: &str,
+) -> Result<&'a [(rustdb_common::ByteString, LogicalType)]> {
     match ty.id() {
         LogicalTypeId::Union => ty.union_members(),
         _ => ty.struct_children(),
@@ -917,7 +920,7 @@ impl ArrowAppendData {
 
     /// `ArrowEnumData::EnumAppendVector`: the enum's values as the strings of the
     /// dictionary.
-    fn append_enum_values(&mut self, values: &[String]) {
+    fn append_enum_values(&mut self, values: &[rustdb_common::ByteString]) {
         let size = values.len();
         let row_count = self.row_count;
         Self::resize_bitmap(self.validity(), row_count + size);

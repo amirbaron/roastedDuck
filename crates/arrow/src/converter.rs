@@ -52,8 +52,8 @@ pub struct SchemaField {
 
 impl SchemaField {
     /// A nullable field without a format yet (`InitializeChild`).
-    fn new(name: &str) -> Self {
-        let mut name = name.as_bytes().to_vec();
+    fn new(name: impl AsRef<[u8]>) -> Self {
+        let mut name = name.as_ref().to_vec();
         name.push(0);
         Self {
             format: Format::Static(c""),
@@ -168,7 +168,7 @@ unsafe extern "C" fn release_duckdb_arrow_schema(schema: *mut ArrowSchema) {
 pub fn to_arrow_schema(
     out_schema: &mut ArrowSchema,
     types: &[LogicalType],
-    names: &[String],
+    names: &[rustdb_common::ByteString],
     options: &ClientProperties,
 ) -> Result<()> {
     let mut columns = Vec::with_capacity(types.len());
@@ -260,7 +260,8 @@ pub(crate) fn binary_format(options: &ClientProperties) -> &'static CStr {
 
 /// The Arrow format of a column of type `ty` (`SetArrowFormat`).
 fn set_arrow_format(child: &mut SchemaField, ty: &LogicalType, options: &ClientProperties) -> Result<()> {
-    let is_json = ty.id() == LogicalTypeId::Varchar && ty.alias() == Some("JSON");
+    let is_json =
+        ty.id() == LogicalTypeId::Varchar && ty.alias().is_some_and(|alias| alias.as_bytes() == b"JSON");
     // An aliased type may be an extension type; JSON only when exported losslessly.
     if ty.alias().is_some_and(|alias| !alias.is_empty())
         && (!is_json || options.arrow_lossless_conversion)

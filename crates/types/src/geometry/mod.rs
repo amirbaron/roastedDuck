@@ -140,14 +140,14 @@ pub fn storage_type(geometry: GeometryType, vertex: VertexType) -> GeometryStora
 /// The STRUCT of DOUBLE coordinates of a vertex type (`Geometry::GetVectorizedType`).
 fn vertex_struct_type(vertex: VertexType) -> LogicalType {
     let mut fields = vec![
-        ("x".to_owned(), LogicalType::DOUBLE),
-        ("y".to_owned(), LogicalType::DOUBLE),
+        ("x".into(), LogicalType::DOUBLE),
+        ("y".into(), LogicalType::DOUBLE),
     ];
     if vertex.has_z() {
-        fields.push(("z".to_owned(), LogicalType::DOUBLE));
+        fields.push(("z".into(), LogicalType::DOUBLE));
     }
     if vertex.has_m() {
-        fields.push(("m".to_owned(), LogicalType::DOUBLE));
+        fields.push(("m".into(), LogicalType::DOUBLE));
     }
     LogicalType::struct_type(fields)
 }

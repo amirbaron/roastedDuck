@@ -20,16 +20,16 @@ pub struct ExpressionTableFilter {
 impl ExpressionTableFilter {
     /// The predicate with the column reference named `column_name` (DuckDB's
     /// `ExpressionFilter::ToExpression`).
-    pub fn to_expression(&self, column_name: &str) -> Expression {
-        fn replace(expression: &mut Expression, column_name: &str) {
+    pub fn to_expression(&self, column_name: impl AsRef<[u8]>) -> Expression {
+        fn replace(expression: &mut Expression, column_name: &[u8]) {
             if matches!(expression.kind, ExpressionKind::Reference(_)) {
-                column_name.clone_into(&mut expression.alias);
+                expression.alias = column_name.into();
                 return;
             }
             expression.for_each_child_mut(|child| replace(child, column_name));
         }
         let mut expression = self.expression.clone();
-        replace(&mut expression, column_name);
+        replace(&mut expression, column_name.as_ref());
         expression
     }
 }
@@ -99,7 +99,7 @@ pub fn geometry_check_zonemap(stats: &BaseStatistics, expression: &Expression) -
     let name = function.function.name.as_ref();
     if !["&&", "st_intersects_extent"]
         .iter()
-        .any(|predicate| predicate.eq_ignore_ascii_case(name))
+        .any(|predicate| predicate.as_bytes().eq_ignore_ascii_case(name))
     {
         return FilterPropagateResult::NoPruningPossible;
     }
@@ -143,8 +143,8 @@ impl ExpressionFilter for ExpressionTableFilter {
         FilterPropagateResult::NoPruningPossible
     }
 
-    fn to_sql(&self, column_name: &str) -> String {
-        self.to_expression(column_name).to_string()
+    fn to_sql(&self, column_name: &[u8]) -> rustdb_common::ByteString {
+        self.to_expression(column_name).to_bytes()
     }
 
     /// `ExpressionFilter::Serialize`.

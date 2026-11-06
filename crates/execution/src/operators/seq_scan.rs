@@ -74,13 +74,13 @@ impl ScanRandom for SamplingRandom {
 #[derive(Clone, Debug, Default)]
 pub struct ScanExplainInfo {
     /// The qualified table name (`TableScanToString`); empty for table functions.
-    pub table: String,
+    pub table: rustdb_common::ByteString,
     /// The name of each scanned column, by position in the scan's column list.
-    pub column_names: Vec<String>,
+    pub column_names: Vec<rustdb_common::ByteString>,
     /// What `Projections` lists for each scanned column, by position in the scan's
     /// column list: its name, or the fields read (`AddProjectionNames`); empty for the
     /// names themselves.
-    pub projection_names: Vec<String>,
+    pub projection_names: Vec<rustdb_common::ByteString>,
     /// Positions of virtual columns (`rowid`), which DuckDB does not list as projections
     /// (`AddProjectionNames` skips ids past the table's columns).
     pub virtual_columns: Vec<usize>,
@@ -92,11 +92,11 @@ pub struct ScanExplainInfo {
 
 impl ScanExplainInfo {
     /// What `Projections` lists for scanned column `index`.
-    pub fn projection_name(&self, index: usize) -> Option<&str> {
+    pub fn projection_name(&self, index: usize) -> Option<&[u8]> {
         self.projection_names
             .get(index)
             .or_else(|| self.column_names.get(index))
-            .map(String::as_str)
+            .map(rustdb_common::ByteString::as_bytes)
     }
 
     /// DuckDB's `PhysicalTableScan::ParamsToString` for a scan with projection and filter
@@ -118,7 +118,7 @@ impl ScanExplainInfo {
                 .then(|| self.projection_name(index))
                 .flatten()
         };
-        let projected: Vec<&str> = if projection.is_empty() {
+        let projected: Vec<&[u8]> = if projection.is_empty() {
             (0..self.column_names.len()).filter_map(projected_name).collect()
         } else {
             projection
@@ -126,15 +126,22 @@ impl ScanExplainInfo {
                 .filter_map(|&index| projected_name(index))
                 .collect()
         };
-        result.insert("Projections".to_owned(), projected.join("\n"));
+        result.insert(
+            "Projections".to_owned(),
+            rustdb_common::ByteString::join(&projected, b"\n"),
+        );
         // DuckDB's `GetFilterInfo`.
         let filter_info = |filters: &TableFilterSet| {
-            filters
-                .filters
-                .iter()
-                .filter_map(|(&column, filter)| self.column_names.get(column).map(|name| filter.to_sql(name)))
-                .collect::<Vec<String>>()
-                .join("\n")
+            rustdb_common::ByteString::join(
+                &filters
+                    .filters
+                    .iter()
+                    .filter_map(|(&column, filter)| {
+                        self.column_names.get(column).map(|name| filter.to_sql(name))
+                    })
+                    .collect::<Vec<_>>(),
+                b"\n",
+            )
         };
         if let Some(filters) = filters {
             result.insert("Filters".to_owned(), filter_info(filters));
@@ -282,6 +289,10 @@ impl PhysicalOperator for PhysicalSeqScan {
     fn children(&self) -> &[PhysicalRef] {
         &[]
     }
+    fn preallocate_output(&self) -> bool {
+        // Scans prepare each result vector; indexed fetches grow it before writing.
+        false
+    }
     fn as_source(&self) -> Option<&dyn ErasedSource> {
         Some(self)
     }
@@ -316,7 +327,7 @@ impl PhysicalOperator for PhysicalSeqScan {
         if self.is_index_scan.load(Ordering::Relaxed)
             && let Some(scan_type) = result.get_mut("Type")
         {
-            "Index Scan".clone_into(scan_type);
+            *scan_type = "Index Scan".into();
         }
         result
     }

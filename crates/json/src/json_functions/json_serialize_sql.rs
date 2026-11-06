@@ -62,22 +62,25 @@ fn serialize_bind(_: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Optio
         let Some(Some(value)) = input.constants.get(i) else {
             return Err(Error::binder("json_serialize_sql: arguments must be constant"));
         };
-        let alias = input.aliases.get(i).map_or("", String::as_str);
-        let flag = |name: &str| -> Result<bool> {
+        let alias = input
+            .aliases
+            .get(i)
+            .map_or(b"".as_slice(), rustdb_common::ByteString::as_bytes);
+        let flag = |name: &[u8]| -> Result<bool> {
             if input.argument_types[i].id() != LogicalTypeId::Boolean {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "json_serialize_sql: '{name}' argument must be a boolean"
                 )));
             }
             Ok(value.as_bool().unwrap_or(false))
         };
         match alias {
-            "skip_null" => json.skip_null = flag(alias)?,
-            "skip_empty" => json.skip_empty = flag(alias)?,
-            "format" => format = flag(alias)?,
-            "skip_default" => json.skip_default = flag(alias)?,
+            b"skip_null" => json.skip_null = flag(alias)?,
+            b"skip_empty" => json.skip_empty = flag(alias)?,
+            b"format" => format = flag(alias)?,
+            b"skip_default" => json.skip_default = flag(alias)?,
             _ => {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "json_serialize_sql: Unknown argument '{alias}'"
                 )));
             }

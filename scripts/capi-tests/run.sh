@@ -8,6 +8,9 @@
 #   --no-build   skip `cargo build` (rust only)
 # Extra Catch arguments go after `--` (e.g. `-- "Test pending statements in C API"`).
 # Env: REF (DuckDB 1.5.6 source root), CXX.
+# RUSTDB_CAPI_LIBRARY_DIR selects an already-signed immutable library directory
+# (requires --no-build); RUSTDB_CAPI_TEST_BIN_DIR preserves a separate run's binaries/logs.
+# RUSTDB_CAPI_TEST_OUTPUT_DIR relocates all harness objects/sources to external storage.
 #
 # The tests may only reach the engine through duckdb.h. The C++ helpers they include
 # (test_helpers.hpp, exception.hpp, arrow.hpp) are replaced by the header-only stand-ins in
@@ -18,6 +21,17 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 REF="${REF:-$ROOT/.context/duckdb-download/duckdb-1.5.6}"
 CXX="${CXX:-clang++}"
+SYSTEM="$(uname)"
+LIBRARY_NAME=libduckdb.so
+LINK_STRIP_FLAGS=(-Wl,--gc-sections)
+# Stand-in C++ helpers share names with DuckDB internals but have different layouts.
+# Keep them out of ELF's dynamic symbol table so they cannot preempt the reference DLL.
+PLATFORM_FLAGS=(-ffunction-sections -fdata-sections -pthread -fvisibility=hidden -fvisibility-inlines-hidden)
+if [[ "$SYSTEM" == Darwin ]]; then
+  LIBRARY_NAME=libduckdb.dylib
+  LINK_STRIP_FLAGS=(-Wl,-dead_strip)
+  PLATFORM_FLAGS=()
+fi
 LIB=rust
 BUILD=1
 FILES=()
@@ -68,26 +82,41 @@ EXCLUDED=(
   "SECTION:test scan"
 )
 
-if [[ "$LIB" == rust ]]; then
+SELECTED_LIBRARY_DIR="${RUSTDB_CAPI_LIBRARY_DIR:-}"
+if [[ -n "$SELECTED_LIBRARY_DIR" ]]; then
+  if [[ $BUILD -ne 0 ]]; then
+    echo "RUSTDB_CAPI_LIBRARY_DIR requires --no-build" >&2
+    exit 2
+  fi
+  LIBDIR="$(cd "$SELECTED_LIBRARY_DIR" && pwd -P)"
+  [[ -f "$LIBDIR/$LIBRARY_NAME" ]] || { echo "No $LIBRARY_NAME in $LIBDIR" >&2; exit 2; }
+  if [[ "$(uname)" == Darwin ]]; then
+    codesign --verify --strict "$LIBDIR/libduckdb.dylib"
+  fi
+elif [[ "$LIB" == rust ]]; then
   LIBDIR="$ROOT/target/release"
   if [[ $BUILD -eq 1 ]]; then
     cargo build --release -p rustdb-capi --manifest-path "$ROOT/Cargo.toml"
   fi
-  "$ROOT/scripts/sign.sh" "$LIBDIR/libduckdb.dylib"
+  "$ROOT/scripts/sign.sh" "$LIBDIR/$LIBRARY_NAME"
 else
   LIBDIR="$REF/build/release/src"
 fi
 
-OUT="$ROOT/target/capi-tests"
+OUT="${RUSTDB_CAPI_TEST_OUTPUT_DIR:-$ROOT/target/capi-tests}"
 OBJ="$OUT/obj"
-BIN="$OUT/$LIB"
+BIN="${RUSTDB_CAPI_TEST_BIN_DIR:-$OUT/$LIB}"
 INC="$OUT/include"
 mkdir -p "$OBJ" "$BIN" "$INC"
 # capi_tester.hpp includes "test_helpers.hpp"; a copy outside test/include makes that
 # resolve to the shim instead of the C++ helpers next to it.
 cp "$REF/test/include/capi_tester.hpp" "$INC/capi_tester.hpp"
 FLAGS=(-std=c++17 -O1 -g -w -I "$ROOT/scripts/capi-tests/shim" -I "$INC" -I "$REF/src/include"
-  -I "$REF/third_party/catch")
+  -I "$REF/third_party/catch" ${PLATFORM_FLAGS[@]+"${PLATFORM_FLAGS[@]}"})
+LINK_HEADER_FLAGS=()
+if [[ "$(uname)" == Darwin ]]; then
+  LINK_HEADER_FLAGS=(-Wl,-headerpad_max_install_names)
+fi
 
 compile() { # source object
   if [[ ! -f "$2" || "$1" -nt "$2" || "$ROOT/scripts/capi-tests/shim/test_helpers.hpp" -nt "$2" ]]; then
@@ -113,16 +142,28 @@ for file in "${FILES[@]}"; do
     continue
   fi
   if ! "$CXX" "$OBJ/main.o" "$OBJ/capi_tester.o" "$OBJ/$name.o" -L "$LIBDIR" -lduckdb \
-    -Wl,-rpath,"$LIBDIR" -Wl,-dead_strip -o "$BIN/$name" 2>"$BIN/$name.link.log"; then
+    -Wl,-rpath,"$LIBDIR" "${LINK_STRIP_FLAGS[@]}" ${PLATFORM_FLAGS[@]+"${PLATFORM_FLAGS[@]}"} ${LINK_HEADER_FLAGS[@]+"${LINK_HEADER_FLAGS[@]}"} \
+    -o "$BIN/$name" 2>"$BIN/$name.link.log"; then
     missing="$(grep -c '^  "_' "$BIN/$name.link.log" || true)"
     printf '%-36s does not link: %s missing symbols (see %s)\n' "$name" "$missing" "$BIN/$name.link.log"
     status=1
     continue
   fi
+  if [[ -n "$SELECTED_LIBRARY_DIR" && "$(uname)" == Darwin ]]; then
+    # Rust's default dylib install name can be an absolute mutable build path.
+    # Pin this test executable to the selected image without modifying that image.
+    install_name="$(otool -D "$LIBDIR/libduckdb.dylib" | tail -n 1)"
+    install_name_tool -change "$install_name" "$LIBDIR/libduckdb.dylib" "$BIN/$name"
+  fi
   "$ROOT/scripts/sign.sh" "$BIN/$name"
   printf '%-36s ' "$name"
   log="$BIN/$name.log"
-  if (cd "$REF" && "$BIN/$name" ${CATCH_ARGS[@]+"${CATCH_ARGS[@]}"}) >"$log" 2>&1; then
+  RUN_COMMAND=("$BIN/$name")
+  if [[ -n "$SELECTED_LIBRARY_DIR" && "$(uname)" == Darwin ]]; then
+    # Preserve the loader's actual selected path, not just the executable's load command.
+    RUN_COMMAND=(env DYLD_PRINT_LIBRARIES=1 "$BIN/$name")
+  fi
+  if (cd "$REF" && "${RUN_COMMAND[@]}" ${CATCH_ARGS[@]+"${CATCH_ARGS[@]}"}) >"$log" 2>&1; then
     tail -n 2 "$log" | grep -E "passed|test cases" | tr '\n' ' '
     echo
   else

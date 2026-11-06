@@ -3,12 +3,13 @@
 //! `finalize` and `combine` read back.
 
 use std::alloc::Layout;
+use std::any::TypeId;
 use std::sync::Arc;
 
 use rustdb_common::{Error, Result};
 use rustdb_types::{LogicalType, StringT, Vector};
 
-use super::{AggregateFunction, AggregateInput, AggregateOps, StatePtr};
+use super::{AggregateCallbackIdentity, AggregateFunction, AggregateInput, AggregateOps, StatePtr};
 use crate::NullHandling;
 
 /// The operations of an exported aggregate: those of the aggregate, except that
@@ -18,6 +19,17 @@ struct ExportOps {
 }
 
 impl AggregateOps for ExportOps {
+    fn callback_identity(&self) -> AggregateCallbackIdentity {
+        let mut identity = self.inner.callback_identity();
+        identity.finalize = TypeId::of::<Self>();
+        identity.window = None;
+        identity
+    }
+
+    fn has_simple_update(&self) -> bool {
+        self.inner.has_simple_update()
+    }
+
     fn verify_state_layout(&self) -> Result<()> {
         self.inner.verify_state_layout()
     }

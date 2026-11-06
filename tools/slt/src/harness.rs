@@ -181,7 +181,9 @@ fn spawn_and_wait(options: &RunOptions, file: &str, log_path: &Path) -> io::Resu
         }
         Worker::Unittest { executable } => {
             let mut command = Command::new(executable);
-            command.arg(file);
+            // The upstream binary otherwise changes cwd back to its compiled
+            // source root, ignoring the root selected by this harness.
+            command.arg("--test-dir").arg(&options.root).arg(file);
             command
         }
     };

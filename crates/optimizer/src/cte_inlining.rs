@@ -174,7 +174,7 @@ fn prevents_inlining(op: &mut LogicalOperator) -> bool {
 
 fn has_volatile_function(expression: &Expression) -> bool {
     if let ExpressionKind::Function(function) = &expression.kind {
-        if &*function.function.name == "error" {
+        if &*function.function.name == b"error" {
             return false;
         }
         if function.function.stability == Stability::Volatile || expression.is_volatile() {

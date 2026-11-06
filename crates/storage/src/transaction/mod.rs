@@ -80,11 +80,11 @@ pub struct Transaction {
     local_storage: Arc<LocalStorage>,
     /// The attached database the transaction writes to, and its WAL
     /// (`MetaTransaction::modified_database`).
-    modified_database: Mutex<Option<(String, Option<Arc<WriteAheadLog>>)>>,
+    modified_database: Mutex<Option<(rustdb_common::ByteString, Option<Arc<WriteAheadLog>>)>>,
     /// The attached databases the transaction looked into (DuckDB's `MetaTransaction`
     /// has a transaction of each), by lower-cased name; shared with the manager's list of
     /// running transactions.
-    accessed_databases: Arc<Mutex<Vec<String>>>,
+    accessed_databases: Arc<Mutex<Vec<rustdb_common::ByteString>>>,
     /// The shared hold of the written database's checkpoint lock, until the transaction
     /// ends (`DuckTransaction::write_lock`).
     checkpoint_guard: Mutex<Option<crate::checkpoint_lock::SharedCheckpointGuard>>,
@@ -164,24 +164,25 @@ impl Transaction {
     /// until the transaction ends, so that no checkpoint moves row ids under it.
     pub fn modify_database(
         &self,
-        name: &str,
+        name: impl AsRef<[u8]>,
         wal: Option<&Arc<WriteAheadLog>>,
         locks: &crate::checkpoint_lock::DatabaseLocks,
         checkpoint_lock: bool,
         vacuum_lock: bool,
     ) -> Result<()> {
+        let name = name.as_ref();
         let mut modified = self
             .modified_database
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         match &*modified {
             None => {
-                *modified = Some((name.to_owned(), wal.cloned()));
+                *modified = Some((name.into(), wal.cloned()));
             }
             Some((current, _)) if current.eq_ignore_ascii_case(name) => {}
-            Some((current, _)) => Err(Error::new(
+            Some((current, _)) => Err(Error::new_bytes(
                 rustdb_common::ErrorKind::Transaction,
-                format!(
+                rustdb_common::byte_format!(
                     "Attempting to write to database \"{name}\" in a transaction that has already modified database \"{current}\" - a single transaction can only write to a single attached database."
                 ),
             ))?,
@@ -208,7 +209,8 @@ impl Transaction {
 
     /// Records that the transaction looked into database `name`
     /// (`MetaTransaction::GetTransaction`).
-    pub fn access_database(&self, name: &str) {
+    pub fn access_database(&self, name: impl AsRef<[u8]>) {
+        let name = name.as_ref();
         let mut accessed = self
             .accessed_databases
             .lock()
@@ -217,13 +219,14 @@ impl Transaction {
             .iter()
             .any(|accessed| accessed.eq_ignore_ascii_case(name))
         {
-            accessed.push(name.to_lowercase());
+            accessed.push(name.to_ascii_lowercase().into());
         }
     }
 
     /// Whether the transaction looked into or wrote to database `name`
     /// (`MetaTransaction::TryGetTransaction`).
-    pub fn has_accessed_database(&self, name: &str) -> bool {
+    pub fn has_accessed_database(&self, name: impl AsRef<[u8]>) -> bool {
+        let name = name.as_ref();
         self.accessed_databases
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -235,7 +238,7 @@ impl Transaction {
     }
 
     /// The database the transaction writes to (`MetaTransaction::ModifiedDatabase`).
-    pub fn modified_database(&self) -> Option<String> {
+    pub fn modified_database(&self) -> Option<rustdb_common::ByteString> {
         self.modified_database
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -308,12 +311,20 @@ impl Transaction {
     /// Records that the transaction took a value from the sequence identified by `key`
     /// (any address unique to the sequence while it exists); the sequence's state after
     /// the transaction is logged at commit (`DuckTransaction::PushSequenceUsage`).
-    pub fn push_sequence_usage(&self, key: usize, schema: &str, name: &str, usage_count: u64, counter: i64) {
+    pub fn push_sequence_usage(
+        &self,
+        key: usize,
+        schema: impl AsRef<[u8]>,
+        name: impl AsRef<[u8]>,
+        usage_count: u64,
+        counter: i64,
+    ) {
+        let name = name.as_ref();
         self.undo().push_sequence_value(
             key,
             SequenceValue {
-                schema: schema.to_owned(),
-                name: name.to_owned(),
+                schema: schema.as_ref().into(),
+                name: name.into(),
                 usage_count,
                 counter,
             },
@@ -356,7 +367,7 @@ struct CommittedUndo {
     blocks_checkpoint: bool,
     /// The database the transaction wrote to; every attached database has its own
     /// recently committed transactions in DuckDB. `None` blocks every checkpoint.
-    database: Option<String>,
+    database: Option<rustdb_common::ByteString>,
 }
 
 /// A running transaction as its manager sees it.
@@ -366,11 +377,12 @@ struct ActiveTransaction {
     start: u64,
     /// The databases it looked into (its `accessed_databases`): in DuckDB it runs in the
     /// transaction manager of each of them only.
-    databases: Arc<Mutex<Vec<String>>>,
+    databases: Arc<Mutex<Vec<rustdb_common::ByteString>>>,
 }
 
 impl ActiveTransaction {
-    fn accessed(&self, database: &str) -> bool {
+    fn accessed(&self, database: impl AsRef<[u8]>) -> bool {
+        let database = database.as_ref();
         self.databases
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -548,7 +560,8 @@ impl TransactionManager {
     /// `database` is kept for a running transaction other than `except` (by id), which in
     /// DuckDB holds the checkpoint lock shared until it is cleaned up
     /// (`recently_committed_transactions`).
-    pub fn retains_changes(&self, except: u64, database: &str) -> bool {
+    pub fn retains_changes(&self, except: u64, database: impl AsRef<[u8]>) -> bool {
+        let database = database.as_ref();
         let state = self.lock();
         // DuckDB keeps a transaction manager per database: only the transactions that
         // looked into `database` run in its manager.

@@ -81,7 +81,10 @@ def verify(manifest, signature, certificate, openssl, tmpdir, certificate_sha256
         artifact = (root / relative).resolve()
         require(artifact.is_relative_to(root) and artifact.is_file(), "artifact outside signed directory")
         with artifact.open("rb") as source:
-            actual = hashlib.file_digest(source, "sha256").hexdigest()
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+            actual = digest.hexdigest()
         require(hmac.compare_digest(actual, expected), "artifact SHA256 mismatch: " + name)
         entries += 1
     require(entries > 0, "empty artifact manifest")

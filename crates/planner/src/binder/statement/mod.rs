@@ -34,7 +34,7 @@ use crate::planner::Planner;
 use crate::prepared::StatementReturnType;
 
 fn success(plan: LogicalOperator) -> BoundStatement {
-    BoundStatement::new(plan, vec!["Success".to_owned()], vec![LogicalType::BOOLEAN])
+    BoundStatement::new(plan, vec!["Success".into()], vec![LogicalType::BOOLEAN])
 }
 
 /// Binds any statement (DuckDB's `Binder::Bind(SQLStatement &)`).
@@ -81,10 +81,23 @@ pub fn bind_statement(scope: &mut BindScope<'_>, statement: &mut SqlStatement) -
         SqlStatementKind::Attach(info) => bind_attach(scope, info),
         SqlStatementKind::Detach(info) => Ok(bind_detach(scope, info)),
         SqlStatementKind::Load(info) => Ok(bind_load(scope, info)),
+        SqlStatementKind::UpdateExtensions(info) => Ok(BoundStatement::new(
+            LogicalOperator::new(LogicalKind::UpdateExtensions(info.clone())),
+            [
+                "extension_name",
+                "repository",
+                "update_result",
+                "previous_version",
+                "current_version",
+            ]
+            .map(Into::into)
+            .to_vec(),
+            vec![LogicalType::VARCHAR; 5],
+        )),
         SqlStatementKind::Copy(info) => copy::bind_copy(scope, info),
         SqlStatementKind::Export(export) => export::bind_export(scope, export),
         SqlStatementKind::Vacuum(info) => bind_vacuum(scope, info),
-        other => Err(Error::not_implemented(format!(
+        other => Err(Error::not_implemented(rustdb_common::byte_format!(
             "Unimplemented statement type \"{}\" for Bind",
             other.statement_type().name()
         ))),
@@ -95,7 +108,7 @@ pub fn bind_statement(scope: &mut BindScope<'_>, statement: &mut SqlStatement) -
 /// columns are checked; the statistics DuckDB recomputes are not kept here.
 fn bind_vacuum(scope: &mut BindScope<'_>, info: &mut rustdb_ast::VacuumInfo) -> Result<BoundStatement> {
     scope.with_properties(|properties| properties.return_type = StatementReturnType::Nothing);
-    let names = vec!["Success".to_owned()];
+    let names = vec!["Success".into()];
     let types = vec![LogicalType::BOOLEAN];
     let Some(table_ref) = info.table_ref.as_mut().filter(|_| info.has_table) else {
         let plan = LogicalOperator::new(LogicalKind::EmptyResult {
@@ -127,15 +140,20 @@ fn bind_vacuum(scope: &mut BindScope<'_>, info: &mut rustdb_ast::VacuumInfo) -> 
     let mut select_list = Vec::with_capacity(info.columns.len());
     for name in &info.columns {
         let Some((logical, column)) = table.column(name) else {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Column with name \"{name}\" does not exist"
             )));
         };
         if column.generated.is_some() {
-            return Err(Error::binder(format!(
-                "cannot vacuum or analyze generated column \"{}\" - specify non-generated columns to vacuum or analyze",
-                column.name
-            )));
+            return Err(Error::new_bytes(
+                rustdb_common::ErrorKind::Binder,
+                [
+                    "cannot vacuum or analyze generated column \"".as_bytes(),
+                    column.name.as_bytes(),
+                    "\" - specify non-generated columns to vacuum or analyze".as_bytes(),
+                ]
+                .concat(),
+            ));
         }
         if column_ids
             .iter()
@@ -177,7 +195,7 @@ fn bind_call(scope: &mut BindScope<'_>, call: &mut rustdb_ast::CallStatement) ->
     let star = ParsedExpression::new(
         ExpressionType::Star,
         ParsedExpressionKind::Star(Box::new(StarExpression {
-            relation_name: String::new(),
+            relation_name: rustdb_common::ByteString::new(),
             exclude_list: Vec::new(),
             replace_list: CaseInsensitiveMap::default(),
             rename_list: rustdb_common::OrderedMap::default(),
@@ -186,7 +204,8 @@ fn bind_call(scope: &mut BindScope<'_>, call: &mut rustdb_ast::CallStatement) ->
         })),
     );
     let from_table = TableRef {
-        alias: String::new(),
+        external_dependency: rustdb_ast::ExternalDependency::default(),
+        alias: rustdb_common::ByteString::new(),
         sample: None,
         query_location: None,
         kind: TableRefKind::TableFunction(TableFunctionRef {
@@ -217,7 +236,7 @@ fn bind_call(scope: &mut BindScope<'_>, call: &mut rustdb_ast::CallStatement) ->
 /// `EXPLAIN statement` (DuckDB's `Binder::Bind(ExplainStatement &)`).
 fn bind_explain(scope: &mut BindScope<'_>, explain: &mut ExplainStatement) -> Result<BoundStatement> {
     let bound = bind_statement(scope, &mut explain.statement)?;
-    let logical_plan_unopt = bound.plan.to_explain_string(explain.explain_format);
+    let logical_plan_unopt = bound.plan.to_explain_string(explain.explain_format)?;
     let plan = LogicalOperator::new(LogicalKind::Explain {
         explain_type: explain.explain_type,
         explain_format: explain.explain_format,
@@ -227,7 +246,7 @@ fn bind_explain(scope: &mut BindScope<'_>, explain: &mut ExplainStatement) -> Re
     scope.with_properties(|properties| properties.return_type = StatementReturnType::QueryResult);
     Ok(BoundStatement::new(
         plan,
-        vec!["explain_key".to_owned(), "explain_value".to_owned()],
+        vec!["explain_key".into(), "explain_value".into()],
         vec![LogicalType::VARCHAR, LogicalType::VARCHAR],
     ))
 }
@@ -247,7 +266,8 @@ fn bind_set(scope: &mut BindScope<'_>, set: &mut SetStatement) -> Result<BoundSt
         let select = rustdb_ast::SelectNode {
             select_list: vec![(**value).clone()],
             from_table: Box::new(rustdb_ast::TableRef {
-                alias: String::new(),
+                external_dependency: rustdb_ast::ExternalDependency::default(),
+                alias: rustdb_common::ByteString::new(),
                 sample: None,
                 query_location: None,
                 kind: rustdb_ast::TableRefKind::Empty,
@@ -305,11 +325,11 @@ fn bind_attach(scope: &mut BindScope<'_>, info: &mut rustdb_ast::AttachInfo) -> 
     for (name, expression) in parsed.iter() {
         let value = if let rustdb_ast::ParsedExpressionKind::ColumnRef(column) = &expression.kind {
             if column.column_names.len() != 1 {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "ATTACH option \"{name}\": qualified column names are not supported"
                 )));
             }
-            rustdb_types::Value::varchar(column.column_names[0].clone())
+            rustdb_types::Value::try_varchar(&column.column_names[0])?
         } else {
             let mut expression = expression.clone();
             let bound = {
@@ -320,11 +340,11 @@ fn bind_attach(scope: &mut BindScope<'_>, info: &mut rustdb_ast::AttachInfo) -> 
             scope.context.evaluator.evaluate_scalar(&bound)?
         };
         if value.is_null() {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "NULL is not supported as a valid option for ATTACH option \"{name}\""
             )));
         }
-        bound_info.options.insert(name.to_lowercase(), value);
+        bound_info.options.insert(name.to_ascii_lowercase(), value);
     }
     Ok(success(LogicalOperator::new(LogicalKind::Attach(Box::new(
         bound_info,
@@ -436,7 +456,7 @@ pub fn bind_pragma_info(scope: &mut BindScope<'_>, pragma: &mut PragmaInfo) -> R
             true,
         )?;
         if table_function.is_some() {
-            return Err(Error::catalog(format!(
+            return Err(Error::catalog(rustdb_common::byte_format!(
                 "Pragma Function with name {0} does not exist, but a table function with the same name \
                  exists, try `CALL {0}(...)`",
                 pragma.name
@@ -446,7 +466,10 @@ pub fn bind_pragma_info(scope: &mut BindScope<'_>, pragma: &mut PragmaInfo) -> R
         lookup(false)?.ok_or_else(|| Error::internal("pragma lookup"))?
     };
     let rustdb_catalog::EntryKind::PragmaFunction(functions) = &entry.entry.kind else {
-        return Err(Error::internal(format!("\"{}\" is not a pragma", pragma.name)));
+        return Err(Error::internal(rustdb_common::byte_format!(
+            "\"{}\" is not a pragma",
+            pragma.name
+        )));
     };
     let types: Vec<LogicalType> = parameters
         .iter()
@@ -488,37 +511,37 @@ fn bind_prepare(scope: &mut BindScope<'_>, prepare: &mut PrepareStatement) -> Re
 
 /// `PreparedStatement::VerifyParameters`: the supplied values name exactly the
 /// statement's parameters (`MissingValuesException` / `ExcessValuesException`).
-pub fn verify_parameters<V, E>(
-    provided: &rustdb_common::CaseInsensitiveMap<V>,
-    expected: &rustdb_common::CaseInsensitiveMap<E>,
+pub fn verify_parameters<V, E, K: AsRef<[u8]>, L: AsRef<[u8]>>(
+    provided: &rustdb_common::CaseInsensitiveMap<V, K>,
+    expected: &rustdb_common::CaseInsensitiveMap<E, L>,
 ) -> Result<()> {
-    let names = |from: &dyn Fn(&str) -> bool, of: Vec<&str>| {
-        let mut names: Vec<&str> = of.into_iter().filter(|name| !from(name)).collect();
-        names.sort_unstable();
-        names.dedup();
-        names.join(", ")
-    };
-    let missing = || {
-        Error::invalid_input(format!(
-            "Values were not provided for the following prepared statement parameters: {}",
-            names(
-                &|name| provided.contains_key(name),
-                expected.iter().map(|(name, _)| name).collect()
-            )
-        ))
-    };
+    let missing: Vec<_> = expected
+        .iter_keys()
+        .filter(|(name, _)| !provided.contains_key(name.as_ref()))
+        .map(|(name, _)| rustdb_common::ByteString::from(name.as_ref()))
+        .collect();
     if expected.len() >= provided.len() {
-        if expected.iter().any(|(name, _)| !provided.contains_key(name)) {
-            return Err(missing());
+        if !missing.is_empty() {
+            let mut names = missing;
+            names.sort_unstable();
+            names.dedup();
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
+                "Values were not provided for the following prepared statement parameters: {}",
+                rustdb_common::ByteString::join(&names, b", ")
+            )));
         }
         return Ok(());
     }
-    Err(Error::invalid_input(format!(
+    let mut names: Vec<_> = provided
+        .iter_keys()
+        .filter(|(name, _)| !expected.contains_key(name.as_ref()))
+        .map(|(name, _)| rustdb_common::ByteString::from(name.as_ref()))
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    Err(Error::invalid_input(rustdb_common::byte_format!(
         "Parameter argument/count mismatch, identifiers of the excess parameters: {}",
-        names(
-            &|name| expected.contains_key(name),
-            provided.iter().map(|(name, _)| name).collect()
-        )
+        rustdb_common::ByteString::join(&names, b", ")
     )))
 }
 
@@ -526,7 +549,7 @@ pub fn verify_parameters<V, E>(
 /// again with the values, so the plan uses them as constants.
 fn bind_execute(scope: &mut BindScope<'_>, execute: &mut ExecuteStatement) -> Result<BoundStatement> {
     let Some(prepared) = scope.context.prepared_statements.get(&execute.name).cloned() else {
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "Prepared statement \"{}\" does not exist",
             execute.name
         )));
@@ -536,7 +559,7 @@ fn bind_execute(scope: &mut BindScope<'_>, execute: &mut ExecuteStatement) -> Re
     // DuckDB's `PreparedStatementData::Bind`: every parameter needs a value.
     for (identifier, _) in prepared.value_map.iter() {
         if execute.named_values.get(identifier).is_none() {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Could not find parameter with identifier {identifier}"
             )));
         }

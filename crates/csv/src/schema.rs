@@ -2,7 +2,6 @@
 //! `csv_schema.hpp/.cpp`).
 
 use std::collections::HashMap;
-use std::fmt::Write as _;
 
 use rustdb_types::{LogicalType, LogicalTypeId};
 
@@ -11,7 +10,7 @@ use crate::sniffer::SnifferResult;
 /// One column of a [`CsvSchema`] (DuckDB's `CSVColumnInfo`).
 #[derive(Clone, Debug)]
 pub struct CsvColumnInfo {
-    pub name: String,
+    pub name: rustdb_common::ByteString,
     pub ty: LogicalType,
 }
 
@@ -19,17 +18,17 @@ pub struct CsvColumnInfo {
 #[derive(Clone, Debug, Default)]
 pub struct CsvSchema {
     pub columns: Vec<CsvColumnInfo>,
-    name_idx_map: HashMap<String, usize>,
-    file_path: String,
+    name_idx_map: HashMap<rustdb_common::ByteString, usize>,
+    file_path: rustdb_common::ByteString,
     rows_read: u64,
     empty: bool,
 }
 
 impl CsvSchema {
     pub fn new(
-        names: &[String],
+        names: &[rustdb_common::ByteString],
         types: &[LogicalType],
-        file_path: &str,
+        file_path: &[u8],
         rows_read: u64,
         empty: bool,
     ) -> Self {
@@ -43,8 +42,13 @@ impl CsvSchema {
     }
 
     /// `Initialize`.
-    pub fn initialize(&mut self, names: &[String], types: &[LogicalType], file_path: &str) {
-        file_path.clone_into(&mut self.file_path);
+    pub fn initialize(
+        &mut self,
+        names: &[rustdb_common::ByteString],
+        types: &[LogicalType],
+        file_path: &[u8],
+    ) {
+        self.file_path = file_path.into();
         for (i, (name, ty)) in names.iter().zip(types).enumerate() {
             self.columns.push(CsvColumnInfo {
                 name: name.clone(),
@@ -109,7 +113,7 @@ impl CsvSchema {
         }
     }
 
-    pub fn names(&self) -> Vec<String> {
+    pub fn names(&self) -> Vec<rustdb_common::ByteString> {
         self.columns.iter().map(|column| column.name.clone()).collect()
     }
 
@@ -135,7 +139,7 @@ impl CsvSchema {
         other.columns.len() == self.columns.len() || self.empty || other.empty
     }
 
-    pub fn path(&self) -> &str {
+    pub fn path(&self) -> &[u8] {
         &self.file_path
     }
 
@@ -151,25 +155,25 @@ impl CsvSchema {
     /// is set for results of the minimal sniffer.
     pub fn schemas_match(
         &self,
-        error_message: &mut String,
+        error_message: &mut rustdb_common::ByteString,
         sniffer_result: &mut SnifferResult,
-        cur_file_path: &str,
+        cur_file_path: &[u8],
         minimal_more_than_one_row: Option<bool>,
     ) -> bool {
-        let mut current_schema: HashMap<&str, (LogicalType, usize)> = HashMap::new();
+        let mut current_schema: HashMap<&[u8], (LogicalType, usize)> = HashMap::new();
         for (i, (name, ty)) in sniffer_result
             .names
             .iter()
             .zip(&sniffer_result.return_types)
             .enumerate()
         {
-            current_schema.insert(name.as_str(), (ty.clone(), i));
+            current_schema.insert(name.as_bytes(), (ty.clone(), i));
         }
         if minimal_more_than_one_row == Some(false) {
             if self
                 .columns
                 .iter()
-                .all(|column| current_schema.contains_key(column.name.as_str()))
+                .all(|column| current_schema.contains_key(column.name.as_bytes()))
             {
                 return true;
             }
@@ -187,31 +191,36 @@ impl CsvSchema {
             }
         }
         let mut matches = true;
-        let mut error = "Schema mismatch between globbed files.\n".to_owned();
-        let _ = writeln!(error, "Main file schema: {}", self.file_path);
-        let _ = writeln!(error, "Current file: {cur_file_path}");
+        let mut error = rustdb_common::ByteString::from("Schema mismatch between globbed files.\n");
+        let _ = rustdb_common::byte_write!(error, "Main file schema: {}\n", self.file_path);
+        let _ = rustdb_common::byte_write!(error, "Current file: {cur_file_path}\n");
         for column in &self.columns {
-            match current_schema.get(column.name.as_str()) {
+            match current_schema.get(column.name.as_bytes()) {
                 None => {
-                    let _ = writeln!(error, "Column with name: \"{}\" is missing", column.name);
+                    let _ = rustdb_common::byte_write!(
+                        error,
+                        "Column with name: \"{}\" is missing\n",
+                        column.name
+                    );
                     matches = false;
                 }
                 Some((ty, _)) => {
                     if !Self::can_we_cast_it(ty.id(), column.ty.id()) {
-                        let _ = write!(
+                        let _ = rustdb_common::byte_write!(
                             error,
                             "Column with name: \"{}\" is expected to have type: {}",
-                            column.name, column.ty
+                            column.name,
+                            column.ty
                         );
-                        let _ = writeln!(error, " But has type: {ty}");
+                        let _ = rustdb_common::byte_write!(error, " But has type: {ty}\n");
                         matches = false;
                     }
                 }
             }
         }
-        error += "Potential Fixes \n";
-        error += "* Consider setting union_by_name=true.\n";
-        error += "* Consider setting files_to_sniff to a higher value (e.g., files_to_sniff = -1)\n";
+        error.push_bytes("Potential Fixes \n");
+        error.push_bytes("* Consider setting union_by_name=true.\n");
+        error.push_bytes("* Consider setting files_to_sniff to a higher value (e.g., files_to_sniff = -1)\n");
         if !matches {
             *error_message = error;
         }

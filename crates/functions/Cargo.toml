@@ -20,5 +20,8 @@ memchr = "2"
 regex = "1"
 regex-syntax = "0.8"
 
+[dev-dependencies]
+rustdb-parser.workspace = true
+
 [lints]
 workspace = true

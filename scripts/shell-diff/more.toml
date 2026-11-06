@@ -238,7 +238,6 @@ EXPLAIN SELECT 1;
 
 [[case]]
 name = "pragma-database-list"
-known = "a database oid counts the catalog entries created before it, which differ in number"
 stdin = "PRAGMA database_list;\n"
 
 [[case]]

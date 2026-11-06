@@ -30,7 +30,7 @@ pub use display::expression_list_to_string;
 pub struct Expression {
     pub expression_type: ExpressionType,
     /// The name given with `AS`, or the name the binder derived.
-    pub alias: String,
+    pub alias: rustdb_common::ByteString,
     /// Byte offset in the query text, for error messages.
     pub query_location: Option<u64>,
     /// The type the expression evaluates to.
@@ -236,7 +236,7 @@ pub type SharedParameterData = Arc<Mutex<BoundParameterData>>;
 /// A prepared statement parameter `$n` / `?` (DuckDB's `BoundParameterExpression`).
 #[derive(Clone, Debug)]
 pub struct BoundParameterExpression {
-    pub identifier: String,
+    pub identifier: rustdb_common::ByteString,
     pub parameter_data: SharedParameterData,
 }
 
@@ -347,7 +347,7 @@ impl Expression {
     pub fn new(expression_type: ExpressionType, return_type: LogicalType, kind: ExpressionKind) -> Self {
         Self {
             expression_type,
-            alias: String::new(),
+            alias: rustdb_common::ByteString::new(),
             query_location: None,
             return_type,
             kind,
@@ -366,7 +366,7 @@ impl Expression {
 
     /// A reference to `binding` (`BOUND_COLUMN_REF`).
     pub fn column_ref(
-        alias: impl Into<String>,
+        alias: impl Into<rustdb_common::ByteString>,
         return_type: LogicalType,
         binding: ColumnBinding,
         depth: u64,
@@ -381,7 +381,11 @@ impl Expression {
     }
 
     /// Column `index` of the input chunk (`BOUND_REF`).
-    pub fn reference(alias: impl Into<String>, return_type: LogicalType, index: u64) -> Self {
+    pub fn reference(
+        alias: impl Into<rustdb_common::ByteString>,
+        return_type: LogicalType,
+        index: u64,
+    ) -> Self {
         let mut expression = Self::new(
             ExpressionType::BoundRef,
             return_type,
@@ -441,7 +445,7 @@ impl Expression {
 
     /// The same expression under an alias.
     #[must_use]
-    pub fn with_alias(mut self, alias: impl Into<String>) -> Self {
+    pub fn with_alias(mut self, alias: impl Into<rustdb_common::ByteString>) -> Self {
         self.alias = alias.into();
         self
     }
@@ -472,9 +476,9 @@ impl Expression {
     }
 
     /// The alias, or else the expression's text (DuckDB's `GetName`).
-    pub fn name(&self) -> String {
+    pub fn name(&self) -> rustdb_common::ByteString {
         if self.alias.is_empty() {
-            self.to_string()
+            self.to_bytes()
         } else {
             self.alias.clone()
         }

@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 rustdb-common.workspace = true
 rustdb-types.workspace = true
+rustdb-ast.workspace = true
 rustdb-serde.workspace = true
 rustdb-buffer = { path = "../buffer" }
 

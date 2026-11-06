@@ -15,7 +15,7 @@ use crate::thrift::FileMetaData;
 /// A column of a file as the multi-file reader sees it (`MultiFileColumnDefinition`).
 #[derive(Clone, Debug)]
 pub struct ColumnDefinition {
-    pub name: String,
+    pub name: rustdb_common::ByteString,
     pub logical_type: LogicalType,
     /// The field id, if the file has one for the column.
     pub identifier: Option<Value>,
@@ -36,14 +36,18 @@ pub struct ParquetReader {
 impl ParquetReader {
     /// Opens `path` and parses its footer and schema (`ParquetReader::ParquetReader`);
     /// with a metadata cache, a cached footer of the unchanged file is reused.
-    pub fn open(path: &str, options: ParquetOptions) -> Result<Self> {
+    pub fn open(path: &[u8], options: ParquetOptions) -> Result<Self> {
+        // Remote footer reads use the same bounded 16–256 KiB estimate as C++.
+        // Row-group buffering remains controlled independently by `prefetch`.
+        let prefetch_footer = options.prefetch
+            || (!options.disable_prefetch && rustdb_function::file_system::is_remote_file(path));
         let file = Arc::new(ParquetFile::open(
             path,
             options.file_cache.clone(),
             options.cache_validation,
         )?);
         if let Some(key) = &options.encryption {
-            let loaded = load_metadata(&file, Some(key), options.prefetch)?;
+            let loaded = load_metadata(&file, Some(key), prefetch_footer)?;
             let decryption = loaded.decryption.map(Arc::new);
             let mut reader =
                 Self::from_metadata(file, Arc::new(loaded.metadata), loaded.footer_len, options)?;
@@ -58,7 +62,7 @@ impl ParquetReader {
                 let metadata = Arc::clone(&entry.metadata);
                 return Self::from_metadata(file, metadata, entry.footer_len, options);
             }
-            let loaded = load_metadata(&file, None, options.prefetch)?;
+            let loaded = load_metadata(&file, None, prefetch_footer)?;
             let metadata = Arc::new(loaded.metadata);
             let handle = file.handle();
             cache.put(
@@ -73,7 +77,7 @@ impl ParquetReader {
             );
             return Self::from_metadata(file, metadata, loaded.footer_len, options);
         }
-        let loaded = load_metadata(&file, None, options.prefetch)?;
+        let loaded = load_metadata(&file, None, prefetch_footer)?;
         Self::from_metadata(file, Arc::new(loaded.metadata), loaded.footer_len, options)
     }
 
@@ -84,16 +88,16 @@ impl ParquetReader {
         footer_len: u32,
         options: ParquetOptions,
     ) -> Result<Self> {
-        let path = file.path().to_owned();
+        let path = rustdb_common::ByteString::from(file.path());
         if let Some(algorithm) = &metadata.encryption_algorithm
             && algorithm.aes_gcm_ctr_v1.is_some()
         {
-            return Err(Error::invalid_input(format!(
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "File '{path}' is encrypted with AES_GCM_CTR_V1, but only AES_GCM_V1 is supported"
             )));
         }
         if metadata.schema.len() < 2 {
-            return Err(Error::invalid_input(format!(
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "Failed to read Parquet file '{path}': Need at least one non-root column in the file"
             )));
         }
@@ -113,7 +117,7 @@ impl ParquetReader {
             .collect();
         Ok(Self {
             context: ReaderContext {
-                file_name: Arc::from(path.as_str()),
+                file_name: Arc::from(path.as_bytes()),
                 file,
                 metadata,
                 decryption: None,
@@ -126,7 +130,7 @@ impl ParquetReader {
         })
     }
 
-    pub fn file_name(&self) -> &str {
+    pub fn file_name(&self) -> &[u8] {
         &self.context.file_name
     }
 
@@ -142,10 +146,13 @@ impl ParquetReader {
     /// `None` when a row group has none for it.
     pub fn read_statistics(
         &self,
-        name: &str,
+        name: &[u8],
         casts: &rustdb_function::cast::CastFunctionSet,
     ) -> Option<rustdb_storage::statistics::BaseStatistics> {
-        let index = self.columns.iter().position(|column| column.name == name)?;
+        let index = self
+            .columns
+            .iter()
+            .position(|column| column.name.as_bytes() == name)?;
         let schema = self.root_schema.children.get(index)?;
         let mut result: Option<rustdb_storage::statistics::BaseStatistics> = None;
         for group in &self.context.metadata.row_groups {
@@ -287,8 +294,8 @@ pub struct CachedMetadata {
 
 impl CachedMetadata {
     /// The object cache key of the footer of `path` (`GetWithTypePrefix`).
-    pub fn key(path: &str) -> String {
-        format!("parquet_metadata{path}")
+    pub fn key(path: &[u8]) -> rustdb_common::ByteString {
+        rustdb_common::byte_format!("parquet_metadata{path}")
     }
 
     /// Whether the cached footer is that of the file `handle` reads
@@ -307,9 +314,9 @@ impl CachedMetadata {
     }
 
     /// The cached footer of `path`, if the file has not changed since (`TryLoadCaches`).
-    pub fn lookup(cache: &rustdb_function::ObjectCache, path: &str) -> Option<Arc<Self>> {
+    pub fn lookup(cache: &rustdb_function::ObjectCache, path: &[u8]) -> Option<Arc<Self>> {
         let entry = cache.get::<Self>(&Self::key(path))?;
-        let metadata = std::fs::metadata(path).ok()?;
+        let metadata = std::fs::metadata(rustdb_function::file_system::native_path(path).ok()?).ok()?;
         let (last_modified, version_tag) = rustdb_function::caching_file_system::file_version(&metadata);
         rustdb_function::external_file_cache::ExternalFileCache::is_valid(
             entry.validate,
@@ -515,9 +522,9 @@ impl ReaderScanState {
         const WHOLE_GROUP_PREFETCH_MINIMUM_SCAN: f64 = 0.95;
         let span = group_span(group);
         if to_scan > span {
-            return Err(Error::new(
+            return Err(Error::new_bytes(
                 rustdb_common::ErrorKind::Io,
-                format!(
+                rustdb_common::byte_format!(
                     "The parquet file '{}' seems to have incorrectly set page offsets. This interferes with DuckDB's prefetching optimization. DuckDB may still be able to scan this file by manually disabling the prefetching mechanism using: 'SET disable_parquet_prefetching=true'.",
                     self.context.file_name
                 ),
@@ -568,7 +575,7 @@ impl ReaderScanState {
         let mut vector = Vector::flat(reader.logical_type(), STANDARD_VECTOR_SIZE);
         let read = reader.read(count, &mut self.defines, &mut self.repeats, &mut vector)?;
         if read != count {
-            return Err(Error::invalid_input(format!(
+            return Err(Error::invalid_input(rustdb_common::byte_format!(
                 "Mismatch in parquet read for column {column}, expected {count} rows, got {read}"
             )));
         }

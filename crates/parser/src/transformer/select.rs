@@ -169,7 +169,9 @@ impl<'a> Transformer<'a> {
                     let window_def: &'a WindowDef = cast_node(window)?;
                     let name = window_def.name.clone().unwrap_or_default();
                     if self.frame().window_clauses.contains_key(&name) {
-                        return Err(Error::parser(format!("window \"{name}\" is already defined")));
+                        return Err(Error::parser(rustdb_common::byte_format!(
+                            "window \"{name}\" is already defined"
+                        )));
                     }
                     self.frame().window_clauses.insert(name, window_def);
                 }
@@ -260,18 +262,18 @@ impl<'a> Transformer<'a> {
             expected_types: Vec::new(),
             values,
         })));
-        "valueslist".clone_into(&mut result.alias);
+        result.alias = "valueslist".into();
         Ok(result)
     }
 
     /// `TransformShow`: `SHOW TABLES`, `DESCRIBE tbl`, `SUMMARIZE tbl`, ...
     fn transform_show(&mut self, stmt: &'a VariableShowStmt) -> Result<QueryNode> {
         let mut showref = ShowRef {
-            table_name: String::new(),
+            table_name: String::new().into(),
             query: None,
             show_type: ShowType::Describe,
-            catalog_name: String::new(),
-            schema_name: String::new(),
+            catalog_name: String::new().into(),
+            schema_name: String::new().into(),
         };
         if let Some(set) = &stmt.set {
             if set == "__show_tables_from_database" {
@@ -291,7 +293,7 @@ impl<'a> Transformer<'a> {
                     showref.schema_name = qualified_name.name;
                 }
             } else {
-                showref.table_name.clone_from(set);
+                showref.table_name = set.into();
                 showref.show_type = ShowType::ShowUnqualified;
             }
         } else {
@@ -303,10 +305,10 @@ impl<'a> Transformer<'a> {
                     .unwrap_or_default()
                     .to_ascii_lowercase();
                 if matches!(
-                    table_name.as_str(),
-                    "databases" | "schemas" | "tables" | "variables"
+                    table_name.as_slice(),
+                    b"databases" | b"schemas" | b"tables" | b"variables"
                 ) {
-                    showref.table_name = format!("\"{table_name}\"");
+                    showref.table_name = rustdb_common::byte_format!("\"{table_name}\"");
                     showref.show_type = ShowType::ShowUnqualified;
                 }
             }
@@ -341,15 +343,15 @@ impl<'a> Transformer<'a> {
     fn transform_show_select(&mut self, stmt: &'a VariableShowSelectStmt) -> Result<QueryNode> {
         let query = self.transform_select_node(required(stmt.stmt.as_ref(), "statement")?, true)?;
         let showref = ShowRef {
-            table_name: String::new(),
+            table_name: String::new().into(),
             query: Some(Box::new(query)),
             show_type: if stmt.is_summary != 0 {
                 ShowType::Summary
             } else {
                 ShowType::Describe
             },
-            catalog_name: String::new(),
-            schema_name: String::new(),
+            catalog_name: String::new().into(),
+            schema_name: String::new().into(),
         };
         let mut select = build::select_node();
         select.select_list.push(build::star());

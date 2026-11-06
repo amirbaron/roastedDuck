@@ -100,10 +100,11 @@ pub fn bind_create_function_info(scope: &mut BindScope<'_>, info: &mut CreateInf
 /// binds.
 fn verify_macro_functions(
     scope: &mut BindScope<'_>,
-    name: &str,
+    name: impl AsRef<[u8]>,
     base: &mut rustdb_ast::CreateMacroInfo,
     store_types: bool,
 ) -> Result<()> {
+    let name = name.as_ref();
     let mut type_overloads: Vec<Vec<LogicalType>> = Vec::new();
     for function in &mut base.macros {
         if !store_types && function.types.iter().any(|ty| ty.id() != LogicalTypeId::Unknown) {
@@ -134,12 +135,15 @@ fn verify_macro_functions(
             let mut copy = default.clone();
             let bound = {
                 let (inner, outer) = scope.split();
-                let mut binder =
-                    ConstantBinder::new(inner, outer, format!("Default value for parameter '{parameter}'"));
+                let mut binder = ConstantBinder::new(
+                    inner,
+                    outer,
+                    rustdb_common::byte_format!("Default value for parameter '{parameter}'"),
+                );
                 binder.bind(&mut copy, false)?
             };
             if !bound.is_foldable() {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "Default value '{default}' for parameter '{parameter}' is not a constant expression."
                 )));
             }
@@ -168,7 +172,7 @@ fn verify_macro_functions(
                     .implicit_cast_cost(constant.value.logical_type(), ty)
                     < 0
             {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "Default value '{default}' for parameter '{parameter}' cannot be implicitly cast to '{ty}'. \
                      Please add an explicit type cast."
                 )));
@@ -178,13 +182,13 @@ fn verify_macro_functions(
         let dummy_types: Vec<LogicalType> = (0..function.parameters.len())
             .map(|index| function.types.get(index).cloned().unwrap_or(LogicalType::UNKNOWN))
             .collect();
-        let dummy_names: Vec<String> = function
+        let dummy_names: Vec<rustdb_common::ByteString> = function
             .parameters
             .iter()
-            .map(|parameter| parameter_name(parameter).to_owned())
+            .map(|parameter| rustdb_common::ByteString::from(parameter_name(parameter)))
             .collect();
         if type_overloads.contains(&dummy_types) {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Ambiguity in macro overloads - macro {name}() has multiple definitions with the same parameters"
             )));
         }

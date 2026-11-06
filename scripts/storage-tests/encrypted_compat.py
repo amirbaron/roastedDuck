@@ -1,0 +1,143 @@
+"""Check encrypted checkpoint/WAL compatibility between authenticated native engines.
+
+Usage: encrypted_compat.py RUST_BUNDLE CPP_BUNDLE HTTPFS_BUNDLE OUT
+       --certificate-sha256 PIN
+
+Runs four cross-engine mutation/checkpoint/original-readback journeys and eight
+incomplete-tail recoveries. All directories must be on the approved artifact disk.
+The caller chooses already-built bundles; pinned manifests are verified before any
+native execution and again afterward. No user extension/secret directory is used.
+"""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+ROOT = Path(__file__).resolve().parents[2]
+WORKER = Path(__file__).with_name('encrypted_worker.py')
+
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def library(bundle):
+    candidates = [bundle / name for name in [
+        'src/libduckdb.dylib', 'lib/libduckdb.dylib', 'lib/libduckdb.so', 'libduckdb.so']]
+    found = [path for path in candidates if path.is_file()]
+    if len(found) != 1:
+        raise ValueError(f'Expected one native DuckDB library in {bundle}: {found}')
+    return found[0]
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    for name in ['rust_bundle', 'cpp_bundle', 'httpfs_bundle', 'out']:
+        parser.add_argument(name, type=Path)
+    parser.add_argument('--certificate-sha256', required=True)
+    parser.add_argument('--cipher', choices=['GCM', 'CTR'], default='GCM')
+    parser.add_argument('--encryption-version', choices=['v0', 'v1'], default='v1')
+    args = parser.parse_args()
+    out = args.out.resolve()
+    out.mkdir(parents=True, exist_ok=False)
+    bundles = {name: getattr(args, name + '_bundle').resolve() for name in ['rust', 'cpp', 'httpfs']}
+    libs = {name: library(bundles[name]) for name in ['rust', 'cpp']}
+    package = bundles['httpfs'] / 'httpfs.duckdb_extension'
+    env = os.environ.copy()
+    env.update(TZ='UTC', TMPDIR=str(out), PYTHONDONTWRITEBYTECODE='1')
+
+    def authenticate(label):
+        for name, bundle in bundles.items():
+            command = [sys.executable, '-B', str(ROOT / 'scripts/signing/verify_detached_manifest.py'),
+                       str(bundle / 'SHA256SUMS'), str(bundle / 'SHA256SUMS.csig'),
+                       str(bundle / 'rustdb-dev.pem'), '--tmpdir', str(out),
+                       '--certificate-sha256', args.certificate_sha256]
+            with (out / f'{label}-{name}-auth.log').open('x') as log:
+                subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True)
+                selected = package if name == 'httpfs' else libs[name]
+                entries = dict(line.split('  ', 1)[::-1]
+                               for line in (bundle / 'SHA256SUMS').read_text().splitlines() if line)
+                relative = selected.relative_to(bundle).as_posix()
+                assert entries.get(relative) == sha(selected), f'Native input missing from manifest: {selected}'
+                if sys.platform == 'darwin' and name != 'httpfs':
+                    subprocess.run(['codesign', '--verify', '--strict', str(selected)],
+                                   stdout=log, stderr=subprocess.STDOUT, check=True)
+
+    def run(case, engine, stage, mode):
+        command = ['/usr/bin/nice', '-n', '10', sys.executable, '-B', str(WORKER),
+                   str(case), str(libs[engine]), str(package), stage, mode,
+                   args.cipher, args.encryption_version]
+        with (case / f'{stage}.log').open('x') as log:
+            result = subprocess.run(command, env=env, stdin=subprocess.DEVNULL,
+                                    stdout=log, stderr=subprocess.STDOUT, timeout=120)
+        (case / f'{stage}-terminal.json').write_text(json.dumps({'exit_code': result.returncode}) + '\n')
+        if result.returncode:
+            raise AssertionError((case / f'{stage}.log').read_text())
+        return json.loads((case / f'{stage}-result.json').read_text())
+
+    authenticate('before')
+    journeys = []
+    for producer, receiver in [('cpp', 'rust'), ('rust', 'cpp')]:
+        for mode in ['checkpoint', 'wal']:
+            case = out / f'{producer}-to-{receiver}-{mode}'
+            case.mkdir()
+            stages = []
+            for stage, engine in [('create', producer), ('receive', receiver), ('readback', producer)]:
+                receipt = run(case, engine, stage, mode)
+                wal = case / 'encrypted.duckdb.wal'
+                wal_bytes = wal.stat().st_size if wal.exists() else 0
+                if stage == 'create':
+                    assert wal_bytes > 0 if mode == 'wal' else wal_bytes == 0
+                stages.append({'engine': engine, 'stage': stage, 'wal_bytes': wal_bytes,
+                               'engine_images': receipt['engine_images']})
+            journeys.append({'producer': producer, 'receiver': receiver, 'mode': mode, 'stages': stages})
+            print('JOURNEY_PASS', producer, receiver, mode, flush=True)
+
+    recoveries = []
+    for producer in ['cpp', 'rust']:
+        source = out / (producer + '-sealed-wal-source')
+        source.mkdir()
+        run(source, producer, 'create', 'wal')
+        db, wal = source / 'encrypted.duckdb', source / 'encrypted.duckdb.wal'
+        sealed = {'database': sha(db), 'wal': sha(wal), 'wal_bytes': wal.stat().st_size}
+        assert sealed['wal_bytes'] > 1
+        (source / 'sealed-inputs.json').write_text(json.dumps(sealed, indent=2) + '\n')
+        for corruption in ['append_one_byte', 'truncate_one_byte']:
+            receipts = {}
+            inputs = {}
+            for receiver in ['cpp', 'rust']:
+                case = out / f'{producer}-{corruption}-read-{receiver}'
+                case.mkdir()
+                target = case / 'encrypted.duckdb'
+                shutil.copy2(db, target)
+                target_wal = case / 'encrypted.duckdb.wal'
+                data = wal.read_bytes()
+                data = data + bytes([1]) if corruption == 'append_one_byte' else data[:-1]
+                target_wal.write_bytes(data)
+                inputs[receiver] = {'database': sha(target), 'wal': sha(target_wal), 'wal_bytes': len(data)}
+                (case / 'input-hashes.json').write_text(json.dumps(inputs[receiver], indent=2) + '\n')
+                receipt = run(case, receiver, 'recover', corruption)
+                receipts[receiver] = receipt['queries'][-1]['rows']
+            assert inputs['cpp'] == inputs['rust']
+            assert receipts['cpp'] == receipts['rust']
+            recoveries.append({'producer': producer, 'corruption': corruption, 'inputs': inputs['cpp'],
+                               'checked_rows': receipts['cpp']})
+            print('RECOVERY_MATCH', producer, corruption, flush=True)
+        assert sha(db) == sealed['database'] and sha(wal) == sealed['wal']
+
+    authenticate('after')
+    verification = {'journeys_pass': 4, 'recovery_processes_pass': 8, 'native_processes': 22,
+                    'cipher': args.cipher, 'encryption_version': args.encryption_version,
+                    'journeys': journeys, 'recoveries': recoveries,
+                    'libraries': {name: {'path': str(path), 'sha256': sha(path)} for name, path in libs.items()},
+                    'scope': 'Encrypted native desktop/server checkpoint/nonempty-WAL mutation/readback and two incomplete-tail cases. Actual release/platform scope depends on supplied authenticated artifacts.'}
+    (out / 'verification.json').write_text(json.dumps(verification, indent=2) + '\n')
+    (out / 'terminal.json').write_text(json.dumps({'exit_code': 0}) + '\n')
+
+
+if __name__ == '__main__':
+    main()

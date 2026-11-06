@@ -53,14 +53,15 @@ const fn type_cost(physical: PhysicalType, multiplier: u64) -> u64 {
 }
 
 /// The cost of a function call (DuckDB's `ExpressionCost(BoundFunctionExpression)`).
-fn function_cost(name: &str) -> u64 {
+fn function_cost(name: impl AsRef<[u8]>) -> u64 {
+    let name = name.as_ref();
     match name {
-        "+" | "-" | "&" | "#" | ">>" | "<<" | "abs" => 5,
-        "*" | "%" => 10,
-        "/" => 15,
-        "date_part" | "year" => 20,
-        "round" => 100,
-        "~~" | "!~~" | "regexp_matches" | "||" => 200,
+        b"+" | b"-" | b"&" | b"#" | b">>" | b"<<" | b"abs" => 5,
+        b"*" | b"%" => 10,
+        b"/" => 15,
+        b"date_part" | b"year" => 20,
+        b"round" => 100,
+        b"~~" | b"!~~" | b"regexp_matches" | b"||" => 200,
         _ => 1000,
     }
 }

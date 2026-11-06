@@ -53,13 +53,13 @@ pub struct PhysicalCte {
     types: Vec<LogicalType>,
     data: Arc<CteData>,
     children: [PhysicalRef; 2],
-    ctename: String,
+    ctename: rustdb_common::ByteString,
     table_index: u64,
 }
 
 impl PhysicalCte {
     pub fn new(
-        ctename: String,
+        ctename: rustdb_common::ByteString,
         table_index: u64,
         data: &Arc<CteData>,
         definition: PhysicalRef,
@@ -320,7 +320,7 @@ pub struct PhysicalRecursiveCte {
     /// The anchor and the recursive part.
     parts: [PhysicalRef; 2],
     external: Vec<Arc<dyn SinkData>>,
-    ctename: String,
+    ctename: rustdb_common::ByteString,
     table_index: u64,
     /// The key columns of `USING KEY` (`distinct_idx`), if any.
     key_columns: Option<Vec<usize>>,
@@ -329,9 +329,12 @@ pub struct PhysicalRecursiveCte {
 }
 
 impl PhysicalRecursiveCte {
-    #[allow(clippy::too_many_arguments, reason = "mirrors the fields of DuckDB's operator")]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors the fields of DuckDB's operator"
+    )]
     pub fn new(
-        (ctename, table_index): (String, u64),
+        (ctename, table_index): (rustdb_common::ByteString, u64),
         types: Vec<LogicalType>,
         union_all: bool,
         working_table: Arc<CteData>,
@@ -456,7 +459,11 @@ impl KeyedRows {
     /// Every row of `chunk` replaces the row with its key.
     fn upsert(&mut self, chunk: &DataChunk, keys: &[usize]) {
         for row in 0..chunk.len() {
-            let values: Vec<Value> = chunk.columns().iter().map(|column| column.get_value(row)).collect();
+            let values: Vec<Value> = chunk
+                .columns()
+                .iter()
+                .map(|column| column.get_value(row))
+                .collect();
             let key: Vec<Value> = keys.iter().map(|&column| values[column].clone()).collect();
             if let Some(&slot) = self.index.get(&key) {
                 self.rows[slot] = values;
@@ -471,7 +478,10 @@ impl KeyedRows {
     fn chunks(&self, types: &[LogicalType]) -> Result<Vec<DataChunk>> {
         let mut result = Vec::with_capacity(self.rows.len().div_ceil(STANDARD_VECTOR_SIZE));
         for rows in self.rows.chunks(STANDARD_VECTOR_SIZE) {
-            let mut columns: Vec<Vector> = types.iter().map(|ty| Vector::flat(ty.clone(), rows.len())).collect();
+            let mut columns: Vec<Vector> = types
+                .iter()
+                .map(|ty| Vector::flat(ty.clone(), rows.len()))
+                .collect();
             for (row, values) in rows.iter().enumerate() {
                 for (column, value) in columns.iter_mut().zip(values) {
                     column.set_value(row, value)?;

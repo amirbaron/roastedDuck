@@ -253,6 +253,16 @@ fn identify_crs(crs: &str) -> String {
     serde_json::to_string(&json).unwrap_or_else(|_| trimmed.to_owned())
 }
 
+// yyjson_mut_write_opts(..., 0) rejects malformed UTF-8 at JSON output.
+fn geo_json_name(bytes: &[u8]) -> Result<&str> {
+    std::str::from_utf8(bytes).map_err(|_| {
+        Error::new(
+            ErrorKind::Serialization,
+            "Failed to write JSON string: invalid utf-8 encoding in string",
+        )
+    })
+}
+
 /// One geometry column of the `GeoParquet` metadata (`GeoParquetColumnMetadata`).
 #[derive(Clone, Debug, Default)]
 pub struct GeoColumn {
@@ -265,8 +275,8 @@ pub struct GeoColumn {
 /// The `GeoParquet` `geo` metadata of a file (`GeoParquetFileMetadata`).
 #[derive(Clone, Debug, Default)]
 pub struct GeoParquetMetadata {
-    columns: CaseInsensitiveMap<GeoColumn>,
-    order: Vec<String>,
+    columns: CaseInsensitiveMap<GeoColumn, rustdb_common::ByteString>,
+    order: Vec<rustdb_common::ByteString>,
 }
 
 impl GeoParquetMetadata {
@@ -353,11 +363,11 @@ impl GeoParquetMetadata {
 
     fn insert(&mut self, name: &str, projjson: String) {
         if !self.columns.contains_key(name) {
-            self.order.push(name.to_owned());
+            self.order.push(name.into());
         }
         let insertion_index = self.order.len() - 1;
         self.columns.insert(
-            name.to_owned(),
+            name,
             GeoColumn {
                 stats: GeoStats::default(),
                 projjson,
@@ -367,14 +377,16 @@ impl GeoParquetMetadata {
     }
 
     /// The CRS of a geometry column, `None` if `name` is not one.
-    pub fn column_crs(&self, name: &str) -> Option<&str> {
-        self.columns.get(name).map(|column| column.projjson.as_str())
+    pub fn column_crs(&self, name: impl AsRef<[u8]>) -> Option<&str> {
+        self.columns
+            .get(name.as_ref())
+            .map(|column| column.projjson.as_str())
     }
 
     /// `AddGeoParquetStats`: merges the statistics of a column chunk.
     pub fn add_stats(
         &mut self,
-        name: &str,
+        name: &[u8],
         ty: &LogicalType,
         stats: &GeoStats,
         version: GeoParquetVersion,
@@ -391,19 +403,19 @@ impl GeoParquetMetadata {
             if crs.trim_start().starts_with('{') || version == GeoParquetVersion::V2 {
                 crs.clone_into(&mut projjson);
             } else {
-                return Err(Error::invalid_input(format!(
+                return Err(Error::invalid_input(rustdb_common::byte_format!(
                     "Cannot write GeoParquet V1 metadata for column '{name}': GeoParquet V1 only supports PROJJSON CRS definitions"
                 )));
             }
         }
-        self.order.push(name.to_owned());
+        self.order.push(name.into());
         let mut column = GeoColumn {
             stats: GeoStats::default(),
             projjson,
             insertion_index: self.order.len() - 1,
         };
         column.stats.merge(stats);
-        self.columns.insert(name.to_owned(), column);
+        self.columns.insert(name, column);
         Ok(())
     }
 
@@ -411,10 +423,10 @@ impl GeoParquetMetadata {
     pub fn to_json(&self, version: GeoParquetVersion) -> Result<Option<String>> {
         use serde_json::{Map, Value, json};
         // GeoParquet has no M coordinates: such columns are left out.
-        let columns: Vec<(&String, &GeoColumn)> = self
+        let columns: Vec<(&rustdb_common::ByteString, &GeoColumn)> = self
             .order
             .iter()
-            .filter_map(|name| self.columns.get(name).map(|column| (name, column)))
+            .filter_map(|name| self.columns.get(name.as_ref()).map(|column| (name, column)))
             .filter(|(_, column)| !has_m(&column.stats.extent))
             .collect();
         let Some((primary, _)) = columns.iter().min_by_key(|(_, column)| column.insertion_index) else {
@@ -468,18 +480,21 @@ impl GeoParquetMetadata {
                     }
                     Err(_) if version == GeoParquetVersion::V2 => {}
                     Err(_) => {
-                        return Err(Error::new(
+                        return Err(Error::new_bytes(
                             ErrorKind::Serialization,
-                            format!("Failed to parse CRS PROJJSON for column '{name}'"),
+                            rustdb_common::byte_format!("Failed to parse CRS PROJJSON for column '{name}'"),
                         ));
                     }
                 }
             }
-            json_columns.insert((*name).clone(), Value::Object(entry));
+            // yyjson's object helper uses c_str for keys; primary_column uses length.
+            let key = name.split(|&byte| byte == 0).next().unwrap_or_default();
+            let name = geo_json_name(key)?.to_owned();
+            json_columns.insert(name, Value::Object(entry));
         }
         let mut root = Map::new();
         root.insert("version".to_owned(), json!(version_text));
-        root.insert("primary_column".to_owned(), json!(primary));
+        root.insert("primary_column".to_owned(), json!(geo_json_name(primary)?));
         root.insert("columns".to_owned(), Value::Object(json_columns));
         serde_json::to_string(&Value::Object(root))
             .map(Some)

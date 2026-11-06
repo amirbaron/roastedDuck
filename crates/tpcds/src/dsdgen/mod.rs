@@ -93,7 +93,7 @@ pub(crate) struct TableInfo {
 #[derive(Debug, Clone)]
 pub(crate) struct DsdgenTarget {
     pub(crate) catalog: Arc<Catalog>,
-    pub(crate) schema: String,
+    pub(crate) schema: rustdb_common::ByteString,
     pub(crate) transaction: Arc<Transaction>,
 }
 
@@ -101,7 +101,7 @@ pub(crate) struct DsdgenTarget {
 fn create_tpcds_table(
     target: &DsdgenTarget,
     table: &TableInfo,
-    suffix: &str,
+    suffix: &[u8],
     keys: bool,
     overwrite: bool,
 ) -> Result<()> {
@@ -109,7 +109,7 @@ fn create_tpcds_table(
         .columns
         .iter()
         .map(|&(name, ty)| ColumnDefinition {
-            name: name.to_owned(),
+            name: name.into(),
             logical_type: ty.logical_type(),
             expression: None,
             category: TableColumnType::Standard,
@@ -122,7 +122,7 @@ fn create_tpcds_table(
     if keys {
         constraints.push(Constraint::Unique(UniqueConstraint {
             index: LogicalIndex(u64::MAX),
-            columns: table.primary_key.iter().map(|&name| name.to_owned()).collect(),
+            columns: table.primary_key.iter().map(|&name| name.into()).collect(),
             is_primary_key: true,
         }));
         // `Binder::BindCreateTableInfo`: a PRIMARY KEY makes its columns NOT NULL.
@@ -135,7 +135,7 @@ fn create_tpcds_table(
         }
     }
     let info = CreateInfo {
-        catalog: target.catalog.name().to_string(),
+        catalog: (&*target.catalog.name()).into(),
         schema: target.schema.clone(),
         temporary: false,
         internal: false,
@@ -144,12 +144,12 @@ fn create_tpcds_table(
         } else {
             OnCreateConflict::ErrorOnConflict
         },
-        sql: String::new(),
+        sql: rustdb_common::ByteString::new(),
         comment: Value::default(),
         tags: CaseInsensitiveMap::default(),
         dependencies: LogicalDependencyList::default(),
         kind: CreateInfoKind::Table(Box::new(CreateTableInfo {
-            table: format!("{}{suffix}", table.name),
+            table: rustdb_common::byte_format!("{}{suffix}", table.name),
             columns: ColumnList { columns },
             constraints,
             query: None,
@@ -172,7 +172,7 @@ fn create_tpcds_table(
 /// their primary keys if `keys`, replacing existing ones if `overwrite`.
 pub(crate) fn create_tpcds_schema(
     target: &DsdgenTarget,
-    suffix: &str,
+    suffix: &[u8],
     keys: bool,
     overwrite: bool,
 ) -> Result<()> {
@@ -211,16 +211,22 @@ impl WriterState {
 impl TableWriter {
     /// Looks the tables up and starts appending to them (`DSDGen`'s lookups before the
     /// generation).
-    fn all(target: &DsdgenTarget, suffix: &str) -> Result<Vec<Self>> {
+    fn all(target: &DsdgenTarget, suffix: &[u8]) -> Result<Vec<Self>> {
         let mut writers = Vec::new();
         for table in CALL_CENTER..DBGEN_VERSION {
-            let name = format!("{}{suffix}", get_simple_tdefs_by_number(table).name);
+            let name = rustdb_common::byte_format!("{}{suffix}", get_simple_tdefs_by_number(table).name);
             let entry = target
                 .catalog
                 .get_entry(&target.transaction, CatalogType::Table, &target.schema, &name)
-                .ok_or_else(|| Error::catalog(format!("Table with name {name} does not exist!")))?;
+                .ok_or_else(|| {
+                    Error::catalog(rustdb_common::byte_format!(
+                        "Table with name {name} does not exist!"
+                    ))
+                })?;
             let EntryKind::Table(table_entry) = &entry.kind else {
-                return Err(Error::catalog(format!("{name} is not a table")));
+                return Err(Error::catalog(rustdb_common::byte_format!(
+                    "{name} is not a table"
+                )));
             };
             let storage = table_entry
                 .storage
@@ -608,7 +614,7 @@ fn run_jobs(jobs: &[Job], scale: f64, writers: &[TableWriter], threads: usize) -
 /// `DSDGenWrapper::DSDGen`: generates the data of scale factor `scale` into the tables
 /// (named with `suffix`) of `target`, on `threads` threads. DuckDB generates the tables
 /// one after the other; their rows and the order of the rows are the same.
-pub(crate) fn dsdgen(target: &DsdgenTarget, scale: f64, suffix: &str, threads: usize) -> Result<()> {
+pub(crate) fn dsdgen(target: &DsdgenTarget, scale: f64, suffix: &[u8], threads: usize) -> Result<()> {
     if scale <= 0.0 {
         // Schema only.
         return Ok(());

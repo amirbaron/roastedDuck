@@ -50,7 +50,7 @@ impl ExpressionFilter for ExecutableExpressionFilter {
         self.filter.check_statistics(stats)
     }
 
-    fn to_sql(&self, column_name: &str) -> String {
+    fn to_sql(&self, column_name: &[u8]) -> rustdb_common::ByteString {
         self.filter.to_sql(column_name)
     }
 

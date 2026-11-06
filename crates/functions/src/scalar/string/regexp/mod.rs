@@ -31,7 +31,7 @@ struct RegexpBindData {
     /// `regexp_extract`'s group (`None` for a NULL group: always the empty string).
     group: Option<usize>,
     /// Group names of the STRUCT variants.
-    names: Vec<String>,
+    names: Vec<rustdb_common::ByteString>,
 }
 
 impl FunctionData for RegexpBindData {
@@ -287,11 +287,12 @@ fn extract<'a>(input: &'a [u8], regex: &Regex, group: Option<usize>) -> &'a [u8]
 
 /// DuckDB's `ParseGroupNameList`: the STRUCT fields of the named-group variants.
 fn parse_group_names(
-    function_name: &str,
+    function_name: impl AsRef<[u8]>,
     argument_type: &LogicalType,
     constant: Option<&Option<Value>>,
     regex: Option<&Regex>,
-) -> Result<Vec<String>> {
+) -> Result<Vec<rustdb_common::ByteString>> {
+    let function_name = function_name.as_ref();
     if argument_type.id() == LogicalTypeId::Unknown {
         return Err(crate::parameter_not_resolved());
     }
@@ -309,14 +310,16 @@ fn parse_group_names(
     if children.is_empty() {
         return Err(Error::binder("Group name list must be non-empty"));
     }
-    let mut names: Vec<String> = Vec::with_capacity(children.len());
+    let mut names: Vec<rustdb_common::ByteString> = Vec::with_capacity(children.len());
     for child in children {
         if child.is_null() {
-            return Err(Error::binder(format!("NULL group name in {function_name}")));
+            return Err(Error::binder(rustdb_common::byte_format!(
+                "NULL group name in {function_name}"
+            )));
         }
-        let name = crate::values::as_text(child)?;
+        let name = crate::values::as_text_bytes(child)?;
         if names.iter().any(|existing| existing.eq_ignore_ascii_case(&name)) {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Duplicate group name '{name}' in {function_name}"
             )));
         }
@@ -334,7 +337,7 @@ fn parse_group_names(
     Ok(names)
 }
 
-fn struct_type(names: &[String]) -> LogicalType {
+fn struct_type(names: &[rustdb_common::ByteString]) -> LogicalType {
     LogicalType::struct_type(names.iter().map(|name| (name.clone(), varchar())).collect())
 }
 
@@ -377,7 +380,7 @@ fn bind_extract(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindRes
             group = None;
         } else if value.logical_type().id() == LogicalTypeId::List {
             if constant.is_none() {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "{} with LIST of group names requires a constant pattern",
                     function.name
                 )));
@@ -662,7 +665,7 @@ fn extract_all_kernel(
 
 fn bind_extract_all_struct(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindResult {
     let Some(pattern) = constant_pattern(input.constants.get(1)) else {
-        return Err(Error::binder(format!(
+        return Err(Error::binder(rustdb_common::byte_format!(
             "{} with LIST requires a constant pattern",
             function.name
         )));

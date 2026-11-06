@@ -26,7 +26,7 @@ impl PegTransformer {
         let index_name = index_name.identifier()?.to_owned();
         let table = base_table_ref(self.transform_child(list, 5)?)?;
         let mut index_info = CreateIndexInfo {
-            name: index_name,
+            name: index_name.into(),
             table: table.table_name.clone(),
             constraint_type,
             parsed_expressions: Vec::new(),
@@ -34,17 +34,17 @@ impl PegTransformer {
             names: Vec::new(),
             column_ids: Vec::new(),
             options: CaseInsensitiveMap::default(),
-            index_type_name: "ART".to_owned(),
+            index_type_name: "ART".to_owned().into(),
         };
         if let Some(column_list) = list.optional(6)? {
             let column_list: Vec<String> = self.transform(column_list)?;
             for column in column_list {
                 index_info
                     .parsed_expressions
-                    .push(rustdb_parser::build::qualified_column_ref(
-                        column,
+                    .push(ParsedExpression::column_ref(vec![
                         table.table_name.clone(),
-                    ));
+                        column.into(),
+                    ]));
             }
         }
         if let Some(index_type) = self.transform_optional(list, 7)? {
@@ -60,10 +60,10 @@ impl PegTransformer {
             }
         }
         if let Some(with_list) = list.optional(9)? {
-            let options_expr: CaseInsensitiveMap<ParsedExpression> = self.transform(with_list)?;
+            let options_expr: CaseInsensitiveMap<ParsedExpression, ByteString> = self.transform(with_list)?;
             // `index_info->options` is a `case_insensitive_map_t`, filled in the
             // iteration order of the options.
-            let mut options: CiHashMap<Value> = CiHashMap::new();
+            let mut options: CiHashMap<Value, ByteString> = CiHashMap::default();
             for (name, expr) in options_expr.iter() {
                 let ParsedExpressionKind::Constant(const_expr) = &expr.kind else {
                     return Err(Error::invalid_input(
@@ -99,7 +99,7 @@ impl PegTransformer {
     pub(super) fn transform_with_list(
         &mut self,
         parse_result: &ParseResult,
-    ) -> Result<CaseInsensitiveMap<ParsedExpression>> {
+    ) -> Result<CaseInsensitiveMap<ParsedExpression, ByteString>> {
         self.transform_child(parse_result.list()?, 1)
     }
 
@@ -107,7 +107,7 @@ impl PegTransformer {
     pub(super) fn transform_rel_option_or_oids(
         &mut self,
         parse_result: &ParseResult,
-    ) -> Result<CaseInsensitiveMap<ParsedExpression>> {
+    ) -> Result<CaseInsensitiveMap<ParsedExpression, ByteString>> {
         self.transform(parse_result.list()?.choice(0)?)
     }
 
@@ -116,7 +116,7 @@ impl PegTransformer {
     pub(super) fn transform_rel_option_list(
         &mut self,
         parse_result: &ParseResult,
-    ) -> Result<CaseInsensitiveMap<ParsedExpression>> {
+    ) -> Result<CaseInsensitiveMap<ParsedExpression, ByteString>> {
         let rel_option_list = parse_result.list()?.child(0)?.parens_content()?.list_elements()?;
         let mut result: CiHashMap<ParsedExpression> = CiHashMap::new();
         for rel_option in rel_option_list {
@@ -130,7 +130,7 @@ impl PegTransformer {
     pub(super) fn transform_oids(
         &mut self,
         _parse_result: &ParseResult,
-    ) -> Result<CaseInsensitiveMap<ParsedExpression>> {
+    ) -> Result<CaseInsensitiveMap<ParsedExpression, ByteString>> {
         Err(Error::not_implemented("Oids for index are not yet implemented."))
     }
 

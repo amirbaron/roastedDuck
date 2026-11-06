@@ -13,7 +13,7 @@ use rustdb_planner::{ReplacementScan, ReplacementScanInput};
 use rustdb_types::Value;
 
 use crate::function::{DuckdbDeleteCallback, error_bytes};
-use crate::helper::{opt_str, to_cstring};
+use crate::helper::to_cstring;
 use crate::open::DuckdbDatabase;
 use crate::value::{DuckdbValue, value_ref};
 
@@ -50,7 +50,7 @@ impl Drop for CReplacementScanData {
 /// What a `duckdb_replacement_scan_info` points to (DuckDB's `CAPIReplacementScanInfo`).
 #[derive(Debug, Default)]
 struct CReplacementScanInfo {
-    function_name: String,
+    function_name: rustdb_common::ByteString,
     parameters: Vec<Value>,
     error: Option<Vec<u8>>,
 }
@@ -83,7 +83,7 @@ fn capi_replacement_callback(
     }
     let function = FunctionExpression {
         function_name: info.function_name,
-        schema: String::new(),
+        schema: rustdb_common::ByteString::new(),
         children: info
             .parameters
             .into_iter()
@@ -94,10 +94,11 @@ fn capi_replacement_callback(
         distinct: false,
         is_operator: false,
         export_state: false,
-        catalog: String::new(),
+        catalog: rustdb_common::ByteString::new(),
     };
     Ok(Some(TableRef {
-        alias: String::new(),
+        external_dependency: rustdb_ast::ExternalDependency::default(),
+        alias: rustdb_common::ByteString::new(),
         sample: None,
         query_location: None,
         kind: TableRefKind::TableFunction(TableFunctionRef {
@@ -157,8 +158,8 @@ pub unsafe extern "C" fn duckdb_replacement_scan_set_function_name(
 ) {
     // SAFETY: `info` is NULL or the info of a running callback; the name is NULL or a C
     // string.
-    if let (Some(info), Some(name)) = unsafe { (scan_info(info), opt_str(function_name)) } {
-        name.clone_into(&mut info.function_name);
+    if let (Some(info), Some(name)) = unsafe { (scan_info(info), crate::helper::opt_bytes(function_name)) } {
+        info.function_name = name.into();
     }
 }
 

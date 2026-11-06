@@ -294,7 +294,7 @@ impl Linenoise<'_> {
             let is_cursor_row = rows == cursor_row;
             let prompt = super::with_prompts(|prompts| {
                 if !self.continuation_markers {
-                    String::new()
+                    rustdb_common::ByteString::new()
                 } else if is_cursor_row {
                     prompts.continuation_selected.clone()
                 } else if truncate_top && rows == 2 {
@@ -306,13 +306,13 @@ impl Linenoise<'_> {
                 }
             });
             let continuation_len = prompt.len();
-            let continuation_render = compute_render_width(prompt.as_bytes());
+            let continuation_render = compute_render_width(&prompt);
             // Spaces before the prompt, to the width of the main prompt.
             result.resize(
                 result.len() + (plen - continuation_render as i32).max(0) as usize,
                 b' ',
             );
-            result.extend_from_slice(prompt.as_bytes());
+            result.extend_from_slice(&prompt);
             let continuation_bytes = (plen as usize)
                 .wrapping_sub(continuation_render)
                 .wrapping_add(continuation_len);

@@ -1004,9 +1004,9 @@ pub(super) fn opt_repeatable_clause<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize)
 pub(super) fn at_unit<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // TIMESTAMP
-        0 => Ok(SemValue::Str(Some("TIMESTAMP".to_owned()))),
+        0 => Ok(SemValue::Str(Some("TIMESTAMP".into()))),
         // VERSION_P
-        1 => Ok(SemValue::Str(Some("VERSION".to_owned()))),
+        1 => Ok(SemValue::Str(Some("VERSION".into()))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -4499,13 +4499,13 @@ pub(super) fn list_comprehension<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
             let location = rhs.loc(1);
             let filter_expr = NamedArgExpr {
                 arg: rhs.node(8)?,
-                name: Some("filter".to_owned()),
+                name: Some("filter".into()),
                 argnumber: -1,
                 location: rhs.loc(8),
             };
             let result_expr = NamedArgExpr {
                 arg: rhs.node(2)?,
-                name: Some("result".to_owned()),
+                name: Some("result".into()),
                 argnumber: -1,
                 location: rhs.loc(2),
             };
@@ -5051,7 +5051,9 @@ pub(super) fn sub_type<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<Se
 pub(super) fn all_op<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // MathOp
-        1 => Ok(SemValue::Str(rhs.const_str(1)?.map(str::to_owned))),
+        1 => Ok(SemValue::Str(
+            rhs.const_str(1)?.map(rustdb_common::ByteString::from),
+        )),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -5317,31 +5319,31 @@ pub(super) fn extract_list<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Resul
 pub(super) fn extract_arg<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // year_keyword
-        1 => Ok(SemValue::Str(Some("year".to_owned()))),
+        1 => Ok(SemValue::Str(Some("year".into()))),
         // month_keyword
-        2 => Ok(SemValue::Str(Some("month".to_owned()))),
+        2 => Ok(SemValue::Str(Some("month".into()))),
         // day_keyword
-        3 => Ok(SemValue::Str(Some("day".to_owned()))),
+        3 => Ok(SemValue::Str(Some("day".into()))),
         // hour_keyword
-        4 => Ok(SemValue::Str(Some("hour".to_owned()))),
+        4 => Ok(SemValue::Str(Some("hour".into()))),
         // minute_keyword
-        5 => Ok(SemValue::Str(Some("minute".to_owned()))),
+        5 => Ok(SemValue::Str(Some("minute".into()))),
         // second_keyword
-        6 => Ok(SemValue::Str(Some("second".to_owned()))),
+        6 => Ok(SemValue::Str(Some("second".into()))),
         // millisecond_keyword
-        7 => Ok(SemValue::Str(Some("millisecond".to_owned()))),
+        7 => Ok(SemValue::Str(Some("millisecond".into()))),
         // microsecond_keyword
-        8 => Ok(SemValue::Str(Some("microsecond".to_owned()))),
+        8 => Ok(SemValue::Str(Some("microsecond".into()))),
         // week_keyword
-        9 => Ok(SemValue::Str(Some("week".to_owned()))),
+        9 => Ok(SemValue::Str(Some("week".into()))),
         // quarter_keyword
-        10 => Ok(SemValue::Str(Some("quarter".to_owned()))),
+        10 => Ok(SemValue::Str(Some("quarter".into()))),
         // decade_keyword
-        11 => Ok(SemValue::Str(Some("decade".to_owned()))),
+        11 => Ok(SemValue::Str(Some("decade".into()))),
         // century_keyword
-        12 => Ok(SemValue::Str(Some("century".to_owned()))),
+        12 => Ok(SemValue::Str(Some("century".into()))),
         // millennium_keyword
-        13 => Ok(SemValue::Str(Some("millennium".to_owned()))),
+        13 => Ok(SemValue::Str(Some("millennium".into()))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -6101,7 +6103,7 @@ pub(super) fn type_function_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
     match alt {
         // unreserved_keyword
         // type_func_name_keyword
-        1 | 2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
+        1 | 2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.into()))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -6116,7 +6118,7 @@ pub(super) fn function_name_token<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
     match alt {
         // unreserved_keyword
         // func_name_keyword
-        1 | 2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
+        1 | 2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.into()))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -6131,7 +6133,7 @@ pub(super) fn type_name_token<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Re
     match alt {
         // unreserved_keyword
         // type_name_keyword
-        1 | 2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
+        1 | 2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.into()))),
         _ => Err(rhs.bad_alternative()),
     }
 }

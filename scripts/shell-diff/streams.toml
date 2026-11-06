@@ -103,7 +103,6 @@ stdin = ".print a\u0000b\n.print next\n"
 
 [[case]]
 name = "input-latin1-string"
-known = "the shell reads input as UTF-8 (invalid bytes become U+FFFD)"
 encoding = "latin-1"
 stdin = "SELECT 'café' AS x;\nSELECT 1 AS ok;\n"
 
@@ -178,7 +177,6 @@ stdin = ".mode csv\nSELECT 1 AS before;\nSELECT count(*) FROM range(100000000000
 
 [[case]]
 name = "argument-latin1"
-known = "the shell reads arguments as UTF-8 (invalid bytes become U+FFFD)"
 encoding = "latin-1"
 args = ["-c", "SELECT 'café' AS x"]
 

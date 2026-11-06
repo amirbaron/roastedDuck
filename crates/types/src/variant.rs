@@ -12,6 +12,7 @@
 //! [`encode`] converts a batch of [`Value`]s column-wise exactly like DuckDB's
 //! `ConvertToVariant`, so that the layout (and therefore hashing and grouping) matches.
 
+use rustdb_common::ByteString;
 use std::collections::BTreeMap;
 
 use rustdb_common::{Error, Result};
@@ -242,7 +243,7 @@ pub struct VariantNested {
 /// One non-NULL VARIANT value, unpacked from its STRUCT representation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct VariantData {
-    pub keys: Vec<String>,
+    pub keys: Vec<ByteString>,
     pub children: Vec<VariantChild>,
     pub values: Vec<VariantEntry>,
     pub data: Vec<u8>,
@@ -295,7 +296,7 @@ impl VariantData {
         let as_u32 = |value: Option<Value>| -> Option<u32> { value.and_then(|v| v.as_u32()) };
         let keys = list(keys)
             .iter()
-            .map(|key| String::from_utf8_lossy(key.as_bytes().unwrap_or_default()).into_owned())
+            .map(|key| ByteString::from(key.as_bytes().unwrap_or_default()))
             .collect();
         let children = list(children)
             .iter()
@@ -335,7 +336,7 @@ impl VariantData {
         };
         let (key_rows, key_vector) = list_elements(keys, slot)?;
         let keys = key_rows
-            .map(|index| String::from_utf8_lossy(key_vector.string_bytes(index)).into_owned())
+            .map(|index| ByteString::from(key_vector.string_bytes(index)))
             .collect();
         let (child_rows, child_vector) = list_elements(children, slot)?;
         let (keys_index, values_index) = (struct_field(child_vector, 0)?, struct_field(child_vector, 1)?);
@@ -471,7 +472,11 @@ impl VariantData {
     }
 
     fn to_value_with(&self, layout: &Layout) -> Value {
-        let keys = self.keys.iter().map(Value::varchar).collect();
+        let keys = self
+            .keys
+            .iter()
+            .map(|key| Value::bytes(LogicalType::VARCHAR, key.as_bytes()))
+            .collect();
         let children = self
             .children
             .iter()
@@ -584,18 +589,17 @@ impl VariantData {
     }
 
     /// The key of an OBJECT child.
-    pub fn child_key(&self, child: VariantChild) -> Result<&str> {
+    pub fn child_key(&self, child: VariantChild) -> Result<&ByteString> {
         child
             .keys_index
             .and_then(|index| self.keys.get(index as usize))
-            .map(String::as_str)
             .ok_or_else(|| Error::internal("VARIANT key index out of range"))
     }
 
     /// The keys of an OBJECT (`VariantUtils::GetObjectKeys`).
-    pub fn object_keys(&self, nested: VariantNested) -> Result<Vec<String>> {
+    pub fn object_keys(&self, nested: VariantNested) -> Result<Vec<ByteString>> {
         (0..nested.child_count)
-            .map(|index| self.child_key(self.child(nested, index)?).map(str::to_owned))
+            .map(|index| self.child_key(self.child(nested, index)?).cloned())
             .collect()
     }
 
@@ -718,19 +722,21 @@ impl VariantData {
     }
 
     /// `variant_typeof` of value `value_index`.
-    pub fn type_name(&self, value_index: u32) -> Result<String> {
+    pub fn type_name(&self, value_index: u32) -> Result<ByteString> {
         let type_id = self.type_id(value_index)?;
         Ok(match type_id {
             VariantLogicalType::Decimal => {
                 let (width, scale, _) = self.decimal(value_index)?;
-                format!("DECIMAL({width}, {scale})")
+                rustdb_common::byte_format!("DECIMAL({width}, {scale})")
             }
             VariantLogicalType::Object => {
                 let nested = self.nested(value_index)?;
-                format!("OBJECT({})", self.object_keys(nested)?.join(", "))
+                rustdb_common::byte_format!("OBJECT({})", ByteString::join(&self.object_keys(nested)?, ", "))
             }
-            VariantLogicalType::Array => format!("ARRAY({})", self.nested(value_index)?.child_count),
-            other => other.name().to_owned(),
+            VariantLogicalType::Array => {
+                rustdb_common::byte_format!("ARRAY({})", self.nested(value_index)?.child_count)
+            }
+            other => other.name().into(),
         })
     }
 
@@ -833,7 +839,7 @@ pub fn unshredded_type() -> LogicalType {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VariantPathComponent {
     /// An OBJECT field.
-    Key(String),
+    Key(ByteString),
     /// A 0-based ARRAY index.
     Index(u32),
 }
@@ -843,7 +849,7 @@ pub enum VariantPathComponent {
 /// fields sorted by key, no unused data.
 #[derive(Debug, Default)]
 pub struct VariantNormalizer {
-    keys: Vec<String>,
+    keys: Vec<ByteString>,
     children: Vec<VariantChild>,
     values: Vec<VariantEntry>,
     data: Vec<u8>,
@@ -955,9 +961,9 @@ impl VariantNormalizer {
         varint_encode(first_child as u64, &mut self.data);
         self.children
             .resize(first_child + reserved, VariantChild::default());
-        self.keys.resize(first_key + reserved, String::new());
+        self.keys.resize(first_key + reserved, ByteString::new());
         for (slot, (key, child)) in fields.into_iter().enumerate() {
-            self.keys[first_key + slot] = String::from_utf8_lossy(key).into_owned();
+            self.keys[first_key + slot] = ByteString::from(key);
             self.children[first_child + slot] = VariantChild {
                 keys_index: Some(u32_of(first_key + slot)?),
                 values_index: u32_of(self.values.len())?,
@@ -1015,7 +1021,7 @@ pub fn encode(values: &[Value], ty: &LogicalType) -> Result<Vec<Option<Value>>> 
 #[derive(Default)]
 struct RowBuilder {
     null: bool,
-    keys: Vec<String>,
+    keys: Vec<ByteString>,
     children: Vec<VariantChild>,
     values: Vec<VariantEntry>,
     data: Vec<u8>,
@@ -1470,9 +1476,9 @@ mod tests {
     #[test]
     fn struct_becomes_object() {
         let value = Value::struct_value(vec![
-            ("a".to_owned(), Value::integer(42)),
+            ("a".into(), Value::integer(42)),
             (
-                "b".to_owned(),
+                "b".into(),
                 Value::list(
                     LogicalType::INTEGER,
                     vec![Value::integer(1), Value::null(LogicalType::INTEGER)],
@@ -1491,8 +1497,8 @@ mod tests {
     #[test]
     fn normalize_sorts_keys() {
         let value = Value::struct_value(vec![
-            ("b".to_owned(), Value::integer(1)),
-            ("a".to_owned(), Value::integer(2)),
+            ("b".into(), Value::integer(1)),
+            ("a".into(), Value::integer(2)),
         ]);
         let encoded = encode_value(&value).unwrap().unwrap();
         let data = VariantData::from_value(&encoded).unwrap().unwrap();
@@ -1504,9 +1510,9 @@ mod tests {
     #[test]
     fn vectors_roundtrip() {
         let object = Value::struct_value(vec![
-            ("k".to_owned(), Value::varchar("text")),
+            ("k".into(), Value::varchar("text")),
             (
-                "l".to_owned(),
+                "l".into(),
                 Value::list(LogicalType::INTEGER, vec![Value::integer(1), Value::integer(2)]),
             ),
         ]);

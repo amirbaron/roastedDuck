@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use rustdb_common::{ByteString, Error, Result, STANDARD_VECTOR_SIZE, byte_write};
 use rustdb_function::cast::CastFunctionSet;
 use rustdb_types::LogicalType;
 
@@ -31,7 +31,7 @@ use crate::state_machine::CsvStateMachine;
 #[derive(Clone, Debug, Default)]
 pub struct SnifferResult {
     pub return_types: Vec<LogicalType>,
-    pub names: Vec<String>,
+    pub names: Vec<rustdb_common::ByteString>,
 }
 
 /// The result of the minimal sniffer (DuckDB's `AdaptiveSnifferResult`).
@@ -45,7 +45,7 @@ pub struct AdaptiveSnifferResult {
 #[derive(Clone, Debug, Default)]
 pub struct SetColumns {
     pub types: Vec<LogicalType>,
-    pub names: Vec<String>,
+    pub names: Vec<rustdb_common::ByteString>,
 }
 
 impl SetColumns {
@@ -79,15 +79,15 @@ impl SetColumns {
     }
 
     /// `ToString`.
-    pub fn to_display_string(&self) -> String {
-        let mut result = "columns = { ".to_owned();
+    pub fn to_display_string(&self) -> ByteString {
+        let mut result = ByteString::from("columns = { ");
         for (i, (name, ty)) in self.names.iter().zip(&self.types).enumerate() {
-            let _ = write!(result, "'{name}' : '{ty}'");
+            let _ = byte_write!(result, "'{name}' : '{ty}'");
             if i + 1 != self.types.len() {
-                result += ", ";
+                result.push_bytes(", ");
             }
         }
-        result += "}";
+        result.push_bytes("}");
         result
     }
 }
@@ -130,7 +130,7 @@ pub struct CsvSniffer<'a> {
     original_format_candidates: BTreeMap<FormatType, DateTimestampSniffing>,
     detected_types: Vec<LogicalType>,
     default_null_to_varchar: bool,
-    names: Vec<String>,
+    names: Vec<rustdb_common::ByteString>,
     single_row_file: bool,
     manually_set: Vec<bool>,
 }
@@ -141,17 +141,17 @@ fn match_and_replace<T: Clone + PartialEq + FormatOption>(
     original: &mut CsvOption<T>,
     sniffed: &CsvOption<T>,
     name: &str,
-    error: &mut String,
+    error: &mut ByteString,
 ) {
     if original.is_set_by_user() {
         if original != sniffed {
-            let _ = write!(
+            let _ = byte_write!(
                 error,
                 "CSV Sniffer: Sniffer detected value different than the user input for the {name}"
             );
-            let _ = writeln!(
+            let _ = byte_write!(
                 error,
-                " options \n Set: {}, Sniffed: {}",
+                " options \n Set: {}, Sniffed: {}\n",
                 original.format_value(),
                 sniffed.format_value()
             );
@@ -165,7 +165,7 @@ fn match_and_replace<T: Clone + PartialEq + FormatOption>(
 fn match_and_replace_user_set_variables(
     original: &mut DialectOptions,
     sniffed: &DialectOptions,
-    error: &mut String,
+    error: &mut ByteString,
     found_date: bool,
     found_timestamp: bool,
 ) {
@@ -399,7 +399,7 @@ impl<'a> CsvSniffer<'a> {
         let mut min_sniff_res = self.minimal_sniff()?;
         let mut run_full = self.error_handler.any_errors() || self.detection_error_handler.any_errors();
         if !run_full && !self.set_columns.is_set() && !self.file_options.any_set() {
-            let mut error = String::new();
+            let mut error = ByteString::new();
             run_full = !file_schema.schemas_match(
                 &mut error,
                 &mut min_sniff_res.result,
@@ -410,7 +410,7 @@ impl<'a> CsvSniffer<'a> {
         if run_full {
             let mut full_sniffer = self.sniff_csv(false)?;
             if !self.set_columns.is_set() && !self.file_options.any_set() {
-                let mut error = String::new();
+                let mut error = ByteString::new();
                 if !file_schema.schemas_match(&mut error, &mut full_sniffer, &self.options.file_path, None)
                     && !self.options.ignore_errors.value()
                 {
@@ -459,23 +459,23 @@ impl<'a> CsvSniffer<'a> {
         if self.set_columns.is_set() {
             let mut matches = true;
             if self.options.dialect_options.header.value() {
-                let mut header_error =
-                    "The Column names set by the user do not match the ones found by the sniffer. \n"
-                        .to_owned();
+                let mut header_error = ByteString::from(
+                    "The Column names set by the user do not match the ones found by the sniffer. \n",
+                );
                 let set_names = &self.set_columns.names;
                 if set_names.len() == self.names.len() {
                     for (i, (set_name, name)) in set_names.iter().zip(&self.names).enumerate() {
                         if set_name != name {
-                            let _ = writeln!(
+                            let _ = byte_write!(
                                 header_error,
-                                "Column at position: {i}, Set name: {set_name}, Sniffed Name: {name}"
+                                "Column at position: {i}, Set name: {set_name}, Sniffed Name: {name}\n"
                             );
                             matches = false;
                         }
                     }
                 }
                 if !matches {
-                    error += &header_error;
+                    error.push_bytes(&header_error);
                 }
             }
             matches = true;
@@ -497,7 +497,7 @@ impl<'a> CsvSniffer<'a> {
                 }
             }
             if !matches {
-                error += &type_error;
+                error.push_bytes(&type_error);
             }
             if !error.is_empty() && force_match {
                 return Err(Error::invalid_input(error));

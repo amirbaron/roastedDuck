@@ -34,20 +34,10 @@ const SUPPORTED_BASE_OPTIONS: [&str; 16] = [
 ];
 
 /// `ThrowJSONCopyParameterException`.
-fn parameter_error(option: &str) -> Error {
-    Error::binder(format!(
+fn parameter_error(option: &[u8]) -> Error {
+    Error::binder(rustdb_common::byte_format!(
         "COPY (FORMAT JSON) parameter {option} expects a single argument."
     ))
-}
-
-/// A SQL string literal.
-fn quote_literal(text: &str) -> String {
-    format!("'{}'", text.replace('\'', "''"))
-}
-
-/// A SQL identifier.
-fn quote_identifier(text: &str) -> String {
-    format!("\"{}\"", text.replace('"', "\"\""))
 }
 
 /// `CopyToJSONPlan`.
@@ -55,24 +45,25 @@ fn copy_to_json_plan(input: &CopyPlanInput<'_>) -> Result<CopyPlanRewrite> {
     use rustdb_function::cast::ValueCast;
     let mut date_format = String::new();
     let mut timestamp_format = String::new();
-    let mut csv_options: CaseInsensitiveMap<Vec<Value>> = CaseInsensitiveMap::default();
+    let mut csv_options: CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteString> =
+        CaseInsensitiveMap::default();
     csv_options.insert("file_extension".to_owned(), vec![Value::varchar("json")]);
     for (key, values) in input.options.iter() {
-        let option = key.to_lowercase();
-        match option.as_str() {
-            "dateformat" | "date_format" => {
+        let option = key.to_ascii_lowercase();
+        match option.as_bytes() {
+            b"dateformat" | b"date_format" => {
                 let [value] = values.as_slice() else {
                     return Err(parameter_error(&option));
                 };
                 date_format = value.to_varchar()?;
             }
-            "timestampformat" | "timestamp_format" => {
+            b"timestampformat" | b"timestamp_format" => {
                 let [value] = values.as_slice() else {
                     return Err(parameter_error(&option));
                 };
                 timestamp_format = value.to_varchar()?;
             }
-            "array" => {
+            b"array" => {
                 if values.len() > 1 {
                     return Err(parameter_error(&option));
                 }
@@ -89,7 +80,7 @@ fn copy_to_json_plan(input: &CopyPlanInput<'_>) -> Result<CopyPlanRewrite> {
                     csv_options.insert("new_line".to_owned(), vec![Value::varchar(",\n\t")]);
                 }
             }
-            "file_extension" => {
+            b"file_extension" => {
                 let extension = values
                     .last()
                     .map(Value::to_varchar)
@@ -97,38 +88,54 @@ fn copy_to_json_plan(input: &CopyPlanInput<'_>) -> Result<CopyPlanRewrite> {
                     .unwrap_or_default();
                 csv_options.insert("file_extension".to_owned(), vec![Value::varchar(extension)]);
             }
-            _ if SUPPORTED_BASE_OPTIONS.contains(&option.as_str()) => {
+            _ if SUPPORTED_BASE_OPTIONS
+                .iter()
+                .any(|key| key.as_bytes() == option.as_bytes()) =>
+            {
                 csv_options.insert(key.to_owned(), values.clone());
             }
             _ => {
-                return Err(Error::binder(format!(
+                return Err(Error::binder(rustdb_common::byte_format!(
                     "Unknown option for COPY ... TO ... (FORMAT JSON): \"{option}\"."
                 )));
             }
         }
     }
-    // `to_json(struct_pack(name := #i, ...))`, formatting dates and timestamps if asked.
+    // The same positional/strftime/struct_pack/to_json tree as C++'s generated SQL.
     let mut fields = Vec::with_capacity(input.types.len());
     for (index, (ty, name)) in input.types.iter().zip(input.names).enumerate() {
-        let column = format!("#{}", index + 1);
-        let column = if !date_format.is_empty() && ty.id() == LogicalTypeId::Date {
-            format!("strftime({column}, {})", quote_literal(&date_format))
+        let mut column = rustdb_parser::build::positional_reference((index + 1) as u64);
+        let format = if !date_format.is_empty() && ty.id() == LogicalTypeId::Date {
+            Some(&date_format)
         } else if !timestamp_format.is_empty()
             && matches!(ty.id(), LogicalTypeId::Timestamp | LogicalTypeId::TimestampTz)
         {
-            format!("strftime({column}, {})", quote_literal(&timestamp_format))
+            Some(&timestamp_format)
         } else {
-            column
+            None
         };
-        fields.push(format!("{} := {column}", quote_identifier(name)));
+        if let Some(format) = format {
+            column = rustdb_ast::ParsedExpression::function(
+                "strftime",
+                vec![
+                    column,
+                    rustdb_ast::ParsedExpression::constant(Value::varchar(format)),
+                ],
+            );
+        }
+        column.alias.clone_from(name);
+        fields.push(column);
     }
-    let select_list = format!("to_json(struct_pack({}))", fields.join(", "));
+    let select_list = vec![rustdb_ast::ParsedExpression::function(
+        "to_json",
+        vec![rustdb_ast::ParsedExpression::function("struct_pack", fields)],
+    )];
     csv_options.insert("quote".to_owned(), vec![Value::varchar("")]);
     csv_options.insert("escape".to_owned(), vec![Value::varchar("")]);
     csv_options.insert("delimiter".to_owned(), vec![Value::varchar("\n")]);
     csv_options.insert("header".to_owned(), vec![Value::integer(0)]);
     Ok(CopyPlanRewrite {
-        format: "csv".to_owned(),
+        format: "csv".into(),
         options: csv_options,
         select_list,
     })
@@ -137,7 +144,7 @@ fn copy_to_json_plan(input: &CopyPlanInput<'_>) -> Result<CopyPlanRewrite> {
 /// `MultiFileBindCopy` for `COPY ... FROM ... (FORMAT json)`.
 fn copy_from_json_bind(
     input: &CopyFromBindInput<'_>,
-    names: &[String],
+    names: &[rustdb_common::ByteString],
     types: &[LogicalType],
 ) -> Result<Arc<dyn FunctionData>> {
     let context = input

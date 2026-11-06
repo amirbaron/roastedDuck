@@ -56,7 +56,9 @@ fn check(handle: &BufferHandle, seed: u8) {
     // SAFETY: no writers.
     let data = unsafe { handle.as_slice() };
     assert!(
-        data.iter().zip(pattern(seed, data.len())).all(|(&byte, value)| byte == value),
+        data.iter()
+            .zip(pattern(seed, data.len()))
+            .all(|(&byte, value)| byte == value),
         "block contents differ for seed {seed}"
     );
 }
@@ -393,6 +395,35 @@ fn persistent_blocks_convert_evict_and_reload() {
     assert!(!block_manager.registry().is_registered(5));
 }
 
+#[test]
+fn thread_safe_persistence_keeps_readers_and_reloads_the_full_block() {
+    let buffers = manager(2 * BLOCK, None);
+    let block_manager: Arc<dyn BlockManager> = Arc::new(MapBlockManager::default());
+    let pin = buffers
+        .allocate_for(MemoryTag::Metadata, block_manager.as_ref(), false)
+        .unwrap();
+    fill(&pin, 91);
+    let temporary = Arc::clone(pin.block());
+    let reader = buffers.pin(&temporary).unwrap();
+    let persistent = buffers
+        .convert_to_persistent_thread_safe(&block_manager, 5, temporary, pin)
+        .unwrap();
+    assert!(!Arc::ptr_eq(reader.block(), &persistent));
+    check(&reader, 91);
+    assert_eq!(buffers.used_memory(), (2 * BLOCK) as u64);
+    drop(reader);
+    assert_eq!(buffers.used_memory(), BLOCK as u64);
+
+    // Eviction must leave a complete, independently readable persisted copy.
+    let a = buffers.allocate(MemoryTag::HashTable, BLOCK, false).unwrap();
+    let b = buffers.allocate(MemoryTag::HashTable, BLOCK, false).unwrap();
+    assert_eq!(persistent.state(), BlockState::Unloaded);
+    drop(a);
+    let reloaded = buffers.pin(&persistent).unwrap();
+    check(&reloaded, 91);
+    drop((reloaded, b));
+}
+
 /// Whether the file at `path` contains `needle`.
 fn file_contains(path: &str, needle: &[u8]) -> bool {
     std::fs::read(path)
@@ -441,7 +472,10 @@ fn encrypted_temp_files_hide_their_data() {
             assert!(!file_contains(&file.path, &start), "plaintext in {}", file.path);
         }
     }
-    let block_file = files.iter().find(|file| file.path.contains("duckdb_temp_block-")).unwrap();
+    let block_file = files
+        .iter()
+        .find(|file| file.path.contains("duckdb_temp_block-"))
+        .unwrap();
     assert_eq!(
         std::fs::metadata(&block_file.path).unwrap().len(),
         16 + 32 + 2 * BLOCK as u64 + 4096

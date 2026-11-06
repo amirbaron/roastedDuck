@@ -9,7 +9,7 @@ impl PegTransformer {
         let name = parse_result.list()?.child(2)?.string_literal()?.0;
         Ok(SqlStatement::new(SqlStatementKind::Pragma(Box::new(
             PragmaInfo {
-                name: "import_database".to_owned(),
+                name: "import_database".to_owned().into(),
                 parameters: vec![ParsedExpression::constant(Value::varchar(name))],
                 named_parameters: CaseInsensitiveMap::default(),
             },

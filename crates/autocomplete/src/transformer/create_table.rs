@@ -11,14 +11,14 @@ use super::prelude::*;
 const INVALID_INDEX: u64 = u64::MAX;
 
 /// A `CreateInfo` with the defaults of DuckDB's `CreateInfo(type, schema)`.
-pub(super) fn create_info(schema: &str, kind: CreateInfoKind) -> CreateInfo {
+pub(super) fn create_info(schema: impl AsRef<[u8]>, kind: CreateInfoKind) -> CreateInfo {
     CreateInfo {
-        catalog: String::new(),
-        schema: schema.to_owned(),
+        catalog: String::new().into(),
+        schema: schema.as_ref().into(),
         temporary: false,
         internal: false,
         on_conflict: OnCreateConflict::ErrorOnConflict,
-        sql: String::new(),
+        sql: String::new().into(),
         comment: Value::default(),
         tags: CaseInsensitiveMap::default(),
         dependencies: LogicalDependencyList::default(),
@@ -45,9 +45,9 @@ pub(super) const fn on_entry_not_found(if_exists: bool) -> OnEntryNotFound {
 }
 
 /// `ColumnDefinition(name, type)`.
-pub(super) fn column_definition(name: String, logical_type: LogicalType) -> ColumnDefinition {
+pub(super) fn column_definition(name: impl Into<ByteString>, logical_type: LogicalType) -> ColumnDefinition {
     ColumnDefinition {
-        name,
+        name: name.into(),
         logical_type,
         expression: None,
         category: TableColumnType::Standard,
@@ -72,7 +72,7 @@ fn add_column(columns: &mut ColumnList, column: ColumnDefinition) -> Result<()> 
         .iter()
         .any(|existing| existing.name.eq_ignore_ascii_case(&column.name))
     {
-        return Err(Error::catalog(format!(
+        return Err(Error::catalog(byte_format!(
             "Column with name {} already exists!",
             column.name
         )));
@@ -286,7 +286,7 @@ impl PegTransformer {
                     result.constraints.push(self.transform(column_element_child)?);
                 }
                 other => {
-                    return Err(Error::not_implemented(format!(
+                    return Err(Error::not_implemented(byte_format!(
                         "Unknown column type encountered: {other}"
                     )));
                 }
@@ -303,8 +303,8 @@ impl PegTransformer {
         let choice = parse_result.list()?.choice(0)?;
         let mut result = QualifiedName::default();
         match &choice.kind {
-            ParseResultKind::Identifier(identifier) => identifier.clone_into(&mut result.name),
-            ParseResultKind::String { text, .. } => text.clone_into(&mut result.name),
+            ParseResultKind::Identifier(identifier) => result.name = identifier.into(),
+            ParseResultKind::String { text, .. } => result.name = text.into(),
             _ => {}
         }
         Ok(result)
@@ -363,7 +363,7 @@ impl PegTransformer {
         let generated_opt = list.optional(2)?;
         let mut ty = LogicalType::ANY;
         if type_opt.is_none() && generated_opt.is_none() {
-            return Err(Error::parser(format!(
+            return Err(Error::parser(byte_format!(
                 "Column {} must have a type or be defined as a GENERATED column.",
                 qualifier_to_string(
                     &qualified_name.catalog,
@@ -408,7 +408,7 @@ impl PegTransformer {
                     }
                     "ColumnCollation" => {
                         if ty.id() == LogicalTypeId::Any {
-                            return Err(Error::parser(format!(
+                            return Err(Error::parser(byte_format!(
                                 "Specify the VARCHAR type for column \"{}\" with collation.",
                                 qualifier_to_string(
                                     &qualified_name.catalog,
@@ -440,7 +440,7 @@ impl PegTransformer {
                 .expr
                 .ok_or_else(|| Error::internal("Generated column without an expression"))?;
             if rustdb_parser::has_subquery(&expr) {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(byte_format!(
                     "Expression of generated column \"{}\" contains a subquery, which isn't allowed",
                     qualified_name.name
                 )));
@@ -449,7 +449,7 @@ impl PegTransformer {
                 expr = ParsedExpression::cast(expr, ty.clone());
             }
             if rustdb_parser::has_subquery(&expr) {
-                return Err(Error::parser(format!(
+                return Err(Error::parser(byte_format!(
                     "Expression of generated column \"{}\" contains a subquery, which isn't allowed",
                     qualified_name.name
                 )));
@@ -525,7 +525,7 @@ impl PegTransformer {
         &mut self,
         parse_result: &ParseResult,
     ) -> Result<Constraint> {
-        let columns: Vec<String> = self.transform_child(parse_result.list()?, 2)?;
+        let columns: Vec<ByteString> = self.transform_child(parse_result.list()?, 2)?;
         Ok(Constraint::Unique(UniqueConstraint {
             is_primary_key: true,
             index: LogicalIndex(INVALID_INDEX),
@@ -538,7 +538,7 @@ impl PegTransformer {
         &mut self,
         parse_result: &ParseResult,
     ) -> Result<Constraint> {
-        let columns: Vec<String> = self.transform_child(parse_result.list()?, 1)?;
+        let columns: Vec<ByteString> = self.transform_child(parse_result.list()?, 1)?;
         Ok(Constraint::Unique(UniqueConstraint {
             is_primary_key: false,
             index: LogicalIndex(INVALID_INDEX),
@@ -564,7 +564,7 @@ impl PegTransformer {
         parse_result: &ParseResult,
     ) -> Result<Constraint> {
         let list = parse_result.list()?;
-        let pk_list: Vec<String> = self.transform_child(list, 2)?;
+        let pk_list: Vec<ByteString> = self.transform_child(list, 2)?;
         let mut fk_constraint: ForeignKeyConstraint = self.transform_child(list, 3)?;
         fk_constraint.fk_columns = pk_list;
         if !fk_constraint.pk_columns.is_empty()

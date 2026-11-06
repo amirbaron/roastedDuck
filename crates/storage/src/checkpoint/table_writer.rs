@@ -1049,7 +1049,8 @@ pub(crate) fn write_row_groups_to_disk(
     let types = collection.types();
     let compression_types: Vec<CompressionType> =
         table.columns().iter().map(|column| column.compression).collect();
-    let table_name = format!("{}.{}", table.info().schema_name(), table.info().table_name());
+    let table_name =
+        rustdb_common::byte_format!("{}.{}", table.info().schema_name(), table.info().table_name());
     let storage_version = blocks.compression_info().storage_version;
     let mut columns: Vec<Vec<PersistentColumnData>> = row_groups
         .iter()
@@ -1249,7 +1250,7 @@ struct TableWriteContext<'a> {
     /// `RowGroupWriter::compression_types`: the declared compression of each column.
     compression_types: &'a [CompressionType],
     /// `schema.table`, for the log.
-    table_name: &'a str,
+    table_name: &'a [u8],
 }
 
 /// `RowGroup::WriteToDisk`: decides how the row group is written and writes the data of
@@ -1513,7 +1514,8 @@ pub fn write_table_data(
     // `RowGroupWriter::compression_types`: the declared compression of each column.
     let compression_types: Vec<CompressionType> =
         table.columns().iter().map(|column| column.compression).collect();
-    let table_name = format!("{}.{}", table.info().schema_name(), table.info().table_name());
+    let table_name =
+        rustdb_common::byte_format!("{}.{}", table.info().schema_name(), table.info().table_name());
     let context = TableWriteContext {
         collection,
         metadata,
@@ -1756,7 +1758,8 @@ pub fn checkpoint_in_memory_table(
     let io = collection.io();
     let compression_types: Vec<CompressionType> =
         table.columns().iter().map(|column| column.compression).collect();
-    let table_name = format!("{}.{}", table.info().schema_name(), table.info().table_name());
+    let table_name =
+        rustdb_common::byte_format!("{}.{}", table.info().schema_name(), table.info().table_name());
     let mut blocks = BlockWriter::in_memory(Arc::clone(io), config);
     let (row_groups, _, new_total_rows, rebuild_indexes) =
         checkpoint_row_groups(table, settings, !vacuum_only, None, |row_group, row_start, _| {

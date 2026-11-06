@@ -72,8 +72,8 @@ pub use join::{
     PhysicalPiecewiseMergeJoin, PhysicalPositionalJoin,
 };
 pub use limit::{
-    BATCH_LIMIT_THRESHOLD, BufferedChunks, LimitBounds, LimitGlobal, LimitLocal, LimitPercentGlobal, PhysicalLimit,
-    PhysicalLimitPercent, PhysicalStreamingLimit,
+    BATCH_LIMIT_THRESHOLD, BufferedChunks, LimitBounds, LimitGlobal, LimitLocal, LimitPercentGlobal,
+    PhysicalLimit, PhysicalLimitPercent, PhysicalStreamingLimit,
 };
 pub use merge_into::{MergeGlobal, MergeIntoOperator, PhysicalMergeInto};
 pub use modify::{ModifyResult, SharedAppend};

@@ -7,6 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+rustdb-byte-format = { path = "../byte-format" }
 unicode-segmentation = "1"
 unicode-width = "0.2"
 

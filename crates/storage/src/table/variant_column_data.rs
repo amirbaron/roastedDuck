@@ -13,7 +13,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use rustdb_common::libcxx::{UnorderedOrder, string_hash};
-use rustdb_common::{Error, Result};
+use rustdb_common::{ByteString, Error, Result};
 use rustdb_types::variant::{
     VariantData, VariantLogicalType as V, VariantNormalizer, VariantPathComponent, unshredded_type,
 };
@@ -66,9 +66,9 @@ struct ColumnStats {
     total_count: u64,
     /// The fields (name and column index) in the iteration order of the
     /// `unordered_map<string, idx_t>` DuckDB keeps them in, which orders shredded fields.
-    fields: UnorderedOrder<(String, usize)>,
+    fields: UnorderedOrder<(ByteString, usize)>,
     /// The column of each field by name.
-    field_columns: HashMap<String, usize>,
+    field_columns: HashMap<ByteString, usize>,
     element: Option<usize>,
 }
 
@@ -157,7 +157,7 @@ impl ShreddingAnalysis {
     }
 
     /// `GetOrCreateField`.
-    fn field(&mut self, parent: usize, name: &str) -> usize {
+    fn field(&mut self, parent: usize, name: &ByteString) -> usize {
         if let Some(&column) = self.columns[parent].field_columns.get(name) {
             return column;
         }
@@ -299,9 +299,9 @@ fn wrap_shredded(typed: LogicalType, fully_consistent: bool) -> LogicalType {
     if fully_consistent && !typed.is_nested() {
         return typed;
     }
-    let mut fields = vec![("typed_value".to_owned(), typed)];
+    let mut fields = vec![("typed_value".into(), typed)];
     if !fully_consistent {
-        fields.push(("untyped_value_index".to_owned(), LogicalType::UINTEGER));
+        fields.push(("untyped_value_index".into(), LogicalType::UINTEGER));
     }
     LogicalType::struct_type(fields)
 }
@@ -599,7 +599,7 @@ impl<'a> Shredder<'a> {
     /// `WriteTypedObjectValues`: each shredded field of the OBJECTs, by exact name; a
     /// missing field has a NULL typed value and an `untyped_value_index` of 0.
     fn write_typed_object_values(&mut self, typed: usize, items: &[Item]) -> Result<()> {
-        let field_names: Vec<String> = self.vectors[typed]
+        let field_names: Vec<ByteString> = self.vectors[typed]
             .ty
             .struct_children()
             .unwrap_or_default()
@@ -881,7 +881,7 @@ struct ShreddedObject<'a> {
     untyped: Option<&'a Vector>,
     /// The fields in the order of their names (an OBJECT's `BTreeMap`), with the variant
     /// type of their values.
-    fields: Vec<(&'a str, &'a Vector, V)>,
+    fields: Vec<(&'a ByteString, &'a Vector, V)>,
 }
 
 impl<'a> ShreddedObject<'a> {
@@ -898,7 +898,7 @@ impl<'a> ShreddedObject<'a> {
         let vectors = typed.struct_children()?;
         let mut fields = Vec::with_capacity(names.len());
         for ((name, field_type), vector) in names.iter().zip(vectors) {
-            fields.push((name.as_str(), vector, primitive_variant_type(field_type)?));
+            fields.push((name, vector, primitive_variant_type(field_type)?));
         }
         fields.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
         if fields.windows(2).any(|pair| pair[0].0 == pair[1].0) {
@@ -1056,10 +1056,10 @@ fn push_fixed(builder: &mut VariantVectorBuilder, type_id: V, payload: &[u8]) ->
 /// `VariantUtils::VariantExtract` along a path of OBJECT fields: each row's value rooted
 /// at the field; NULL where a level is not an OBJECT, lacks the field, or the field is a
 /// VARIANT NULL.
-pub(crate) fn extract_path(input: &Vector, path: &[&str], count: usize) -> Result<Vector> {
+pub(crate) fn extract_path<S: AsRef<[u8]>>(input: &Vector, path: &[S], count: usize) -> Result<Vector> {
     let components: Vec<VariantPathComponent> = path
         .iter()
-        .map(|key| VariantPathComponent::Key((*key).to_owned()))
+        .map(|key| VariantPathComponent::Key(ByteString::from(key.as_ref())))
         .collect();
     rustdb_types::variant_vector::extract(input, &components, count)
 }
@@ -1215,7 +1215,7 @@ mod tests {
         Value::struct_value(
             fields
                 .into_iter()
-                .map(|(name, value)| (name.to_owned(), value))
+                .map(|(name, value)| (ByteString::from(name), value))
                 .collect(),
         )
     }
@@ -1265,7 +1265,7 @@ mod tests {
             variant(&object(vec![("b", Value::integer(1))])),
         ];
         let shredding = crate::statistics::wrap_shredded_levels(&LogicalType::struct_type(vec![(
-            "a".to_owned(),
+            "a".into(),
             LogicalType::INTEGER,
         )]));
         let values = roundtrip_on(&rows, &shredding);

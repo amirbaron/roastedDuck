@@ -920,7 +920,7 @@ pub(super) fn is_constant_or_null(expression: &Expression, value: bool) -> bool 
     let ExpressionKind::Function(function) = &expression.kind else {
         return false;
     };
-    &*function.function.name == "constant_or_null"
+    &*function.function.name == b"constant_or_null"
         && function
             .children
             .first()

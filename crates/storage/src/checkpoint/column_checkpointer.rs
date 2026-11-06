@@ -97,7 +97,7 @@ pub(crate) struct CheckpointContext<'a> {
     /// `ColumnCheckpointInfo::GetCompressionType`); `Auto` lets the codecs compete.
     pub column_compression: CompressionType,
     /// `schema.table` of the column, for the log.
-    pub table_name: &'a str,
+    pub table_name: &'a [u8],
     /// The storage version written: GEOMETRY uses the legacy format before v1.5.0.
     pub storage_version: u64,
     /// `geometry_minimum_shredding_size`.
@@ -106,7 +106,7 @@ pub(crate) struct CheckpointContext<'a> {
 
 /// `DUCKDB_LOG_TRACE` of the codec `DetectBestCompressionMethod` chose for a column.
 fn log_final_analyze(
-    table_name: &str,
+    table_name: &[u8],
     column: &ColumnData,
     ty: &LogicalType,
     function: CompressionType,
@@ -119,12 +119,12 @@ fn log_final_analyze(
     if !logger.should_log(LogScope::Database, "", LogLevel::Trace) {
         return;
     }
-    let message = format!(
+    let message = rustdb_common::byte_format!(
         "ColumnDataCheckpointer FinalAnalyze({}) result for {table_name}.{}({ty}): {score}",
         super::pointers::compression_enum_name(function),
         column.column_index()
     );
-    let _ = logger.write_log(LogScope::Database, "", LogLevel::Trace, &message);
+    let _ = logger.write_log_bytes(LogScope::Database, "", LogLevel::Trace, &message);
 }
 
 /// The physical type segments of `ty` store.

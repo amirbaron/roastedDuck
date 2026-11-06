@@ -9,7 +9,7 @@ impl PegTransformer {
         let choice = parse_result.list()?.list(1)?.choice(0)?;
         let setting_info: SettingInfo = self.transform(choice)?;
         Ok(SqlStatement::new(SqlStatementKind::Set(SetStatement {
-            name: setting_info.name,
+            name: setting_info.name.into(),
             scope: setting_info.scope,
             value: None,
         })))
@@ -47,7 +47,7 @@ impl PegTransformer {
     pub(super) fn transform_set_time_zone(&mut self, parse_result: &ParseResult) -> Result<SetStatement> {
         let expr: ParsedExpression = self.transform_child(parse_result.list()?, 2)?;
         Ok(SetStatement {
-            name: "timezone".to_owned(),
+            name: "timezone".to_owned().into(),
             scope: SetScope::Automatic,
             value: Some(Box::new(expr)),
         })
@@ -80,11 +80,11 @@ impl PegTransformer {
             ParsedExpressionKind::ColumnRef(col_ref) => {
                 // A SET value cannot be a column reference.
                 let column_name = col_ref.column_names.last().cloned().unwrap_or_default();
-                value = ParsedExpression::constant(Value::varchar(column_name));
+                value = ParsedExpression::constant(Value::try_varchar(&column_name)?);
             }
             ParsedExpressionKind::Default => {
                 return Ok(SetStatement {
-                    name: setting_info.name,
+                    name: setting_info.name.into(),
                     scope: setting_info.scope,
                     value: None,
                 });
@@ -92,7 +92,7 @@ impl PegTransformer {
             _ => {}
         }
         Ok(SetStatement {
-            name: setting_info.name,
+            name: setting_info.name.into(),
             scope: setting_info.scope,
             value: Some(Box::new(value)),
         })

@@ -69,7 +69,7 @@ fn shell_scan_last_result(
     input: &ReplacementScanInput<'_>,
     last_result: &LastResult,
 ) -> Result<Option<TableRef>> {
-    if input.table_name != "_" {
+    if input.table_name != b"_" {
         return Ok(None);
     }
     let Some(scanned) = last_result.lock().unwrap_or_else(PoisonError::into_inner).clone() else {
@@ -92,11 +92,11 @@ fn shell_scan_last_result(
 struct ShellLogStorage {
     out: Output,
     /// The messages printed so far (`printed_logs`, compared without case).
-    printed_logs: Mutex<HashSet<String>>,
+    printed_logs: Mutex<HashSet<Vec<u8>>>,
 }
 
 impl LogStorage for ShellLogStorage {
-    fn write_log_entry(&self, _timestamp: i64, level: LogLevel, _log_type: &str, message: &str) {
+    fn write_log_entry(&self, _timestamp: i64, level: LogLevel, _log_type: &str, message: &[u8]) {
         let element_type = match level {
             LogLevel::Trace => HighlightElementType::LogTrace,
             LogLevel::Debug => HighlightElementType::LogDebug,
@@ -105,12 +105,16 @@ impl LogStorage for ShellLogStorage {
             LogLevel::Error | LogLevel::Fatal => HighlightElementType::ErrorToken,
         };
         let mut printed_logs = self.printed_logs.lock().unwrap_or_else(PoisonError::into_inner);
-        if !printed_logs.insert(message.to_lowercase()) {
+        if !printed_logs.insert(message.to_ascii_lowercase()) {
             return;
         }
         let highlight = ShellHighlight::new(&self.out);
         highlight.print_text(&format!("{}:\n", level.name()), PrintOutput::Stdout, element_type);
-        highlight.print_text(&format!("{message}\n\n"), PrintOutput::Stdout, element_type);
+        highlight.print_bytes(
+            &rustdb_common::byte_format!("{message}\n\n"),
+            PrintOutput::Stdout,
+            element_type,
+        );
     }
 }
 

@@ -17,7 +17,7 @@ fn arithmetic_constant_child(expression: &Expression) -> Option<usize> {
     let ExpressionKind::Function(function) = &expression.kind else {
         return None;
     };
-    if !matches!(&*function.function.name, "+" | "-" | "*")
+    if !matches!(&*function.function.name, b"+" | b"-" | b"*")
         || !expression.return_type.is_integral()
         || function.children.len() != 2
     {
@@ -99,7 +99,7 @@ pub fn move_constants(
     };
     let name = function.function.name.clone();
     let result_value = match &*name {
-        "+" => {
+        b"+" => {
             let Some(value) = outer_value.checked_sub(inner_value) else {
                 return Ok(RuleOutcome::Unchanged);
             };
@@ -111,7 +111,7 @@ pub fn move_constants(
                 None => return Ok(RuleOutcome::Unchanged),
             }
         }
-        "-" if arithmetic_child_index == 0 => {
+        b"-" if arithmetic_child_index == 0 => {
             let Some(value) = outer_value.checked_add(inner_value) else {
                 return Ok(RuleOutcome::Unchanged);
             };
@@ -123,7 +123,7 @@ pub fn move_constants(
                 None => return Ok(RuleOutcome::Unchanged),
             }
         }
-        "-" => {
+        b"-" => {
             let Some(value) = inner_value.checked_sub(outer_value) else {
                 return Ok(RuleOutcome::Unchanged);
             };

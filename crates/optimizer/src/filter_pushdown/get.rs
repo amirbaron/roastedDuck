@@ -29,7 +29,7 @@ fn normalize_column_ref_aliases(expression: &mut Expression, get: &LogicalGet) {
             return;
         };
         if column.index == COLUMN_IDENTIFIER_ROW_ID {
-            "rowid".clone_into(&mut expression.alias);
+            expression.alias = "rowid".into();
         } else {
             let name = get.column_name(column);
             if !name.is_empty() {
@@ -80,7 +80,7 @@ impl FilterPushdown<'_> {
             return Ok(());
         };
         // The scanned columns by name (`HivePartitioningFilterInfo::column_map`).
-        let mut column_map: Vec<(String, usize, rustdb_types::LogicalType)> = Vec::new();
+        let mut column_map: Vec<(rustdb_common::ByteString, usize, rustdb_types::LogicalType)> = Vec::new();
         for (position, column) in get.column_ids.iter().enumerate() {
             let Some(index) = usize::try_from(column.index)
                 .ok()
@@ -168,9 +168,16 @@ impl FilterPushdown<'_> {
             return self.finish_pushdown(op);
         };
         let mut pushdown_results = Vec::new();
-        get.table_filters = self
-            .combiner
-            .generate_table_scan_filters(&get.column_ids, &mut pushdown_results)?;
+        let supported = |column, filter: &rustdb_storage::TableFilter| match (
+            &get.function.filter_support,
+            &get.bind_data,
+        ) {
+            (Some(supported), Some(data)) => supported(data.as_ref(), column, filter),
+            _ => true,
+        };
+        get.table_filters =
+            self.combiner
+                .generate_table_scan_filters(&get.column_ids, &mut pushdown_results, &supported)?;
         self.generate_filters();
         while pushdown_results.len() < self.filters.len() {
             pushdown_results.push(FilterPushdownResult::NoPushdown);

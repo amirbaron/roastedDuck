@@ -166,7 +166,7 @@ fn add_aliases(names: &[&str], set: &ScalarFunctionSet, functions: &mut Vec<Scal
         let mut aliased = ScalarFunctionSet::new(*name);
         for function in &set.functions {
             let mut function = function.clone();
-            function.name = Arc::from(*name);
+            function.name = (*name).into();
             aliased.add(function);
         }
         functions.push(aliased);
@@ -175,7 +175,7 @@ fn add_aliases(names: &[&str], set: &ScalarFunctionSet, functions: &mut Vec<Scal
 
 /// Whether `ty` is the JSON type (`LogicalType::IsJSONType`).
 pub(crate) fn is_json_type(ty: &LogicalType) -> bool {
-    ty.id() == LogicalTypeId::Varchar && ty.alias() == Some("JSON")
+    ty.id() == LogicalTypeId::Varchar && ty.alias().is_some_and(|alias| alias.as_bytes() == b"JSON")
 }
 
 /// The input types of the read functions: VARCHAR and JSON.

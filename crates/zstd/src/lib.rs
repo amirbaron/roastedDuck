@@ -5,11 +5,13 @@
 //! (`ZSTD_decompressStream`).
 //!
 //! The `ZSTD_fast` and `ZSTD_dfast` match finders are ported, with and without an extDict
-//! (the window of a stream that wrapped around its input buffer); the stronger strategies
-//! (`ZSTD_greedy` and above, levels 4 or 5 and up) compress with the double-fast match
-//! finder at their level's window, so their frames are valid but differ from zstd's.
-//! The compressor supports no dictionaries, checksums, long-distance matching or
-//! multi-threading: DuckDB uses none of them.
+//! (the window of a stream that wrapped around its input buffer). Hash-chain
+//! Greedy/Lazy/Lazy2 parsing uses hash chains or salted row hashes.
+//! Delayed binary-tree lazy parsing is also implemented. Optimal parsing and
+//! entropy-cost block splitting are under parity verification.
+//! The compressor supports no attached dictionaries, checksums or multi-threading.
+//! Automatic long-distance matching at the largest windows remains under parity
+//! work; the frozen encoder enables it for optimal strategies with window log 27.
 
 #![allow(
     clippy::inline_always,
@@ -18,6 +20,7 @@
 
 mod bits;
 mod block;
+mod bt_lazy;
 mod cctx;
 mod decompress;
 mod dfast;
@@ -26,10 +29,17 @@ mod fast;
 mod fse;
 mod hist;
 mod huf;
+mod lazy;
+mod ldm;
+mod ldm_gear;
 mod literals;
+mod opt;
+mod opt_tree;
 mod params;
+mod row;
 mod seq;
 mod sequences;
+mod split;
 mod window;
 
 pub use cctx::{Compressor, EndDirective, compress, compress_streamed};

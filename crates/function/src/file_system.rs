@@ -43,6 +43,188 @@ pub fn opener() -> Option<Arc<FunctionClient>> {
     OPENER.with(|opener| opener.borrow().clone())
 }
 
+/// A native local path at the operating-system boundary.
+pub fn native_path(bytes: &[u8]) -> rustdb_common::Result<std::path::PathBuf> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        Ok(std::path::PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
+    }
+    #[cfg(not(unix))]
+    {
+        Ok(std::str::from_utf8(bytes)
+            .map_err(|_| rustdb_common::Error::invalid_input("Invalid UTF-8 in filesystem path"))?
+            .into())
+    }
+}
+
+/// Native `GetHomeDirectory`, including the OS environment's path bytes.
+pub fn home_directory_bytes() -> rustdb_common::ByteString {
+    opener()
+        .and_then(|client| client.settings())
+        .and_then(|settings| settings.current_setting("home_directory").ok())
+        .filter(|value| !value.is_null())
+        .and_then(|value| value.to_varchar_bytes().ok())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| {
+            std::env::var_os("HOME").map_or_else(rustdb_common::ByteString::new, |path| {
+                path.as_encoded_bytes().into()
+            })
+        })
+}
+
+fn file_url_offset_bytes(path: &[u8]) -> usize {
+    let Some(rest) = path.strip_prefix(b"file:/") else {
+        return 0;
+    };
+    if !rest.starts_with(b"/") {
+        return 5;
+    }
+    if rest[1..].starts_with(b"/") {
+        return 7;
+    }
+    if rest[1..].starts_with(b"localhost/") {
+        return 16;
+    }
+    0
+}
+pub fn expand_path_bytes(path: &[u8]) -> rustdb_common::ByteString {
+    if let Some(rest) = path.strip_prefix(b"~") {
+        return rustdb_common::byte_format!("{}{rest}", home_directory_bytes());
+    }
+    path[file_url_offset_bytes(path)..].into()
+}
+pub fn canonicalize_path_bytes(path: &[u8]) -> rustdb_common::ByteString {
+    use rustdb_common::ByteString;
+    if REMOTE_PREFIXES
+        .iter()
+        .any(|prefix| path.starts_with(prefix.as_bytes()))
+    {
+        return path.into();
+    }
+    // StringUtil::Split(string,string) falls back to the whole input when every
+    // component is empty (e.g. "/"), unlike the char-delimiter overload.
+    let mut elements: Vec<&[u8]> = path
+        .split(|byte| *byte == b'/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    if elements.is_empty() {
+        elements.push(path);
+    }
+    let mut stack = Vec::new();
+    for part in elements {
+        match part {
+            b"" | b"." => {}
+            b".." => {
+                stack.pop();
+            }
+            part => stack.push(part),
+        }
+    }
+    let mut out = if path.starts_with(b"/") {
+        ByteString::from(b"/")
+    } else {
+        ByteString::new()
+    };
+    out.push_bytes(ByteString::join(&stack, b"/"));
+    out
+}
+pub fn canonicalize_local_path_bytes(input: &[u8]) -> rustdb_common::ByteString {
+    use rustdb_common::{ByteString, byte_format};
+    let mut path = expand_path_bytes(input);
+    if !path.starts_with(b"/") && !path.starts_with(b"file:/") {
+        let cwd = std::env::current_dir().map_or_else(
+            |_| ByteString::new(),
+            |path| path.as_os_str().as_encoded_bytes().into(),
+        );
+        path = byte_format!("{cwd}/{path}");
+    }
+    let mut current = path.clone();
+    let mut remainder = ByteString::new();
+    let mut dots = 0;
+    while !current.is_empty() {
+        if dots == 0
+            && let Ok(local) = native_path(current.split(|byte| *byte == 0).next().unwrap_or_default())
+            && let Ok(resolved) = std::fs::canonicalize(local)
+        {
+            let resolved = resolved.as_os_str().as_encoded_bytes();
+            if remainder.is_empty() {
+                return resolved.into();
+            }
+            return if resolved.ends_with(b"/") {
+                byte_format!("{resolved}{remainder}")
+            } else {
+                byte_format!("{resolved}/{remainder}")
+            };
+        }
+        let Some(sep) = current.iter().rposition(|byte| *byte == b'/') else {
+            break;
+        };
+        let part = &current[sep + 1..];
+        if part == b".." {
+            dots += 1;
+        } else if !part.is_empty() && part != b"." {
+            if dots > 0 {
+                dots -= 1;
+            } else if remainder.is_empty() {
+                remainder = part.into();
+            } else {
+                remainder = byte_format!("{part}/{remainder}");
+            }
+        }
+        current = current[..sep].into();
+    }
+    canonicalize_path_bytes(&path)
+}
+pub fn sanitize_allowed_path_bytes(path: &[u8]) -> rustdb_common::ByteString {
+    if path.windows(3).any(|part| part == b"://") && file_url_offset_bytes(path) == 0 {
+        canonicalize_path_bytes(path)
+    } else {
+        canonicalize_local_path_bytes(path)
+    }
+}
+fn can_access_bytes(settings: &dyn crate::client::SettingsSource, path: &[u8], directory: bool) -> bool {
+    if settings
+        .current_setting("enable_external_access")
+        .ok()
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true)
+    {
+        return true;
+    }
+    let paths = |name| {
+        settings
+            .current_setting(name)
+            .ok()
+            .map(|value| {
+                value
+                    .children()
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(|value| value.to_varchar_bytes().ok())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    let mut path = sanitize_allowed_path_bytes(path);
+    if paths("allowed_paths")
+        .iter()
+        .any(|allowed| sanitize_allowed_path_bytes(allowed) == path)
+    {
+        return true;
+    }
+    if directory && !path.ends_with(b"/") {
+        path.push(b'/');
+    }
+    paths("allowed_directories").iter().any(|allowed| {
+        let mut allowed = sanitize_allowed_path_bytes(allowed);
+        if !allowed.ends_with(b"/") {
+            allowed.push(b'/');
+        }
+        path.starts_with(&allowed)
+    })
+}
+
 /// Path prefixes of files other file systems serve (`EXTENSION_FILE_PREFIXES`).
 const REMOTE_PREFIXES: [&str; 12] = [
     "http://", "https://", "s3://", "s3a://", "s3n://", "gcs://", "gs://", "r2://", "azure://", "az://",
@@ -50,8 +232,10 @@ const REMOTE_PREFIXES: [&str; 12] = [
 ];
 
 /// `FileSystem::IsRemoteFile`.
-pub fn is_remote_file(path: &str) -> bool {
-    REMOTE_PREFIXES.iter().any(|prefix| path.starts_with(prefix))
+pub fn is_remote_file(path: impl AsRef<[u8]>) -> bool {
+    REMOTE_PREFIXES
+        .iter()
+        .any(|prefix| path.as_ref().starts_with(prefix.as_bytes()))
 }
 
 /// `FileSystem::GetHomeDirectory`: the `home_directory` setting if set, else `$HOME`.
@@ -168,62 +352,6 @@ pub fn canonicalize_local_path(input: &str) -> String {
     canonicalize_path(&path)
 }
 
-/// `DBConfig::SanitizeAllowedPath`: the path as the file system serving it canonicalizes
-/// it; remote paths are kept as they are.
-fn sanitize_allowed_path(path: &str) -> String {
-    if path.contains("://") && file_url_offset(path) == 0 {
-        return canonicalize_path(path);
-    }
-    canonicalize_local_path(path)
-}
-
-/// The VARCHAR entries of the list setting `name`.
-fn list_setting(settings: &dyn crate::client::SettingsSource, name: &str) -> Vec<String> {
-    let Ok(value) = settings.current_setting(name) else {
-        return Vec::new();
-    };
-    value
-        .children()
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|entry| entry.to_varchar().ok())
-        .collect()
-}
-
-/// `DBConfig::CanAccessFile`: with `enable_external_access` off, only `allowed_paths`
-/// and files under `allowed_directories` can be accessed.
-fn can_access(settings: &dyn crate::client::SettingsSource, path: &str, directory: bool) -> bool {
-    let enabled = settings
-        .current_setting("enable_external_access")
-        .ok()
-        .and_then(|value| value.as_bool())
-        .unwrap_or(true);
-    if enabled {
-        return true;
-    }
-    let mut path = sanitize_allowed_path(path);
-    if list_setting(settings, "allowed_paths")
-        .iter()
-        .any(|allowed| sanitize_allowed_path(allowed) == path)
-    {
-        return true;
-    }
-    let directories = list_setting(settings, "allowed_directories");
-    if directories.is_empty() {
-        return false;
-    }
-    if directory && !path.ends_with('/') {
-        path.push('/');
-    }
-    directories.iter().any(|allowed| {
-        let mut allowed = sanitize_allowed_path(allowed);
-        if !allowed.ends_with('/') {
-            allowed.push('/');
-        }
-        path.starts_with(&allowed)
-    })
-}
-
 /// Whether the statement's configuration allows external access (`enable_external_access`).
 pub fn external_access_enabled() -> bool {
     opener()
@@ -233,34 +361,40 @@ pub fn external_access_enabled() -> bool {
         .unwrap_or(true)
 }
 
-fn verify_can_access(path: &str, directory: bool) -> rustdb_common::Result<()> {
+fn verify_can_access(path: &[u8], directory: bool) -> rustdb_common::Result<()> {
     let Some(client) = opener() else {
         return Ok(());
     };
     if let Some(settings) = client.settings()
-        && !can_access(settings.as_ref(), path, directory)
+        && !can_access_bytes(settings.as_ref(), path, directory)
     {
-        return Err(rustdb_common::Error::new(
+        return Err(rustdb_common::Error::new_bytes(
             rustdb_common::ErrorKind::Permission,
-            format!(
+            rustdb_common::byte_format!(
                 "Cannot access {} \"{path}\" - file system operations are disabled by configuration",
                 if directory { "directory" } else { "file" }
             ),
         ));
     }
-    // `VirtualFileSystem::FindFileSystem`: the file system of the path may be disabled.
-    let name = file_system_name(path);
-    let disabled = client
+    let registered = crate::registered_files::lookup(path);
+    let name = registered
+        .as_ref()
+        .map_or_else(|| file_system_name(path), |fs| fs.name());
+    if client
         .object_cache()
         .and_then(|cache| cache.get::<DisabledFileSystems>(DISABLED_FILE_SYSTEMS_KEY))
-        .is_some_and(|disabled| disabled.contains(name));
-    if disabled {
+        .is_some_and(|disabled| disabled.contains(name))
+    {
         return Err(rustdb_common::Error::new(
             rustdb_common::ErrorKind::Permission,
             format!("File system {name} has been disabled by configuration"),
         ));
     }
-    verify_file_system_loaded(&client, path)
+    if registered.is_some() {
+        Ok(())
+    } else {
+        verify_file_system_loaded(&client, path)
+    }
 }
 
 /// Path prefixes of the file systems extensions register, with the extension
@@ -282,19 +416,19 @@ const EXTENSION_FILE_PREFIXES: [(&str, &str); 12] = [
 
 /// `VirtualFileSystem::FindFileSystem`: a path of a file system an extension registers
 /// needs that extension, and rustdb loads none of them.
-fn verify_file_system_loaded(client: &crate::FunctionClient, path: &str) -> rustdb_common::Result<()> {
+fn verify_file_system_loaded(client: &crate::FunctionClient, path: &[u8]) -> rustdb_common::Result<()> {
     let Some((_, extension)) = EXTENSION_FILE_PREFIXES
         .iter()
-        .find(|(prefix, _)| path.starts_with(prefix))
+        .find(|(prefix, _)| path.starts_with(prefix.as_bytes()))
     else {
         return Ok(());
     };
-    let message = crate::extension_entries::add_client_install_hint(
+    let message = crate::extension_entries::add_client_install_hint_bytes(
         client,
-        &format!("File {path} requires the extension {extension} to be loaded"),
+        &rustdb_common::byte_format!("File {path} requires the extension {extension} to be loaded"),
         extension,
     );
-    Err(rustdb_common::Error::new(
+    Err(rustdb_common::Error::new_bytes(
         rustdb_common::ErrorKind::MissingExtension,
         message,
     ))
@@ -302,13 +436,22 @@ fn verify_file_system_loaded(client: &crate::FunctionClient, path: &str) -> rust
 
 /// The name of the file system that handles `path` (`FileSystem::GetName` of the one
 /// `FindFileSystem` picks): the local file system unless the path has a URL scheme.
-fn file_system_name(path: &str) -> &'static str {
+fn file_system_name(path: &[u8]) -> &'static str {
     let lower = path.to_ascii_lowercase();
-    if lower.starts_with("http://") || lower.starts_with("https://") {
+    if lower.starts_with(b"duckdb_internal_objectstore://") && crate::object_store::is_registered() {
+        "DUCKDB_INTERNAL_OBJECTSTORE"
+    } else if lower.starts_with(b"http://") || lower.starts_with(b"https://") {
         "HTTPFileSystem"
-    } else if ["s3://", "s3a://", "s3n://", "gcs://", "gs://", "r2://"]
-        .iter()
-        .any(|scheme| lower.starts_with(scheme))
+    } else if [
+        b"s3://".as_slice(),
+        b"s3a://".as_slice(),
+        b"s3n://".as_slice(),
+        b"gcs://".as_slice(),
+        b"gs://".as_slice(),
+        b"r2://".as_slice(),
+    ]
+    .iter()
+    .any(|scheme| lower.starts_with(scheme))
     {
         "S3FileSystem"
     } else {
@@ -345,6 +488,19 @@ pub const DISABLED_FILE_SYSTEMS_KEY: &str = "rustdb.disabled_filesystems";
 pub struct DisabledFileSystems(std::sync::Mutex<std::collections::BTreeSet<String>>);
 
 impl DisabledFileSystems {
+    /// Check the live registry policy for an already selected backend. Database
+    /// storage retains the backend, but newly opened files still obey this policy.
+    pub fn verify_enabled(&self, name: &str) -> rustdb_common::Result<()> {
+        if self.contains(name) {
+            Err(rustdb_common::Error::new(
+                rustdb_common::ErrorKind::Permission,
+                format!("File system {name} has been disabled by configuration"),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
     fn contains(&self, name: &str) -> bool {
         self.0
             .lock()
@@ -378,31 +534,38 @@ impl DisabledFileSystems {
 
 /// `OpenerFileSystem::VerifyCanAccessExtension`: files ending with `.duckdb_extension`
 /// are only written by `INSTALL`.
-pub fn verify_can_write(path: &str) -> rustdb_common::Result<()> {
-    if path.ends_with(".duckdb_extension") {
-        return Err(rustdb_common::Error::new(
+pub fn verify_can_write(path: impl AsRef<[u8]>) -> rustdb_common::Result<()> {
+    let path = path.as_ref();
+    if path.ends_with(b".duckdb_extension") {
+        return Err(rustdb_common::Error::new_bytes(
             rustdb_common::ErrorKind::Permission,
-            format!(
+            rustdb_common::byte_format!(
                 "File '{path}' cannot be opened for writing since files ending with '.duckdb_extension' are \
                  reserved for DuckDB extensions, and these can only be installed through the INSTALL command"
             ),
         ));
     }
     match opener() {
-        Some(client) => verify_file_system_loaded(&client, path),
+        Some(client) => {
+            if crate::registered_files::lookup(path).is_some() {
+                verify_can_access(path, false)
+            } else {
+                verify_file_system_loaded(&client, path)
+            }
+        }
         None => Ok(()),
     }
 }
 
 /// `OpenerFileSystem::VerifyCanAccessFile`: a Permission Error if the configuration
 /// forbids accessing the file `path`.
-pub fn verify_can_access_file(path: &str) -> rustdb_common::Result<()> {
-    verify_can_access(path, false)
+pub fn verify_can_access_file(path: impl AsRef<[u8]>) -> rustdb_common::Result<()> {
+    verify_can_access(path.as_ref(), false)
 }
 
 /// `OpenerFileSystem::VerifyCanAccessDirectory`.
-pub fn verify_can_access_directory(path: &str) -> rustdb_common::Result<()> {
-    verify_can_access(path, true)
+pub fn verify_can_access_directory(path: impl AsRef<[u8]>) -> rustdb_common::Result<()> {
+    verify_can_access(path.as_ref(), true)
 }
 
 #[cfg(test)]

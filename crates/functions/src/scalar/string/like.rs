@@ -352,7 +352,7 @@ fn escape_like(name: &str, op: Matcher, invert: bool) -> ScalarFunctionSet {
 }
 
 fn single(function: ScalarFunction) -> ScalarFunctionSet {
-    let mut set = ScalarFunctionSet::new(Arc::clone(&function.name));
+    let mut set = ScalarFunctionSet::new(function.name.clone());
     set.add(function);
     set
 }

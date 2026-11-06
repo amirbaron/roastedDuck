@@ -5,8 +5,8 @@ use std::cmp::Ordering;
 
 /// Jaro-Winkler similarity of two byte strings in `[0, 1]` (the `jaro_winkler` library DuckDB
 /// vendors: prefix weight 0.1 over at most 4 characters, applied above a Jaro score of 0.7).
-pub fn similarity_rating(left: &str, right: &str) -> f64 {
-    let (p, t) = (left.as_bytes(), right.as_bytes());
+pub fn similarity_rating(left: impl AsRef<[u8]>, right: impl AsRef<[u8]>) -> f64 {
+    let (p, t) = (left.as_ref(), right.as_ref());
     let prefix = p.iter().zip(t).take(4).take_while(|(a, b)| a == b).count();
     let similarity = jaro_similarity(p, t);
     if similarity > 0.7 {
@@ -94,8 +94,8 @@ pub fn similarity_score(left: &[u8], right: &[u8]) -> usize {
 }
 
 /// DuckDB's `StringUtil::CILessThan` (shorter strings compare as if NUL-terminated).
-fn ci_less_than(left: &str, right: &str) -> bool {
-    let (a, b) = (left.as_bytes(), right.as_bytes());
+fn ci_less_than(left: impl AsRef<[u8]>, right: impl AsRef<[u8]>) -> bool {
+    let (a, b) = (left.as_ref(), right.as_ref());
     let length = a.len().min(b.len()) + usize::from(a.len() != b.len());
     let upper = |bytes: &[u8], i: usize| bytes.get(i).map_or(0, u8::to_ascii_uppercase);
     let (mut u1, mut u2) = (0u8, 0u8);
@@ -111,7 +111,7 @@ fn ci_less_than(left: &str, right: &str) -> bool {
 
 /// The best-scoring strings, at least one and at most `n`, keeping only those scoring at
 /// least `threshold` after the first (DuckDB's `StringUtil::TopNStrings`).
-pub fn top_n_strings(mut scores: Vec<(String, f64)>, n: usize, threshold: f64) -> Vec<String> {
+pub fn top_n_strings<S: AsRef<[u8]> + Clone>(mut scores: Vec<(S, f64)>, n: usize, threshold: f64) -> Vec<S> {
     if scores.is_empty() {
         return Vec::new();
     }
@@ -142,7 +142,11 @@ pub fn top_n_strings(mut scores: Vec<(String, f64)>, n: usize, threshold: f64) -
 
 /// [`top_n_strings`] over distances (lower is better) normalised to similarities against
 /// the largest distance and `threshold` (DuckDB's `TopNStrings(vector<pair<string, idx_t>>)`).
-pub fn top_n_distances(scores: Vec<(String, usize)>, n: usize, threshold: usize) -> Vec<String> {
+pub fn top_n_distances<S: AsRef<[u8]> + Clone>(
+    scores: Vec<(S, usize)>,
+    n: usize,
+    threshold: usize,
+) -> Vec<S> {
     let max_score = scores.iter().map(|(_, s)| *s).max().unwrap_or(0).max(threshold);
     let normalize = |score: usize| 1.0 - score as f64 / max_score as f64;
     let normalized = scores
@@ -159,11 +163,11 @@ pub fn top_n_levenshtein(strings: &[String], target: &str) -> Vec<String> {
 }
 
 /// Prefix Levenshtein suggestions for a native byte string.
-pub fn top_n_levenshtein_bytes(strings: &[String], target: &[u8]) -> Vec<String> {
+pub fn top_n_levenshtein_bytes<S: AsRef<[u8]> + Clone>(strings: &[S], target: &[u8]) -> Vec<S> {
     let scores = strings
         .iter()
         .map(|candidate| {
-            let candidate_bytes = candidate.as_bytes();
+            let candidate_bytes = candidate.as_ref();
             let compared = &candidate_bytes[..target.len().min(candidate_bytes.len())];
             (candidate.clone(), similarity_score(compared, target))
         })
@@ -173,10 +177,10 @@ pub fn top_n_levenshtein_bytes(strings: &[String], target: &[u8]) -> Vec<String>
 
 /// The strings most similar to `target` by Jaro-Winkler similarity
 /// (DuckDB's `StringUtil::TopNJaroWinkler` with `n = 5`, `threshold = 0.5`).
-pub fn top_n_jaro_winkler(strings: &[String], target: &str) -> Vec<String> {
+pub fn top_n_jaro_winkler<S: AsRef<[u8]> + Clone>(strings: &[S], target: impl AsRef<[u8]>) -> Vec<S> {
     let scores = strings
         .iter()
-        .map(|candidate| (candidate.clone(), similarity_rating(candidate, target)))
+        .map(|candidate| (candidate.clone(), similarity_rating(candidate, target.as_ref())))
         .collect();
     top_n_strings(scores, 5, 0.5)
 }
@@ -193,6 +197,34 @@ pub fn candidates_message(candidates: &[String], label: &str) -> String {
 /// The Levenshtein candidates message (DuckDB's `StringUtil::CandidatesErrorMessage`).
 pub fn candidates_error_message(strings: &[String], target: &str, label: &str) -> String {
     candidates_message(&top_n_levenshtein(strings, target), label)
+}
+
+/// The native candidates message, preserving the bytes and original casing of names.
+pub fn candidates_error_message_bytes<S: AsRef<[u8]> + Clone>(
+    strings: &[S],
+    target: &[u8],
+    label: &[u8],
+) -> crate::ByteString {
+    candidates_message_bytes(&top_n_levenshtein_bytes(strings, target), label)
+}
+
+/// Native candidates with an already ranked list, preserving original name bytes.
+pub fn candidates_message_bytes<S: AsRef<[u8]>>(candidates: &[S], label: &[u8]) -> crate::ByteString {
+    if candidates.is_empty() {
+        return crate::ByteString::new();
+    }
+    let mut out = crate::ByteString::from(b"\n");
+    out.push_bytes(label);
+    out.push_bytes(": ");
+    for (i, candidate) in candidates.iter().enumerate() {
+        if i > 0 {
+            out.push_bytes(", ");
+        }
+        out.push(b'"');
+        out.push_bytes(candidate);
+        out.push(b'"');
+    }
+    out
 }
 
 /// `value` as a JSON string literal, escaped as yyjson writes it: quotes, backslashes

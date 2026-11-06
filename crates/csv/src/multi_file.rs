@@ -2,10 +2,11 @@
 //! `GlobMultiFileList`, the local file system's glob and `HivePartitioning`). Shared by
 //! the readers of all file formats.
 
-use std::collections::{BTreeMap, BinaryHeap, HashMap};
-use std::path::Path;
+use rustdb_function::file_system::native_path;
+use std::collections::{BTreeMap, BinaryHeap, HashMap, VecDeque};
+use std::sync::{Mutex, PoisonError};
 
-use rustdb_common::{Error, ErrorKind, Result};
+use rustdb_common::{ByteString, Error, ErrorKind, Result};
 use rustdb_function::TablePartitionInfo;
 use rustdb_function::cast::{CastFunctionSet, ValueCast};
 use rustdb_types::{LogicalType, LogicalTypeId, Value};
@@ -15,21 +16,21 @@ use rustdb_types::{LogicalType, LogicalTypeId, Value};
 #[allow(clippy::struct_excessive_bools)]
 pub struct MultiFileOptions {
     pub filename: bool,
-    pub filename_column: String,
+    pub filename_column: rustdb_common::ByteString,
     pub hive_partitioning: bool,
     pub auto_detect_hive_partitioning: bool,
     pub union_by_name: bool,
     pub hive_types_autocast: bool,
     /// The partition types, given or detected (DuckDB's `case_insensitive_map_t`), in the
     /// order they were added.
-    pub hive_types_schema: Vec<(String, LogicalType)>,
+    pub hive_types_schema: Vec<(rustdb_common::ByteString, LogicalType)>,
 }
 
 impl Default for MultiFileOptions {
     fn default() -> Self {
         Self {
             filename: false,
-            filename_column: "filename".to_owned(),
+            filename_column: "filename".into(),
             hive_partitioning: false,
             auto_detect_hive_partitioning: true,
             union_by_name: false,
@@ -41,19 +42,19 @@ impl Default for MultiFileOptions {
 
 impl MultiFileOptions {
     /// The type given or detected for the partition `name` (case-insensitively).
-    pub fn hive_type(&self, name: &str) -> Option<&LogicalType> {
+    pub fn hive_type(&self, name: impl AsRef<[u8]>) -> Option<&LogicalType> {
         self.hive_types_schema
             .iter()
-            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .find(|(key, _)| key.eq_ignore_ascii_case(name.as_ref()))
             .map(|(_, ty)| ty)
     }
 
     /// `hive_types_schema` as DuckDB walks it: a `case_insensitive_map_t`, in libc++'s
     /// iteration order.
-    pub fn hive_types_in_map_order(&self) -> Vec<(&str, &LogicalType)> {
+    pub fn hive_types_in_map_order(&self) -> Vec<(&[u8], &LogicalType)> {
         let mut map = rustdb_common::libcxx::UnorderedOrder::default();
         for (name, _) in &self.hive_types_schema {
-            map.insert(rustdb_common::libcxx::ci_hash(name), name.as_str(), |a, b| {
+            map.insert(rustdb_common::libcxx::ci_hash(name), name.as_bytes(), |a, b| {
                 a.eq_ignore_ascii_case(b)
             });
         }
@@ -76,18 +77,20 @@ pub const COLUMN_IDENTIFIER_FILE_INDEX: u64 = (1 << 63) + 2;
 
 /// `MultiFileGetVirtualColumns`: `filename` (unless the `filename` option names a real
 /// column) and `file_index`.
-pub fn multi_file_virtual_columns(filename_option: bool) -> Vec<(u64, String, LogicalType)> {
+pub fn multi_file_virtual_columns(
+    filename_option: bool,
+) -> Vec<(u64, rustdb_common::ByteString, LogicalType)> {
     let mut result = Vec::with_capacity(2);
     if !filename_option {
         result.push((
             COLUMN_IDENTIFIER_FILENAME,
-            "filename".to_owned(),
+            "filename".into(),
             LogicalType::VARCHAR,
         ));
     }
     result.push((
         COLUMN_IDENTIFIER_FILE_INDEX,
-        "file_index".to_owned(),
+        "file_index".into(),
         LogicalType::UBIGINT,
     ));
     result
@@ -117,51 +120,53 @@ pub fn multi_file_parameters() -> Vec<(String, LogicalType)> {
 /// What `EXPLAIN ANALYZE` shows about a finished multi-file scan
 /// (`MultiFileDynamicToString`): the number of files opened and the first file names
 /// (`display`: the patterns given, or the files left after pruning).
-pub fn dynamic_to_string(files_loaded: usize, display: &[String]) -> Vec<(String, String)> {
+pub fn dynamic_to_string(files_loaded: usize, display: &[ByteString]) -> Vec<(ByteString, ByteString)> {
     const FILE_NAME_LIST_LIMIT: usize = 5;
-    let mut result = vec![("Total Files Read".to_owned(), files_loaded.to_string())];
+    let mut result = vec![("Total Files Read".into(), files_loaded.to_string().into())];
     if !display.is_empty() {
-        let mut names: Vec<&str> = display
+        let mut names: Vec<&[u8]> = display
             .iter()
             .take(FILE_NAME_LIST_LIMIT)
-            .map(String::as_str)
+            .map(ByteString::as_bytes)
             .collect();
         if files_loaded > FILE_NAME_LIST_LIMIT {
-            names.push("...");
+            names.push(b"...");
         }
-        result.push(("Filename(s)".to_owned(), names.join(", ")));
+        result.push(("Filename(s)".into(), ByteString::join(&names, b", ")));
     }
     result
 }
 
-/// DuckDB's `IOException`.
-fn io_error(message: impl Into<String>) -> Error {
-    Error::new(ErrorKind::Io, message.into())
+fn io_error(message: impl Into<ByteString>) -> Error {
+    Error::new_bytes(ErrorKind::Io, message.into())
 }
 
 fn null_argument(key: &str) -> Error {
-    Error::invalid_input(format!("Cannot use NULL as argument for \"{key}\""))
+    Error::invalid_input(rustdb_common::byte_format!(
+        "Cannot use NULL as argument for \"{key}\""
+    ))
 }
 
 impl MultiFileOptions {
     /// `MultiFileReader::ParseOption`: whether the option is a multi-file option.
     pub fn parse_option(
         &mut self,
-        key: &str,
+        key: impl AsRef<[u8]>,
         value: &Value,
         parse_type: &dyn Fn(&str) -> Result<LogicalType>,
     ) -> Result<bool> {
-        match key.to_lowercase().as_str() {
+        // Multi-file options have a closed ASCII vocabulary.
+        let Ok(key) = std::str::from_utf8(key.as_ref()) else {
+            return Ok(false);
+        };
+        match key.to_ascii_lowercase().as_str() {
             "filename" => {
                 if value.is_null() {
                     return Err(null_argument(key));
                 }
                 if value.logical_type().id() == LogicalTypeId::Varchar {
                     self.filename = true;
-                    value
-                        .as_str()
-                        .unwrap_or_default()
-                        .clone_into(&mut self.filename_column);
+                    self.filename_column = value.to_varchar_bytes()?;
                 } else if let Ok(boolean) = value.try_cast(&LogicalType::BOOLEAN) {
                     self.filename = boolean.as_bool().unwrap_or(false);
                 }
@@ -191,17 +196,17 @@ impl MultiFileOptions {
                 }
                 let ty = value.logical_type();
                 if ty.id() != LogicalTypeId::Struct {
-                    return Err(Error::invalid_input(format!(
+                    return Err(Error::invalid_input(rustdb_common::byte_format!(
                         "'hive_types' only accepts a STRUCT('name':VARCHAR, ...), but '{ty}' was provided"
                     )));
                 }
-                let names: Vec<String> = ty
+                let names: Vec<rustdb_common::ByteString> = ty
                     .struct_children()
                     .map(|children| children.iter().map(|(name, _)| name.clone()).collect())
                     .unwrap_or_default();
                 for (name, child) in names.iter().zip(value.children().unwrap_or_default()) {
                     if child.logical_type().id() != LogicalTypeId::Varchar {
-                        return Err(Error::invalid_input(format!(
+                        return Err(Error::invalid_input(rustdb_common::byte_format!(
                             "hive_types: '{name}' must be a VARCHAR, instead: '{}' was provided",
                             child.logical_type()
                         )));
@@ -211,7 +216,7 @@ impl MultiFileOptions {
                     match self
                         .hive_types_schema
                         .iter_mut()
-                        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                        .find(|(key, _)| key.eq_ignore_ascii_case(name.as_ref()))
                     {
                         Some((_, ty)) => *ty = parsed,
                         None => self.hive_types_schema.push((name.clone(), parsed)),
@@ -229,7 +234,7 @@ impl MultiFileOptions {
     }
 
     /// `GetHiveLogicalType`.
-    pub fn hive_logical_type(&self, column: &str) -> LogicalType {
+    pub fn hive_logical_type(&self, column: &[u8]) -> LogicalType {
         self.hive_type(column).cloned().unwrap_or(LogicalType::VARCHAR)
     }
 
@@ -253,13 +258,13 @@ impl MultiFileOptions {
             self.hive_partitioning = auto_detect_hive_partitioning_internal(files);
         }
         if self.hive_partitioning && self.hive_types_autocast {
-            self.auto_detect_hive_types(files, casts);
+            self.auto_detect_hive_types(files, casts)?;
         }
         Ok(())
     }
 
     /// `AutoDetectHiveTypesInternal`.
-    fn auto_detect_hive_types(&mut self, files: &FileList, casts: &CastFunctionSet) {
+    fn auto_detect_hive_types(&mut self, files: &FileList, casts: &CastFunctionSet) -> Result<()> {
         let candidates = [LogicalType::DATE, LogicalType::TIMESTAMP, LogicalType::BIGINT];
         // An `unordered_map<string, LogicalType>`: its types join the schema in libc++'s
         // iteration order.
@@ -268,13 +273,13 @@ impl MultiFileOptions {
         for file in &files.files {
             let partitions = hive_parse(file);
             if partitions.is_empty() {
-                return;
+                return Ok(());
             }
             for (name, value) in partitions {
                 if self.hive_type(&name).is_some() || hive_is_null(&value) {
                     continue;
                 }
-                let text = Value::varchar(&value);
+                let text = Value::try_varchar(&value)?;
                 let detected_type = candidates
                     .iter()
                     .find(|candidate| text.try_cast_as(casts, candidate, true).is_ok())
@@ -296,10 +301,11 @@ impl MultiFileOptions {
                     .push((name.clone(), detected_types[node].clone()));
             }
         }
+        Ok(())
     }
 
     /// `GetHivePartitionValue`.
-    pub fn hive_partition_value(&self, value: &str, key: &str, casts: &CastFunctionSet) -> Result<Value> {
+    pub fn hive_partition_value(&self, value: &[u8], key: &[u8], casts: &CastFunctionSet) -> Result<Value> {
         hive_value(key, value, &self.hive_logical_type(key), casts)
     }
 }
@@ -309,7 +315,7 @@ impl MultiFileOptions {
 pub struct MultiFileBindData {
     pub filename_idx: Option<usize>,
     /// (partition key, column index).
-    pub hive_partitioning_indexes: Vec<(String, usize)>,
+    pub hive_partitioning_indexes: Vec<(ByteString, usize)>,
 }
 
 impl MultiFileBindData {
@@ -335,12 +341,12 @@ pub fn bind_options(
     options: &MultiFileOptions,
     files: &FileList,
     return_types: &mut Vec<LogicalType>,
-    names: &mut Vec<String>,
+    names: &mut Vec<rustdb_common::ByteString>,
 ) -> Result<MultiFileBindData> {
     let mut bind_data = MultiFileBindData::default();
     if options.filename {
         if names.contains(&options.filename_column) {
-            return Err(Error::binder(format!(
+            return Err(Error::binder(rustdb_common::byte_format!(
                 "Option filename adds column \"{}\", but a column with this name is also in the file. Try setting a different name: filename='<filename column name>'",
                 options.filename_column
             )));
@@ -356,11 +362,11 @@ pub fn bind_options(
             let file_partitions = hive_parse(file);
             for key in partitions.keys() {
                 if !file_partitions.contains_key(key) {
-                    let error = format!(
+                    let error = rustdb_common::byte_format!(
                         "Hive partition mismatch between file \"{first}\" and \"{file}\": key \"{key}\" not found"
                     );
                     if options.auto_detect_hive_partitioning {
-                        return Err(Error::internal(format!(
+                        return Err(Error::internal(rustdb_common::byte_format!(
                             "{error}(hive partitioning was autodetected)"
                         )));
                     }
@@ -368,9 +374,11 @@ pub fn bind_options(
                 }
             }
             if partitions.len() != file_partitions.len() {
-                let error = format!("Hive partition mismatch between file \"{first}\" and \"{file}\"");
+                let error = rustdb_common::byte_format!(
+                    "Hive partition mismatch between file \"{first}\" and \"{file}\""
+                );
                 if options.auto_detect_hive_partitioning {
-                    return Err(Error::internal(format!(
+                    return Err(Error::internal(rustdb_common::byte_format!(
                         "{error}(hive partitioning was autodetected)"
                     )));
                 }
@@ -378,8 +386,8 @@ pub fn bind_options(
             }
         }
         for (name, _) in options.hive_types_in_map_order() {
-            if !partitions.contains_key(name) {
-                return Err(Error::invalid_input(format!(
+            if !partitions.keys().any(|key| key.as_bytes() == name) {
+                return Err(Error::invalid_input(rustdb_common::byte_format!(
                     "Unknown hive_type: \"{name}\" does not appear to be a partition"
                 )));
             }
@@ -402,7 +410,7 @@ pub fn bind_options(
 /// The files of a multi-file read (DuckDB's `GlobMultiFileList`, fully expanded).
 #[derive(Clone, Debug, Default)]
 pub struct FileList {
-    pub files: Vec<String>,
+    pub files: Vec<ByteString>,
 }
 
 impl FileList {
@@ -415,34 +423,34 @@ impl FileList {
         }
     }
 
-    pub fn first_file(&self) -> Option<&str> {
-        self.files.first().map(String::as_str)
+    pub fn first_file(&self) -> Option<&[u8]> {
+        self.files.first().map(ByteString::as_bytes)
     }
 }
 
 /// `MultiFileReader::ParsePaths`.
-pub fn parse_paths(function_name: &str, input: &Value) -> Result<Vec<String>> {
+pub fn parse_paths(function_name: &str, input: &Value) -> Result<Vec<ByteString>> {
     if input.is_null() {
-        return Err(Error::parser(format!(
+        return Err(Error::parser(rustdb_common::byte_format!(
             "{function_name} cannot take NULL list as parameter"
         )));
     }
     match input.logical_type().id() {
-        LogicalTypeId::Varchar => Ok(vec![input.as_str().unwrap_or_default().to_owned()]),
+        LogicalTypeId::Varchar => Ok(vec![ByteString::from(input.as_bytes().unwrap_or_default())]),
         LogicalTypeId::List => {
             let mut paths = Vec::new();
             for value in input.children().unwrap_or_default() {
                 if value.is_null() {
-                    return Err(Error::parser(format!(
+                    return Err(Error::parser(rustdb_common::byte_format!(
                         "{function_name} reader cannot take NULL input as parameter"
                     )));
                 }
                 if value.logical_type().id() != LogicalTypeId::Varchar {
-                    return Err(Error::parser(format!(
+                    return Err(Error::parser(rustdb_common::byte_format!(
                         "{function_name} reader can only take a list of strings as a parameter"
                     )));
                 }
-                paths.push(value.as_str().unwrap_or_default().to_owned());
+                paths.push(ByteString::from(value.as_bytes().unwrap_or_default()));
             }
             Ok(paths)
         }
@@ -454,7 +462,7 @@ pub fn parse_paths(function_name: &str, input: &Value) -> Result<Vec<String>> {
 
 /// `MultiFileReader::CreateFileList`: expands the paths and globs (falling back to
 /// `<path>/**/*.<extension>` for a path without glob that matches no file).
-pub fn create_file_list(function_name: &str, paths: &[String], extension: &str) -> Result<FileList> {
+pub fn create_file_list(function_name: &str, paths: &[ByteString], extension: &str) -> Result<FileList> {
     let mut files = Vec::new();
     for path in paths {
         let mut expanded = glob_file_list(path, Some(extension))?;
@@ -463,7 +471,7 @@ pub fn create_file_list(function_name: &str, paths: &[String], extension: &str) 
     }
     let list = FileList { files };
     if list.expand_result() == FileExpandResult::NoFiles {
-        return Err(io_error(format!(
+        return Err(io_error(rustdb_common::byte_format!(
             "{function_name} needs at least one file to read"
         )));
     }
@@ -473,7 +481,58 @@ pub fn create_file_list(function_name: &str, paths: &[String], extension: &str) 
 /// The bind data of `glob`: the matching files.
 #[derive(Debug)]
 struct GlobData {
-    files: Vec<String>,
+    files: Mutex<GlobFiles>,
+}
+
+#[derive(Debug)]
+struct GlobFiles {
+    expanded: Vec<ByteString>,
+    pending: VecDeque<ByteString>,
+    current: Option<Box<dyn rustdb_function::registered_files::GlobResult>>,
+    finished: bool,
+}
+
+impl GlobFiles {
+    /// `GetExpandResult` ensures that up to the first two paths are available
+    /// during binding. Later pages stay deferred until scan execution.
+    fn new(paths: Vec<ByteString>) -> Result<Self> {
+        let mut files = Self {
+            expanded: Vec::new(),
+            pending: paths.into(),
+            current: None,
+            finished: false,
+        };
+        while files.expanded.len() < 2 && files.expand_next()? {}
+        Ok(files)
+    }
+
+    fn expand_next(&mut self) -> Result<bool> {
+        loop {
+            if let Some(source) = &mut self.current {
+                if let Some(mut page) = source.expand_next()? {
+                    page.sort();
+                    self.expanded.extend(page);
+                    return Ok(true);
+                }
+                self.current = None;
+            }
+            let Some(path) = self.pending.pop_front() else {
+                self.finished = true;
+                return Ok(false);
+            };
+            rustdb_function::file_system::verify_can_access_file(&path)?;
+            if let Some(fs) = rustdb_function::registered_files::lookup(&path)
+                && let Some(source) = fs.glob_lazy(&path)?
+            {
+                self.current = Some(source);
+                continue;
+            }
+            let mut files = local_glob(&path)?;
+            files.sort();
+            self.expanded.extend(files);
+            return Ok(true);
+        }
+    }
 }
 
 impl rustdb_function::FunctionData for GlobData {
@@ -493,15 +552,10 @@ pub fn glob_functions() -> Vec<rustdb_function::TableFunctionSet> {
                     .inputs
                     .first()
                     .ok_or_else(|| Error::internal("glob without a pattern"))?;
-                let mut files = Vec::new();
-                for path in parse_paths("glob", first)? {
-                    let mut expanded = local_glob(&path)?;
-                    expanded.sort();
-                    files.extend(expanded);
-                }
+                let files = Mutex::new(GlobFiles::new(parse_paths("glob", first)?)?);
                 Ok(TableFunctionBindOutput {
                     return_types: vec![LogicalType::VARCHAR],
-                    names: vec!["file".to_owned()],
+                    names: vec!["file".into()],
                     bind_data: Some(std::sync::Arc::new(GlobData { files })),
                 })
             })
@@ -509,17 +563,20 @@ pub fn glob_functions() -> Vec<rustdb_function::TableFunctionSet> {
                 let data = bind_data
                     .and_then(|data| data.as_any().downcast_ref::<GlobData>())
                     .ok_or_else(|| Error::internal("glob scan without bind data"))?;
-                let start = usize::try_from(state.position)
-                    .unwrap_or(usize::MAX)
-                    .min(data.files.len());
-                let end = (start + rustdb_common::STANDARD_VECTOR_SIZE).min(data.files.len());
+                let mut files = data.files.lock().unwrap_or_else(PoisonError::into_inner);
+                let position = usize::try_from(state.position).unwrap_or(usize::MAX);
+                while position >= files.expanded.len() && files.expand_next()? {}
+                let start = position.min(files.expanded.len());
+                // FETCH_IF_AVAILABLE: once a page supplied rows, finish this
+                // chunk using available paths without fetching another page.
+                let end = (start + rustdb_common::STANDARD_VECTOR_SIZE).min(files.expanded.len());
                 let mut column = rustdb_types::Vector::flat(LogicalType::VARCHAR, (end - start).max(1));
-                for (row, file) in data.files[start..end].iter().enumerate() {
-                    column.set_value(row, &Value::varchar(file))?;
+                for (row, file) in files.expanded[start..end].iter().enumerate() {
+                    column.set_value(row, &Value::try_varchar(file)?)?;
                 }
                 *chunk = rustdb_types::DataChunk::new(vec![column], end - start);
                 state.position = end as u64;
-                Ok(end < data.files.len())
+                Ok(end < files.expanded.len() || !files.finished)
             })
     };
     let mut set = TableFunctionSet::new("glob");
@@ -529,24 +586,29 @@ pub fn glob_functions() -> Vec<rustdb_function::TableFunctionSet> {
 }
 
 /// `FileSystem::HasGlob`.
-pub fn has_glob(path: &str) -> bool {
-    path.bytes().any(|byte| matches!(byte, b'*' | b'?' | b'['))
+pub fn has_glob(path: &[u8]) -> bool {
+    path.iter()
+        .copied()
+        .any(|byte| matches!(byte, b'*' | b'?' | b'['))
 }
 
 /// `FileSystem::GlobFileList`: the files matching a pattern; an error when none match.
-pub fn glob_file_list(pattern: &str, fallback_extension: Option<&str>) -> Result<Vec<String>> {
+pub fn glob_file_list(pattern: &[u8], fallback_extension: Option<&str>) -> Result<Vec<ByteString>> {
     let result = local_glob(pattern)?;
     if result.is_empty() {
         if let Some(extension) = fallback_extension
             && !has_glob(pattern)
         {
-            let new_pattern = join_path(&join_path(pattern, "**"), &format!("*.{extension}"));
+            let new_pattern = join_path(
+                &join_path(pattern, b"**"),
+                &rustdb_common::byte_format!("*.{extension}"),
+            );
             let fallback = local_glob(&new_pattern)?;
             if !fallback.is_empty() {
                 return Ok(fallback);
             }
         }
-        return Err(io_error(format!(
+        return Err(io_error(rustdb_common::byte_format!(
             "No files found that match the pattern \"{pattern}\""
         )));
     }
@@ -554,24 +616,32 @@ pub fn glob_file_list(pattern: &str, fallback_extension: Option<&str>) -> Result
 }
 
 /// `FileSystem::JoinPath`.
-fn join_path(a: &str, b: &str) -> String {
-    if a.ends_with('/') {
-        format!("{a}{b}")
+fn join_path(a: &[u8], b: &[u8]) -> ByteString {
+    if a.ends_with(b"/") {
+        rustdb_common::byte_format!("{a}{b}")
     } else {
-        format!("{a}/{b}")
+        rustdb_common::byte_format!("{a}/{b}")
     }
 }
 
 /// Whether a path names an existing file or pipe (`FetchFileWithoutGlob`).
-fn file_exists(path: &str) -> bool {
-    let path = Path::new(path);
+fn file_exists(path: &[u8]) -> bool {
+    if let Some(fs) = rustdb_function::registered_files::lookup(path) {
+        return fs.is_file(path).unwrap_or(false);
+    }
+    if rustdb_function::object_store::lookup(path).is_some() {
+        return true;
+    }
+    let Ok(path) = native_path(path.split(|byte| *byte == 0).next().unwrap_or_default()) else {
+        return false;
+    };
     path.is_file() || (path.exists() && !path.is_dir())
 }
 
 /// A directory still to expand, processed in path order (`ExpandDirectory`).
 #[derive(Debug, PartialEq, Eq)]
 struct ExpandDirectory {
-    path: String,
+    path: ByteString,
     split_index: usize,
     is_empty: bool,
 }
@@ -593,31 +663,34 @@ impl PartialOrd for ExpandDirectory {
 }
 
 /// The entries of a directory: (name, is directory).
-fn list_files(path: &str) -> Vec<(String, bool)> {
-    let Ok(entries) = std::fs::read_dir(path) else {
+fn list_files(path: &[u8]) -> Vec<(ByteString, bool)> {
+    let Ok(local) = native_path(path) else {
+        return Vec::new();
+    };
+    let Ok(entries) = std::fs::read_dir(local) else {
         return Vec::new();
     };
     entries
         .filter_map(std::result::Result::ok)
         .map(|entry| {
             let is_dir = entry.path().is_dir();
-            (entry.file_name().to_string_lossy().into_owned(), is_dir)
+            (ByteString::from(entry.file_name().as_encoded_bytes()), is_dir)
         })
         .collect()
 }
 
 /// The directories of the `file_search_path` setting, relative paths are looked up in.
-fn file_search_paths() -> Vec<String> {
+fn file_search_paths() -> Vec<ByteString> {
     rustdb_function::file_system::opener()
         .and_then(|client| client.settings())
         .and_then(|settings| settings.current_setting("file_search_path").ok())
         .filter(|value| !value.is_null())
-        .and_then(|value| value.to_varchar().ok())
+        .and_then(|value| value.to_varchar_bytes().ok())
         .map(|paths| {
             paths
-                .split(',')
+                .split(|byte| *byte == b',')
                 .filter(|path| !path.is_empty())
-                .map(str::to_owned)
+                .map(ByteString::from)
                 .collect()
         })
         .unwrap_or_default()
@@ -625,9 +698,9 @@ fn file_search_paths() -> Vec<String> {
 
 /// `LocalFileSystem::FetchFileWithoutGlob`: the file itself, or else (for relative paths)
 /// the files of that name in the `file_search_path` directories.
-fn fetch_file_without_glob(path: &str, absolute_path: bool) -> Vec<String> {
+fn fetch_file_without_glob(path: &[u8], absolute_path: bool) -> Vec<ByteString> {
     if file_exists(path) {
-        return vec![path.to_owned()];
+        return vec![path.into()];
     }
     if absolute_path {
         return Vec::new();
@@ -640,15 +713,18 @@ fn fetch_file_without_glob(path: &str, absolute_path: bool) -> Vec<String> {
 }
 
 /// `LocalGlobResult`: expands a pattern against the local file system.
-pub fn local_glob(pattern: &str) -> Result<Vec<String>> {
+pub fn local_glob(pattern: &[u8]) -> Result<Vec<ByteString>> {
     // `OpenerFileSystem::Glob` checks the pattern against the access configuration.
     rustdb_function::file_system::verify_can_access_file(pattern)?;
+    if let Some(fs) = rustdb_function::registered_files::lookup(pattern) {
+        return fs.glob(pattern);
+    }
     // `LocalGlobResult`: `~` and `file:` URLs expand first (`FileSystem::ExpandPath`).
-    let path = rustdb_function::file_system::expand_path(pattern);
+    let path = rustdb_function::file_system::expand_path_bytes(pattern);
     if path.is_empty() {
         return Ok(Vec::new());
     }
-    let mut splits: Vec<String> = Vec::new();
+    let mut splits: Vec<ByteString> = Vec::new();
     let bytes = path.as_bytes();
     let mut last_pos = 0;
     for i in 0..bytes.len() {
@@ -658,19 +734,19 @@ pub fn local_glob(pattern: &str) -> Result<Vec<String>> {
                 continue;
             }
             if splits.is_empty() {
-                splits.push(path[..i].to_owned());
+                splits.push(path[..i].into());
             } else {
-                splits.push(path[last_pos..i].to_owned());
+                splits.push(path[last_pos..i].into());
             }
             last_pos = i + 1;
         }
     }
-    splits.push(path[last_pos..].to_owned());
-    let absolute_path = path.starts_with('/') || splits[0].contains(':');
+    splits.push(path[last_pos..].into());
+    let absolute_path = path.starts_with(b"/") || splits[0].contains(&b':');
     if !has_glob(&path) {
         return Ok(fetch_file_without_glob(&path, absolute_path));
     }
-    if splits.iter().filter(|split| *split == "**").count() > 1 {
+    if splits.iter().filter(|split| split.as_bytes() == b"**").count() > 1 {
         return Err(io_error("Cannot use multiple '**' in one path"));
     }
     let mut expand_directories = BinaryHeap::new();
@@ -678,7 +754,7 @@ pub fn local_glob(pattern: &str) -> Result<Vec<String>> {
         if splits.len() > 1 {
             expand_directories.push(ExpandDirectory {
                 path: if splits[0].is_empty() {
-                    "/".to_owned()
+                    ByteString::from(b"/")
                 } else {
                     splits[0].clone()
                 },
@@ -697,13 +773,13 @@ pub fn local_glob(pattern: &str) -> Result<Vec<String>> {
         }
         if expand_directories.is_empty() {
             expand_directories.push(ExpandDirectory {
-                path: ".".to_owned(),
+                path: ByteString::from(b"."),
                 split_index: 0,
                 is_empty: true,
             });
         }
     }
-    let mut expanded_files: Vec<String> = Vec::new();
+    let mut expanded_files: Vec<ByteString> = Vec::new();
     while let Some(next_dir) = expand_directories.pop() {
         let split_index = next_dir.split_index;
         let current_path = next_dir.path;
@@ -723,7 +799,7 @@ pub fn local_glob(pattern: &str) -> Result<Vec<String>> {
                 });
             } else if is_last_component {
                 let filename = join_path(&current_path, next_component);
-                if Path::new(&filename).exists() {
+                if native_path(&filename)?.exists() {
                     expanded_files.push(filename);
                 }
             } else {
@@ -733,7 +809,7 @@ pub fn local_glob(pattern: &str) -> Result<Vec<String>> {
                     is_empty: false,
                 });
             }
-        } else if next_component == "**" {
+        } else if next_component.as_bytes() == b"**" {
             if !is_last_component {
                 expand_directories.push(ExpandDirectory {
                     path: current_path.clone(),
@@ -743,7 +819,9 @@ pub fn local_glob(pattern: &str) -> Result<Vec<String>> {
             }
             for (name, is_dir) in list_files(&current_path) {
                 let full = join_path(&current_path, &name);
-                if std::fs::symlink_metadata(&full).is_ok_and(|meta| meta.file_type().is_symlink()) {
+                if std::fs::symlink_metadata(native_path(&full)?)
+                    .is_ok_and(|meta| meta.file_type().is_symlink())
+                {
                     continue;
                 }
                 if is_dir {
@@ -791,91 +869,11 @@ pub fn local_glob(pattern: &str) -> Result<Vec<String>> {
     Ok(expanded_files)
 }
 
-/// DuckDB's `Glob` (with `?` matching any character).
-pub fn glob(string: &[u8], pattern: &[u8]) -> bool {
-    let (mut sidx, mut pidx) = (0, 0);
-    while sidx < string.len() && pidx < pattern.len() {
-        let s = string[sidx];
-        let p = pattern[pidx];
-        match p {
-            b'*' => {
-                pidx += 1;
-                while pidx < pattern.len() && pattern[pidx] == b'*' {
-                    pidx += 1;
-                }
-                if pidx == pattern.len() {
-                    return true;
-                }
-                return (sidx..string.len()).any(|start| glob(&string[start..], &pattern[pidx..]));
-            }
-            b'?' => {}
-            b'[' => {
-                pidx += 1;
-                if pidx == pattern.len() {
-                    return false;
-                }
-                let invert = pattern[pidx] == b'!';
-                if invert {
-                    pidx += 1;
-                }
-                let mut found_match = invert;
-                let start_pos = pidx;
-                let mut found_closing_bracket = false;
-                while pidx < pattern.len() {
-                    let p = pattern[pidx];
-                    if p == b']' && pidx > start_pos {
-                        found_closing_bracket = true;
-                        pidx += 1;
-                        break;
-                    }
-                    if pidx + 1 == pattern.len() {
-                        break;
-                    }
-                    let matches = if pattern[pidx + 1] == b'-' {
-                        if pidx + 2 == pattern.len() {
-                            break;
-                        }
-                        let next_char = pattern[pidx + 2];
-                        pidx += 3;
-                        s >= p && s <= next_char
-                    } else {
-                        pidx += 1;
-                        p == s
-                    };
-                    if found_match == invert && matches {
-                        found_match = !invert;
-                    }
-                }
-                if !found_closing_bracket || !found_match {
-                    return false;
-                }
-                sidx += 1;
-                continue;
-            }
-            b'\\' => {
-                pidx += 1;
-                if pidx == pattern.len() || s != pattern[pidx] {
-                    return false;
-                }
-            }
-            _ => {
-                if s != p {
-                    return false;
-                }
-            }
-        }
-        sidx += 1;
-        pidx += 1;
-    }
-    while pidx < pattern.len() && pattern[pidx] == b'*' {
-        pidx += 1;
-    }
-    pidx == pattern.len() && sidx == string.len()
-}
+pub use rustdb_common::glob::glob;
 
 /// `HivePartitioning::Parse`: the `key=value` directories of a path.
-pub fn hive_parse(filename: &str) -> BTreeMap<String, String> {
-    let bytes = filename.as_bytes();
+pub fn hive_parse(filename: &[u8]) -> BTreeMap<ByteString, ByteString> {
+    let bytes = filename;
     let mut partition_start = 0;
     let mut equality_sign = 0;
     let mut candidate_partition = true;
@@ -886,8 +884,8 @@ pub fn hive_parse(filename: &str) -> BTreeMap<String, String> {
         }
         if byte == b'\\' || byte == b'/' {
             if candidate_partition && equality_sign > partition_start {
-                let key = filename[partition_start..equality_sign].to_owned();
-                let value = filename[equality_sign + 1..c].to_owned();
+                let key = ByteString::from(&filename[partition_start..equality_sign]);
+                let value = ByteString::from(&filename[equality_sign + 1..c]);
                 result.entry(key).or_insert(value);
             }
             partition_start = c + 1;
@@ -903,47 +901,59 @@ pub fn hive_parse(filename: &str) -> BTreeMap<String, String> {
 }
 
 /// `HivePartitioning::IsNull`.
-pub fn hive_is_null(value: &str) -> bool {
-    value.eq_ignore_ascii_case("NULL") || value == "__HIVE_DEFAULT_PARTITION__"
+pub fn hive_is_null(value: &[u8]) -> bool {
+    value.eq_ignore_ascii_case(b"NULL") || value == b"__HIVE_DEFAULT_PARTITION__"
 }
 
-/// `StringUtil::URLDecode`.
-pub fn url_decode(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut result = Vec::with_capacity(bytes.len());
+/// Native `StringUtil::URLDecode`, preserving decoded bytes including invalid UTF-8.
+pub fn url_decode(bytes: &[u8]) -> Result<ByteString> {
+    let mut result = ByteString::new();
     let mut i = 0;
+    let digit = |b| match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    };
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let hex = std::str::from_utf8(&bytes[i + 1..i + 3]).ok();
-            if let Some(byte) = hex.and_then(|hex| u8::from_str_radix(hex, 16).ok()) {
-                result.push(byte);
-                i += 3;
-                continue;
-            }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(a), Some(b)) = (digit(bytes[i + 1]), digit(bytes[i + 2]))
+        {
+            result.push(a * 16 + b);
+            i += 3;
+            continue;
         }
         result.push(bytes[i]);
         i += 1;
     }
-    String::from_utf8_lossy(&result).into_owned()
+    if std::str::from_utf8(&result).is_err() {
+        return Err(Error::invalid_input(rustdb_common::byte_format!(
+            "Failed to decode string \"{}\" using URL decoding - decoded value is invalid UTF8",
+            bytes
+        )));
+    }
+    Ok(result)
 }
 
-/// `HivePartitioning::GetValue`.
-pub fn hive_value(key: &str, value: &str, ty: &LogicalType, casts: &CastFunctionSet) -> Result<Value> {
+/// `HivePartitioning::GetValue`: validates when C++ constructs its VARCHAR Value.
+pub fn hive_value(key: &[u8], value: &[u8], ty: &LogicalType, casts: &CastFunctionSet) -> Result<Value> {
     if hive_is_null(value) {
         return Ok(Value::null(ty.clone()));
     }
     if ty.id() == LogicalTypeId::Varchar {
-        return Ok(Value::varchar(url_decode(value)));
+        return Value::try_varchar(&url_decode(value)?);
     }
     if value.is_empty() {
         return Ok(Value::null(ty.clone()));
     }
-    let text = Value::varchar(url_decode(value));
+    let decoded = url_decode(value)?;
+    let text = Value::try_varchar(&decoded)?;
     text.try_cast_as(casts, ty, false).map_err(|_| {
-        Error::invalid_input(format!(
+        Error::invalid_input(rustdb_common::byte_format!(
             "Unable to cast '{}' (from hive partition column '{}') to: '{ty}'",
-            url_decode(value),
-            key.to_uppercase()
+            decoded,
+            key.to_ascii_uppercase()
         ))
     })
 }
@@ -954,17 +964,17 @@ pub fn hive_value(key: &str, value: &str, ty: &LogicalType, casts: &CastFunction
 pub fn known_column_value(
     options: &MultiFileOptions,
     casts: &CastFunctionSet,
-    path: &str,
-    name: &str,
+    path: &[u8],
+    name: &[u8],
     ty: &LogicalType,
 ) -> Result<Option<Value>> {
-    if options.filename && name == "filename" {
-        return Ok(Some(Value::varchar(path)));
+    if options.filename && name == b"filename" {
+        return Ok(Some(Value::try_varchar(path)?));
     }
     if options.hive_partitioning
-        && let Some(value) = hive_parse(path).get(name)
+        && let Some((key, value)) = hive_parse(path).iter().find(|(key, _)| key.as_bytes() == name)
     {
-        return hive_value(name, value, ty, casts).map(Some);
+        return hive_value(key, value, ty, casts).map(Some);
     }
     Ok(None)
 }
@@ -987,14 +997,14 @@ fn auto_detect_hive_partitioning_internal(files: &FileList) -> bool {
 
 /// `UnionByName::CombineUnionTypes`.
 pub fn combine_union_types(
-    col_names: &[String],
+    col_names: &[rustdb_common::ByteString],
     sql_types: &[LogicalType],
     union_col_types: &mut Vec<LogicalType>,
-    union_col_names: &mut Vec<String>,
-    union_names_map: &mut HashMap<String, usize, impl std::hash::BuildHasher>,
+    union_col_names: &mut Vec<rustdb_common::ByteString>,
+    union_names_map: &mut HashMap<rustdb_common::ByteString, usize, impl std::hash::BuildHasher>,
 ) {
     for (name, ty) in col_names.iter().zip(sql_types) {
-        let key = name.to_lowercase();
+        let key = name.to_ascii_lowercase();
         if let Some(&index) = union_names_map.get(&key) {
             union_col_types[index] = LogicalType::force_max_logical_type(&union_col_types[index], ty);
         } else {

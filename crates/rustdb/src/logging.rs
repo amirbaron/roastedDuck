@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rustdb_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
+use rustdb_common::{ByteString, Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
 use rustdb_function::logging::{ClientLogger, LogLevel, LogScope, LogTypeInfo, enum_error};
 use rustdb_types::{LogicalType, Value};
 
@@ -154,7 +154,7 @@ pub(crate) struct LogEntry {
     pub timestamp: i64,
     pub log_type: String,
     pub level: LogLevel,
-    pub message: String,
+    pub message: ByteString,
 }
 
 impl LogEntry {
@@ -165,7 +165,7 @@ impl LogEntry {
             Value::timestamp_tz(rustdb_types::Timestamp(self.timestamp)),
             Value::varchar(&self.log_type),
             Value::varchar(self.level.name()),
-            Value::varchar(&self.message),
+            Value::bytes(LogicalType::VARCHAR, &self.message),
         ]
     }
 }
@@ -176,7 +176,7 @@ impl LogEntry {
 pub trait LogStorage: Send + Sync + std::fmt::Debug {
     /// `LogStorage::WriteLogEntry`: the time in microseconds since the epoch, the level,
     /// the log type and the message.
-    fn write_log_entry(&self, timestamp: i64, level: LogLevel, log_type: &str, message: &str);
+    fn write_log_entry(&self, timestamp: i64, level: LogLevel, log_type: &str, message: &[u8]);
 }
 
 /// Which storage implementation backs the log (DuckDB's `LogStorage` subclasses).
@@ -251,18 +251,24 @@ impl LogTable {
 /// values with a comma, quote, `#` or line break are quoted. The log storages keep the
 /// writer options of the default dialect when the delimiter changes, so the comma
 /// decides quoting whatever the delimiter (`CSVLogStorage::SetWriterConfigs`).
-fn csv_field(value: &Value, out: &mut String) {
+fn csv_field(value: &Value, out: &mut ByteString) -> Result<()> {
     if value.is_null() {
-        return;
+        return Ok(());
     }
-    let text = value.to_varchar().unwrap_or_default();
-    if text.is_empty() || text.contains([',', '"', '#', '\n', '\r']) {
-        out.push('"');
-        out.push_str(&text.replace('"', "\"\""));
-        out.push('"');
+    let text = value.to_varchar_bytes()?;
+    if text.is_empty() || text.iter().any(|byte| b",\"#\n\r".contains(byte)) {
+        out.push(b'"');
+        for &byte in text.as_bytes() {
+            if byte == b'"' {
+                out.push(byte);
+            }
+            out.push(byte);
+        }
+        out.push(b'"');
     } else {
-        out.push_str(&text);
+        out.push_bytes(text);
     }
+    Ok(())
 }
 
 /// Whether a log path names a single CSV file (`StringUtil::EndsWith(path, ".csv")`).
@@ -333,19 +339,19 @@ impl LogFiles {
             .open(path)
             .map_err(|error| Error::new(ErrorKind::Io, format!("Cannot open file \"{path}\": {error}")))?;
         let empty = file.metadata().map_or(true, |metadata| metadata.len() == 0);
-        let mut out = String::new();
+        let mut out = ByteString::new();
         if empty {
-            out.push_str(&table.column_names().join(delimiter));
-            out.push('\n');
+            out.push_bytes(table.column_names().join(delimiter));
+            out.push(b'\n');
         }
         for row in rows {
             for (index, value) in row.iter().enumerate() {
                 if index > 0 {
-                    out.push_str(delimiter);
+                    out.push_bytes(delimiter);
                 }
-                csv_field(value, &mut out);
+                csv_field(value, &mut out)?;
             }
-            out.push('\n');
+            out.push(b'\n');
         }
         file.write_all(out.as_bytes())
             .map_err(|error| Error::new(ErrorKind::Io, error.to_string()))
@@ -448,17 +454,23 @@ impl BufferingStorage {
         match self.kind {
             StorageKind::Memory => self.entries.extend(entries.into_iter().map(|(entry, _)| entry)),
             StorageKind::Stdout => {
-                let mut out = String::new();
+                let mut out = ByteString::new();
                 for row in entries.iter().map(denormalized) {
                     for (index, value) in row.iter().enumerate() {
                         if index > 0 {
-                            out.push_str(&self.delimiter);
+                            out.push_bytes(&self.delimiter);
                         }
-                        csv_field(value, &mut out);
+                        csv_field(value, &mut out)?;
                     }
-                    out.push('\n');
+                    out.push(b'\n');
                 }
-                print!("{out}");
+                {
+                    use std::io::Write as _;
+                    std::io::stdout()
+                        .lock()
+                        .write_all(&out)
+                        .map_err(|error| Error::new(ErrorKind::Io, error.to_string()))?;
+                }
             }
             StorageKind::File if self.normalize => {
                 let rows: Vec<Vec<Value>> = entries.iter().map(|(entry, _)| entry.row()).collect();
@@ -520,21 +532,21 @@ impl BufferingStorage {
     }
 
     /// `FileLogStorage::UpdateConfigInternal` and `BufferingLogStorage::UpdateConfig`.
-    fn update_config(&mut self, config: &[(String, Value)]) -> Result<()> {
+    fn update_config(&mut self, config: &[(rustdb_common::ByteString, Value)]) -> Result<()> {
         let mut rest = Vec::new();
         if self.kind == StorageKind::File {
             let mut new_path = String::new();
             let mut normalize = self.normalize;
             let mut normalize_explicit = false;
             for (key, value) in config {
-                match key.to_lowercase().as_str() {
-                    "path" => {
+                match key.to_ascii_lowercase().as_bytes() {
+                    b"path" => {
                         new_path = value.to_varchar()?;
                         if !normalize_explicit && ends_with_csv(&new_path) {
                             normalize = false;
                         }
                     }
-                    "normalize" => {
+                    b"normalize" => {
                         normalize_explicit = true;
                         normalize = value.as_bool().unwrap_or(true);
                     }
@@ -565,22 +577,22 @@ impl BufferingStorage {
             rest = config.to_vec();
         }
         for (key, value) in &rest {
-            match key.to_lowercase().as_str() {
-                "buffer_size" => {
+            match key.to_ascii_lowercase().as_bytes() {
+                b"buffer_size" => {
                     let size = value.default_cast_as_ubigint()?;
                     self.buffer_limit = usize::try_from(size).unwrap_or(usize::MAX);
                     self.reset();
                 }
-                "only_flush_on_full_buffer" => {
+                b"only_flush_on_full_buffer" => {
                     self.only_flush_on_full_buffer = value.as_bool().unwrap_or(false);
                 }
                 // `CSVLogStorage::UpdateConfigInternal`.
-                "delim" if self.kind != StorageKind::Memory => {
+                b"delim" if self.kind != StorageKind::Memory => {
                     self.flush_all()?;
                     self.delimiter = value.to_varchar()?;
                 }
                 _ => {
-                    return Err(Error::invalid_input(format!(
+                    return Err(Error::invalid_input(rustdb_common::byte_format!(
                         "Unrecognized log storage config option for storage: '{}': '{key}'",
                         self.name()
                     )));
@@ -652,10 +664,7 @@ fn default_log_types() -> Vec<LogTypeInfo> {
         name: name.to_owned(),
         level,
         structured_type: Some(LogicalType::struct_type(
-            fields
-                .into_iter()
-                .map(|(field, ty)| (field.to_owned(), ty))
-                .collect(),
+            fields.into_iter().map(|(field, ty)| (field.into(), ty)).collect(),
         )),
     };
     let headers = || LogicalType::map(LogicalType::VARCHAR, LogicalType::VARCHAR);
@@ -679,20 +688,20 @@ fn default_log_types() -> Vec<LogTypeInfo> {
                 (
                     "request",
                     LogicalType::struct_type(vec![
-                        ("type".to_owned(), LogicalType::VARCHAR),
-                        ("url".to_owned(), LogicalType::VARCHAR),
-                        ("start_time".to_owned(), LogicalType::TIMESTAMP_TZ),
-                        ("duration_ms".to_owned(), LogicalType::BIGINT),
-                        ("request_body_length".to_owned(), LogicalType::UBIGINT),
-                        ("headers".to_owned(), headers()),
+                        ("type".to_owned().into(), LogicalType::VARCHAR),
+                        ("url".to_owned().into(), LogicalType::VARCHAR),
+                        ("start_time".to_owned().into(), LogicalType::TIMESTAMP_TZ),
+                        ("duration_ms".to_owned().into(), LogicalType::BIGINT),
+                        ("request_body_length".to_owned().into(), LogicalType::UBIGINT),
+                        ("headers".to_owned().into(), headers()),
                     ]),
                 ),
                 (
                     "response",
                     LogicalType::struct_type(vec![
-                        ("status".to_owned(), LogicalType::VARCHAR),
-                        ("reason".to_owned(), LogicalType::VARCHAR),
-                        ("headers".to_owned(), headers()),
+                        ("status".to_owned().into(), LogicalType::VARCHAR),
+                        ("reason".to_owned().into(), LogicalType::VARCHAR),
+                        ("headers".to_owned().into(), headers()),
                     ]),
                 ),
             ],
@@ -934,10 +943,10 @@ impl LogManager {
         context: RegisteredContext,
         log_type: &str,
         level: LogLevel,
-        message: &str,
+        message: &[u8],
     ) -> Result<()> {
         if level == LogLevel::Warning && self.warnings_as_errors.load(std::sync::atomic::Ordering::Relaxed) {
-            return Err(Error::invalid_input(message.to_owned()));
+            return Err(Error::invalid_input(ByteString::from(message)));
         }
         let timestamp = now_micros();
         let mut state = self.lock();
@@ -950,7 +959,7 @@ impl LogManager {
             timestamp,
             log_type: log_type.to_owned(),
             level,
-            message: message.to_owned(),
+            message: message.into(),
         };
         state.storage.write_entry(entry, context)
     }
@@ -973,9 +982,9 @@ impl LogManager {
     /// Logs `message` with the database's global logger if it logs the type at that
     /// level (DuckDB's `DUCKDB_LOG_INTERNAL` on the database); a failure to log is
     /// ignored, as the `catch (...)` around such calls does.
-    pub(crate) fn log_global(&self, log_type: &str, level: LogLevel, message: &str) {
+    pub(crate) fn log_global(&self, log_type: &str, level: LogLevel, message: impl AsRef<[u8]>) {
         if self.global_should_log(log_type, level) {
-            let _ = self.write_entry(self.global_context(), log_type, level, message);
+            let _ = self.write_entry(self.global_context(), log_type, level, message.as_ref());
         }
     }
 
@@ -1059,7 +1068,7 @@ impl LogManager {
     }
 
     /// `LogManager::UpdateLogStorageConfig`.
-    pub(crate) fn update_storage_config(&self, config: &[(String, Value)]) -> Result<()> {
+    pub(crate) fn update_storage_config(&self, config: &[(rustdb_common::ByteString, Value)]) -> Result<()> {
         self.lock().storage.update_config(config)
     }
 
@@ -1139,7 +1148,13 @@ impl ClientLogger for ConnectionLogger {
         }
     }
 
-    fn write_log(&self, scope: LogScope, log_type: &str, level: LogLevel, message: &str) -> Result<()> {
+    fn write_log_bytes(
+        &self,
+        scope: LogScope,
+        log_type: &str,
+        level: LogLevel,
+        message: &[u8],
+    ) -> Result<()> {
         let context = match scope {
             LogScope::Database => self.manager.global_context(),
             LogScope::Connection => self.current().context,

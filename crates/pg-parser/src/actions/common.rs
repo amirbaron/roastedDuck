@@ -47,7 +47,7 @@ pub(super) fn col_id<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
     match alt {
         // unreserved_keyword
         // col_name_keyword
-        1 | 2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
+        1 | 2 => Ok(SemValue::Str(Some(rhs.keyword(1)?.into()))),
         _ => Err(rhs.bad_alternative()),
     }
 }
@@ -135,7 +135,7 @@ pub(super) fn col_label<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
         // other_keyword
         // unreserved_keyword
         // reserved_keyword
-        1..=3 => Ok(SemValue::Str(Some(rhs.keyword(1)?.to_owned()))),
+        1..=3 => Ok(SemValue::Str(Some(rhs.keyword(1)?.into()))),
         _ => Err(rhs.bad_alternative()),
     }
 }

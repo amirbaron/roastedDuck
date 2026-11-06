@@ -45,7 +45,7 @@ fn unnest_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOu
         .ok_or_else(|| Error::internal("LIST type without a child type"))?;
     Ok(TableFunctionBindOutput {
         return_types: vec![child_type.clone()],
-        names: vec!["unnest".to_owned()],
+        names: vec!["unnest".to_owned().into()],
         bind_data: Some(Arc::new(UnnestData { list, child_type })),
     })
 }

@@ -594,16 +594,29 @@ impl<'a> FilterCombiner<'a> {
         &mut self,
         column_ids: &[ColumnIndex],
         pushdown_results: &mut Vec<FilterPushdownResult>,
+        supported: &dyn Fn(usize, &TableFilter) -> bool,
     ) -> Result<TableFilterSet> {
         let mut table_filters = TableFilterSet::default();
         let sets: Vec<usize> = self.constant_values.keys().copied().collect();
         for set in sets {
-            self.try_pushdown_constant_filter(&mut table_filters, column_ids, set);
+            self.try_pushdown_constant_filter(&mut table_filters, column_ids, set, supported);
         }
         let mut index = 0;
         while index < self.remaining_filters.len() {
-            let result =
-                try_pushdown_expression(&mut table_filters, column_ids, &self.remaining_filters[index]);
+            let mut candidates = TableFilterSet::default();
+            let mut result =
+                try_pushdown_expression(&mut candidates, column_ids, &self.remaining_filters[index]);
+            if candidates
+                .filters
+                .iter()
+                .all(|(&column, filter)| supported(column, filter))
+            {
+                for (column, filter) in candidates.filters {
+                    table_filters.push_filter(column, filter);
+                }
+            } else {
+                result = FilterPushdownResult::NoPushdown;
+            }
             if result == FilterPushdownResult::PushedDownFully {
                 self.remaining_filters.remove(index);
             } else {
@@ -620,6 +633,7 @@ impl<'a> FilterCombiner<'a> {
         table_filters: &mut TableFilterSet,
         column_ids: &[ColumnIndex],
         set: usize,
+        supported: &dyn Fn(usize, &TableFilter) -> bool,
     ) {
         let Some(info_list) = self.constant_values.get(&set) else {
             return;
@@ -642,6 +656,7 @@ impl<'a> FilterCombiner<'a> {
         let Some(column) = bound_column_index(column_ids, expression) else {
             return;
         };
+        let mut candidates = Vec::new();
         for info in info_list {
             let Some(op) = compare_op(info.comparison_type) else {
                 continue;
@@ -650,7 +665,13 @@ impl<'a> FilterCombiner<'a> {
                 op,
                 constant: info.constant.clone(),
             };
-            table_filters.push_filter(column, push_down_filter_into_expression(expression, filter));
+            candidates.push(push_down_filter_into_expression(expression, filter));
+        }
+        if !candidates.iter().all(|filter| supported(column, filter)) {
+            return;
+        }
+        for filter in candidates {
+            table_filters.push_filter(column, filter);
         }
         self.equivalence_map.remove(&set);
     }
@@ -697,7 +718,7 @@ fn bound_column_index(column_ids: &[ColumnIndex], expression: &Expression) -> Op
             .get(usize::try_from(column.binding.column_index).ok()?)
             .and_then(filter_key),
         ExpressionKind::Function(function)
-            if matches!(&*function.function.name, "struct_extract" | "struct_extract_at") =>
+            if matches!(&*function.function.name, b"struct_extract" | b"struct_extract_at") =>
         {
             bound_column_index(column_ids, function.children.first()?)
         }
@@ -716,8 +737,8 @@ fn push_down_filter_into_expression(expression: &Expression, inner: TableFilter)
     };
     let field = field.as_constant();
     match (&*function.function.name, field) {
-        ("struct_extract", Some(name)) => {
-            let name = name.as_str().unwrap_or_default().to_owned();
+        (b"struct_extract", Some(name)) => {
+            let name = rustdb_common::ByteString::from(name.as_bytes().unwrap_or_default());
             let index = child
                 .return_type
                 .struct_children()
@@ -734,14 +755,14 @@ fn push_down_filter_into_expression(expression: &Expression, inner: TableFilter)
             };
             push_down_filter_into_expression(child, filter)
         }
-        ("struct_extract_at", Some(position)) => {
+        (b"struct_extract_at", Some(position)) => {
             let index = position
                 .as_i128()
                 .and_then(|position| usize::try_from(position - 1).ok())
                 .unwrap_or(0);
             let filter = TableFilter::StructExtract {
                 child_index: index,
-                child_name: String::new(),
+                child_name: rustdb_common::ByteString::new(),
                 child_filter: Box::new(inner),
             };
             push_down_filter_into_expression(child, filter)
@@ -785,7 +806,7 @@ fn try_pushdown_prefix_filter(
     let ExpressionKind::Function(function) = &expression.kind else {
         return FilterPushdownResult::NoPushdown;
     };
-    if &*function.function.name != "prefix" {
+    if &*function.function.name != b"prefix" {
         return FilterPushdownResult::NoPushdown;
     }
     let Some((column, constant)) = column_and_constant(column_ids, &function.children) else {
@@ -829,7 +850,7 @@ fn try_pushdown_like_filter(
     let ExpressionKind::Function(function) = &expression.kind else {
         return FilterPushdownResult::NoPushdown;
     };
-    if &*function.function.name != "~~" {
+    if &*function.function.name != b"~~" {
         return FilterPushdownResult::NoPushdown;
     }
     let Some((column, constant)) = column_and_constant(column_ids, &function.children) else {
@@ -1073,10 +1094,13 @@ pub fn try_pushdown_generic_expression(
             0,
         ))
     });
-    get.table_filters.push_filter(
-        column,
-        TableFilter::Expression(Arc::new(ExpressionTableFilter { expression: filter })),
-    );
+    let filter = TableFilter::Expression(Arc::new(ExpressionTableFilter { expression: filter }));
+    if let (Some(supported), Some(data)) = (&get.function.filter_support, &get.bind_data)
+        && !supported(data.as_ref(), column, &filter)
+    {
+        return FilterPushdownResult::NoPushdown;
+    }
+    get.table_filters.push_filter(column, filter);
     FilterPushdownResult::PushedDownFully
 }
 

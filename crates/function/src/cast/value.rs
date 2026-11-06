@@ -59,7 +59,16 @@ impl ValueCast for Value {
         }
         let input = Vector::constant(self)?;
         let result = cast_vector(set, &input, target, 1, params)?;
-        Ok(result.get_value(0))
+        let value = result.get_value(0);
+        // Vector::GetValue materializes VARCHAR through Value(string), unlike
+        // native vector/string storage, which can hold unchecked bytes.
+        if value.logical_type().id() == rustdb_types::LogicalTypeId::Varchar
+            && let Some(bytes) = value.as_bytes()
+        {
+            std::str::from_utf8(bytes)
+                .map_err(|_| rustdb_common::utf8::invalid_unicode_error(bytes, "value construction"))?;
+        }
+        Ok(value)
     }
 
     fn try_cast_as(&self, set: &CastFunctionSet, target: &LogicalType, strict: bool) -> Result<Self> {
@@ -76,12 +85,16 @@ impl ValueCast for Value {
         if target.id() == rustdb_types::LogicalTypeId::Any {
             return Ok(self.clone());
         }
-        self.try_cast(target).map_err(|error| {
-            if error.kind() == rustdb_common::ErrorKind::Conversion {
-                Error::invalid_input(format!("Failed to cast value: {}", error.raw_message()))
-            } else {
-                error
-            }
-        })
+        let mut params = CastParameters::try_cast();
+        let value = self.cast_with(&CastFunctionSet::new(), target, &mut params)?;
+        // C++ wraps a false TryCast result, but exceptions from binding/execution
+        // escape unchanged (e.g. an unnamed STRUCT cast to VARIANT).
+        match params.take_error_message() {
+            Some(message) => Err(Error::new_bytes(
+                rustdb_common::ErrorKind::InvalidInput,
+                [b"Failed to cast value: ".as_slice(), message.as_slice()].concat(),
+            )),
+            None => Ok(value),
+        }
     }
 }

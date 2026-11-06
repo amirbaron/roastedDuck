@@ -197,7 +197,7 @@ fn integer_overload(name: &'static str, arguments: usize, generate_series: bool)
             });
             Ok(TableFunctionBindOutput {
                 return_types: vec![LogicalType::BIGINT],
-                names: vec![name.to_owned()],
+                names: vec![name.to_owned().into()],
                 bind_data: Some(bind_data),
             })
         })
@@ -318,7 +318,7 @@ fn timestamp_overload(name: &'static str, generate_series: bool) -> TableFunctio
             });
             Ok(TableFunctionBindOutput {
                 return_types: vec![LogicalType::TIMESTAMP],
-                names: vec![name.to_owned()],
+                names: vec![name.to_owned().into()],
                 bind_data: Some(bind_data),
             })
         })

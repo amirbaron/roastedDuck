@@ -76,12 +76,13 @@ use rustdb_ast::{CreateInfo, SqlStatement, SqlStatementKind};
 use rustdb_common::{Error, Result};
 
 pub use lists::{
-    GroupBy, parse_column_definition, parse_column_list, parse_expression_list, parse_group_by_list,
-    parse_order_list, parse_update_list, parse_values_list,
+    GroupBy, parse_column_definition, parse_column_definition_bytes, parse_column_list,
+    parse_column_list_bytes, parse_expression_list, parse_group_by_list, parse_order_list, parse_update_list,
+    parse_values_list,
 };
 pub use rustdb_pg_parser::keywords::{Keyword, KeywordCategory, keyword_list};
 pub use rustdb_pg_parser::{
-    SimplifiedToken, SimplifiedTokenType, keyword_category, strip_unicode_spaces, tokenize,
+    SimplifiedToken, SimplifiedTokenType, keyword_category, strip_unicode_spaces, tokenize, tokenize_bytes,
 };
 
 /// The `error_subtype` DuckDB attaches to errors of the grammar (`ParserException::SyntaxError`).
@@ -120,14 +121,24 @@ pub fn parse(query: &str) -> Result<Vec<SqlStatement>> {
 /// parser errors tagged with [`SYNTAX_ERROR`] and positioned in the query; errors of the
 /// transformer are whatever DuckDB raises there (parser, binder, not-implemented, ...).
 pub fn parse_with_options(query: &str, options: &ParserOptions) -> Result<Vec<SqlStatement>> {
-    if let Some(stripped) = rustdb_pg_parser::strip_unicode_spaces(query) {
-        return parse_with_options(&stripped, options);
+    parse_bytes_with_options(query.as_bytes(), options)
+}
+
+/// Parses DuckDB SQL bytes, preserving native names and statement source bytes.
+pub fn parse_bytes(query: &[u8]) -> Result<Vec<SqlStatement>> {
+    parse_bytes_with_options(query, &ParserOptions::default())
+}
+
+/// Native SQL ingress with the same syntax and transformer options as the text API.
+pub fn parse_bytes_with_options(query: &[u8], options: &ParserOptions) -> Result<Vec<SqlStatement>> {
+    if let Some(stripped) = rustdb_pg_parser::strip_unicode_spaces_bytes(query) {
+        return parse_bytes_with_options(&stripped, options);
     }
     let pg_options = rustdb_pg_parser::ParserOptions {
         preserve_identifier_case: options.preserve_identifier_case,
     };
-    let raw =
-        rustdb_pg_parser::parse_with_options(query, &pg_options).map_err(|error| syntax_error(&error))?;
+    let raw = rustdb_pg_parser::parse_bytes_with_options(query, &pg_options)
+        .map_err(|error| syntax_error(&error))?;
     if raw.is_empty() {
         return Ok(Vec::new());
     }
@@ -142,7 +153,7 @@ pub fn parse_with_options(query: &str, options: &ParserOptions) -> Result<Vec<Sq
         let end = start
             .saturating_add(usize::try_from(statement.length).unwrap_or(usize::MAX))
             .min(query.len());
-        statement.query = substring(query, start, end);
+        statement.query = query[start..end].into();
         statement.location = 0;
         statement.length = statement.query.len() as u64;
         if let SqlStatementKind::Create(info) = &mut statement.kind {
@@ -154,41 +165,43 @@ pub fn parse_with_options(query: &str, options: &ParserOptions) -> Result<Vec<Sq
 
 /// `SplitQueries`: the statements of `query` at its `;` tokens, trimmed and each ending in
 /// its `;` (the last one as it is).
-pub fn split_queries(query: &str) -> Vec<String> {
-    // `StringUtil::Trim`: the C locale's white space.
-    let trim = |segment: &str| {
-        segment
-            .trim_matches(|c| matches!(c, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r'))
-            .to_owned()
+pub fn split_queries(query: &str) -> Vec<rustdb_common::ByteString> {
+    split_queries_bytes(query.as_bytes())
+}
+
+/// Native byte statement splitting at scanner semicolon tokens.
+pub fn split_queries_bytes(query: &[u8]) -> Vec<rustdb_common::ByteString> {
+    let trim = |mut segment: &[u8]| {
+        let space = |byte: u8| matches!(byte, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r');
+        while segment.first().is_some_and(|byte| space(*byte)) {
+            segment = &segment[1..];
+        }
+        while segment.last().is_some_and(|byte| space(*byte)) {
+            segment = &segment[..segment.len() - 1];
+        }
+        rustdb_common::ByteString::from(segment)
     };
     let mut queries = Vec::new();
     let mut last_split = 0;
-    for token in tokenize(query) {
-        if token.kind == SimplifiedTokenType::Operator && query.as_bytes().get(token.start) == Some(&b';') {
-            let segment = trim(&substring(query, last_split, token.start));
+    for token in rustdb_pg_parser::tokenize_bytes(query) {
+        if token.kind == SimplifiedTokenType::Operator && query.get(token.start) == Some(&b';') {
+            let mut segment = trim(&query[last_split..token.start]);
             if !segment.is_empty() {
-                queries.push(segment + ";");
+                segment.push(b';');
+                queries.push(segment);
             }
             last_split = token.start + 1;
         }
     }
-    let segment = trim(&substring(query, last_split, query.len()));
+    let segment = trim(&query[last_split..]);
     if !segment.is_empty() {
         queries.push(segment);
     }
     queries
 }
 
-/// `query.substr(start, end - start)` on byte offsets (lossy if they split a character).
-fn substring(query: &str, start: usize, end: usize) -> String {
-    query.get(start..end).map_or_else(
-        || String::from_utf8_lossy(&query.as_bytes()[start..end]).into_owned(),
-        str::to_owned,
-    )
-}
-
-fn set_create_sql(info: &mut CreateInfo, sql: &str) {
-    sql.clone_into(&mut info.sql);
+fn set_create_sql(info: &mut CreateInfo, sql: &[u8]) {
+    info.sql = sql.into();
 }
 
 /// `ParserException::SyntaxError`: grammar errors keep their message and position and

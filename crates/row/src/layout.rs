@@ -452,7 +452,7 @@ mod tests {
             TypeInfo::Struct(rustdb_types::StructTypeInfo {
                 child_types: children
                     .iter()
-                    .map(|(n, t)| ((*n).to_owned(), t.clone()))
+                    .map(|(n, t)| ((*n).into(), t.clone()))
                     .collect(),
             }),
         )

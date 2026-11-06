@@ -54,7 +54,10 @@ impl<'a> NestedInput<'a> {
 }
 
 pub(super) fn missing_child(ty: &LogicalType) -> Error {
-    Error::internal(format!("vector of type {ty} has no child vector"))
+    Error::new_bytes(
+        rustdb_common::ErrorKind::Internal,
+        rustdb_common::byte_format!("vector of type {ty} has no child vector").into_bytes(),
+    )
 }
 
 /// Casts `count` rows of `source` into a fresh vector of type `target`.

@@ -12,6 +12,7 @@
 //! loaded; its mbedtls fallback, which it only writes with `force_mbedtls_unsafe`, is not
 //! needed.
 
+pub mod aead;
 mod key_manager;
 mod state;
 

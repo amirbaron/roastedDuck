@@ -70,7 +70,7 @@ pub struct BoundPivotInfo<'a> {
     /// `types` (property 101).
     pub types: &'a [rustdb_types::LogicalType],
     /// `pivot_values` (property 102).
-    pub pivot_values: &'a [String],
+    pub pivot_values: &'a [rustdb_common::ByteString],
     /// `aggregates` (property 103).
     pub aggregates: &'a [crate::Expression],
 }

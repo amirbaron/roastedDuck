@@ -110,7 +110,7 @@ pub fn parse_order_list(order_list: &str, options: &ParserOptions) -> Result<Vec
 pub fn parse_update_list(
     update_list: &str,
     options: &ParserOptions,
-) -> Result<(Vec<String>, Vec<ParsedExpression>)> {
+) -> Result<(Vec<rustdb_common::ByteString>, Vec<ParsedExpression>)> {
     let mut statements = parse_with_options(&format!("UPDATE tbl SET {update_list}"), options)?;
     match statements.pop() {
         Some(statement) if statements.is_empty() => match statement.kind {
@@ -145,7 +145,13 @@ pub fn parse_values_list(value_list: &str, options: &ParserOptions) -> Result<Ve
 
 /// `Parser::ParseColumnList`: the columns of `CREATE TABLE tbl (...)`.
 pub fn parse_column_list(column_list: &str, options: &ParserOptions) -> Result<ColumnList> {
-    let mut statements = parse_with_options(&format!("CREATE TABLE tbl ({column_list})"), options)?;
+    parse_column_list_bytes(column_list.as_bytes(), options)
+}
+
+/// Byte-preserving version of [`parse_column_list`].
+pub fn parse_column_list_bytes(column_list: &[u8], options: &ParserOptions) -> Result<ColumnList> {
+    let sql = rustdb_common::byte_format!("CREATE TABLE tbl ({column_list})");
+    let mut statements = crate::parse_bytes_with_options(&sql, options)?;
     let info = match statements.pop() {
         Some(statement) if statements.is_empty() => match statement.kind {
             SqlStatementKind::Create(info) => info,
@@ -161,7 +167,15 @@ pub fn parse_column_list(column_list: &str, options: &ParserOptions) -> Result<C
 
 /// `Parser::ParseColumnDefinition`: one column definition.
 pub fn parse_column_definition(column_definition: &str, options: &ParserOptions) -> Result<ColumnDefinition> {
-    parse_column_list(column_definition, options)?
+    parse_column_definition_bytes(column_definition.as_bytes(), options)
+}
+
+/// Byte-preserving version of [`parse_column_definition`].
+pub fn parse_column_definition_bytes(
+    column_definition: &[u8],
+    options: &ParserOptions,
+) -> Result<ColumnDefinition> {
+    parse_column_list_bytes(column_definition, options)?
         .columns
         .into_iter()
         .next()

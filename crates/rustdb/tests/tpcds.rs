@@ -15,7 +15,7 @@ fn connect() -> Connection {
 /// `(row count, fingerprint)` of table `name`.
 fn fingerprint(connection: &mut Connection, name: &str) -> (String, String) {
     let result = connection
-        .query(&format!(
+        .query(format!(
             "SELECT count(*), bit_xor(hash(rowid, *COLUMNS(*))) FROM {name}"
         ))
         .unwrap();

@@ -97,7 +97,7 @@ fn bind_arg_min_max(
     if let Some(bind) = function.bind.clone() {
         let client = Arc::new(FunctionClient::default());
         let constants = vec![None; arguments.len()];
-        let names = vec![String::new(); arguments.len()];
+        let names = vec![rustdb_common::ByteString::new(); arguments.len()];
         bind_info = bind(
             &mut function,
             &BindInput {
