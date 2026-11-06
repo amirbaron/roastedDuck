@@ -1,0 +1,59 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "tools/bench", "tools/bindcheck", "tools/codegen", "tools/corpus", "tools/slt"]
+
+[workspace.package]
+version = "1.5.6"
+edition = "2024"
+license = "MIT"
+rust-version = "1.99"
+
+[workspace.dependencies]
+rustdb-common = { path = "crates/common" }
+rustdb-types = { path = "crates/types" }
+rustdb-serde = { path = "crates/serde" }
+rustdb-ast = { path = "crates/ast" }
+rustdb-parser = { path = "crates/parser" }
+rustdb-planner = { path = "crates/planner" }
+rustdb-execution = { path = "crates/execution" }
+rustdb = { path = "crates/rustdb" }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+cast_possible_truncation = "allow"
+cast_possible_wrap = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+cast_lossless = "allow"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+debug = "line-tables-only"
+panic = "unwind"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+# DuckDB compresses with C miniz; this copy of miniz_oxide 0.9.1 takes miniz's
+# stored-block decision so compressed output matches DuckDB's byte for byte.
+[patch.crates-io]
+miniz_oxide = { path = "third_party/miniz_oxide" }
+
+ureq-proto = { path = "third_party/ureq-proto" }

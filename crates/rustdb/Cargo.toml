@@ -1,0 +1,40 @@
+[package]
+name = "rustdb"
+description = "An in-process analytical SQL database: a 1:1 Rust port of DuckDB."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+flate2 = "1"
+rustdb-common.workspace = true
+rustdb-types.workspace = true
+rustdb-ast.workspace = true
+rustdb-parser.workspace = true
+rustdb-catalog = { path = "../catalog" }
+rustdb-function = { path = "../function" }
+rustdb-functions = { path = "../functions" }
+rustdb-planner = { path = "../planner" }
+rustdb-execution = { path = "../execution" }
+rustdb-row = { path = "../row" }
+rustdb-optimizer = { path = "../optimizer" }
+rustdb-storage = { path = "../storage" }
+rustdb-buffer = { path = "../buffer" }
+rustdb-crypto = { path = "../crypto" }
+rustdb-serde = { path = "../serde" }
+rustdb-csv = { path = "../csv" }
+rustdb-parquet = { path = "../parquet" }
+rustdb-json = { path = "../json" }
+rustdb-tpch = { path = "../tpch" }
+rustdb-tpcds = { path = "../tpcds" }
+rustdb-icu = { path = "../icu" }
+rustdb-arrow = { path = "../arrow" }
+rustdb-autocomplete = { path = "../autocomplete" }
+rustdb-httpfs = { path = "../httpfs" }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }

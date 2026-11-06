@@ -1,0 +1,513 @@
+//! Connection state reachable from function callbacks (the parts of DuckDB's
+//! `ClientContext` that functions use).
+
+use std::any::Any;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use rustdb_common::Result;
+use rustdb_types::{LogicalType, Value};
+
+use crate::random::RandomEngine;
+
+/// One configuration option as `duckdb_settings()` lists it.
+#[derive(Clone, Debug)]
+pub struct SettingInfo {
+    pub name: String,
+    /// The current value cast to VARCHAR, preserving SQL NULL.
+    pub value: Option<String>,
+    pub description: String,
+    pub input_type: String,
+    /// `GLOBAL` (else `LOCAL`) scope.
+    pub global: bool,
+    pub aliases: Vec<String>,
+}
+
+/// Checks a new value of an extension option and may normalise it (DuckDB's
+/// `set_option_callback_t`).
+pub type ExtensionOptionSet = std::sync::Arc<dyn Fn(&mut Value) -> Result<()> + Send + Sync>;
+
+/// A configuration option an extension adds (DuckDB's `ExtensionOption`, registered with
+/// `DBConfig::AddExtensionOption`).
+#[derive(Clone)]
+pub struct ExtensionOption {
+    pub name: String,
+    pub description: String,
+    pub input_type: rustdb_types::LogicalType,
+    pub default_value: Value,
+    pub set_function: Option<ExtensionOptionSet>,
+    /// Whether `SET` without a scope sets the option globally (a `default_scope` of
+    /// `GLOBAL`) rather than for the session.
+    pub global_by_default: bool,
+}
+
+impl std::fmt::Debug for ExtensionOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExtensionOption")
+            .field("name", &self.name)
+            .field("default_value", &self.default_value)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Where the current value of an option comes from (DuckDB's `SettingScope`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingScope {
+    /// The connection's own value.
+    Local,
+    /// The database's value.
+    Global,
+}
+
+/// The connection's configuration as functions see it (DuckDB's
+/// `ClientContext::TryGetCurrentSetting` and `DBConfig::GetOptions`).
+pub trait SettingsSource: Send + Sync + std::fmt::Debug {
+    /// The current value of option `name` (case-insensitive), or DuckDB's unrecognized
+    /// option error.
+    fn current_setting(&self, name: &str) -> Result<Value>;
+    /// The current value of option `name` and where it comes from (the
+    /// `SettingLookupResult` of `TryGetCurrentSetting`); `None` for an unknown option.
+    fn current_setting_scope(&self, name: &str) -> Option<(Value, SettingScope)>;
+    /// Every option with its current value.
+    fn settings(&self) -> Vec<SettingInfo>;
+}
+
+/// Objects a database keeps for its lifetime, by key (DuckDB's `ObjectCache`), such as
+/// the parsed footers of Parquet files.
+#[derive(Default)]
+pub struct ObjectCache {
+    entries:
+        Mutex<std::collections::HashMap<rustdb_common::ByteString, Arc<dyn std::any::Any + Send + Sync>>>,
+}
+
+impl std::fmt::Debug for ObjectCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ObjectCache").finish_non_exhaustive()
+    }
+}
+
+impl ObjectCache {
+    /// Atomically obtains a database-local registry, constructing it only once.
+    pub fn get_or_insert_with<T: Send + Sync + 'static>(
+        &self,
+        key: impl Into<rustdb_common::ByteString>,
+        create: impl FnOnce() -> T,
+    ) -> Arc<T> {
+        let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        let key = key.into();
+        if let Some(value) = entries.get(&key).and_then(|v| Arc::clone(v).downcast::<T>().ok()) {
+            return value;
+        }
+        let value = Arc::new(create());
+        entries.insert(key, value.clone());
+        value
+    }
+
+    /// The object stored under `key`, if it has type `T`.
+    pub fn get<T: Send + Sync + 'static>(&self, key: impl AsRef<[u8]>) -> Option<Arc<T>> {
+        let entry = self
+            .entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(key.as_ref())
+            .cloned()?;
+        entry.downcast::<T>().ok()
+    }
+
+    /// Stores `value` under `key`, replacing what was there.
+    pub fn put<T: Send + Sync + 'static>(&self, key: impl Into<rustdb_common::ByteString>, value: Arc<T>) {
+        self.entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key.into(), value);
+    }
+}
+
+/// A change of the connection's own configuration that a function makes when it runs
+/// (DuckDB's functions change the `ClientConfig` directly; ours hand the change to the
+/// connection, which applies it once the function has run).
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClientRequest {
+    /// `enable_profiling(...)` (`EnableProfiling`): the options given.
+    EnableProfiling {
+        format: Option<String>,
+        coverage: Option<String>,
+        save_location: Option<String>,
+        mode: Option<String>,
+        metrics: Option<Value>,
+    },
+    /// `disable_profiling()` (`DisableProfiling`).
+    DisableProfiling,
+    /// Sets a database-wide option (`DBConfig::SetOptionByName`), e.g. the
+    /// `allow_parser_override_extension` of `enable_peg_parser()`.
+    SetGlobalOption { name: String, value: Value },
+    /// Performs a checkpoint requested by the executing table function, before
+    /// statement/profile finalization, including prepared/pending execution.
+    Checkpoint {
+        database: Option<rustdb_common::ByteString>,
+        force: bool,
+    },
+}
+
+/// Connection ids handed out so far (DuckDB's `ConnectionManager` counter).
+static NEXT_CONNECTION_ID: AtomicU64 = AtomicU64::new(0);
+
+/// HTTP requests issued by one connection's current query, including binding I/O.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HttpStats {
+    /// The connection has created its HTTP state, retained across query resets.
+    pub active: bool,
+    pub received: u64,
+    pub sent: u64,
+    pub head: u64,
+    pub get: u64,
+    pub put: u64,
+    pub post: u64,
+    pub delete: u64,
+}
+
+impl HttpStats {
+    pub fn is_empty(self) -> bool {
+        self.received == 0
+            && self.sent == 0
+            && self.head == 0
+            && self.get == 0
+            && self.put == 0
+            && self.post == 0
+            && self.delete == 0
+    }
+
+    /// `HTTPState::WriteProfilingInformation`, shared by EXPLAIN and query profiles.
+    pub fn render(self) -> rustdb_common::ByteString {
+        let mut out = rustdb_common::ByteString::new();
+        if !self.active {
+            return out;
+        }
+        out.push_bytes("┌─────────────────────────────────────┐\n│┌───────────────────────────────────┐│\n");
+        for line in [
+            "HTTPFS HTTP Stats".to_owned(),
+            String::new(),
+            format!("in: {}", rustdb_buffer::format_bytes(self.received)),
+            format!("out: {}", rustdb_buffer::format_bytes(self.sent)),
+            format!("#HEAD: {}", self.head),
+            format!("#GET: {}", self.get),
+            format!("#PUT: {}", self.put),
+            format!("#POST: {}", self.post),
+            format!("#DELETE: {}", self.delete),
+        ] {
+            let padding = 35_usize.saturating_sub(line.chars().count());
+            let left = padding / 2 + padding % 2;
+            let _ = rustdb_common::byte_write!(
+                out,
+                "││{}{}{}││\n",
+                " ".repeat(left),
+                line,
+                " ".repeat(padding - left)
+            );
+        }
+        out.push_bytes("│└───────────────────────────────────┘│\n└─────────────────────────────────────┘\n");
+        out
+    }
+}
+
+/// Per-connection state shared by the functions a connection runs.
+#[derive(Debug)]
+pub struct FunctionClient {
+    random: Mutex<RandomEngine>,
+    /// The id of the current transaction and its start time in microseconds since the
+    /// epoch (DuckDB's `MetaTransaction::start_timestamp`).
+    transaction: Mutex<Option<(u64, i64)>>,
+    /// The text of the query being run (DuckDB's `ClientContext::GetCurrentQuery`).
+    query: Mutex<rustdb_common::ByteString>,
+    /// The number of statements run so far (DuckDB's query id).
+    query_id: AtomicU64,
+    http_stats: Mutex<HttpStats>,
+    /// The default database (DuckDB's `DatabaseManager::GetDefaultDatabase`).
+    database: Mutex<rustdb_common::ByteString>,
+    connection_id: u64,
+    /// The configuration of the statement being run.
+    settings: Mutex<Option<Arc<dyn SettingsSource>>>,
+    /// The number of open connections of the database (DuckDB's
+    /// `ConnectionManager::GetConnectionCount`), shared by its connections.
+    connections: Mutex<Option<Arc<AtomicU64>>>,
+    /// The connection's loggers (DuckDB's `ClientContext::GetLogger`).
+    logger: Mutex<Option<Arc<dyn crate::logging::ClientLogger>>>,
+    /// The database's object cache (`ObjectCache::GetObjectCache`).
+    object_cache: Mutex<Option<Arc<ObjectCache>>>,
+    /// The database's external file cache (`ExternalFileCache::Get(context)`).
+    external_file_cache: Mutex<Option<Arc<crate::external_file_cache::ExternalFileCache>>>,
+    /// Configuration changes functions made, not yet applied by the connection.
+    client_requests: Mutex<Vec<ClientRequest>>,
+    /// The connection's temporary catalog in the running statement's transaction.
+    temp_catalog: Mutex<Option<Arc<dyn TempCatalog>>>,
+    /// The binder's view of the connection in its open transaction (the planner's
+    /// `ClientContext`), held weakly and cleared when the transaction ends: what DuckDB's
+    /// C API reaches through `ClientContext` while `HasActiveTransaction()` (catalog
+    /// lookups, constant folding).
+    transaction_context: Mutex<Option<Weak<dyn Any + Send + Sync>>>,
+}
+
+/// The connection's temporary catalog, for functions that keep tables of their own
+/// (DuckDB's functions use the `ClientContext` catalog API, e.g. the CSV reader's
+/// rejects tables). Everything happens in the running statement's transaction.
+pub trait TempCatalog: Send + Sync + std::fmt::Debug {
+    /// Whether the temporary table `name` exists.
+    fn table_exists(&self, name: &str) -> Result<bool>;
+    /// `CREATE TEMP TYPE IF NOT EXISTS name AS ty`.
+    fn create_type(&self, name: &str, ty: LogicalType) -> Result<()>;
+    /// `CREATE TEMP TABLE IF NOT EXISTS name (columns)`.
+    fn create_table(&self, name: &str, columns: &[(String, LogicalType)]) -> Result<()>;
+    /// Appends `rows` to the temporary table `name` (DuckDB's `InternalAppender`).
+    fn append(&self, name: &str, rows: &[Vec<Value>]) -> Result<()>;
+}
+
+impl Default for FunctionClient {
+    fn default() -> Self {
+        Self {
+            random: Mutex::default(),
+            transaction: Mutex::default(),
+            query: Mutex::default(),
+            query_id: AtomicU64::new(0),
+            http_stats: Mutex::default(),
+            database: Mutex::new("memory".into()),
+            connection_id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
+            settings: Mutex::default(),
+            connections: Mutex::default(),
+            logger: Mutex::default(),
+            object_cache: Mutex::default(),
+            external_file_cache: Mutex::default(),
+            client_requests: Mutex::default(),
+            temp_catalog: Mutex::default(),
+            transaction_context: Mutex::default(),
+        }
+    }
+}
+
+impl FunctionClient {
+    /// The connection's random engine (DuckDB's `RandomEngine::Get(context)` with its
+    /// lock held).
+    pub fn random_engine(&self) -> MutexGuard<'_, RandomEngine> {
+        // A poisoned lock only means another thread panicked mid-draw; the engine state
+        // is still a valid generator state.
+        self.random.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Records that statements now run in transaction `id`; a new transaction starts its
+    /// clock now.
+    pub fn observe_transaction(&self, id: u64) {
+        let mut transaction = self.transaction.lock().unwrap_or_else(PoisonError::into_inner);
+        if transaction.is_none_or(|(current, _)| current != id) {
+            *transaction = Some((id, now_micros()));
+        }
+    }
+
+    /// The id of the current transaction (0 if none was observed).
+    pub fn transaction_id(&self) -> u64 {
+        self.transaction
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .map_or(0, |(id, _)| id)
+    }
+
+    /// Records the text of the statement about to run.
+    pub fn set_query(&self, query: impl AsRef<[u8]>) {
+        {
+            let mut stats = self.http_stats.lock().unwrap_or_else(PoisonError::into_inner);
+            self.query_id.fetch_add(1, Ordering::Relaxed);
+            *stats = HttpStats {
+                active: stats.active,
+                ..HttpStats::default()
+            };
+        }
+        *self.query.lock().unwrap_or_else(PoisonError::into_inner) = query.as_ref().into();
+    }
+
+    /// The text of the running query (`current_query()`).
+    pub fn query(&self) -> rustdb_common::ByteString {
+        self.query.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// The id of the running query (`current_query_id()`).
+    pub fn query_id(&self) -> u64 {
+        self.query_id.load(Ordering::Relaxed)
+    }
+
+    pub fn record_http_request(&self, method: &str, body_length: u64) {
+        let mut stats = self.http_stats.lock().unwrap_or_else(PoisonError::into_inner);
+        stats.active = true;
+        if matches!(method, "PUT" | "POST") {
+            stats.sent += body_length;
+        }
+        let count = match method {
+            "HEAD" => &mut stats.head,
+            "GET" => &mut stats.get,
+            "PUT" => &mut stats.put,
+            "POST" => &mut stats.post,
+            "DELETE" => &mut stats.delete,
+            _ => return,
+        };
+        *count += 1;
+    }
+
+    pub fn http_stats(&self) -> HttpStats {
+        *self.http_stats.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn record_http_received(&self, query_id: u64, bytes: u64) {
+        let mut stats = self.http_stats.lock().unwrap_or_else(PoisonError::into_inner);
+        if query_id == self.query_id() {
+            stats.received += bytes;
+        }
+    }
+
+    /// Sets the default database name.
+    pub fn set_database(&self, name: impl AsRef<[u8]>) {
+        *self.database.lock().unwrap_or_else(PoisonError::into_inner) = name.as_ref().into();
+    }
+
+    /// The default database (`current_database()`).
+    pub fn database(&self) -> rustdb_common::ByteString {
+        self.database
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Sets the configuration seen by the next statements.
+    pub fn set_settings(&self, settings: Arc<dyn SettingsSource>) {
+        *self.settings.lock().unwrap_or_else(PoisonError::into_inner) = Some(settings);
+    }
+
+    /// Sets the temporary catalog functions see during the running statement.
+    pub fn set_temp_catalog(&self, catalog: Arc<dyn TempCatalog>) {
+        *self.temp_catalog.lock().unwrap_or_else(PoisonError::into_inner) = Some(catalog);
+    }
+
+    /// The temporary catalog of the running statement, if the connection set one.
+    pub fn temp_catalog(&self) -> Option<Arc<dyn TempCatalog>> {
+        self.temp_catalog
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Records the binder's context of the open transaction, or that none is open.
+    pub fn set_transaction_context(&self, context: Option<Weak<dyn Any + Send + Sync>>) {
+        *self
+            .transaction_context
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = context;
+    }
+
+    /// The binder's context of the open transaction (the planner's `ClientContext`), if a
+    /// transaction is open and a statement still uses it.
+    pub fn transaction_context(&self) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.transaction_context
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .and_then(Weak::upgrade)
+    }
+
+    /// Sets the connection's loggers.
+    pub fn set_logger(&self, logger: Arc<dyn crate::logging::ClientLogger>) {
+        *self.logger.lock().unwrap_or_else(PoisonError::into_inner) = Some(logger);
+    }
+
+    /// The connection's loggers, if the database logs.
+    pub fn logger(&self) -> Option<Arc<dyn crate::logging::ClientLogger>> {
+        self.logger.lock().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// Hands a configuration change to the connection.
+    pub fn push_client_request(&self, request: ClientRequest) {
+        self.client_requests
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(request);
+    }
+
+    /// The configuration changes functions made since the last call, in order.
+    pub fn take_client_requests(&self) -> Vec<ClientRequest> {
+        std::mem::take(
+            &mut *self
+                .client_requests
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        )
+    }
+
+    /// Shares the database's object cache with this connection.
+    pub fn set_object_cache(&self, cache: Arc<ObjectCache>) {
+        *self.object_cache.lock().unwrap_or_else(PoisonError::into_inner) = Some(cache);
+    }
+
+    /// Shares the database's external file cache with this connection.
+    pub fn set_external_file_cache(&self, cache: Arc<crate::external_file_cache::ExternalFileCache>) {
+        *self
+            .external_file_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(cache);
+    }
+
+    /// The database's external file cache, if the connection belongs to a database.
+    pub fn external_file_cache(&self) -> Option<Arc<crate::external_file_cache::ExternalFileCache>> {
+        self.external_file_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The database's object cache, if the connection belongs to a database.
+    pub fn object_cache(&self) -> Option<Arc<ObjectCache>> {
+        self.object_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Shares the database's open-connection counter with this connection.
+    pub fn set_connection_counter(&self, counter: Arc<AtomicU64>) {
+        *self.connections.lock().unwrap_or_else(PoisonError::into_inner) = Some(counter);
+    }
+
+    /// The number of open connections of the database, if it is tracked.
+    pub fn connection_count(&self) -> Option<u64> {
+        self.connections
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .map(|counter| counter.load(Ordering::Relaxed))
+    }
+
+    /// The configuration of the current statement, if the connection provided one.
+    pub fn settings(&self) -> Option<Arc<dyn SettingsSource>> {
+        self.settings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The connection id (`current_connection_id()`).
+    pub fn connection_id(&self) -> u64 {
+        self.connection_id
+    }
+
+    /// The start time of the current transaction in microseconds since the epoch
+    /// (now, if no transaction was observed).
+    pub fn transaction_start_micros(&self) -> i64 {
+        self.transaction
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .map_or_else(now_micros, |(_, start)| start)
+    }
+}
+
+/// The wall clock in microseconds since the epoch (DuckDB's
+/// `Timestamp::GetCurrentTimestamp`).
+fn now_micros() -> i64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |elapsed| {
+        i64::try_from(elapsed.as_micros()).unwrap_or(i64::MAX)
+    })
+}

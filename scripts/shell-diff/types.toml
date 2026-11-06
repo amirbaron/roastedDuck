@@ -1,0 +1,327 @@
+# Lazy builtin type catalog, lookup scopes, spelling and rollback against C++ DuckDB.
+
+[[case]]
+name = "type-catalog-fresh-integr"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT 1::integr;
+'''
+
+[[case]]
+name = "type-catalog-fresh-Integr"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT 1::Integr;
+'''
+
+[[case]]
+name = "type-catalog-fresh-INTEGR"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT 1::INTEGR;
+'''
+
+[[case]]
+name = "type-catalog-fresh-deciml"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT 1::deciml;
+'''
+
+[[case]]
+name = "type-catalog-fresh-DECIML"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT 1::DECIML;
+'''
+
+[[case]]
+name = "type-catalog-used-cast"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT 1::INTEGER;
+SELECT 1::INTEGR;
+'''
+
+[[case]]
+name = "type-catalog-used-table"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+CREATE TABLE t(i INT);
+SELECT 1::INTEGR;
+'''
+
+[[case]]
+name = "type-catalog-scan-before-use"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT count(*) FROM duckdb_types();
+SELECT 1::INTEGER;
+SELECT 1::INTEGR;
+'''
+
+[[case]]
+name = "type-catalog-error-before-use"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT 1::INTEGR;
+SELECT 1::INTEGER;
+SELECT 1::INTEGR;
+'''
+
+[[case]]
+name = "type-catalog-bad-modifier"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT 1::DECIMAL(99);
+SELECT 1::DECIML;
+'''
+
+[[case]]
+name = "type-catalog-rollback-builtin"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+BEGIN;
+SELECT 1::INTEGER;
+ROLLBACK;
+SELECT 1::INTEGR;
+'''
+
+[[case]]
+name = "type-catalog-scope-builtin"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+CREATE SCHEMA s;
+CREATE TYPE s.INTEGER AS ENUM ('a');
+CREATE TABLE s.t(x INTEGER);
+INSERT INTO s.t VALUES ('a');
+SELECT count(*) FROM s.t;
+'''
+
+[[case]]
+name = "type-catalog-scope-user"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+CREATE SCHEMA s;
+CREATE TYPE s.my_enum AS ENUM ('a');
+CREATE TABLE s.t(x my_enum);
+INSERT INTO s.t VALUES ('a');
+SELECT * FROM s.t;
+'''
+
+[[case]]
+name = "type-catalog-schema-path"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+CREATE SCHEMA s;
+CREATE TYPE s.INTEGER AS ENUM ('a');
+SET schema='s';
+CREATE TABLE t(x INTEGER);
+INSERT INTO t VALUES ('a');
+SELECT count(*) FROM t;
+'''
+
+[[case]]
+name = "type-catalog-schema-hint"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+CREATE SCHEMA s;
+CREATE TYPE s.magnitude_mojotypename AS ENUM ('a');
+SET schema='s';
+SELECT 1::magnitude_mojotypenam;
+'''
+
+[[case]]
+name = "type-catalog-metadata-first-use"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT 1::INTEGER;
+SELECT database_name,type_name,internal FROM duckdb_types() WHERE upper(type_name)='INTEGER' ORDER BY database_name,schema_name;
+'''
+
+[[case]]
+name = "type-catalog-metadata-first-scan"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT count(*) FROM duckdb_types();
+SELECT 1::INTEGER;
+SELECT database_name,type_name,internal FROM duckdb_types() WHERE upper(type_name)='INTEGER' ORDER BY database_name,schema_name;
+'''
+
+[[case]]
+name = "type-catalog-json-alias"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT '{"a":1}'::JSON;
+SELECT type_name,type_oid FROM duckdb_types() WHERE type_name='JSON';
+SELECT 1::INTEGR;
+'''
+
+[[case]]
+name = "type-catalog-qualified-builtin"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT 1::memory.main."INTEGER";
+SELECT 1::INTEGR;
+'''
+
+[[case]]
+name = "type-catalog-qualified-user"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+CREATE SCHEMA s;
+CREATE TYPE s.INTEGER AS ENUM ('a');
+SELECT 'a'::s."INTEGER";
+'''
+
+[[case]]
+name = "type-catalog-missing-catalog"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT 1::no_db.main."INTEGER";
+'''
+
+[[case]]
+name = "type-catalog-missing-schema"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT 1::no_schema."INTEGER";
+'''
+
+[[case]]
+name = "type-catalog-qualified-missing"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+CREATE SCHEMA s;
+SELECT 1::s."missing_type";
+'''
+
+[[case]]
+name = "type-catalog-drop-builtin"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+DROP TYPE "INTEGER";
+SELECT 1::INTEGR;
+'''
+
+[[case]]
+name = "type-catalog-create-builtin"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+CREATE TYPE "INTEGER" AS ENUM ('a');
+SELECT 1::INTEGR;
+'''
+
+[[case]]
+name = "type-catalog-detach-default-refused"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+DETACH memory;
+SELECT 1::INTEGER;
+SELECT 1::INTEGR;
+'''
+
+[[case]]
+name = "type-catalog-nested-modifiers"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT NULL::STRUCT(a INTEGER,b DECIMAL(10,2));
+SELECT 1::INTEGR;
+'''
+
+[[case]]
+name = "type-catalog-checkpoint-reopen"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+.open type_catalog.db
+CREATE TYPE mood AS ENUM ('a','b');
+CREATE TABLE t(i INTEGER,m mood);
+INSERT INTO t VALUES (1,'a');
+CHECKPOINT;
+.open :memory:
+.open type_catalog.db
+SELECT * FROM t;
+SELECT database_name,type_name FROM duckdb_types() WHERE upper(type_name)='INTEGER' ORDER BY database_name,schema_name;
+'''
+
+[[case]]
+name = "type-catalog-extension-error-order"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SET autoinstall_known_extensions=false;
+SET autoload_known_extensions=false;
+SELECT 1::INET;
+SELECT 1::"system".main."INTEGER";
+SELECT 1::INTEGR;
+'''
+
+[[case]]
+name = "type-catalog-struct-root"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT NULL::STRUCT(a INTEGER,b DECIMAL(10,2));
+SELECT 1::STRUC;
+'''
+
+[[case]]
+name = "type-catalog-quoted-primitive-modifier"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT 1::"INTEGER"(2);
+'''
+
+[[case]]
+name = "type-catalog-user-modifier"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+CREATE TYPE mood AS ENUM ('calm');
+SELECT 'calm'::mood(1);
+'''
+
+[[case]]
+name = "type-catalog-table-schema-position"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+SELECT * FROM no_schema.no_table;
+'''
+
+[[case]]
+name = "type-catalog-alter-client-fallback"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+CREATE TYPE my_enum AS ENUM ('x');
+ATTACH ':memory:' AS c2;
+CREATE SCHEMA c2.s1;
+CREATE TYPE c2.my_enum AS ENUM ('y');
+CREATE TABLE c2.s1.t(a VARCHAR);
+INSERT INTO c2.s1.t VALUES ('x');
+ALTER TABLE c2.s1.t ALTER COLUMN a SET DATA TYPE my_enum;
+SELECT * FROM c2.s1.t;
+'''
+
+[[case]]
+name = "type-catalog-create-client-fallback"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+CREATE TYPE my_enum AS ENUM ('x');
+ATTACH ':memory:' AS c2;
+CREATE SCHEMA c2.s1;
+CREATE TYPE c2.my_enum AS ENUM ('y');
+CREATE TABLE c2.s1.t(a my_enum);
+INSERT INTO c2.s1.t VALUES ('x');
+SELECT * FROM c2.s1.t;
+'''
+
+[[case]]
+name = "type-catalog-target-schema-priority"
+args = ["-batch", "-csv", "-noheader"]
+stdin = '''
+CREATE TYPE my_enum AS ENUM ('x');
+ATTACH ':memory:' AS c2;
+CREATE SCHEMA c2.s1;
+CREATE TYPE c2.my_enum AS ENUM ('y');
+CREATE TYPE c2.s1.my_enum AS ENUM ('z');
+CREATE TABLE c2.s1.t(a my_enum);
+INSERT INTO c2.s1.t VALUES ('z');
+SELECT * FROM c2.s1.t;
+'''

@@ -1,0 +1,21 @@
+[build-system]
+requires = ["maturin==1.9.6"]
+build-backend = "maturin"
+
+[project]
+name = "duckdb"
+version = "1.5.6"
+requires-python = ">=3.10"
+description = "DuckDB Python API backed by the native Rust engine"
+license = "MIT"
+
+[tool.maturin]
+manifest-path = "../crates/python/Cargo.toml"
+python-source = "."
+module-name = "duckdb._duckdb"
+features = ["extension-module"]
+include = [
+    { path = "_duckdb.py", format = "wheel" },
+    { path = "_duckdb-stubs/**/*.pyi", format = "wheel" },
+    { path = "adbc_driver_duckdb/**/*.py", format = "wheel" },
+]

@@ -1,0 +1,373 @@
+# Command-line handling: options, database arguments, init files, stdin, exit codes.
+
+[[case]]
+name = "cli-help"
+args = ["-help"]
+
+[[case]]
+name = "cli-h"
+args = ["-h"]
+
+[[case]]
+name = "cli-help-double-dash"
+args = ["--help"]
+
+[[case]]
+name = "cli-version"
+args = ["-version"]
+
+[[case]]
+name = "cli-version-double-dash"
+args = ["--version"]
+
+[[case]]
+name = "cli-unknown-option"
+args = ["-bogus"]
+
+[[case]]
+name = "cli-unknown-option-close"
+args = ["-jsn"]
+
+[[case]]
+name = "cli-unknown-option-double-dash"
+args = ["--csvv"]
+
+[[case]]
+name = "cli-underscore-option"
+args = ["-no_stdin", "-c", "SELECT 1 AS a"]
+
+[[case]]
+name = "cli-missing-argument-{opt}"
+vary = { opt = ["-c", "-s", "-cmd", "-separator", "-nullvalue", "-newline", "-init", "-f", "-storage-version"] }
+args = ["{opt}"]
+
+[[case]]
+name = "cli-c-multiple"
+args = ["-c", "SELECT 1 AS a", "-c", "SELECT 2 AS b"]
+
+[[case]]
+name = "cli-c-and-s"
+args = ["-s", "SELECT 1 AS a", "-c", "SELECT 2 AS b"]
+
+[[case]]
+name = "cli-c-error"
+args = ["-c", "SELECT bogus", "-c", "SELECT 2 AS b"]
+
+[[case]]
+name = "cli-c-multiple-statements"
+args = ["-c", "SELECT 1 AS a; SELECT bogus; SELECT 3 AS c"]
+
+[[case]]
+name = "cli-c-dot-command"
+args = ["-c", ".mode csv", "-c", "SELECT 1 AS a"]
+
+[[case]]
+name = "cli-c-ignores-stdin"
+args = ["-c", "SELECT 1 AS a"]
+stdin = "SELECT 'stdin' AS s;\n"
+
+[[case]]
+name = "cli-cmd-then-stdin"
+args = ["-cmd", "SELECT 'cmd' AS c", "-cmd", ".mode csv"]
+stdin = "SELECT 'stdin' AS s;\n"
+
+[[case]]
+name = "cli-cmd-error"
+args = ["-cmd", "SELECT bogus"]
+stdin = "SELECT 'stdin' AS s;\n"
+
+[[case]]
+name = "cli-cmd-error-bail"
+args = ["-bail", "-cmd", "SELECT bogus"]
+stdin = "SELECT 'stdin' AS s;\n"
+
+[[case]]
+name = "cli-sql-argument"
+args = [":memory:", "SELECT 42 AS answer"]
+
+[[case]]
+name = "cli-sql-argument-multiple"
+args = [":memory:", "SELECT 1 AS a", "SELECT 2 AS b"]
+
+[[case]]
+name = "cli-sql-argument-error"
+args = [":memory:", "SELECT bogus"]
+
+[[case]]
+name = "cli-db-new-file"
+args = ["new.db", "-c", "CREATE TABLE t AS SELECT 1 AS i; SELECT * FROM t"]
+
+[[case]]
+name = "cli-db-file-reopen"
+args = ["-c", "ATTACH 'x.db' AS x; CREATE TABLE x.t AS SELECT 7 AS v; DETACH x; ATTACH 'x.db' AS y (READ_ONLY); SELECT * FROM y.t; CREATE TABLE y.u(i INT)"]
+
+[[case]]
+name = "cli-db-readonly-missing"
+args = ["-readonly", "missing.db", "-c", "SELECT 1"]
+
+[[case]]
+name = "cli-db-invalid-file"
+files = { "bad.db" = "garbage garbage garbage garbage garbage garbage garbage garbage" }
+args = ["bad.db", "-c", "SELECT 1"]
+
+[[case]]
+name = "cli-db-directory"
+files = { "dir/placeholder" = "" }
+args = ["dir", "-c", "SELECT 1"]
+
+[[case]]
+name = "cli-db-missing-directory"
+args = ["no/such/dir/x.db", "-c", "SELECT 1"]
+
+[[case]]
+name = "cli-db-memory-named"
+args = [":memory:named", "-c", "SELECT database_name FROM duckdb_databases() WHERE NOT internal"]
+
+[[case]]
+name = "cli-db-empty-name"
+args = ["", "-c", "SELECT 1 AS a"]
+
+[[case]]
+name = "cli-db-two-files"
+args = ["a.db", "b.db"]
+stdin = "SELECT 1;\n"
+
+[[case]]
+name = "cli-db-csv-file"
+files = { "data.csv" = "a,b\n1,2\n" }
+args = ["data.csv", "-c", "SELECT * FROM data"]
+
+[[case]]
+name = "cli-db-parquet-file"
+args = ["-c", "COPY (SELECT 1 AS a) TO 'p.parquet'"]
+
+[[case]]
+name = "cli-storage-version"
+args = ["-storage-version", "v1.0.0", "-c", "SELECT 1 AS a"]
+
+[[case]]
+name = "cli-storage-version-bad"
+args = ["-storage-version", "bogus", "-c", "SELECT 1 AS a"]
+
+[[case]]
+name = "cli-storage-version-underscore"
+args = ["-storage_version", "latest", "-c", "SELECT 1 AS a"]
+
+[[case]]
+name = "cli-init-file"
+files = { "init.sql" = ".mode csv\nSELECT 'from init' AS i;\n" }
+args = ["-init", "init.sql"]
+stdin = "SELECT 'stdin' AS s;\n"
+
+[[case]]
+name = "cli-init-missing"
+args = ["-init", "missing.sql"]
+stdin = "SELECT 'stdin' AS s;\n"
+
+[[case]]
+name = "cli-init-error"
+files = { "init.sql" = "SELECT bogus;\nSELECT 'after error' AS a;\n" }
+args = ["-init", "init.sql"]
+stdin = "SELECT 'stdin' AS s;\n"
+
+[[case]]
+name = "cli-duckdbrc"
+home = { ".duckdbrc" = ".mode markdown\nSELECT 'rc' AS source;\n" }
+stdin = "SELECT 'stdin' AS s;\n"
+
+[[case]]
+name = "cli-duckdbrc-with-c"
+home = { ".duckdbrc" = ".mode csv\nSELECT 'rc' AS source;\n" }
+args = ["-c", "SELECT 'c' AS s"]
+
+[[case]]
+name = "cli-duckdbrc-no-init"
+home = { ".duckdbrc" = ".mode csv\nSELECT 'rc' AS source;\n" }
+args = ["-no-init"]
+stdin = "SELECT 'stdin' AS s;\n"
+
+[[case]]
+name = "cli-duckdbrc-error"
+home = { ".duckdbrc" = "SELECT bogus;\n.bogus\nSELECT 'rc after' AS a;\n" }
+stdin = "SELECT 'stdin' AS s;\n"
+
+[[case]]
+name = "cli-duckdbrc-startup-text"
+home = { ".duckdbrc" = ".startup_text none\n" }
+stdin = "SELECT 1 AS a;\n"
+
+[[case]]
+name = "cli-init-overrides-duckdbrc"
+home = { ".duckdbrc" = "SELECT 'rc' AS source;\n" }
+files = { "init.sql" = "SELECT 'init' AS source;\n" }
+args = ["-init", "init.sql"]
+stdin = "SELECT 'stdin' AS s;\n"
+
+[[case]]
+name = "cli-f-file"
+files = { "script.sql" = "SELECT 1 AS a;\n.mode csv\nSELECT 2 AS b;\n" }
+args = ["-f", "script.sql"]
+stdin = "SELECT 'not read' AS s;\n"
+
+[[case]]
+name = "cli-f-missing"
+args = ["-f", "missing.sql"]
+
+[[case]]
+name = "cli-f-error"
+files = { "script.sql" = "SELECT 1 AS a;\nSELECT bogus;\nSELECT 3 AS c;\n" }
+args = ["-f", "script.sql"]
+
+[[case]]
+name = "cli-f-then-c"
+files = { "script.sql" = "SELECT 1 AS a;\n" }
+args = ["-f", "script.sql", "-c", "SELECT 2 AS b"]
+
+[[case]]
+name = "cli-no-stdin"
+args = ["-no-stdin", "-cmd", "SELECT 1 AS a"]
+stdin = "SELECT 'not read' AS s;\n"
+
+[[case]]
+name = "cli-batch-interactive"
+args = ["-batch"]
+stdin = "SELECT 1 AS a;\n"
+
+[[case]]
+name = "cli-interactive-flag-piped"
+args = ["-interactive"]
+stdin = "SELECT 1 AS a;\n.mode csv\nSELECT 2 AS b;\n"
+
+[[case]]
+name = "cli-unsigned-unredacted"
+args = ["-unsigned", "-unredacted", "-c", "SELECT current_setting('allow_unsigned_extensions') AS a, current_setting('allow_unredacted_secrets') AS b"]
+
+[[case]]
+name = "cli-readonly-memory"
+args = ["-readonly", "-c", "CREATE TABLE t(i INT)"]
+
+[[case]]
+name = "cli-readonly-file"
+args = ["-c", "ATTACH 'r.db'; CREATE TABLE r.t(i INT)"]
+
+[[case]]
+name = "cli-echo-flag-c"
+args = ["-echo", "-c", "SELECT 1 AS a"]
+
+[[case]]
+name = "cli-bail-stdin"
+args = ["-bail"]
+stdin = "SELECT 1 AS a;\nSELECT bogus;\nSELECT 3 AS c;\n"
+
+[[case]]
+name = "cli-no-bail-stdin"
+stdin = "SELECT 1 AS a;\nSELECT bogus;\nSELECT 3 AS c;\n"
+
+[[case]]
+name = "cli-stdin-no-trailing-newline"
+stdin = "SELECT 1 AS a;\nSELECT 2 AS b;"
+
+[[case]]
+name = "cli-stdin-no-trailing-semicolon"
+stdin = "SELECT 1 AS a;\nSELECT 2 AS b"
+
+[[case]]
+name = "cli-stdin-unterminated-string"
+stdin = "SELECT 1 AS a;\nSELECT 'abc"
+
+[[case]]
+name = "cli-stdin-unterminated-comment"
+stdin = "SELECT 1 AS a;\n/* never closed\nSELECT 2;\n"
+
+[[case]]
+name = "cli-stdin-split-statements"
+stdin = '''
+SELECT
+  1
+  AS a
+;
+SELECT 'multi
+line string' AS b; SELECT 3
+AS c;
+SELECT 4 AS d
+;
+'''
+
+[[case]]
+name = "cli-stdin-empty"
+stdin = ""
+
+[[case]]
+name = "cli-stdin-only-whitespace"
+stdin = "   \n\n\t\n"
+
+[[case]]
+name = "cli-stdin-semicolons"
+stdin = ";;;\nSELECT 1 AS a;;\n;\n"
+
+[[case]]
+name = "cli-stdin-crlf"
+stdin = "SELECT 1 AS a;\r\n.mode csv\r\nSELECT 2 AS b;\r\n"
+
+[[case]]
+name = "cli-stdin-dot-in-statement"
+stdin = "SELECT\n.5 AS a;\n"
+
+[[case]]
+name = "cli-stdin-error-exit-code"
+stdin = "SELECT bogus;\n"
+
+[[case]]
+name = "cli-stdin-last-error-exit-code"
+stdin = "SELECT bogus;\nSELECT 1 AS ok;\n"
+
+[[case]]
+name = "cli-stdin-utf8-bom"
+stdin = "﻿SELECT 1 AS a;\n"
+
+[[case]]
+name = "cli-stdin-invalid-utf8-literal"
+files = { "bad.sql" = "SELECT 'café' AS ok;\n" }
+args = ["-f", "bad.sql"]
+
+[[case]]
+name = "cli-separator-then-mode"
+args = ["-separator", ";", "-list", "-c", "SELECT 1 AS a, 2 AS b"]
+
+[[case]]
+name = "cli-header-before-c"
+args = ["-header", "-csv", "-c", "SELECT 1 AS a"]
+
+[[case]]
+name = "cli-options-after-c"
+args = ["-c", "SELECT 1 AS a", "-csv"]
+
+[[case]]
+name = "cli-db-after-options"
+args = ["-csv", "x.db", "-c", "SELECT 1 AS a"]
+
+[[case]]
+name = "cli-light-dark"
+args = ["-light-mode", "-dark-mode", "-c", "SELECT 1 AS a"]
+
+[[case]]
+name = "cli-ascii-flag"
+args = ["-ascii", "-c", "SELECT 1 AS a, 2 AS b"]
+
+[[case]]
+name = "cli-double-dash-options"
+args = ["--csv", "--header", "-c", "SELECT 1 AS a"]
+
+[[case]]
+name = "cli-ui-flag"
+args = ["-ui", "-no-stdin"]
+
+[[case]]
+name = "cli-single-dash"
+args = ["-"]
+stdin = "SELECT 1 AS a;\n"
+
+[[case]]
+name = "cli-help-colors-tty"
+args = ["-help"]
+env = { TERM = "xterm" }

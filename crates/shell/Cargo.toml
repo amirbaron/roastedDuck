@@ -1,0 +1,29 @@
+[package]
+name = "rustdb-shell"
+description = "The rustdb command-line shell (DuckDB's CLI)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "rustdb"
+path = "src/main.rs"
+
+[dependencies]
+rustdb_capi = { package = "rustdb-capi", path = "../capi" }
+rustdb.workspace = true
+rustdb-ast.workspace = true
+rustdb-common.workspace = true
+rustdb-parser.workspace = true
+rustdb-planner.workspace = true
+rustdb-types.workspace = true
+rustdb-function = { path = "../function" }
+rustdb-functions = { path = "../functions" }
+rustdb-serde.workspace = true
+libc = "0.2"
+unicode-segmentation = "1"
+unicode-width = "0.2"
+
+[lints]
+workspace = true

@@ -1,0 +1,26 @@
+[package]
+name = "rustdb-csv"
+description = "The CSV reader and writer: sniffer, scanners, read_csv/sniff_csv and the COPY csv function (DuckDB's csv_scanner)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rustdb-common.workspace = true
+rustdb-types.workspace = true
+rustdb-ast.workspace = true
+rustdb-parser.workspace = true
+rustdb-planner.workspace = true
+rustdb-catalog = { path = "../catalog" }
+rustdb-function = { path = "../function" }
+rustdb-functions = { path = "../functions" }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+rustdb-zstd = { path = "../zstd" }
+unicode-normalization = "0.1"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+rustdb-serde.workspace = true

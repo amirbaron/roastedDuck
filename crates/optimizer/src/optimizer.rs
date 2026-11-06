@@ -1,0 +1,551 @@
+//! The optimizer driver (DuckDB's `optimizer.cpp`): runs the passes in DuckDB's order,
+//! each unless disabled through `disabled_optimizers`.
+
+use std::cell::Cell;
+use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use rustdb_catalog::EntryKind;
+use rustdb_common::string_util::candidates_error_message;
+use rustdb_common::{Error, Result};
+use rustdb_planner::function_binder::FunctionBinder;
+use rustdb_planner::{ClientContext, Expression, LogicalKind, LogicalOperator, LogicalOperatorType};
+
+use crate::build_probe_side::optimize_build_probe_side;
+use crate::column_lifetime_analyzer::analyze_column_lifetime;
+use crate::expression_rewriter::ExpressionRewriter;
+use crate::filter_pullup::FilterPullup;
+use crate::filter_pushdown::FilterPushdown;
+use crate::join_order::JoinOrderOptimizer;
+use crate::remove_unused_columns::remove_unused_columns;
+use crate::statistics_propagator::StatisticsPropagator;
+
+macro_rules! optimizer_types {
+    ($($variant:ident => $name:literal,)*) => {
+        /// An optimizer pass (DuckDB's `OptimizerType`).
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub enum OptimizerType {
+            $($variant,)*
+        }
+
+        impl OptimizerType {
+            /// Every pass, in DuckDB's declaration order.
+            pub const ALL: &'static [Self] = &[$(Self::$variant,)*];
+
+            /// The pass's name in `disabled_optimizers` (DuckDB's `OptimizerTypeToString`).
+            pub const fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)*
+                }
+            }
+        }
+    };
+}
+
+optimizer_types! {
+    ExpressionRewriter => "expression_rewriter",
+    FilterPullup => "filter_pullup",
+    FilterPushdown => "filter_pushdown",
+    EmptyResultPullup => "empty_result_pullup",
+    CteFilterPusher => "cte_filter_pusher",
+    RegexRange => "regex_range",
+    InClause => "in_clause",
+    JoinOrder => "join_order",
+    Deliminator => "deliminator",
+    UnnestRewriter => "unnest_rewriter",
+    UnusedColumns => "unused_columns",
+    StatisticsPropagation => "statistics_propagation",
+    CommonSubexpressions => "common_subexpressions",
+    CommonAggregate => "common_aggregate",
+    ColumnLifetime => "column_lifetime",
+    LimitPushdown => "limit_pushdown",
+    RowGroupPruner => "row_group_pruner",
+    TopN => "top_n",
+    TopNWindowElimination => "top_n_window_elimination",
+    BuildSideProbeSide => "build_side_probe_side",
+    CompressedMaterialization => "compressed_materialization",
+    DuplicateGroups => "duplicate_groups",
+    ReorderFilter => "reorder_filter",
+    SamplingPushdown => "sampling_pushdown",
+    JoinFilterPushdown => "join_filter_pushdown",
+    Extension => "extension",
+    MaterializedCte => "materialized_cte",
+    SumRewriter => "sum_rewriter",
+    LateMaterialization => "late_materialization",
+    CteInlining => "cte_inlining",
+    CommonSubplan => "common_subplan",
+    JoinElimination => "join_elimination",
+    WindowSelfJoin => "window_self_join",
+}
+
+impl OptimizerType {
+    /// The pass called `name` (DuckDB's `OptimizerTypeFromString`).
+    pub fn from_name(name: &str) -> Result<Self> {
+        if let Some(found) = Self::ALL.iter().find(|ty| ty.name() == name) {
+            return Ok(*found);
+        }
+        let names: Vec<String> = Self::ALL.iter().map(|ty| ty.name().to_owned()).collect();
+        Err(Error::parser(format!(
+            "Optimizer type \"{name}\" not recognized\n{}",
+            candidates_error_message(&names, name, "Candidate optimizers")
+        )))
+    }
+
+    /// Parses the value of the `disabled_optimizers` setting: a comma-separated list
+    /// (DuckDB's `DisabledOptimizersSetting::SetGlobal`).
+    pub fn parse_list(list: &str) -> Result<BTreeSet<Self>> {
+        let mut result = BTreeSet::new();
+        for entry in list.split(',') {
+            let name = entry.trim().to_lowercase();
+            if name.is_empty() {
+                continue;
+            }
+            result.insert(Self::from_name(&name)?);
+        }
+        Ok(result)
+    }
+}
+
+/// The settings that steer the optimizer (one field per DuckDB setting).
+#[derive(Clone, Debug)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "mirrors independent boolean settings"
+)]
+pub struct OptimizerConfig {
+    /// `enable_optimizer` (`PRAGMA enable_optimizer` / `disable_optimizer`).
+    pub enabled: bool,
+    /// `disabled_optimizers`.
+    pub disabled: BTreeSet<OptimizerType>,
+    /// `debug_force_no_cross_product`.
+    pub force_no_cross_product: bool,
+    /// `prefer_range_joins`: no projection maps on joins that may become range joins.
+    pub prefer_range_joins: bool,
+    /// `preserve_insertion_order`.
+    pub preserve_insertion_order: bool,
+    /// `late_materialization_max_rows`: the largest LIMIT/SAMPLE late materialization
+    /// rewrites.
+    pub late_materialization_max_rows: u64,
+}
+
+impl Default for OptimizerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            disabled: BTreeSet::new(),
+            force_no_cross_product: false,
+            prefer_range_joins: false,
+            preserve_insertion_order: true,
+            late_materialization_max_rows: 50,
+        }
+    }
+}
+
+impl OptimizerConfig {
+    /// The configuration in a connection's settings, for optimizing outside the
+    /// connection's own query processing (`json_serialize_plan`).
+    pub fn from_settings(settings: &dyn rustdb_function::SettingsSource) -> Self {
+        use rustdb_function::cast::ValueCast as _;
+        let defaults = Self::default();
+        let setting = |name: &str, ty: &rustdb_types::LogicalType| {
+            settings
+                .current_setting(name)
+                .ok()
+                .filter(|value| !value.is_null())
+                .and_then(|value| value.default_cast_as(ty).ok())
+        };
+        let boolean = |name: &str, default: bool| {
+            setting(name, &rustdb_types::LogicalType::BOOLEAN)
+                .and_then(|value| value.as_bool())
+                .unwrap_or(default)
+        };
+        Self {
+            enabled: boolean("enable_optimizer", defaults.enabled),
+            disabled: setting("disabled_optimizers", &rustdb_types::LogicalType::VARCHAR)
+                .and_then(|value| value.to_varchar().ok())
+                .and_then(|list: String| OptimizerType::parse_list(&list).ok())
+                .unwrap_or_default(),
+            force_no_cross_product: boolean("debug_force_no_cross_product", defaults.force_no_cross_product),
+            prefer_range_joins: boolean("prefer_range_joins", defaults.prefer_range_joins),
+            preserve_insertion_order: boolean("preserve_insertion_order", defaults.preserve_insertion_order),
+            late_materialization_max_rows: setting(
+                "late_materialization_max_rows",
+                &rustdb_types::LogicalType::UBIGINT,
+            )
+            .and_then(|value| value.as_i128())
+            .and_then(|value| u64::try_from(value).ok())
+            .unwrap_or(defaults.late_materialization_max_rows),
+        }
+    }
+}
+
+/// Rewrites logical plans into cheaper equivalent ones (DuckDB's `Optimizer`).
+#[derive(Debug)]
+pub struct Optimizer {
+    pub(crate) context: Arc<ClientContext>,
+    pub(crate) config: OptimizerConfig,
+    /// The next unused table index (DuckDB's `Binder::GenerateTableIndex`).
+    next_table_index: Cell<u64>,
+    /// The time each pass took, in the order they ran (the optimizer phases DuckDB's
+    /// `RunOptimizer` reports to the query profiler).
+    timings: Vec<(OptimizerType, Duration)>,
+}
+
+/// Fixes the columns of every scan: the binder shares them with its table bindings
+/// while binding; from here on the optimizer owns them.
+fn finalize_column_ids(op: &mut LogicalOperator) {
+    if let LogicalKind::Get(get) = &mut op.kind {
+        get.sync_column_ids();
+        get.shared_column_ids = None;
+    }
+    for child in &mut op.children {
+        finalize_column_ids(child);
+    }
+}
+
+/// The largest table index a plan uses.
+fn max_table_index(op: &LogicalOperator) -> u64 {
+    let own = op
+        .column_bindings()
+        .iter()
+        .map(|binding| binding.table_index)
+        .filter(|&index| index != u64::MAX)
+        .max()
+        .unwrap_or(0);
+    let kind_index = match &op.kind {
+        LogicalKind::Aggregate(aggregate) => aggregate.group_index.max(aggregate.aggregate_index).max(
+            if aggregate.groupings_index == u64::MAX {
+                0
+            } else {
+                aggregate.groupings_index
+            },
+        ),
+        LogicalKind::ComparisonJoin(join) => join.mark_index,
+        _ => 0,
+    };
+    op.children
+        .iter()
+        .map(max_table_index)
+        .fold(own.max(kind_index), u64::max)
+}
+
+impl Optimizer {
+    /// An optimizer for plans bound in `context`.
+    pub fn new(context: Arc<ClientContext>, config: OptimizerConfig) -> Self {
+        Self {
+            context,
+            config,
+            next_table_index: Cell::new(0),
+            timings: Vec::new(),
+        }
+    }
+
+    /// The time each pass took, in the order they ran.
+    pub fn timings(&self) -> &[(OptimizerType, Duration)] {
+        &self.timings
+    }
+
+    /// Continues the table indexes after the `count` the binder generated (DuckDB's
+    /// optimizer generates them with the plan's binder); by default they follow the
+    /// largest one the plan uses.
+    pub fn reserve_table_indexes(&self, count: u64) {
+        self.next_table_index.set(self.next_table_index.get().max(count));
+    }
+
+    /// A fresh table index (DuckDB's `Binder::GenerateTableIndex`).
+    pub fn generate_table_index(&self) -> u64 {
+        let index = self.next_table_index.get();
+        self.next_table_index.set(index + 1);
+        index
+    }
+
+    /// The client context the plan was bound in.
+    pub fn context(&self) -> &ClientContext {
+        &self.context
+    }
+
+    /// Whether a pass is disabled (DuckDB's `Optimizer::OptimizerDisabled`).
+    pub fn optimizer_disabled(&self, ty: OptimizerType) -> bool {
+        self.config.disabled.contains(&ty)
+    }
+
+    /// Optimizes `plan` (DuckDB's `ClientContext` check of `enable_optimizer` and
+    /// `RequireOptimizer`, then `Optimizer::Optimize`).
+    pub fn optimize(&mut self, plan: LogicalOperator) -> Result<LogicalOperator> {
+        if !self.config.enabled || matches!(plan.kind, LogicalKind::Prepare { .. }) {
+            return Ok(plan);
+        }
+        let next = self.next_table_index.get().max(max_table_index(&plan) + 1);
+        self.next_table_index.set(next);
+        let mut plan = plan;
+        finalize_column_ids(&mut plan);
+        self.run_built_in_optimizers(plan)
+    }
+
+    /// Runs `pass` on the plan unless it is disabled (DuckDB's `RunOptimizer`).
+    fn run(
+        &mut self,
+        ty: OptimizerType,
+        plan: LogicalOperator,
+        pass: impl FnOnce(&mut Self, LogicalOperator) -> Result<LogicalOperator>,
+    ) -> Result<LogicalOperator> {
+        if self.optimizer_disabled(ty) {
+            return Ok(plan);
+        }
+        let start = Instant::now();
+        let result = pass(self, plan);
+        self.timings.push((ty, start.elapsed()));
+        result
+    }
+
+    /// DuckDB's `Optimizer::RunBuiltInOptimizers`.
+    fn run_built_in_optimizers(&mut self, plan: LogicalOperator) -> Result<LogicalOperator> {
+        if plan.children.is_empty()
+            && matches!(
+                plan.operator_type(),
+                LogicalOperatorType::LogicalTransaction
+                    | LogicalOperatorType::LogicalPragma
+                    | LogicalOperatorType::LogicalSet
+                    | LogicalOperatorType::LogicalAttach
+                    | LogicalOperatorType::LogicalUpdateExtensions
+                    | LogicalOperatorType::LogicalCreateSecret
+                    | LogicalOperatorType::LogicalExtensionOperator
+            )
+        {
+            return Ok(plan);
+        }
+        // Expression rewrites simplify the expression trees without changing the plan.
+        let plan = self.run(OptimizerType::ExpressionRewriter, plan, |optimizer, mut plan| {
+            ExpressionRewriter::new(optimizer).visit_operator(&mut plan)?;
+            Ok(plan)
+        })?;
+        // Try to inline CTEs instead of materializing them.
+        let plan = self.run(OptimizerType::CteInlining, plan, |optimizer, plan| {
+            Ok(crate::cte_inlining::inline_ctes(optimizer, plan))
+        })?;
+        // SUM(x + C) as SUM(x) + C * COUNT(x).
+        let plan = self.run(OptimizerType::SumRewriter, plan, |optimizer, mut plan| {
+            crate::sum_rewriter::rewrite_sums(optimizer, &mut plan)?;
+            Ok(plan)
+        })?;
+        let plan = self.run(OptimizerType::FilterPullup, plan, |_, plan| {
+            FilterPullup::default().rewrite(plan)
+        })?;
+        let plan = self.run(OptimizerType::FilterPushdown, plan, |optimizer, mut plan| {
+            FilterPushdown::check_mark_to_semi(&mut plan, &mut BTreeSet::new());
+            FilterPushdown::new(optimizer, true).rewrite(plan)
+        })?;
+        // Filters on every reference of a materialized CTE also filter its definition.
+        let plan = self.run(OptimizerType::CteFilterPusher, plan, |optimizer, plan| {
+            crate::cte_filter_pusher::push_cte_filters(optimizer, plan)
+        })?;
+        // IN lists as comparisons or MARK joins.
+        let plan = self.run(OptimizerType::InClause, plan, |optimizer, mut plan| {
+            crate::in_clause_rewriter::rewrite_in_clauses(optimizer, &mut plan)?;
+            Ok(plan)
+        })?;
+        // Redundant joins with duplicate-eliminated scans.
+        let plan = self.run(OptimizerType::Deliminator, plan, |_, mut plan| {
+            crate::deliminator::deliminate(&mut plan);
+            Ok(plan)
+        })?;
+        let plan = self.run(OptimizerType::CteInlining, plan, |optimizer, plan| {
+            Ok(crate::cte_inlining::inline_ctes(optimizer, plan))
+        })?;
+        let plan = self.run(OptimizerType::EmptyResultPullup, plan, |_, plan| {
+            crate::empty_result_pullup::pull_up_empty_results(plan)
+        })?;
+        // Whole-partition window aggregates become a join with a grouped aggregate.
+        let plan = self.run(OptimizerType::WindowSelfJoin, plan, |optimizer, mut plan| {
+            crate::window_self_join::optimize_window_self_joins(optimizer, &mut plan)?;
+            Ok(plan)
+        })?;
+        // Join ordering also turns cross products with filters into joins and sets the
+        // estimated cardinalities.
+        let plan = self.run(OptimizerType::JoinOrder, plan, |optimizer, plan| {
+            JoinOrderOptimizer::new(
+                optimizer.context(),
+                optimizer.config.force_no_cross_product,
+                optimizer.context().config.max_expression_depth,
+            )
+            .optimize(plan, None)
+        })?;
+        let plan = self.run(OptimizerType::JoinElimination, plan, |_, mut plan| {
+            crate::join_elimination::eliminate_joins(&mut plan);
+            Ok(plan)
+        })?;
+        // A lateral UNNEST runs on the outer rows instead of through a delim join.
+        let plan = self.run(OptimizerType::UnnestRewriter, plan, |_, mut plan| {
+            crate::unnest_rewriter::rewrite_unnests(&mut plan)?;
+            Ok(plan)
+        })?;
+        let plan = self.run(OptimizerType::UnusedColumns, plan, |optimizer, mut plan| {
+            remove_unused_columns(optimizer, &mut plan)?;
+            Ok(plan)
+        })?;
+        let plan = self.run(OptimizerType::DuplicateGroups, plan, |_, mut plan| {
+            crate::remove_duplicate_groups::remove_duplicate_groups(&mut plan);
+            Ok(plan)
+        })?;
+        // Repeated subexpressions are computed once.
+        let plan = self.run(
+            OptimizerType::CommonSubexpressions,
+            plan,
+            |optimizer, mut plan| {
+                crate::cse_optimizer::extract_common_subexpressions(optimizer, &mut plan);
+                Ok(plan)
+            },
+        )?;
+        // Projection maps drop columns as soon as they are no longer needed.
+        let plan = self.run(OptimizerType::ColumnLifetime, plan, |optimizer, mut plan| {
+            analyze_column_lifetime(&mut plan, optimizer.config.prefer_range_joins)?;
+            Ok(plan)
+        })?;
+        // With the column lifetimes known, the cheaper side of each join is built.
+        let plan = self.run(OptimizerType::BuildSideProbeSide, plan, |optimizer, mut plan| {
+            optimize_build_probe_side(&mut plan, optimizer.config.prefer_range_joins)?;
+            Ok(plan)
+        })?;
+        // Identical subplans are computed once, as a CTE.
+        let plan = self.run(OptimizerType::CommonSubplan, plan, |optimizer, mut plan| {
+            crate::common_subplan::optimize_common_subplans(optimizer, &mut plan)?;
+            Ok(plan)
+        })?;
+        // LIMIT below projections.
+        let plan = self.run(OptimizerType::LimitPushdown, plan, |_, plan| {
+            Ok(crate::limit_pushdown::optimize(plan))
+        })?;
+        // ORDER BY ... LIMIT over a table scan reads the row groups in the order's
+        // direction, leaving out those that cannot reach the result.
+        let plan = self.run(OptimizerType::RowGroupPruner, plan, |optimizer, plan| {
+            Ok(crate::row_group_pruner::optimize(optimizer, plan))
+        })?;
+        // SYSTEM samples of table scans skip vectors in the scan.
+        let plan = self.run(OptimizerType::SamplingPushdown, plan, |_, mut plan| {
+            crate::sampling_pushdown::push_down_sampling(&mut plan);
+            Ok(plan)
+        })?;
+        // ORDER BY + LIMIT becomes a Top-N.
+        let plan = self.run(OptimizerType::TopN, plan, |_, plan| {
+            Ok(crate::topn::optimize(plan))
+        })?;
+        // Top-N / LIMIT / SAMPLE pick their rows on few columns, then fetch the rest by
+        // row id.
+        let plan = self.run(OptimizerType::LateMaterialization, plan, |optimizer, mut plan| {
+            crate::late_materialization::late_materialize(optimizer, &mut plan)?;
+            Ok(plan)
+        })?;
+        let mut statistics_map = HashMap::new();
+        let plan = self.run(
+            OptimizerType::StatisticsPropagation,
+            plan,
+            |optimizer, mut plan| {
+                let mut propagator = StatisticsPropagator::new(optimizer, &mut plan)?;
+                propagator.propagate_statistics(&mut plan)?;
+                statistics_map = propagator.into_statistics_map();
+                Ok(plan)
+            },
+        )?;
+        // `row_number()` windows filtered to the first rows become grouped aggregates.
+        let plan = self.run(
+            OptimizerType::TopNWindowElimination,
+            plan,
+            |optimizer, mut plan| {
+                crate::topn_window_elimination::eliminate_topn_windows(
+                    optimizer,
+                    &mut plan,
+                    &statistics_map,
+                )?;
+                Ok(plan)
+            },
+        )?;
+        let plan = self.run(OptimizerType::CommonAggregate, plan, |_, mut plan| {
+            crate::common_aggregate::extract_common_aggregates(&mut plan);
+            Ok(plan)
+        })?;
+        let plan = self.run(OptimizerType::ColumnLifetime, plan, |optimizer, mut plan| {
+            analyze_column_lifetime(&mut plan, optimizer.config.prefer_range_joins)?;
+            Ok(plan)
+        })?;
+        // Cheap predicates first.
+        let plan = self.run(OptimizerType::ReorderFilter, plan, |_, mut plan| {
+            crate::expression_heuristics::reorder_filters(&mut plan);
+            Ok(plan)
+        })?;
+        // Hash joins filter their probe side scans by the range of their build keys.
+        let plan = self.run(OptimizerType::JoinFilterPushdown, plan, |_, mut plan| {
+            crate::join_filter_pushdown::push_join_filters(&mut plan);
+            Ok(plan)
+        })?;
+        Ok(plan)
+    }
+
+    /// Binds a call to a built-in scalar function; failures are internal errors (DuckDB's
+    /// `Optimizer::BindScalarFunction`).
+    pub fn bind_scalar_function(&self, name: &str, children: Vec<Expression>) -> Result<Expression> {
+        bind_scalar_function(&self.context, name, children, false).map_err(|error| {
+            Error::internal(format!(
+                "Optimizer exception - failed to bind function {name}: {}",
+                error.raw_message()
+            ))
+        })
+    }
+}
+
+/// Binds a call to a built-in scalar function by name, raising the binder's error if no
+/// overload fits (DuckDB's `FunctionBinder::BindScalarFunction` followed by
+/// `error.Throw()`).
+pub(crate) fn bind_scalar_function(
+    context: &ClientContext,
+    name: &str,
+    children: Vec<Expression>,
+    is_operator: bool,
+) -> Result<Expression> {
+    let entry = context
+        .get_entry(
+            "system",
+            "main",
+            rustdb_catalog::CatalogType::ScalarFunction,
+            name,
+            true,
+        )?
+        .ok_or_else(|| Error::internal(format!("scalar function {name} not found")))?;
+    let EntryKind::ScalarFunction(functions) = &entry.entry.kind else {
+        return Err(Error::internal(format!("{name} is not a scalar function")));
+    };
+    FunctionBinder::new(context)
+        .bind_scalar_function(functions, children, is_operator)?
+        .map_err(|error| error.error)
+}
+
+/// Binds a call to a built-in aggregate function by name, without DISTINCT, filter or
+/// ordering (DuckDB's `FunctionBinder::BindAggregateFunction` on e.g. `CountStarFun`).
+pub(crate) fn bind_aggregate_function(
+    context: &ClientContext,
+    name: &str,
+    children: Vec<Expression>,
+) -> Result<Expression> {
+    let entry = context
+        .get_entry(
+            "system",
+            "main",
+            rustdb_catalog::CatalogType::AggregateFunction,
+            name,
+            true,
+        )?
+        .ok_or_else(|| Error::internal(format!("aggregate function {name} not found")))?;
+    let EntryKind::AggregateFunction(functions) = &entry.entry.kind else {
+        return Err(Error::internal(format!("{name} is not an aggregate function")));
+    };
+    let binder = FunctionBinder::new(context);
+    let types = FunctionBinder::argument_types(&children);
+    let function = binder.bind_aggregate_overload(functions, &types)??;
+    binder.bind_aggregate_function(
+        function,
+        children,
+        None,
+        rustdb_planner::expression::AggregateType::NonDistinct,
+        None,
+    )
+}

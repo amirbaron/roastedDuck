@@ -1,0 +1,32 @@
+[package]
+name = "rustdb-capi"
+description = "DuckDB's C API (duckdb.h), ABI-compatible, as a drop-in libduckdb."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "duckdb"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[features]
+# Exposes the native connection only to the upstream ADBC test harness. Never enabled for shipping artifacts.
+adbc-test-api = []
+
+[dependencies]
+libloading = "0.8"
+rsa = { version = "=0.9.10", features = ["sha2"] }
+sha2 = { version = "0.11", default-features = false }
+libc = "0.2"
+rustdb.workspace = true
+rustdb-arrow = { path = "../arrow" }
+rustdb-ast.workspace = true
+rustdb-catalog = { path = "../catalog" }
+rustdb-common.workspace = true
+rustdb-function = { path = "../function" }
+rustdb-planner.workspace = true
+rustdb-types.workspace = true
+
+[lints]
+workspace = true

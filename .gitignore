@@ -1,0 +1,5 @@
+/target
+/.context
+*.wal
+/tools/oracle-shim/build
+!/tools/corpus/tests/fixtures/*.wal

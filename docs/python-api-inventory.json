@@ -1,0 +1,3256 @@
+{
+  "target": "DuckDB Python 1.5.6",
+  "commit": "802a345bb627435d2a05d63cb74454fa98b60b5e",
+  "stub_sha256": {
+    "_duckdb-stubs/__init__.pyi": "635861d25b401a6ecddb1274a38f5194b736bdec049585824e7d86a53eff9471",
+    "_duckdb-stubs/_enums.pyi": "af7e1f596a2b88f587a26dac6a33ceb3343ab08a424f3fad653150aaa091d62e",
+    "_duckdb-stubs/_expression.pyi": "96aa71deac67bd793bd81bd768a848ac63ca10fed4779bb91d88b1a1d6ed7a94",
+    "_duckdb-stubs/_func.pyi": "223f3d865fbb0e28ed76d3e2643f90d7e9f3042585028b6e726b8631541d0355",
+    "_duckdb-stubs/_sqltypes.pyi": "bda4d8aefd59c5dadedcf846967505e77f72d33e66f9eeb36ee873fd43bc8ae5",
+    "_duckdb-stubs/_typing.pyi": "a7e53def01fcb5ca9597890ab2c7095c552b346f4c5e34d93c60de354ee7f5a8"
+  },
+  "surfaces": [
+    {
+      "surface": "_duckdb",
+      "name": "BinderException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 190
+    },
+    {
+      "surface": "_duckdb",
+      "name": "CatalogException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 191
+    },
+    {
+      "surface": "_duckdb",
+      "name": "ConnectionException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 192
+    },
+    {
+      "surface": "_duckdb",
+      "name": "ConstraintException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 193
+    },
+    {
+      "surface": "_duckdb",
+      "name": "ConversionException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 194
+    },
+    {
+      "surface": "_duckdb",
+      "name": "DataError",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 195
+    },
+    {
+      "surface": "_duckdb",
+      "name": "DatabaseError",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 196
+    },
+    {
+      "surface": "_duckdb",
+      "name": "DependencyException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 197
+    },
+    {
+      "surface": "_duckdb",
+      "name": "DuckDBPyConnection",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 199,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "__del__",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 200
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "__enter__",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 201,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "__exit__",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 202,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "append",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 203
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "array_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 204
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "arrow",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 205,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "to_arrow_reader",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 208,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "to_arrow_table",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 209,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "begin",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 210,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "checkpoint",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 211,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "close",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 212,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "commit",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 213,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "create_function",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 228,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "cursor",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 240,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "decimal_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 241
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "df",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 242,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "dtype",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 243
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "duplicate",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 244,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "enum_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 245
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "execute",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 246,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "executemany",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 247,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "extract_statements",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 248
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "fetch_arrow_table",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 249,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "fetch_df",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 252,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "fetch_df_chunk",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 253,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "fetch_record_batch",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 256,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "fetchall",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 259,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "fetchdf",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 260,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "fetchmany",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 261,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "fetchnumpy",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 262,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "fetchone",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 263,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "filesystem_is_registered",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 264
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "from_arrow",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 265,
+      "evidence": "python-input-20261024/python-input-checkpoint.json; 32 exact C++ input outcomes and 39/41 upstream Arrow cases; native Pandas/NumPy, full protocols/frame/pushdown/platform coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "from_csv_auto",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 266,
+      "evidence": "python-csv-20261024: 98 pinned upstream CSV cases pass with one existing skip; 56 focused outcomes (only generated object-store URI identifiers normalized, raw errors retained); native COPY/scanner and snapshot ownership; broader filesystem/platform/API coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "from_df",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 311,
+      "evidence": "python-pandas-20261024/python-pandas-checkpoint.json; direct native Pandas/NumPy arrays, query_df and relation query; 37/37 host and 75/81 object tests; full API/nested/error/performance/platform acceptance remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "from_parquet",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 312,
+      "evidence": "python-parquet-20261024: primary three-file Parquet cohort 57/57; broader Parquet/Arrow cohort 59/60 with same timestamp-unit failure on C++; 50 focused Parquet and 19 calling-contract outcomes, with generated identifiers/addresses/work paths/internal stack traces normalized and raw text retained; broader metadata/platform/protocol coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "from_query",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 329,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "get_table_names",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 330
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "install_extension",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 331
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "get_profiling_information",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 340,
+      "evidence": "python-profile-20261024: native formats and real streaming counters; 2 upstream cases, 37 normalized functional comparisons, raw timing/resource profiles retained; 4 signed SDK stream/type tests; broader custom metrics/error/concurrency/platform coverage open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "enable_profiling",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 341,
+      "evidence": "python-profile-20261024: native formats and real streaming counters; 2 upstream cases, 37 normalized functional comparisons, raw timing/resource profiles retained; 4 signed SDK stream/type tests; broader custom metrics/error/concurrency/platform coverage open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "disable_profiling",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 342,
+      "evidence": "python-profile-20261024: native formats and real streaming counters; 2 upstream cases, 37 normalized functional comparisons, raw timing/resource profiles retained; 4 signed SDK stream/type tests; broader custom metrics/error/concurrency/platform coverage open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "interrupt",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 343,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "list_filesystems",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 344
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "list_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 345,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "load_extension",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 346
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "map_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 347,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "pl",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 355
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "query",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 358,
+      "evidence": "python-pandas-20261024/python-pandas-checkpoint.json; direct native Pandas/NumPy arrays, query_df and relation query; 37/37 host and 75/81 object tests; full API/nested/error/performance/platform acceptance remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "query_progress",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 359,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "read_csv",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 360,
+      "evidence": "python-csv-20261024: 98 pinned upstream CSV cases pass with one existing skip; 56 focused outcomes (only generated object-store URI identifiers normalized, raw errors retained); native COPY/scanner and snapshot ownership; broader filesystem/platform/API coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "read_json",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 405,
+      "evidence": "python-json-20261024: native JSON scans, 19 ordered options, retained file-like snapshots, compression and parallel ranges; Spark289 pass with existing4 skips/1xfail; JSON105/109 isolated outcomes with four unsafe C++ pending-error cases held unaccepted; native tests11pass+3existing ignored timing probes; broader platform/API coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "read_parquet",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 429,
+      "evidence": "python-parquet-20261024: primary three-file Parquet cohort 57/57; broader Parquet/Arrow cohort 59/60 with same timestamp-unit failure on C++; 50 focused Parquet and 19 calling-contract outcomes, with generated identifiers/addresses/work paths/internal stack traces normalized and raw text retained; broader metadata/platform/protocol coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "register",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 446,
+      "evidence": "python-pandas-20261024/python-pandas-checkpoint.json; direct native Pandas/NumPy arrays, query_df and relation query; 37/37 host and 75/81 object tests; full API/nested/error/performance/platform acceptance remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "register_filesystem",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 447
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "remove_function",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 448,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "rollback",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 449,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "row_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 450
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "sql",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 451,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "sqltype",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 452
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "string_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 453
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "struct_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 454
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "table",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 455,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "table_function",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 456,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "tf",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 457
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "torch",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 458
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 459
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "union_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 460
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "unregister",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 461,
+      "evidence": "python-input-20261024/python-input-checkpoint.json; 32 exact C++ input outcomes and 39/41 upstream Arrow cases; native Pandas/NumPy, full protocols/frame/pushdown/platform coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "unregister_filesystem",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 462
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "values",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 463,
+      "evidence": "python-values-20261024: 30 values/insertion, 14 describe and 23 update exact C++ outcomes; relation/expression cohort 116/123; full overload/platform/ownership coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "view",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 464,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "description",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 466,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyConnection",
+      "name": "rowcount",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 468,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "DuckDBPyRelation",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 470
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "__arrow_c_stream__",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 471,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "__contains__",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 472,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "__getattr__",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 473
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "__getitem__",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 474,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "__len__",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 475,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "aggregate",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 476,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "any_value",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 477,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "apply",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 480,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "arg_max",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 488,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "arg_min",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 491,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "arrow",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 494,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "to_arrow_reader",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 497,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "to_arrow_table",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 498,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "avg",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 499,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "bit_and",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 502,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "bit_or",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 505,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "bit_xor",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 508,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "bitstring_agg",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 511,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "bool_and",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 520,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "bool_or",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 523,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "close",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 526,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "count",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 527,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "create",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 530,
+      "evidence": "python-relations-20261024/python-relations-checkpoint.json; 36 exact C++ join/write outcomes and 101/101 selected DB-API tests; expression overloads/full type/error/platform/SQL coverage remain open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "create_view",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 531,
+      "evidence": "python-input-20261024/python-input-checkpoint.json; 32 exact C++ input outcomes and 39/41 upstream Arrow cases; native Pandas/NumPy, full protocols/frame/pushdown/platform coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "cross",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 532,
+      "evidence": "python-relations-20261024/python-relations-checkpoint.json; 36 exact C++ join/write outcomes and 101/101 selected DB-API tests; expression overloads/full type/error/platform/SQL coverage remain open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "cume_dist",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 533,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "dense_rank",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 534,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "describe",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 535,
+      "evidence": "python-values-20261024: 30 values/insertion, 14 describe and 23 update exact C++ outcomes; relation/expression cohort 116/123; full overload/platform/ownership coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "df",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 536,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "distinct",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 537,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "except_",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 538,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "execute",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 539,
+      "evidence": "python-parquet-20261024: primary three-file Parquet cohort 57/57; broader Parquet/Arrow cohort 59/60 with same timestamp-unit failure on C++; 50 focused Parquet and 19 calling-contract outcomes, with generated identifiers/addresses/work paths/internal stack traces normalized and raw text retained; broader metadata/platform/protocol coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "explain",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 540,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "favg",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 541,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fetch_arrow_reader",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 544
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fetch_arrow_table",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 547,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fetch_df_chunk",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 550,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fetch_record_batch",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 553,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fetchall",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 556,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fetchdf",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 557,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fetchmany",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 558,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fetchnumpy",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 559,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fetchone",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 560,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "filter",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 561,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "first",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 562,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "first_value",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 563,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "fsum",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 564,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "geomean",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 567,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "histogram",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 568,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "insert",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 571,
+      "evidence": "python-values-20261024: 30 values/insertion, 14 describe and 23 update exact C++ outcomes; relation/expression cohort 116/123; full overload/platform/ownership coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "insert_into",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 572,
+      "evidence": "python-relations-20261024/python-relations-checkpoint.json; 36 exact C++ join/write outcomes and 101/101 selected DB-API tests; expression overloads/full type/error/platform/SQL coverage remain open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "intersect",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 573,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "join",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 574,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "lag",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 575,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "last",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 584,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "last_value",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 585,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "lead",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 586,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "limit",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 595,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "list",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 596,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "map",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 599,
+      "evidence": "python-map-20261024: native bounded dataframe callbacks, 11 upstream cases pass; 82/84 isolated outcomes match; reference numeric-buffer and mapped-view lifetime discrepancies held unaccepted; persistent callbacks/platform/concurrency coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "max",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 602,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "mean",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 605,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "median",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 608,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "min",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 611,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "mode",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 614,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "n_tile",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 617,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "nth_value",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 620,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "order",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 628,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "percent_rank",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 629,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "pl",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 637
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "product",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 640,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "project",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 643,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "quantile",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 644,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "quantile_cont",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 652,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "quantile_disc",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 660,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "query",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 668,
+      "evidence": "python-parquet-20261024: primary three-file Parquet cohort 57/57; broader Parquet/Arrow cohort 59/60 with same timestamp-unit failure on C++; 50 focused Parquet and 19 calling-contract outcomes, with generated identifiers/addresses/work paths/internal stack traces normalized and raw text retained; broader metadata/platform/protocol coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "rank",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 669,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "rank_dense",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 670,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "row_number",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 671,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "select",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 672,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "select_dtypes",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 673,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "select_types",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 674,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "set_alias",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 675,
+      "evidence": "python-relations-20261024/python-relations-checkpoint.json; 36 exact C++ join/write outcomes and 101/101 selected DB-API tests; expression overloads/full type/error/platform/SQL coverage remain open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "show",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 676,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "sort",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 685,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "sql_query",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 686,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "std",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 687,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "stddev",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 690,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "stddev_pop",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 693,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "stddev_samp",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 696,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "string_agg",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 699,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "sum",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 702,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "tf",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 705
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "to_csv",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 706,
+      "evidence": "python-csv-20261024: 98 pinned upstream CSV cases pass with one existing skip; 56 focused outcomes (only generated object-store URI identifiers normalized, raw errors retained); native COPY/scanner and snapshot ownership; broader filesystem/platform/API coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "to_df",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 726,
+      "evidence": "python-relations-20261024/python-relations-checkpoint.json; 36 exact C++ join/write outcomes and 101/101 selected DB-API tests; expression overloads/full type/error/platform/SQL coverage remain open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "to_parquet",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 727,
+      "evidence": "python-parquet-20261024: primary three-file Parquet cohort 57/57; broader Parquet/Arrow cohort 59/60 with same timestamp-unit failure on C++; 50 focused Parquet and 19 calling-contract outcomes, with generated identifiers/addresses/work paths/internal stack traces normalized and raw text retained; broader metadata/platform/protocol coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "to_table",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 744,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "to_view",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 745,
+      "evidence": "python-input-20261024/python-input-checkpoint.json; 32 exact C++ input outcomes and 39/41 upstream Arrow cases; native Pandas/NumPy, full protocols/frame/pushdown/platform coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "torch",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 746
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "union",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 747,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "unique",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 748,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "update",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 749,
+      "evidence": "python-values-20261024: 30 values/insertion, 14 describe and 23 update exact C++ outcomes; relation/expression cohort 116/123; full overload/platform/ownership coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "value_counts",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 750,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "var",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 751,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "var_pop",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 754,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "var_samp",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 757,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "variance",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 760,
+      "evidence": "python-aggregates-20261024: four pinned aggregate/window/grouping/function files 108 passed with one existing skip; 79/81 focused outcomes, two unaccepted UTF-8 trim discrepancies; grouping/window range microbenchmarks retain speed-memory outliers; broader argument/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "write_csv",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 763,
+      "evidence": "python-csv-20261024: 98 pinned upstream CSV cases pass with one existing skip; 56 focused outcomes (only generated object-store URI identifiers normalized, raw errors retained); native COPY/scanner and snapshot ownership; broader filesystem/platform/API coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "write_parquet",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 783,
+      "evidence": "python-parquet-20261024: primary three-file Parquet cohort 57/57; broader Parquet/Arrow cohort 59/60 with same timestamp-unit failure on C++; 50 focused Parquet and 19 calling-contract outcomes, with generated identifiers/addresses/work paths/internal stack traces normalized and raw text retained; broader metadata/platform/protocol coverage remains open"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "alias",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 801,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "columns",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 803,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "description",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 805,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "dtypes",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 807,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "shape",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 809,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 811,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb.DuckDBPyRelation",
+      "name": "types",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 813,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "Error",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 815
+    },
+    {
+      "surface": "_duckdb",
+      "name": "FatalException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 816
+    },
+    {
+      "surface": "_duckdb",
+      "name": "HTTPException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 818
+    },
+    {
+      "surface": "_duckdb",
+      "name": "IOException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 824
+    },
+    {
+      "surface": "_duckdb",
+      "name": "IntegrityError",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 825
+    },
+    {
+      "surface": "_duckdb",
+      "name": "InternalError",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 826
+    },
+    {
+      "surface": "_duckdb",
+      "name": "InternalException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 827
+    },
+    {
+      "surface": "_duckdb",
+      "name": "InterruptException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 828
+    },
+    {
+      "surface": "_duckdb",
+      "name": "InvalidInputException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 829
+    },
+    {
+      "surface": "_duckdb",
+      "name": "InvalidTypeException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 830
+    },
+    {
+      "surface": "_duckdb",
+      "name": "NotImplementedException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 831
+    },
+    {
+      "surface": "_duckdb",
+      "name": "NotSupportedError",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 832
+    },
+    {
+      "surface": "_duckdb",
+      "name": "OperationalError",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 833
+    },
+    {
+      "surface": "_duckdb",
+      "name": "OutOfMemoryException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 834
+    },
+    {
+      "surface": "_duckdb",
+      "name": "OutOfRangeException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 835
+    },
+    {
+      "surface": "_duckdb",
+      "name": "ParserException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 836
+    },
+    {
+      "surface": "_duckdb",
+      "name": "PermissionException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 837
+    },
+    {
+      "surface": "_duckdb",
+      "name": "ProgrammingError",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 838
+    },
+    {
+      "surface": "_duckdb",
+      "name": "SequenceException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 839
+    },
+    {
+      "surface": "_duckdb",
+      "name": "SerializationException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 840
+    },
+    {
+      "surface": "_duckdb",
+      "name": "Statement",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 842
+    },
+    {
+      "surface": "_duckdb.Statement",
+      "name": "expected_result_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 844
+    },
+    {
+      "surface": "_duckdb.Statement",
+      "name": "named_parameters",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 846
+    },
+    {
+      "surface": "_duckdb.Statement",
+      "name": "query",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 848
+    },
+    {
+      "surface": "_duckdb.Statement",
+      "name": "type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 850
+    },
+    {
+      "surface": "_duckdb",
+      "name": "SyntaxException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 852
+    },
+    {
+      "surface": "_duckdb",
+      "name": "TransactionException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 853
+    },
+    {
+      "surface": "_duckdb",
+      "name": "TypeMismatchException",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 854
+    },
+    {
+      "surface": "_duckdb",
+      "name": "Warning",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 855
+    },
+    {
+      "surface": "_duckdb",
+      "name": "CaseExpression",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 857,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "CoalesceOperator",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 858,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "ColumnExpression",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 859,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "ConstantExpression",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 860,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "DefaultExpression",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 861,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "FunctionExpression",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 862,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "LambdaExpression",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 863,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "SQLExpression",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 864,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "StarExpression",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 865,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "aggregate",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 866
+    },
+    {
+      "surface": "_duckdb",
+      "name": "alias",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 873
+    },
+    {
+      "surface": "_duckdb",
+      "name": "append",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 874
+    },
+    {
+      "surface": "_duckdb",
+      "name": "array_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 877,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "arrow",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 888,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "to_arrow_reader",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 889,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "to_arrow_table",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 892,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "begin",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 895,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "checkpoint",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 896,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "close",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 897,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "commit",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 898,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "connect",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 899,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "create_function",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 918,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "cursor",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 930,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "decimal_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 931,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "default_connection",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 934,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "description",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 935,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "df",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 941,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "distinct",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 942
+    },
+    {
+      "surface": "_duckdb",
+      "name": "dtype",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 943,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "duplicate",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 944,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "enum_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 945
+    },
+    {
+      "surface": "_duckdb",
+      "name": "execute",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 952,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "executemany",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 958,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "extract_statements",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 964
+    },
+    {
+      "surface": "_duckdb",
+      "name": "fetch_arrow_table",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 965,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "fetch_df",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 971,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "fetch_df_chunk",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 972,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "fetch_record_batch",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 978,
+      "evidence": "python-reader-20261024/python-reader-checkpoint.json; lazy native C streams, 30 exact C++ reader outcomes and 41/41 selected Arrow tests; complete concurrency/protocol/type/platform coverage remains pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "fetchall",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 984,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "fetchdf",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 985,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "fetchmany",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 986,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "fetchnumpy",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 989,
+      "evidence": "python-host-20261024/python-host-checkpoint.json; native bounded conversion, 100/101 DB-API and 23/37 broader host tests; one retained Arrow discrepancy and full type/platform/API coverage pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "fetchone",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 992,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "filesystem_is_registered",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 993
+    },
+    {
+      "surface": "_duckdb",
+      "name": "filter",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 994
+    },
+    {
+      "surface": "_duckdb",
+      "name": "from_arrow",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1000,
+      "evidence": "python-input-20261024/python-input-checkpoint.json; 32 exact C++ input outcomes and 39/41 upstream Arrow cases; native Pandas/NumPy, full protocols/frame/pushdown/platform coverage pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "from_csv_auto",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1005,
+      "evidence": "python-csv-20261024: 98 pinned upstream CSV cases pass with one existing skip; 56 focused outcomes (only generated object-store URI identifiers normalized, raw errors retained); native COPY/scanner and snapshot ownership; broader filesystem/platform/API coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "from_df",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1049,
+      "evidence": "python-pandas-20261024/python-pandas-checkpoint.json; direct native Pandas/NumPy arrays, query_df and relation query; 37/37 host and 75/81 object tests; full API/nested/error/performance/platform acceptance remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "from_parquet",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1050,
+      "evidence": "python-parquet-20261024: primary three-file Parquet cohort 57/57; broader Parquet/Arrow cohort 59/60 with same timestamp-unit failure on C++; 50 focused Parquet and 19 calling-contract outcomes, with generated identifiers/addresses/work paths/internal stack traces normalized and raw text retained; broader metadata/platform/protocol coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "from_query",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1067,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "get_table_names",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1074
+    },
+    {
+      "surface": "_duckdb",
+      "name": "install_extension",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1077
+    },
+    {
+      "surface": "_duckdb",
+      "name": "interrupt",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1086,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "limit",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1087
+    },
+    {
+      "surface": "_duckdb",
+      "name": "get_profiling_information",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1094,
+      "evidence": "python-profile-20261024: native formats and real streaming counters; 2 upstream cases, 37 normalized functional comparisons, raw timing/resource profiles retained; 4 signed SDK stream/type tests; broader custom metrics/error/concurrency/platform coverage open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "enable_profiling",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1097,
+      "evidence": "python-profile-20261024: native formats and real streaming counters; 2 upstream cases, 37 normalized functional comparisons, raw timing/resource profiles retained; 4 signed SDK stream/type tests; broader custom metrics/error/concurrency/platform coverage open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "disable_profiling",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1098,
+      "evidence": "python-profile-20261024: native formats and real streaming counters; 2 upstream cases, 37 normalized functional comparisons, raw timing/resource profiles retained; 4 signed SDK stream/type tests; broader custom metrics/error/concurrency/platform coverage open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "list_filesystems",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1099
+    },
+    {
+      "surface": "_duckdb",
+      "name": "list_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1100,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "load_extension",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1101
+    },
+    {
+      "surface": "_duckdb",
+      "name": "map_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1102,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "order",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1105
+    },
+    {
+      "surface": "_duckdb",
+      "name": "pl",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1123
+    },
+    {
+      "surface": "_duckdb",
+      "name": "project",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1129
+    },
+    {
+      "surface": "_duckdb",
+      "name": "query",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1132,
+      "evidence": "python-pandas-20261024/python-pandas-checkpoint.json; direct native Pandas/NumPy arrays, query_df and relation query; 37/37 host and 75/81 object tests; full API/nested/error/performance/platform acceptance remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "query_df",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1139,
+      "evidence": "python-pandas-20261024/python-pandas-checkpoint.json; direct native Pandas/NumPy arrays, query_df and relation query; 37/37 host and 75/81 object tests; full API/nested/error/performance/platform acceptance remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "query_progress",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1146,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "read_csv",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1147,
+      "evidence": "python-csv-20261024: 98 pinned upstream CSV cases pass with one existing skip; 56 focused outcomes (only generated object-store URI identifiers normalized, raw errors retained); native COPY/scanner and snapshot ownership; broader filesystem/platform/API coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "read_json",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1191,
+      "evidence": "python-json-20261024: native JSON scans, 19 ordered options, retained file-like snapshots, compression and parallel ranges; Spark289 pass with existing4 skips/1xfail; JSON105/109 isolated outcomes with four unsafe C++ pending-error cases held unaccepted; native tests11pass+3existing ignored timing probes; broader platform/API coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "read_parquet",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1214,
+      "evidence": "python-parquet-20261024: primary three-file Parquet cohort 57/57; broader Parquet/Arrow cohort 59/60 with same timestamp-unit failure on C++; 50 focused Parquet and 19 calling-contract outcomes, with generated identifiers/addresses/work paths/internal stack traces normalized and raw text retained; broader metadata/platform/protocol coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "register",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1231,
+      "evidence": "python-pandas-20261024/python-pandas-checkpoint.json; direct native Pandas/NumPy arrays, query_df and relation query; 37/37 host and 75/81 object tests; full API/nested/error/performance/platform acceptance remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "register_filesystem",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1237
+    },
+    {
+      "surface": "_duckdb",
+      "name": "remove_function",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1240,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "rollback",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1241,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "row_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1242,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "rowcount",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1243,
+      "evidence": "python-bindings-20261024/foundation-comparison-4.json and dbapi-rust-3; broader coverage still pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "set_default_connection",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1244,
+      "evidence": "python-parquet-20261024: primary three-file Parquet cohort 57/57; broader Parquet/Arrow cohort 59/60 with same timestamp-unit failure on C++; 50 focused Parquet and 19 calling-contract outcomes, with generated identifiers/addresses/work paths/internal stack traces normalized and raw text retained; broader metadata/platform/protocol coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "sql",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1245,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "sqltype",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1252,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "string_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1253,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "struct_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1254,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "table",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1255,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "table_function",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1256,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "tf",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1262
+    },
+    {
+      "surface": "_duckdb",
+      "name": "tokenize",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1263
+    },
+    {
+      "surface": "_duckdb",
+      "name": "torch",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1264
+    },
+    {
+      "surface": "_duckdb",
+      "name": "type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1265,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "union_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1266,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "unregister",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1267,
+      "evidence": "python-input-20261024/python-input-checkpoint.json; 32 exact C++ input outcomes and 39/41 upstream Arrow cases; native Pandas/NumPy, full protocols/frame/pushdown/platform coverage pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "unregister_filesystem",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1268
+    },
+    {
+      "surface": "_duckdb",
+      "name": "values",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1269,
+      "evidence": "python-values-20261024: 30 values/insertion, 14 describe and 23 update exact C++ outcomes; relation/expression cohort 116/123; full overload/platform/ownership coverage remains open"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "view",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1270,
+      "evidence": "python-bindings-20261024/python-relation-checkpoint.json; native query trees, 30 exact C++ outcomes; complete API/overloads/upstream coverage pending"
+    },
+    {
+      "surface": "_duckdb",
+      "name": "write_csv",
+      "status": "partial",
+      "source": "_duckdb-stubs/__init__.pyi",
+      "line": 1271,
+      "evidence": "python-csv-20261024: 98 pinned upstream CSV cases pass with one existing skip; 56 focused outcomes (only generated object-store URI identifiers normalized, raw errors retained); native COPY/scanner and snapshot ownership; broader filesystem/platform/API coverage remains open"
+    },
+    {
+      "surface": "_duckdb._enums",
+      "name": "CppEnum",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 3
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "__eq__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 11
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "__getstate__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 12
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "__hash__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 13
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "__index__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 14
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "__init__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 15
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "__int__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 16
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "__ne__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 17
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "__setstate__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 18
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "name",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 20
+    },
+    {
+      "surface": "_duckdb._enums.CppEnum",
+      "name": "value",
+      "status": "pending",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 22
+    },
+    {
+      "surface": "_duckdb._enums",
+      "name": "CSVLineTerminator",
+      "status": "partial",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 24,
+      "evidence": "python-csv-20261024: 98 pinned upstream CSV cases pass with one existing skip; 56 focused outcomes (only generated object-store URI identifiers normalized, raw errors retained); native COPY/scanner and snapshot ownership; broader filesystem/platform/API coverage remains open"
+    },
+    {
+      "surface": "_duckdb._enums",
+      "name": "ExpectedResultType",
+      "status": "partial",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 31
+    },
+    {
+      "surface": "_duckdb._enums",
+      "name": "ExplainType",
+      "status": "partial",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 39
+    },
+    {
+      "surface": "_duckdb._enums",
+      "name": "PythonExceptionHandling",
+      "status": "partial",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 48,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb._enums",
+      "name": "RenderMode",
+      "status": "partial",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 55,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb._enums",
+      "name": "StatementType",
+      "status": "partial",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 64
+    },
+    {
+      "surface": "_duckdb._enums",
+      "name": "token_type",
+      "status": "partial",
+      "source": "_duckdb-stubs/_enums.pyi",
+      "line": 99
+    },
+    {
+      "surface": "_duckdb._expression",
+      "name": "Expression",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 6,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__add__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 7,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__and__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 8,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__div__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 9,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__eq__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 10,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__floordiv__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 11,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__ge__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 12,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__gt__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 13,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__init__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 17,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__invert__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 18,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__le__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 19,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__lt__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 20,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__mod__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 21,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__mul__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 22,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__ne__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 23,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__neg__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 24,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__or__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 25,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__pow__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 26,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__radd__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 27,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__rand__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 28,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__rdiv__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 29,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__rfloordiv__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 30,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__rmod__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 31,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__rmul__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 32,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__ror__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 33,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__rpow__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 34,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__rsub__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 35,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__rtruediv__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 36,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__sub__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 37,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "__truediv__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 38,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "alias",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 39,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "asc",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 40,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "between",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 41,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "cast",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 42,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "collate",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 43,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "desc",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 44,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "get_name",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 45,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "isin",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 46,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "isnotin",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 47,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "isnotnull",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 48,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "isnull",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 49,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "nulls_first",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 50,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "nulls_last",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 51,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "otherwise",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 52,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "show",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 53,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._expression.Expression",
+      "name": "when",
+      "status": "partial",
+      "source": "_duckdb-stubs/_expression.pyi",
+      "line": 54,
+      "evidence": "python-expression-20261024/python-expression-checkpoint.json; native expression trees and relation integration; 64 exact C++ outcomes, 101/123 combined upstream cases, no collection errors; full overload/error/parser-option/platform/UDF coverage remains open"
+    },
+    {
+      "surface": "_duckdb._func",
+      "name": "FunctionNullHandling",
+      "status": "partial",
+      "source": "_duckdb-stubs/_func.pyi",
+      "line": 6,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb._func",
+      "name": "PythonUDFType",
+      "status": "partial",
+      "source": "_duckdb-stubs/_func.pyi",
+      "line": 13,
+      "evidence": "python-udf-20261024: all seven pinned UDF files 559 passed, one existing xfail; 26 focused UDF outcomes; render 18/19 with unaccepted string-mode discrepancy; broader overload/platform coverage remains open"
+    },
+    {
+      "surface": "_duckdb._sqltypes",
+      "name": "DuckDBPyType",
+      "status": "partial",
+      "source": "_duckdb-stubs/_sqltypes.pyi",
+      "line": 37,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
+    },
+    {
+      "surface": "_duckdb._sqltypes.DuckDBPyType",
+      "name": "__eq__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_sqltypes.pyi",
+      "line": 38,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
+    },
+    {
+      "surface": "_duckdb._sqltypes.DuckDBPyType",
+      "name": "__getattr__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_sqltypes.pyi",
+      "line": 39,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
+    },
+    {
+      "surface": "_duckdb._sqltypes.DuckDBPyType",
+      "name": "__getitem__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_sqltypes.pyi",
+      "line": 40,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
+    },
+    {
+      "surface": "_duckdb._sqltypes.DuckDBPyType",
+      "name": "__hash__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_sqltypes.pyi",
+      "line": 41,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
+    },
+    {
+      "surface": "_duckdb._sqltypes.DuckDBPyType",
+      "name": "__init__",
+      "status": "partial",
+      "source": "_duckdb-stubs/_sqltypes.pyi",
+      "line": 45,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
+    },
+    {
+      "surface": "_duckdb._sqltypes.DuckDBPyType",
+      "name": "children",
+      "status": "partial",
+      "source": "_duckdb-stubs/_sqltypes.pyi",
+      "line": 47,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
+    },
+    {
+      "surface": "_duckdb._sqltypes.DuckDBPyType",
+      "name": "id",
+      "status": "partial",
+      "source": "_duckdb-stubs/_sqltypes.pyi",
+      "line": 49,
+      "evidence": "python-nested-20261024: 34 upstream type/conversion cases and 84 exact focused outcomes; native type-name parsing, builtin/NumPy/GenericAlias/nullable types and nested metadata; default/explicit connection, remaining argument and platform coverage remain open"
+    },
+    {
+      "surface": "_duckdb._typing",
+      "name": "NPProtocol",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 19
+    },
+    {
+      "surface": "_duckdb._typing.NPProtocol",
+      "name": "dtype",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 22
+    },
+    {
+      "surface": "_duckdb._typing.NPProtocol",
+      "name": "ndim",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 24
+    },
+    {
+      "surface": "_duckdb._typing.NPProtocol",
+      "name": "__array__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 25
+    },
+    {
+      "surface": "_duckdb._typing.NPProtocol",
+      "name": "__array_wrap__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 26
+    },
+    {
+      "surface": "_duckdb._typing.NPProtocol",
+      "name": "__array_interface__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 28
+    },
+    {
+      "surface": "_duckdb._typing.NPProtocol",
+      "name": "__array_priority__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 30
+    },
+    {
+      "surface": "_duckdb._typing",
+      "name": "NPScalarTypeLike",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 32
+    },
+    {
+      "surface": "_duckdb._typing.NPScalarTypeLike",
+      "name": "itemsize",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 34
+    },
+    {
+      "surface": "_duckdb._typing",
+      "name": "NPArrayLike",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 36
+    },
+    {
+      "surface": "_duckdb._typing.NPArrayLike",
+      "name": "__len__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 44
+    },
+    {
+      "surface": "_duckdb._typing.NPArrayLike",
+      "name": "__contains__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 45
+    },
+    {
+      "surface": "_duckdb._typing.NPArrayLike",
+      "name": "__iter__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 46
+    },
+    {
+      "surface": "_duckdb._typing.NPArrayLike",
+      "name": "__array_finalize__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 47
+    },
+    {
+      "surface": "_duckdb._typing.NPArrayLike",
+      "name": "__getitem__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 48
+    },
+    {
+      "surface": "_duckdb._typing.NPArrayLike",
+      "name": "__setitem__",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 49
+    },
+    {
+      "surface": "_duckdb._typing.NPArrayLike",
+      "name": "shape",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 51
+    },
+    {
+      "surface": "_duckdb._typing.NPArrayLike",
+      "name": "size",
+      "status": "pending",
+      "source": "_duckdb-stubs/_typing.pyi",
+      "line": 53
+    }
+  ],
+  "note": "414 module/class/member declarations across pinned stubs, overloads deduplicated. 385 resolve to runtime exports in the frozen C++ build; 29 are typing-only/protocol declarations. Partial denotes implementation/availability with scoped evidence, never full parity. Pure-Python value/frontend/packaging and interpreter/dependency/platform matrices remain additional requirements.",
+  "runtime_audit": {
+    "date": "2026-10-25",
+    "cpp_exposed": 385,
+    "rust_exposed": 385,
+    "missing_runtime_exports": [],
+    "stub_only_declarations_not_exposed_by_cpp": [
+      "_duckdb._enums.CppEnum",
+      "_duckdb._enums.CppEnum.__eq__",
+      "_duckdb._enums.CppEnum.__getstate__",
+      "_duckdb._enums.CppEnum.__hash__",
+      "_duckdb._enums.CppEnum.__index__",
+      "_duckdb._enums.CppEnum.__init__",
+      "_duckdb._enums.CppEnum.__int__",
+      "_duckdb._enums.CppEnum.__ne__",
+      "_duckdb._enums.CppEnum.__setstate__",
+      "_duckdb._enums.CppEnum.name",
+      "_duckdb._enums.CppEnum.value",
+      "_duckdb._typing.NPProtocol",
+      "_duckdb._typing.NPProtocol.dtype",
+      "_duckdb._typing.NPProtocol.ndim",
+      "_duckdb._typing.NPProtocol.__array__",
+      "_duckdb._typing.NPProtocol.__array_wrap__",
+      "_duckdb._typing.NPProtocol.__array_interface__",
+      "_duckdb._typing.NPProtocol.__array_priority__",
+      "_duckdb._typing.NPScalarTypeLike",
+      "_duckdb._typing.NPScalarTypeLike.itemsize",
+      "_duckdb._typing.NPArrayLike",
+      "_duckdb._typing.NPArrayLike.__len__",
+      "_duckdb._typing.NPArrayLike.__contains__",
+      "_duckdb._typing.NPArrayLike.__iter__",
+      "_duckdb._typing.NPArrayLike.__array_finalize__",
+      "_duckdb._typing.NPArrayLike.__getitem__",
+      "_duckdb._typing.NPArrayLike.__setitem__",
+      "_duckdb._typing.NPArrayLike.shape",
+      "_duckdb._typing.NPArrayLike.size"
+    ],
+    "evidence": ".context/artifacts/python-type-api-20261025/api-audit-comparison-7.json",
+    "note": "All385frozen runtimeentries are present;29typing/protocol declarations separate. This is availability only,not full argument/overload/lifetime/dependency/platform parity. Constructor225/tokenizer298/descriptors13/Torch51/TF51 focused comparisons are recorded separately."
+  },
+  "module_helper_boundaries": {
+    "date": "2026-10-25",
+    "helpers": 68,
+    "status": "partial; strict optional connection and Python call-binding behavior, not full argument-value conversions or semantics",
+    "provided_argument_cases": 396,
+    "boundary_cases": 1872,
+    "state_cases": 28,
+    "count_note": "Overlapping scoped cohorts; do not sum",
+    "evidence": ".context/artifacts/python-root-contract-20261025/"
+  }
+}

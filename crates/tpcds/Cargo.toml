@@ -1,0 +1,24 @@
+[package]
+name = "rustdb-tpcds"
+description = "The TPC-DS extension: dsdgen, tpcds_queries, tpcds_answers and PRAGMA tpcds (DuckDB's extension/tpcds), on a port of the TPC's dsdgen."
+version.workspace = true
+edition.workspace = true
+# dsdgen and its distributions are the TPC's; see README.md.
+license-file = "LICENSE"
+rust-version.workspace = true
+
+[dependencies]
+rustdb-common.workspace = true
+rustdb-types.workspace = true
+rustdb-ast.workspace = true
+rustdb-planner.workspace = true
+rustdb-execution.workspace = true
+rustdb-catalog = { path = "../catalog" }
+rustdb-function = { path = "../function" }
+rustdb-storage = { path = "../storage" }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+rustdb-buffer = { path = "../buffer" }

@@ -1,0 +1,59 @@
+--- a/Sources/DuckDB/Extensions/Decimal+IntHuge.swift
++++ b/Sources/DuckDB/Extensions/Decimal+IntHuge.swift
+@@ -27,6 +27,10 @@
+ public extension Decimal {
+   
+   init(_ source: IntHuge) {
++    #if os(Linux)
++    // Decimal's raw storage initializer is internal in swift-foundation.
++    self = Decimal(string: String(source), locale: Locale(identifier: "en_US_POSIX"))!
++    #else
+     let magnitude =  source.magnitude
+     let mantissa: (UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16)
+     let significantBitCount = magnitude.bitWidth - magnitude.leadingZeroBitCount
+@@ -47,9 +51,14 @@
+       _reserved: 0,
+       _mantissa: mantissa
+     )
++    #endif
+   }
+   
+   init(_ source: UIntHuge) {
++    #if os(Linux)
++    // Decimal's raw storage initializer is internal in swift-foundation.
++    self = Decimal(string: String(source), locale: Locale(identifier: "en_US_POSIX"))!
++    #else
+     let mantissa: (UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16)
+     let significantBitCount = source.bitWidth - source.leadingZeroBitCount
+     let length = (significantBitCount + (UInt16.bitWidth - 1)) / UInt16.bitWidth
+@@ -69,5 +78,6 @@
+       _reserved: 0,
+       _mantissa: mantissa
+     )
++    #endif
+   }
+ }
+--- a/Sources/DuckDB/Internal/CTypeUtilities.swift
++++ b/Sources/DuckDB/Internal/CTypeUtilities.swift
+@@ -279,6 +279,13 @@
+ fileprivate extension Decimal {
+   
+   var hugeMantissa: UIntHuge {
++    #if os(Linux)
++    // significand and NSDecimalString expose the coefficient without relying
++    // on Foundation's private, platform-specific Decimal storage layout.
++    var coefficient = significand.magnitude
++    let text = NSDecimalString(&coefficient, Locale(identifier: "en_US_POSIX"))
++    return UIntHuge(text)!
++    #else
+     let components = [
+       _mantissa.0, _mantissa.1, _mantissa.2, _mantissa.3,
+       _mantissa.4, _mantissa.5, _mantissa.6, _mantissa.7
+@@ -288,6 +295,7 @@
+       mantissa += UIntHuge(components[i]) << (i * 16)
+     }
+     return mantissa
++    #endif
+   }
+ }
+ 

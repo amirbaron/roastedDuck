@@ -1,0 +1,23 @@
+[package]
+name = "rustdb-tpch"
+description = "The TPC-H extension: dbgen, tpch_queries, tpch_answers and PRAGMA tpch (DuckDB's extension/tpch), on a port of the TPC's dbgen."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rustdb-common.workspace = true
+rustdb-types.workspace = true
+rustdb-ast.workspace = true
+rustdb-planner.workspace = true
+rustdb-execution.workspace = true
+rustdb-catalog = { path = "../catalog" }
+rustdb-function = { path = "../function" }
+rustdb-storage = { path = "../storage" }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+rustdb-buffer = { path = "../buffer" }

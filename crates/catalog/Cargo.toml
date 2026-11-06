@@ -1,0 +1,19 @@
+[package]
+name = "rustdb-catalog"
+description = "The MVCC catalog: schemas, tables, functions and their versions."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rustdb-common.workspace = true
+rustdb-types.workspace = true
+rustdb-function = { path = "../function" }
+rustdb-ast.workspace = true
+rustdb-storage = { path = "../storage" }
+rustdb-serde = { path = "../serde" }
+rustdb-buffer = { path = "../buffer" }
+
+[lints]
+workspace = true

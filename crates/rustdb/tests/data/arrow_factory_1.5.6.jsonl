@@ -1,0 +1,18 @@
+{"case":"all","rows":[["0","100","1000"],["1","101","1001"],["2","102","1002"],["3","103","1003"],["4","104","1004"],["5","105","1005"],["6","106","1006"],["7","107","1007"]],"producer":[{"columns":["a","b","c"],"mapping":{"0":0,"1":1,"2":2},"filters":{},"rows":8}]}
+{"case":"second","rows":[["100"],["101"],["102"],["103"],["104"],["105"],["106"],["107"]],"producer":[{"columns":["b"],"mapping":{"0":1},"filters":{},"rows":8}]}
+{"case":"reorder","rows":[["1000","100"],["1001","101"],["1002","102"],["1003","103"],["1004","104"],["1005","105"],["1006","106"],["1007","107"]],"producer":[{"columns":["b","c"],"mapping":{"0":1,"1":2},"filters":{},"rows":8}]}
+{"case":"filter_other","rows":[["1003"],["1004"],["1005"],["1006"],["1007"]],"producer":[{"columns":["a","c"],"mapping":{"0":0,"1":2},"filters":{"0":"a>=3"},"rows":5}]}
+{"case":"equality","rows":[["4"]],"producer":[{"columns":["a","b"],"mapping":{"0":0,"1":1},"filters":{"1":"b=104"},"rows":1}]}
+{"case":"count","rows":[["8"]],"producer":[{"columns":["a"],"mapping":{"0":0},"filters":{},"rows":8}]}
+{"case":"empty","rows":[["0"]],"producer":[{"columns":["a"],"mapping":{"0":0},"filters":{"0":"a<0"},"rows":0}]}
+{"case":"aggregates","rows":[["8028","100","7"]],"producer":[{"columns":["a","b","c"],"mapping":{"0":0,"1":1,"2":2},"filters":{},"rows":8}]}
+{"case":"dynamic_join","rows":[["1002"],["1005"]],"producer":[{"columns":["a","c"],"mapping":{"0":0,"1":2},"filters":{"0":"optional: a IN (2, 5) AND optional: a>=2 AND optional: a<=5"},"rows":8}]}
+{"case":"dynamic_static","rows":[["1005"]],"producer":[{"columns":["a","b","c"],"mapping":{"0":0,"1":1,"2":2},"filters":{"0":"optional: a IN (2, 5) AND optional: a>=2 AND optional: a<=5","1":"b>=103"},"rows":5}]}
+{"case":"prepared_keep","rows":[["1002"],["1005"]],"producer":[{"columns":["a","c"],"mapping":{"0":0,"1":2},"filters":{"0":"optional: a IN (2, 5) AND optional: a>=2 AND optional: a<=5"},"rows":8}]}
+{"case":"prepared_drop","rows":[["1000"],["1007"]],"producer":[{"columns":["a","c"],"mapping":{"0":0,"1":2},"filters":{"0":"optional: a IN (0, 7) AND optional: a>=0 AND optional: a<=7"},"rows":8}]}
+{"case":"prepared_empty","rows":[],"producer":[{"columns":["a","c"],"mapping":{"0":0,"1":2},"filters":{},"rows":8}]}
+{"case":"prepared_keep_again","rows":[["1002"],["1005"]],"producer":[{"columns":["a","c"],"mapping":{"0":0,"1":2},"filters":{"0":"optional: a IN (2, 5) AND optional: a>=2 AND optional: a<=5"},"rows":8}]}
+{"case":"dynamic_profile","rows":[["optional: a IN (2, 5) AND optional: a>=2 AND optional: a<=5"]],"producer":[{"columns":["a","c"],"mapping":{"0":0,"1":2},"filters":{"0":"optional: a IN (2, 5) AND optional: a>=2 AND optional: a<=5"},"rows":8}]}
+{"case":"sparse_join","rows":[["1000"]],"producer":[{"columns":["a","c"],"mapping":{"0":0,"1":2},"filters":{"0":"optional: a>=0 AND optional: a<=4094000"},"rows":8}]}
+{"case":"sparse_small","rows":[["1000"]],"producer":[{"columns":["a","c"],"mapping":{"0":0,"1":2},"filters":{"0":"optional: a>=0 AND optional: a<=254000"},"rows":8}]}
+{"case":"single_join","rows":[["1002"]],"producer":[{"columns":["a","c"],"mapping":{"0":0,"1":2},"filters":{"0":"a=2"},"rows":1}]}

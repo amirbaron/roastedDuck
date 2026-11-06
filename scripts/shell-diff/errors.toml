@@ -1,0 +1,189 @@
+# Errors: every kind, positions and carets, errors_as_json.
+
+[[case]]
+name = "error-control-message-{json}"
+args = ["-cmd", "SET errors_as_json={json}"]
+vary = { json = ["false", "true"] }
+stdin = "SELECT error('a'||chr(0)||'b');\nSELECT error(chr(11)||chr(14)||chr(15)||chr(26)||chr(31));\nSELECT error('café 🦆');\nSELECT 42 AS survived;\n"
+
+[[case]]
+name = "error-{kind}"
+vary = { kind = ["parser", "binder", "catalog", "constraint", "conversion", "range", "division", "invalid-input", "dependency", "transaction", "not-implemented", "permission", "sequence", "type-mismatch", "function-args", "ambiguous", "subquery", "json", "interval", "date", "assertion"] }
+files = { "parser.sql" = "SELECT * FORM t;\n", "binder.sql" = "SELECT x FROM (SELECT 1 AS y);\n", "catalog.sql" = "SELECT * FROM nonexistent_table;\n", "constraint.sql" = "CREATE TABLE t(i INT PRIMARY KEY, j INT NOT NULL CHECK (j > 0));\nINSERT INTO t VALUES (1, 1);\nINSERT INTO t VALUES (1, 2);\nINSERT INTO t VALUES (2, NULL);\nINSERT INTO t VALUES (3, -1);\n", "conversion.sql" = "SELECT 'abc'::INTEGER;\nSELECT '2024-13-45'::DATE;\nSELECT 'x'::UUID;\n", "range.sql" = "SELECT 300::TINYINT;\nSELECT 9223372036854775807 + 1;\nSELECT [1,2][5];\n", "division.sql" = "SELECT 1 // 0;\nSELECT 1 % 0;\nSELECT 1 / 0;\n", "invalid-input.sql" = "SELECT repeat('x', -1);\nSELECT range(1, 10, 0);\nSELECT * FROM read_csv('missing.csv');\n", "dependency.sql" = "CREATE TABLE t(i INT);\nCREATE VIEW v AS SELECT * FROM t;\nCREATE INDEX idx ON t(i);\nDROP TABLE t;\nCREATE SEQUENCE s;\nCREATE TABLE u(i INT DEFAULT nextval('s'));\nDROP SEQUENCE s;\n", "transaction.sql" = "COMMIT;\nBEGIN;\nBEGIN;\nSELECT bogus;\nSELECT 1;\nROLLBACK;\nSELECT 2 AS ok;\n", "not-implemented.sql" = "CREATE TABLE t(i INT);\nALTER TABLE t ADD CONSTRAINT c CHECK (i > 0);\n", "permission.sql" = "SET enable_external_access = false;\nSELECT * FROM read_csv('x.csv');\nSET enable_external_access = true;\n", "sequence.sql" = "CREATE SEQUENCE s MAXVALUE 2;\nSELECT nextval('s');\nSELECT nextval('s');\nSELECT nextval('s');\nSELECT currval('nope');\n", "type-mismatch.sql" = "SELECT 1 + 'a';\nSELECT [1] + 1;\nSELECT {'a': 1} = 1;\n", "function-args.sql" = "SELECT substring();\nSELECT nonexistent_function(1);\nSELECT upper(1, 2);\nSELECT sum('a');\n", "ambiguous.sql" = "SELECT i FROM (SELECT 1 AS i) a, (SELECT 2 AS i) b;\n", "subquery.sql" = "SELECT (SELECT * FROM range(2));\nSELECT (SELECT 1, 2);\n", "json.sql" = "SELECT '{bad json'::JSON;\nSELECT json_extract('[1', '$');\n", "interval.sql" = "SELECT INTERVAL 'bogus';\nSELECT '1 fortnight'::INTERVAL;\n", "date.sql" = "SELECT DATE '2024-02-30';\nSELECT strptime('x', '%Y');\nSELECT TIMESTAMP '2024-01-01 25:00:00';\n", "assertion.sql" = "SELECT error('custom message');\nSELECT error(NULL);\n" }
+args = ["-f", "{kind}.sql"]
+
+[[case]]
+name = "error-continues-after"
+stdin = '''
+SELECT 1 AS a;
+SELECT * FORM t;
+SELECT 2 AS b;
+SELECT x FROM nonexistent;
+SELECT 3 AS c;
+'''
+
+[[case]]
+name = "error-caret-positions"
+stdin = '''
+SELECT 1 + + FROM t;
+SELECT
+  a,
+  b
+FROM
+  nonexistent;
+SELECT 'very long query padding padding padding padding padding padding padding padding padding' AS x, bogus_column FROM range(1);
+SELECT bogus_column, 'very long query padding padding padding padding padding padding padding padding padding padding' AS x FROM range(1);
+SELECT '漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字', 'emoji 🦆🦆🦆🦆🦆🦆🦆🦆🦆🦆🦆🦆🦆', bogus FROM range(1);
+	SELECT	bogus	FROM	range(1);
+SELECT 1 AS a; SELECT bogus2;
+'''
+
+[[case]]
+name = "error-very-long-query"
+stdin = '''
+SELECT 1 AS c0, 2 AS c1, 3 AS c2, 4 AS c3, 5 AS c4, 6 AS c5, 7 AS c6, 8 AS c7, 9 AS c8, 10 AS c9, 11 AS c10, 12 AS c11, 13 AS c12, 14 AS c13, 15 AS c14, 16 AS c15, 17 AS c16, 18 AS c17, 19 AS c18, 20 AS c19, 21 AS c20, 22 AS c21, bogus_column, 23 AS c22, 24 AS c23, 25 AS c24, 26 AS c25, 27 AS c26, 28 AS c27, 29 AS c28, 30 AS c29;
+'''
+
+[[case]]
+name = "error-multiline-statement-position"
+stdin = '''
+SELECT 1,
+       2,
+       bogus,
+       3;
+'''
+
+[[case]]
+name = "error-did-you-mean"
+stdin = '''
+CREATE TABLE customers(customer_id INT, customer_name VARCHAR);
+SELECT * FROM customer;
+SELECT customer_nme FROM customers;
+SELECT cust FROM customers;
+SELECT uper('x');
+SET thread = 4;
+PRAGMA tabel_info('customers');
+SELECT * FROM read_cvs('x');
+'''
+
+[[case]]
+name = "errors-as-json-{kind}"
+vary = { kind = ["parser", "binder", "catalog", "constraint", "conversion", "range", "division", "invalid-input", "dependency", "transaction", "sequence", "type-mismatch", "function-args", "ambiguous", "subquery", "json", "interval", "date", "assertion"] }
+files = { "parser.sql" = "SELECT * FORM t;\nSELECT 'unterminated;\nSELECT (1;\n", "binder.sql" = "SELECT x FROM (SELECT 1 AS y);\nCREATE TABLE t(abc INT, abd INT);\nSELECT ab FROM t;\nSELECT t.zzz FROM t;\nSELECT * FROM t GROUP BY abc;\n", "catalog.sql" = "SELECT * FROM nonexistent_table;\nCREATE TABLE customers(i INT);\nSELECT * FROM customer;\nSELECT * FROM nope.customers;\nDROP TABLE nope;\nSELECT * FROM range_x(3);\nSELECT nonexistent_fn(1);\nSELECT uper('x');\nCREATE TABLE customers(i INT);\nDROP VIEW customers;\nCREATE SCHEMA s;\nCREATE SCHEMA s;\nUSE nope;\nSELECT 'a'::nonexistent_type;\nDROP SCHEMA nope;\nDROP SEQUENCE nope;\nDROP MACRO nope;\nDROP TYPE nope;\nDROP INDEX nope;\nSELECT * FROM nope.main.t;\n", "constraint.sql" = "CREATE TABLE t(i INT PRIMARY KEY, j INT NOT NULL CHECK (j > 0));\nINSERT INTO t VALUES (1, 1);\nINSERT INTO t VALUES (1, 2);\nINSERT INTO t VALUES (2, NULL);\nINSERT INTO t VALUES (3, -1);\n", "conversion.sql" = "SELECT 'abc'::INTEGER;\nSELECT '2024-13-45'::DATE;\nSELECT 'x'::UUID;\n", "range.sql" = "SELECT 300::TINYINT;\nSELECT 9223372036854775807 + 1;\n", "division.sql" = "SELECT 1 // 0;\nSELECT 1 % 0;\n", "invalid-input.sql" = "SELECT repeat('x', -1);\nSELECT * FROM read_csv('missing.csv');\n", "dependency.sql" = "CREATE TABLE t(i INT);\nCREATE VIEW v AS SELECT * FROM t;\nCREATE INDEX idx ON t(i);\nDROP TABLE t;\n", "transaction.sql" = "COMMIT;\nBEGIN;\nBEGIN;\nSELECT bogus;\nSELECT 1;\nROLLBACK;\n", "sequence.sql" = "CREATE SEQUENCE s MAXVALUE 1;\nSELECT nextval('s');\nSELECT nextval('s');\nSELECT currval('nope');\n", "type-mismatch.sql" = "SELECT 1 + 'a';\nSELECT [1] + 1;\n", "function-args.sql" = "SELECT substring();\nSELECT upper(1, 2);\nSELECT sum('a');\n", "ambiguous.sql" = "SELECT i FROM (SELECT 1 AS i) a, (SELECT 2 AS i) b;\n", "subquery.sql" = "SELECT (SELECT * FROM range(2));\nSELECT (SELECT 1, 2);\n", "json.sql" = "SELECT '{bad json'::JSON;\n", "interval.sql" = "SELECT INTERVAL 'bogus';\n", "date.sql" = "SELECT DATE '2024-02-30';\n", "assertion.sql" = "SELECT error('custom message');\n" }
+args = ["-cmd", "SET errors_as_json = true", "-f", "{kind}.sql"]
+
+[[case]]
+name = "errors-as-json-modes"
+stdin = '''
+SET errors_as_json = true;
+.mode csv
+SELECT bogus;
+.mode json
+SELECT bogus;
+.mode line
+SELECT * FROM nope;
+SET errors_as_json = false;
+SELECT bogus;
+'''
+
+[[case]]
+name = "error-null-byte-in-query"
+stdin = "SELECT 'a\u0000b';\nSELECT 1 AS a;\n"
+
+[[case]]
+name = "error-prepared-parameters"
+stdin = '''
+SELECT ?;
+SELECT $1;
+SELECT $name;
+PREPARE p AS SELECT $1 + 1;
+EXECUTE p(41);
+EXECUTE p;
+EXECUTE p(1, 2);
+EXECUTE nope;
+'''
+
+[[case]]
+name = "error-mid-stream-csv"
+stdin = '''
+.mode csv
+SELECT CASE WHEN i < 3 THEN i ELSE error('boom at ' || i) END AS v FROM range(5) t(i);
+SELECT 'next' AS n;
+'''
+
+[[case]]
+name = "error-mid-stream-{mode}"
+vary = { mode = ["duckbox", "box", "line", "json", "jsonlines", "list", "markdown", "html", "insert", "quote", "column", "table", "latex", "tcl", "trash"] }
+stdin = '''
+.mode {mode}
+SELECT CASE WHEN i < 3 THEN i ELSE error('boom at ' || i) END AS v FROM range(5) t(i);
+SELECT 'next' AS n;
+SELECT -128::TINYINT AS a;
+SELECT 1 AS a WHERE 'x'::INT = 1;
+'''
+
+[[case]]
+name = "error-after-many-rows-list"
+stdin = '''
+.mode list
+SELECT CASE WHEN i < 3000 THEN i ELSE error('late failure') END AS v FROM range(3500) t(i);
+'''
+
+[[case]]
+name = "error-interrupt-like"
+stdin = '''
+SELECT * FROM range(3) t(i) WHERE i = (SELECT 1/0);
+'''
+
+[[case]]
+name = "error-internal"
+stdin = '''
+PRAGMA debug_force_internal_error;
+SELECT 1 AS after;
+'''
+
+[[case]]
+name = "error-multiple-statements-one-line"
+stdin = '''
+SELECT 1 AS a; SELECT bogus; SELECT 3 AS c;
+'''
+
+[[case]]
+name = "error-ddl-in-transaction"
+stdin = '''
+BEGIN;
+CREATE TABLE t(i INT);
+INSERT INTO t VALUES ('x');
+COMMIT;
+SELECT * FROM t;
+'''
+
+[[case]]
+name = "error-explain"
+stdin = '''
+EXPLAIN SELECT bogus;
+EXPLAIN ANALYZE SELECT 1/0;
+'''
+normalize = [["Total Time: \\d+\\.\\d+s", "Total Time: Xs"]]
+
+[[case]]
+name = "error-bail-c"
+args = ["-bail", "-c", "SELECT bogus", "-c", "SELECT 1"]
+
+[[case]]
+name = "error-no-bail-c"
+args = ["-c", "SELECT bogus; SELECT 1 AS a"]
+
+[[case]]
+name = "error-render-errors-off"
+stdin = '''
+.render_errors off
+SELECT bogus;
+'''
+
+[[case]]
+name = "error-highlight-errors-off"
+stdin = '''
+.highlight_errors off
+SELECT bogus;
+'''

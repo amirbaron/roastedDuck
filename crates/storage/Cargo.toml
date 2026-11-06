@@ -1,0 +1,23 @@
+[package]
+name = "rustdb-storage"
+description = "The storage engine: tables, row groups, column segments, MVCC versions, indexes and the database file."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rustdb-common.workspace = true
+rustdb-types.workspace = true
+rustdb-buffer = { path = "../buffer" }
+rustdb-crypto = { path = "../crypto" }
+rustdb-function = { path = "../function" }
+rustdb-row = { path = "../row" }
+rustdb-serde = { path = "../serde" }
+rustdb-zstd = { path = "../zstd" }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[lints]
+workspace = true

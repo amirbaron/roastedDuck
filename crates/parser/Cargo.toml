@@ -1,0 +1,20 @@
+[package]
+name = "rustdb-parser"
+description = "DuckDB's SQL parser: the Postgres grammar plus the transformer into parse trees."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rustdb-common.workspace = true
+rustdb-types.workspace = true
+rustdb-ast.workspace = true
+rustdb-pg-parser = { path = "../pg-parser" }
+rustdb-function = { path = "../function" }
+
+[dev-dependencies]
+rustdb-serde.workspace = true
+
+[lints]
+workspace = true

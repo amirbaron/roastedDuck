@@ -1,0 +1,188 @@
+# Edge cases of rendering and metadata commands.
+
+[[case]]
+name = "json-nested-specials-{mode}"
+vary = { mode = ["json", "jsonlines", "html", "latex", "tcl", "quote", "insert"] }
+stdin = '''
+.mode {mode}
+SELECT ['nan'::DOUBLE, 'inf'::DOUBLE, NULL] AS l, {'x': 'a"b\c', 'y': chr(10)} AS s, MAP {'k"': 'v\'} AS m, '\x00\xFF'::BLOB AS b, ['\x01'::BLOB] AS lb;
+'''
+
+[[case]]
+name = "tables-wide-and-unicode"
+args = ["-cmd", "SET threads = 1"]
+stdin = '''
+CREATE TABLE "漢字のテーブル"(列 INT, "🦆" VARCHAR);
+CREATE TABLE a_table_with_a_really_really_long_name_that_goes_on(a_column_with_a_long_name_as_well INT, b INT, c INT, d INT, e INT, f INT, g INT, h INT, i INT, j INT, k INT, l INT, m INT, n INT, o INT, p INT, q INT, r INT, s INT, t INT, u INT, v INT, w INT);
+CREATE TABLE pk(a INT, b INT, c VARCHAR, PRIMARY KEY (a, b));
+.tables
+.maxwidth 60
+.tables
+.mode list
+.tables
+'''
+
+[[case]]
+name = "tables-many-schemas"
+args = ["-cmd", "SET threads = 1"]
+stdin = '''
+CREATE SCHEMA s1;
+CREATE SCHEMA s2;
+CREATE TABLE s1.a(i INT);
+CREATE TABLE s2.b(j VARCHAR, k DOUBLE);
+CREATE VIEW s2.v AS SELECT 1 AS one;
+ATTACH ':memory:' AS db2;
+CREATE TABLE db2.c(x INT);
+.tables
+.tables s1.%
+.tables %.b
+'''
+
+[[case]]
+name = "schema-patterns"
+stdin = '''
+CREATE TABLE "Weird Name"(i INT);
+CREATE TABLE normal(i INT);
+CREATE VIEW v2 AS SELECT * FROM normal;
+CREATE VIEW v1 AS SELECT * FROM v2;
+.schema Weird%
+.schema "Weird Name"
+.schema v%
+.schema %orma%
+'''
+
+[[case]]
+name = "dump-view-dependencies"
+stdin = '''
+CREATE TABLE base(i INT);
+CREATE VIEW v2 AS SELECT * FROM base;
+CREATE VIEW v1 AS SELECT * FROM v2;
+CREATE OR REPLACE VIEW v2 AS SELECT i + 1 AS i FROM base;
+CREATE SEQUENCE s1;
+CREATE TABLE uses_seq(id INT DEFAULT nextval('s1'), x VARCHAR);
+INSERT INTO uses_seq (x) VALUES ('a'), ('b');
+.dump
+'''
+
+[[case]]
+name = "output-then-read"
+stdin = '''
+.mode insert t
+.output out.sql
+SELECT 1 AS i, 'x' AS s;
+.output
+CREATE TABLE t(i INT, s VARCHAR);
+.read out.sql
+.mode duckbox
+SELECT * FROM t;
+'''
+
+[[case]]
+name = "changes-multi"
+stdin = '''
+.changes on
+CREATE TABLE t(i INT); INSERT INTO t SELECT * FROM range(10); UPDATE t SET i = i + 1; DELETE FROM t WHERE i > 5;
+SELECT count(*) FROM t;
+'''
+
+[[case]]
+name = "timer-errors-and-dot"
+stdin = '''
+.timer on
+SELECT bogus;
+.print hi
+SELECT 1; SELECT 2;
+'''
+normalize = [["real \\d+\\.\\d+ user \\d+\\.\\d+ sys \\d+\\.\\d+", "real X user X sys X"]]
+
+[[case]]
+name = "highlight-mode-piped"
+stdin = '''
+.highlight_mode light
+SELECT 1 AS a;
+.highlight_results on
+SELECT 1 AS a, NULL AS b;
+'''
+
+[[case]]
+name = "maxrows-column-layouts"
+stdin = '''
+.maxrows 7
+SELECT i, repeat('x', i) AS s FROM range(30) t(i);
+.maxrows 8
+SELECT i, repeat('x', i) AS s FROM range(30) t(i);
+.maxrows 2
+SELECT i FROM range(30) t(i);
+.maxrows 1
+SELECT i FROM range(30) t(i);
+'''
+
+[[case]]
+name = "duckbox-narrow-terminal-defaults"
+stdin = '''
+SELECT * FROM test_all_types() LIMIT 2;
+.maxwidth 30
+SELECT * FROM test_all_types() LIMIT 2;
+'''
+
+[[case]]
+name = "nulls-in-every-mode-{mode}"
+vary = { mode = ["duckbox", "box", "csv", "column", "html", "insert", "json", "jsonlines", "latex", "line", "list", "markdown", "quote", "table", "tabs", "tcl", "ascii"] }
+args = ["-nullvalue", "NUL"]
+stdin = '''
+.mode {mode}
+SELECT NULL AS a, NULL::INT AS b, [NULL] AS c, {'x': NULL} AS d, MAP {'k': NULL} AS e, NULL::BLOB AS f;
+'''
+
+[[case]]
+name = "empty-strings-and-spaces-{mode}"
+vary = { mode = ["duckbox", "csv", "column", "list", "markdown", "table", "quote", "json"] }
+stdin = '''
+.mode {mode}
+SELECT '' AS a, ' ' AS b, '  x  ' AS c, chr(9) AS d, '' AS "";
+'''
+
+[[case]]
+name = "header-only-results"
+stdin = '''
+.mode csv
+.headers on
+SELECT 1 AS a WHERE false;
+.mode list
+SELECT 1 AS a WHERE false;
+.mode markdown
+SELECT 1 AS a WHERE false;
+.mode json
+SELECT 1 AS a WHERE false;
+.mode line
+SELECT 1 AS a WHERE false;
+'''
+
+[[case]]
+name = "statement-types-output"
+stdin = '''
+CREATE TABLE t(i INT);
+INSERT INTO t VALUES (1), (2) RETURNING *;
+UPDATE t SET i = i * 10 RETURNING i;
+DELETE FROM t RETURNING i;
+EXPLAIN INSERT INTO t VALUES (1);
+CHECKPOINT;
+VACUUM;
+ANALYZE;
+SET VARIABLE x = 42;
+SELECT getvariable('x') AS x;
+CALL range(3);
+FROM range(2);
+'''
+
+[[case]]
+name = "copy-formats"
+stdin = '''
+COPY (SELECT 1 AS a, 'x' AS b) TO 'out.csv';
+COPY (SELECT 1 AS a, 'x' AS b) TO 'out.json';
+COPY (SELECT 1 AS a, 'x' AS b) TO 'out.tsv' (DELIMITER '\t');
+SELECT * FROM 'out.csv';
+SELECT * FROM 'out.json';
+.import out.tsv imported
+SELECT * FROM imported;
+'''
