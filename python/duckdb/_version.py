@@ -10,8 +10,8 @@ from importlib.metadata import version as _dist_version
 
 import _duckdb
 
-__version__: str = _dist_version("duckdb")
-"""Version of the DuckDB Python Package."""
+__version__: str = _dist_version("roastedduck")
+"""Version of the independently distributed roastedDuck Python package."""
 
 __duckdb_version__: str = _duckdb.__version__
 """Version of DuckDB that is bundled."""

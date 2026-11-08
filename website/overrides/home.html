@@ -1,0 +1,29 @@
+{% extends "main.html" %}
+{% block content %}<div class="rd-home-content">{{ super() }}</div>{% endblock %}
+{% block tabs %}
+{{ super() }}
+<section class="rd-hero">
+  <div class="md-grid rd-hero-inner">
+    <div class="rd-hero-copy">
+      <h1>Analytical SQL.<br>Roasted in Rust.</h1>
+      <p>A familiar SQL experience, a different engine underneath.
+      An independent Rust implementation targeting DuckDB compatibility,
+      built to explore the tradeoff between memory and execution time.</p>
+      <div class="rd-actions">
+        <a class="md-button md-button--primary" href="{{ 'install/' | url }}">Try the preview</a>
+        <a class="md-button" href="{{ 'benchmarks/' | url }}">Inspect the benchmarks</a>
+      </div>
+      <p class="rd-preview">Public preview · MIT licensed · Python, Go &amp; Swift</p>
+    </div>
+    <div class="rd-console" aria-label="Example analytical query">
+      <div class="rd-console-header"><img src="{{ 'assets/roastedduck.svg' | url }}" width="28" height="28" alt=""><span>roastedDuck</span><span class="rd-console-kind">SQL shell</span></div>
+      <pre><code><span class="rd-keyword">SELECT</span> category,
+       <span class="rd-function">sum</span>(amount) <span class="rd-keyword">AS</span> total
+<span class="rd-keyword">FROM</span> <span class="rd-string">'sales.parquet'</span>
+<span class="rd-keyword">GROUP BY</span> category
+<span class="rd-keyword">ORDER BY</span> total <span class="rd-keyword">DESC</span>;</code></pre>
+      <div class="rd-console-footer">Local files. In-process queries. Rust engine.</div>
+    </div>
+  </div>
+</section>
+{% endblock %}

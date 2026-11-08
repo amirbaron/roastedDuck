@@ -1,0 +1,56 @@
+# Python
+
+The `roastedduck` wheel provides the familiar `duckdb` import using the Rust
+engine. [Install the matching release wheel](install.md#python) in a fresh
+virtual environment.
+
+```python
+import duckdb
+
+with duckdb.connect("example.duckdb") as connection:
+    connection.execute("CREATE TABLE IF NOT EXISTS readings(value INTEGER)")
+    connection.execute("INSERT INTO readings VALUES (?)", [42])
+    print(connection.execute("SELECT sum(value) FROM readings").fetchall())
+```
+
+## Package and engine versions
+
+```python
+from importlib.metadata import version
+import duckdb
+
+print(version("roastedduck"))  # 0.1.0a1: public Python distribution
+print(duckdb.__duckdb_version__)  # separately reported compatibility engine version
+```
+
+`duckdb.__version__` and `duckdb.__duckdb_version__` retain `1.5.6` for
+version-gated client compatibility. Use `version("roastedduck")` for the public
+distribution version; `duckdb.version()` reports both. The package
+metadata and version helper changed for public branding; the repackaged wheels
+retain the candidate's native extension bytes. Release provenance records both
+the original and repackaged wheel hashes.
+
+## Optional integrations
+
+Install pandas, NumPy, or PyArrow separately when your application needs them.
+The preview's recorded upstream testing covers selected pinned dependency
+environments; it does not establish compatibility with every future dependency
+release. The installed ADBC facade is also included.
+
+## Compatibility boundaries
+
+Normal CPython 3.10–3.14 on macOS arm64 and Linux arm64/x86_64 is in scope.
+The original 15-cell candidate qualification retained matching skips and
+expected failures. Public packaging has additional smoke tests; it does not
+silently reclassify those original outcomes. See [compatibility](compatibility.md).
+
+## Build a wheel
+
+```sh
+python -m pip install maturin==1.9.6
+cd python
+maturin build --release --out ../dist
+```
+
+Choose an external output/cache directory when disk space is limited. The build
+requires the pinned Rust toolchain and the native interpreter for the desired ABI.

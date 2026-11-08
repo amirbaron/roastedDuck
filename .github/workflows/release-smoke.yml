@@ -1,0 +1,86 @@
+name: Release installation
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to verify
+        required: true
+        default: v0.1.0-alpha.1
+  release:
+    types: [published]
+permissions:
+  contents: read
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-amd64
+            wheel: manylinux_2_28_x86_64
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+            wheel: manylinux_2_28_aarch64
+          - os: macos-26
+            platform: macos-arm64
+            wheel: macosx_11_0_arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Download and verify
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          WHEEL: ${{ matrix.wheel }}
+        run: |
+          mkdir downloads sdk
+          gh release download "$RELEASE_TAG" --dir downloads --pattern "roastedduck-${RELEASE_TAG#v}-$PLATFORM.tar.gz" --pattern "roastedduck-*-cp312-cp312-$WHEEL.whl" --pattern SHA256SUMS
+          python scripts/release/verify_downloads.py downloads
+          tar -xzf "downloads/roastedduck-${RELEASE_TAG#v}-$PLATFORM.tar.gz" -C sdk
+      - name: Native CLI smoke
+        run: |
+          result=$(./sdk/bin/roastedDuck -csv -noheader -c 'SELECT sum(i) FROM range(10) t(i);')
+          test "$result" = 45
+      - name: Python install and persistence
+        run: |
+          python -m venv test-venv
+          test-venv/bin/python -m pip install downloads/*.whl
+          test-venv/bin/python scripts/release/smoke_python.py
+      - name: C API consumer
+        run: |
+          cc scripts/release/smoke_c.c -I"$PWD/sdk/include" -L"$PWD/sdk/lib" -Wl,-rpath,"$PWD/sdk/lib" -lduckdb -o smoke-c
+          ./smoke-c
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Go consumer using the Rust SDK
+        run: |
+          mkdir go-consumer
+          cp scripts/release/smoke_go.go go-consumer/main.go
+          cd go-consumer
+          go mod init example.com/roastedduck-smoke
+          go mod edit -require=github.com/duckdb/duckdb-go/v2@v2.10506.0
+          go mod edit -replace="github.com/duckdb/duckdb-go/v2=$GITHUB_WORKSPACE/sdk/go/duckdb-go"
+          export CGO_ENABLED=1
+          export CGO_CFLAGS="-I$GITHUB_WORKSPACE/sdk/include"
+          export CGO_LDFLAGS="-L$GITHUB_WORKSPACE/sdk/lib -Wl,-rpath,$GITHUB_WORKSPACE/sdk/lib"
+          go run -p=1 -mod=mod -tags duckdb_use_lib,duckdb_arrow .
+      - name: Apple Swift package consumer
+        if: runner.os == 'macOS'
+        run: |
+          gh release download "$RELEASE_TAG" --dir downloads --pattern "roastedduck-${RELEASE_TAG#v}-swift-apple.tar.gz"
+          python scripts/release/verify_downloads.py downloads
+          mkdir -p swift-consumer/Sources/Smoke
+          tar -xzf "downloads/roastedduck-${RELEASE_TAG#v}-swift-apple.tar.gz" -C swift-consumer
+          cp scripts/release/smoke_swift.swift swift-consumer/Sources/Smoke/main.swift
+          cp scripts/release/SmokePackage.swift swift-consumer/Package.swift
+          swift run --package-path swift-consumer -j 1 Smoke

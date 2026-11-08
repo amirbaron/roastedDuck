@@ -1,0 +1,69 @@
+site_name: roastedDuck
+site_description: An independent analytical SQL engine, ported to Rust.
+site_url: https://amirbaron.github.io/roastedDuck/
+repo_url: https://github.com/amirbaron/roastedDuck
+repo_name: amirbaron/roastedDuck
+edit_uri: edit/main/website/docs/
+docs_dir: website/docs
+site_dir: site
+strict: true
+theme:
+  name: material
+  custom_dir: website/overrides
+  logo: assets/roastedduck.svg
+  favicon: assets/roastedduck.svg
+  font: false
+  palette:
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+plugins:
+  - search
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+extra_css:
+  - assets/roastedduck.css
+extra_javascript:
+  - assets/benchmarks.js
+nav:
+  - Overview: index.md
+  - Get started:
+      - Installation: install.md
+      - SQL quickstart: quickstart.md
+      - Python: python.md
+      - Go: go.md
+      - Swift: swift.md
+      - C API and ADBC: capi.md
+  - Compatibility: compatibility.md
+  - Benchmarks: benchmarks.md
+  - Project:
+      - Architecture: architecture.md
+      - Contributing: contributing.md
+      - Releases: releases.md
+      - License and credits: license.md
+copyright: Copyright © 2026 roastedDuck contributors. MIT licensed. Independent of the DuckDB Foundation.

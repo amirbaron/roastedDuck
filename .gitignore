@@ -3,3 +3,7 @@
 *.wal
 /tools/oracle-shim/build
 !/tools/corpus/tests/fixtures/*.wal
+/site
+/.venv-docs
+__pycache__/
+*.pyc
