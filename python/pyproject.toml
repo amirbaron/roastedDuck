@@ -3,11 +3,16 @@ requires = ["maturin==1.9.6"]
 build-backend = "maturin"
 
 [project]
-name = "duckdb"
-version = "1.5.6"
+name = "roastedduck"
+version = "0.1.0a1"
 requires-python = ">=3.10"
-description = "DuckDB Python API backed by the native Rust engine"
+description = "roastedDuck: an independent Rust SQL engine targeting DuckDB compatibility"
 license = "MIT"
+
+[project.urls]
+Documentation = "https://amirbaron.github.io/roastedDuck/"
+Repository = "https://github.com/amirbaron/roastedDuck"
+Issues = "https://github.com/amirbaron/roastedDuck/issues"
 
 [tool.maturin]
 manifest-path = "../crates/python/Cargo.toml"

@@ -1,0 +1,12 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Recorded upstream dbapi.py SHA256, not an API credential"
+regexTarget = "match"
+regexes = ['''dbapi\.py": "ce3febfacb48dca2631f5a7d0c11cdd82f77bf2cd90e7684397363df83665935"''']
+
+[[allowlists]]
+description = "Ordinary documentation prose mistaken for a generic key"
+regexTarget = "match"
+regexes = ['''^keys, environment/global ''', '''APIs, UDF/replacement''']

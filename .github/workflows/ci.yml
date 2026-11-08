@@ -1,0 +1,36 @@
+name: Source checks
+on:
+  push:
+    branches: [main, amirbaron/rust-duckdb-port]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: source-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_BUILD_JOBS: 1
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+jobs:
+  core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust
+        run: rustup show
+      - name: Core regression tests
+        run: cargo test --locked -p rustdb-common -p rustdb-types -j 1
+      - name: Shell source check
+        run: cargo check --locked -p rustdb-shell -j 1
+  packaging:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check public metadata
+        run: python scripts/release/check_metadata.py

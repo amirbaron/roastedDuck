@@ -1,0 +1,32 @@
+{
+  "candidate": "source-2551",
+  "recorded_at": "2026-11-05T23:22:55.263738+00:00",
+  "summary_sha256": "18225d06c2fc54a808bd7cd1383e2f979343b6958a693bec6e0175ea3b63883a",
+  "query_configurations": 130,
+  "warmups": 1,
+  "timed_repetitions": 3,
+  "platform": "macOS arm64",
+  "host_identification_rechecked_20261108": {
+    "chip": "Apple M4 Pro",
+    "memory_bytes": 51539607552,
+    "os": "macOS 27.0.1"
+  },
+  "datasets": {
+    "hits": {
+      "bytes": 23977013248,
+      "sha256": "f24a11670aa275540aab43e9a33c7a6aaab288efe5afe8f7d9200ac67d5d08a5"
+    },
+    "tpch10": {
+      "bytes": 2678861824,
+      "sha256": "6a78fe8ba01629cbe264e1ce89f659facf57cfc0fd564d63956bc2b9ac705760"
+    }
+  },
+  "engine_images": {
+    "rust": "7399ed8ea8c2ebff8b86f4d9de3e47c71ad97e8d7699e1b8439c5c8c7afd819f",
+    "cpp": "8db9a7ccb5971b8316820f3bb387f08a2b74c47d2bbfff1cc62c8ebf6e7c0ca1"
+  },
+  "notes": [
+    "Host identity rechecked during public packaging; no new benchmark run.",
+    "Original acceptance fields in the measurements are preserved; later scoped acceptance is described in the dated engineering report."
+  ]
+}

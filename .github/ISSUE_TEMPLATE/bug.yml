@@ -1,0 +1,29 @@
+name: Bug report
+description: Report a reproducible roastedDuck problem
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Release or commit
+      placeholder: v0.1.0-alpha.1
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, architecture, client/Python version, and installation method.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: SQL or code, expected and actual behavior. Remove private data and credentials.
+    validations:
+      required: true
+  - type: textarea
+    id: reference
+    attributes:
+      label: Reference comparison
+      description: If compared with DuckDB, include the exact version and result.
