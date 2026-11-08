@@ -1,7 +1,7 @@
 name: Source checks
 on:
   push:
-    branches: [main, amirbaron/rust-duckdb-port]
+    branches: [main, v1.5-variegata, amirbaron/rust-duckdb-port]
   pull_request:
   workflow_dispatch:
 permissions:

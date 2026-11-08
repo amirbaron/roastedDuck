@@ -17,7 +17,11 @@ establish runtime compatibility.
 
 ## Development workflow
 
-`main` remains the integration/release branch. The existing
+`main` is the integration branch. `v1.5-variegata` is the current maintenance
+and release branch, matching DuckDB's 1.5 series. Tags and package versions
+match the compatibility target (`v1.5.6` / `1.5.6`). Preview status is separate.
+Other version-family branches are added when their corresponding ports are
+maintained. The existing
 `amirbaron/rust-duckdb-port` development branch uses pull requests targeting
 `main`. External contributors can open pull requests from topic branches in
 their forks. Documentation deploys from `main`, without an extra site branch.

@@ -1,6 +1,6 @@
 # roastedDuck Python package
 
-The public distribution is `roastedduck`, version `0.1.0a1`. The compatibility
+The public distribution is `roastedduck`, version `1.5.6`. The compatibility
 import is `duckdb`; use a fresh virtual environment and do not co-install the
 official `duckdb` distribution. The package uses the Rust engine directly.
 

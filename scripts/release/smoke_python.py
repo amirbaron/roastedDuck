@@ -7,9 +7,10 @@ import tempfile
 
 import duckdb
 
-assert importlib.metadata.version("roastedduck") == "0.1.0a1"
-assert duckdb.__version__ == duckdb.__duckdb_version__ == "1.5.6"
-assert duckdb.version() == "0.1.0a1 (with duckdb 1.5.6)"
+release = json.loads((Path(__file__).resolve().parents[2] / "release.json").read_text())
+assert importlib.metadata.version("roastedduck") == release["version"]
+assert duckdb.__version__ == duckdb.__duckdb_version__ == release["compatibility_version"]
+assert duckdb.version() == f'{release["version"]} (with duckdb {release["compatibility_version"]})'
 try:
     importlib.metadata.version("duckdb")
 except importlib.metadata.PackageNotFoundError:

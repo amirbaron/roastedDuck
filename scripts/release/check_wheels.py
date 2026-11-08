@@ -13,11 +13,12 @@ ap = argparse.ArgumentParser()
 ap.add_argument("directory", type=Path)
 args = ap.parse_args()
 provenance = json.loads((args.directory / "provenance.json").read_text())
+version = provenance["release"]
 for record in provenance["wheels"]:
     with zipfile.ZipFile(args.directory / record["public"]) as wheel:
-        info = "roastedduck-0.1.0a1.dist-info"
+        info = f"roastedduck-{version}.dist-info"
         metadata = wheel.read(info + "/METADATA").decode()
-        assert "Name: roastedduck\n" in metadata and "Version: 0.1.0a1\n" in metadata
+        assert "Name: roastedduck\n" in metadata and f"Version: {version}\n" in metadata
         rows = list(csv.reader(io.StringIO(wheel.read(info + "/RECORD").decode())))
         assert {r[0] for r in rows} == set(wheel.namelist())
         for name, checksum, size in rows:
