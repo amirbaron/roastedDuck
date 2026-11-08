@@ -1,6 +1,6 @@
 # Swift
 
-Download `roastedduck-0.1.0-alpha.1-swift-apple.tar.gz` from
+Download `roastedduck-1.5.6-swift-apple.tar.gz` from
 [Releases](https://github.com/amirbaron/roastedDuck/releases). After verification
 and extraction, it contains a local Swift package named `DuckDBRust`, exporting
 the familiar `DuckDB` product and module.

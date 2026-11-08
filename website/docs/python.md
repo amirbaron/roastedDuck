@@ -19,7 +19,7 @@ with duckdb.connect("example.duckdb") as connection:
 from importlib.metadata import version
 import duckdb
 
-print(version("roastedduck"))  # 0.1.0a1: public Python distribution
+print(version("roastedduck"))  # 1.5.6: public Python distribution
 print(duckdb.__duckdb_version__)  # separately reported compatibility engine version
 ```
 

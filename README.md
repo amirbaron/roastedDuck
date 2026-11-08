@@ -37,7 +37,7 @@ import remains **`duckdb`**. Use a separate virtual environment; the official
 python3 -m venv .venv
 . .venv/bin/activate
 # Download the wheel matching your Python version and platform from Releases.
-python -m pip install /path/to/roastedduck-0.1.0a1-<python>-<abi>-<platform>.whl
+python -m pip install /path/to/roastedduck-1.5.6-<python>-<abi>-<platform>.whl
 python -c "import duckdb; print(duckdb.sql('SELECT 42').fetchall())"
 ```
 
@@ -82,8 +82,8 @@ cargo build --locked --release -p rustdb-shell -j 1
 ```
 
 The repository pins Rust 1.99.0. The internal crate and native ABI names remain
-`rustdb`/`duckdb` for continuity and compatibility. Public release versions are
-independent of the targeted DuckDB version. See [CONTRIBUTING.md](CONTRIBUTING.md)
+`rustdb`/`duckdb` for continuity and compatibility. Public release versions follow the targeted DuckDB version. Preview status
+is recorded separately from version compatibility. See [CONTRIBUTING.md](CONTRIBUTING.md)
 for prerequisites, tests, and the existing branch workflow.
 
 ## License and acknowledgements

@@ -18,7 +18,7 @@ and symlinks, preserves native bytes, and produces separate platform archives.
 It deliberately refuses to overwrite a nonempty output directory. The frozen
 candidate is a maintainer input, not a dependency needed to build from source.
 
-Python distributions change from `duckdb==1.5.6` to `roastedduck==0.1.0a1`.
+Python distributions change from `duckdb==1.5.6` to `roastedduck==1.5.6`.
 The version helper, metadata, license additions, and RECORD are updated; all
 native entries are checked byte-for-byte. Install each target wheel on its
 matching native environment, then run `smoke_python.py`. Run the native CLI

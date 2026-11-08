@@ -1,6 +1,6 @@
 # Compatibility and preview status
 
-roastedDuck targets **DuckDB 1.5.6**, with an independent release version.
+roastedDuck targets **DuckDB 1.5.6**, with the same release version and version-family branch naming.
 It is an experimental public preview. Evaluate your own workload and retain
 backups before using it with important data.
 

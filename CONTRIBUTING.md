@@ -6,11 +6,20 @@ improvements are useful contributions. Start with the
 
 ## Branches
 
-`main` is the integration and release branch. The existing
+`main` is the integration branch. The current maintenance/release branch is
+`v1.5-variegata`, matching DuckDB's branch name for the 1.5 series. Release tags
+and package versions follow the compatibility target, beginning with `v1.5.6`.
+Preview status and known exceptions are recorded separately from the version.
+Historical upstream version branches are added when a corresponding port is
+maintained; their names alone would not establish compatibility.
+
+The existing
 `amirbaron/rust-duckdb-port` branch continues to carry development work through
 pull requests targeting `main`. Contributors can use topic branches in their
 forks. Documentation deploys from `main` through GitHub Actions; there is no
-separate documentation branch. Releases use annotated `v*` tags.
+separate documentation branch. Releases use annotated `v*` tags from the
+matching release branch. Fixes should be integrated through `main` and carried
+to the relevant release branch.
 
 ## Local development
 

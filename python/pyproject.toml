@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "roastedduck"
-version = "0.1.0a1"
+version = "1.5.6"
 requires-python = ">=3.10"
 description = "roastedDuck: an independent Rust SQL engine targeting DuckDB compatibility"
 license = "MIT"

@@ -1,26 +1,26 @@
 # Installation
 
 Download from [GitHub Releases](https://github.com/amirbaron/roastedDuck/releases).
-The first preview is `v0.1.0-alpha.1`. Each release has a `SHA256SUMS` manifest,
+The first preview is `v1.5.6`. Each release has a `SHA256SUMS` manifest,
 native SDKs, Python wheels, Swift packages, and a provenance report.
 
 ## Native shell and SDK
 
 | Machine | Archive |
 | --- | --- |
-| Apple Silicon Mac | `roastedduck-0.1.0-alpha.1-macos-arm64.tar.gz` |
-| Linux ARM64 | `roastedduck-0.1.0-alpha.1-linux-arm64.tar.gz` |
-| Linux x86_64 | `roastedduck-0.1.0-alpha.1-linux-amd64.tar.gz` |
+| Apple Silicon Mac | `roastedduck-1.5.6-macos-arm64.tar.gz` |
+| Linux ARM64 | `roastedduck-1.5.6-linux-arm64.tar.gz` |
+| Linux x86_64 | `roastedduck-1.5.6-linux-amd64.tar.gz` |
 
 Download the appropriate archive and `SHA256SUMS` into the same directory.
 Check the archive's digest against its line in the manifest:
 
 ```sh
 # macOS; replace the filename on Linux and use sha256sum instead.
-shasum -a 256 roastedduck-0.1.0-alpha.1-macos-arm64.tar.gz
-grep 'roastedduck-0.1.0-alpha.1-macos-arm64.tar.gz' SHA256SUMS
+shasum -a 256 roastedduck-1.5.6-macos-arm64.tar.gz
+grep 'roastedduck-1.5.6-macos-arm64.tar.gz' SHA256SUMS
 mkdir roastedduck
-tar -xzf roastedduck-0.1.0-alpha.1-macos-arm64.tar.gz -C roastedduck
+tar -xzf roastedduck-1.5.6-macos-arm64.tar.gz -C roastedduck
 cd roastedduck
 ./bin/roastedDuck -c 'SELECT 42 AS answer;'
 ```
@@ -45,7 +45,7 @@ CPython 3.12 on Apple Silicon uses:
 ```sh
 python3.12 -m venv .venv
 . .venv/bin/activate
-python -m pip install ./roastedduck-0.1.0a1-cp312-cp312-macosx_11_0_arm64.whl
+python -m pip install ./roastedduck-1.5.6-cp312-cp312-macosx_11_0_arm64.whl
 python -c "import duckdb; print(duckdb.sql('SELECT 42').fetchall())"
 ```
 

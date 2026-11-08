@@ -3,12 +3,17 @@
 Download the preview from
 [GitHub Releases](https://github.com/amirbaron/roastedDuck/releases).
 
-## 0.1.0-alpha.1
+## 1.5.6
 
 The first roastedDuck preview targets the DuckDB 1.5.6 compatibility contract.
 Its engine payload is the recorded November 6, 2026 source2551 candidate;
 public packaging adds project identity, notices, documentation, and installation
-checks. The Python distribution version is `0.1.0a1`.
+checks. The Python distribution version is `1.5.6`.
+
+Versions and version-family branch names mirror the compatibility target:
+`main` for integration, `v1.5-variegata` for maintenance, and the `v1.5.6` tag.
+The release is still marked as a preview; a matching version is not a claim
+that every feature or platform is equivalent to upstream.
 
 | Asset | Contents |
 | --- | --- |
@@ -27,3 +32,9 @@ qualification.
 
 See the [changelog](https://github.com/amirbaron/roastedDuck/blob/main/CHANGELOG.md),
 [compatibility boundaries](compatibility.md), and [performance evidence](benchmarks.md).
+
+## Superseded initial preview
+
+The initial [0.1.0-alpha.1 release](https://github.com/amirbaron/roastedDuck/releases/tag/v0.1.0-alpha.1)
+is retained with its original assets and checksums. Use 1.5.6 for new installations.
+Renumbering changes packaging metadata; it does not rebuild the native engine.

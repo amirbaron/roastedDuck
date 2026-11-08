@@ -19,8 +19,9 @@ import tarfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
-VERSION = "0.1.0-alpha.1"
-PYTHON_VERSION = "0.1.0a1"
+RELEASE = json.loads((ROOT / "release.json").read_text())
+VERSION = RELEASE["version"]
+PYTHON_VERSION = VERSION
 MANIFEST_SHA256 = "309821a4b830e46a8f1cb628dd43e83e9e93bf0d041dd716c34db49cec081bb2"
 EPOCH = 1793923200  # Stable archive metadata; not a claim about build time.
 
@@ -140,6 +141,8 @@ def main() -> None:
     notices.update(tree(args.dependency_notices, "notices/rust-dependencies"))
     provenance = {
         "project": "roastedDuck", "release": VERSION,
+        "compatibility_version": RELEASE["compatibility_version"],
+        "release_branch": RELEASE["branch"], "preview": RELEASE["preview"],
         "engine_source_commit": "92a8c862238013be466ded949e50335a63e6a508",
         "candidate": "source-2551", "original_manifest_sha256": MANIFEST_SHA256,
         "packager_sha256": digest(Path(__file__)), "engine_rebuilt": False,

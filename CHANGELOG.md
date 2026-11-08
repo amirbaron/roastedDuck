@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.5.6
+
+Align the public release tag, Python distribution, native asset names, and
+maintenance branch with the DuckDB 1.5.6 compatibility target. The matching
+release branch is `v1.5-variegata`; `main` remains the integration branch.
+Preview status is recorded separately from version compatibility.
+
+The native engine bytes and existing compatibility boundaries are unchanged.
+Python packaging/version metadata has separate installation checks. This
+release supersedes `0.1.0-alpha.1`, which remains available as historical evidence.
+
 ## 0.1.0-alpha.1
 
 First roastedDuck public preview, targeting the DuckDB 1.5.6 compatibility contract.
