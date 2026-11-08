@@ -41,11 +41,10 @@ func main() {
 Build and run using both required tags:
 
 ```sh
-go mod tidy
 export CGO_ENABLED=1
 export CGO_CFLAGS="-I$ROASTEDDUCK_SDK/include"
 export CGO_LDFLAGS="-L$ROASTEDDUCK_SDK/lib -Wl,-rpath,$ROASTEDDUCK_SDK/lib"
-go run -tags duckdb_use_lib,duckdb_arrow .
+go run -mod=mod -tags duckdb_use_lib,duckdb_arrow .
 ```
 
 Use an SDK path without spaces for this simple compiler-flag example. The

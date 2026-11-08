@@ -31,6 +31,6 @@ with tempfile.TemporaryDirectory() as temp:
     with duckdb.connect(database) as con:
         assert con.execute("SELECT * FROM t").fetchall() == [(42, "roastedDuck 🦆")]
         assert con.execute("SELECT * FROM read_parquet(?)", [parquet]).fetchall() == [(42, "roastedDuck 🦆")]
-print(json.dumps({"status": "passed", "distribution": "roastedduck", "version": duckdb.__version__,
+print(json.dumps({"status": "passed", "distribution": "roastedduck", "version": importlib.metadata.version("roastedduck"),
                   "engine_version": duckdb.__duckdb_version__, "extension": duckdb.__file__,
                   "checks": ["identity", "aggregate", "parameters", "unicode", "rollback", "reopen", "parquet"]}))
