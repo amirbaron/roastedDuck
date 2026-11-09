@@ -20,5 +20,9 @@
       "sha256": "7ed034f279acd18dc922506d46c069550133024d93de2767d990b256de0e9975",
       "bytes": 60005182
     }
+  },
+  "qualification_recovery": {
+    "run": 42677865985,
+    "commit": "bb1f2fd8421a5f854ed7b242ba77b4acdc463891"
   }
 }

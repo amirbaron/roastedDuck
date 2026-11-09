@@ -14,6 +14,7 @@ from verify_qualification import verify as verify_qualification
 from archive_native_sdk import verify_archive as verify_native_archive
 from qualify_swift_package import verify_archive as verify_swift_archive
 from verify_apple_release import verify as verify_apple
+from recovery_protocol import RECOVERED_ARTIFACTS, INPUT_ARTIFACTS, verify_input_receipts
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--config", type=Path, default=ROOT / "scripts/release/observer-inputs.json")
@@ -67,6 +68,16 @@ while True:
     assert not any(job["conclusion"] in {"failure", "timed_out", "cancelled"} and job["name"] != "assemble" for job in jobs), "A producer build/runtime gate failed"
     print("Waiting for immutable producer", producer_id, flush=True)
     time.sleep(30)
+recovery = config.get("qualification_recovery")
+if recovery:
+    while True:
+        run = api(f'repos/{repository}/actions/runs/{recovery["run"]}')
+        assert run["head_sha"] == recovery["commit"] and run["head_repository"]["full_name"] == repository
+        if run["status"] == "completed":
+            break
+        assert args.wait, "Recovery has not completed"
+        print("Waiting for pinned qualification recovery", recovery["run"], flush=True)
+        time.sleep(30)
 evidence = source_run_evidence(repository, producer_id, candidate, manifests)
 catalog = api(f"repos/{repository}/actions/runs/{producer_id}/artifacts?per_page=100")["artifacts"]
 by_name = {record["name"]: record for record in catalog}
@@ -74,11 +85,24 @@ assert len(by_name) == len(catalog)
 names = required_artifact_names()
 artifacts = []
 for name in names:
+    if recovery and name in RECOVERED_ARTIFACTS:
+        continue
     listed = by_name[name]
     record = api(f'repos/{repository}/actions/artifacts/{int(listed["id"])}')
     assert record["id"] == listed["id"] and record["digest"] == listed["digest"]
     artifacts.append(download_artifact(repository, record, producer_id, candidate, incoming / name, temporary))
     print("Verified original artifact", name, flush=True)
+recovery_artifacts = []
+if recovery:
+    recovery_catalog = api(f'repos/{repository}/actions/runs/{recovery["run"]}/artifacts?per_page=100')["artifacts"]
+    recovery_by_name = {r["name"]: r for r in recovery_catalog}
+    assert len(recovery_by_name) == len(recovery_catalog)
+    for name in sorted(RECOVERED_ARTIFACTS | INPUT_ARTIFACTS):
+        listed = recovery_by_name[name]
+        record = api(f'repos/{repository}/actions/artifacts/{int(listed["id"])}')
+        assert record["digest"] == listed["digest"]
+        recovery_artifacts.append(download_artifact(repository, record, recovery["run"], recovery["commit"], incoming / name, temporary))
+    verify_input_receipts(incoming, evidence, artifacts)
 assert json.loads((incoming / "security-report/report.json").read_text())["results"] == []
 accepted = args.out / "python"
 subprocess.run(["python", str(ROOT / "scripts/release/assemble_python_candidate.py"), "--input", str(incoming),
@@ -115,6 +139,9 @@ verification_inputs.mkdir()
 for name in names:
     if name.startswith(("qualification-", "candidate-native-manifest-", "candidate-swift-manifest-")):
         shutil.copytree(incoming / name, verification_inputs / name)
+if recovery:
+    for name in INPUT_ARTIFACTS:
+        shutil.copytree(incoming / name, verification_inputs / name)
 shutil.copy2(accepted / "python-distributions.json", manifests / "python-distributions.json")
 shutil.copy2(apple_inputs / "apple-distribution.json", manifests / "apple-distribution.json")
 shutil.copy2(apple_inputs / "final-archive-consumer.json", manifests / "apple-final-archive-consumer.json")
@@ -122,6 +149,8 @@ shutil.copy2(incoming / "security-report/report.json", manifests / "dependency-s
 (manifests / "qualification-verification.json").write_text(json.dumps(qualified, indent=2) + "\n")
 evidence.update(verification_tools_commit=observer, observer_run=int(os.environ["GITHUB_RUN_ID"]),
                 verification_only_changed_paths=changed, producer_artifacts=artifacts,
+                recovery_artifacts=recovery_artifacts,
+                derived_archives_first_created_in_recovery=["swift-linux-amd64"] if recovery else [],
                 python_manifest_sha256=sha(accepted / "python-distributions.json"),
                 apple_archive_sha256=sha(apple_archive), apple_input_assets=config["apple_assets"],
                 passed=True, distributions_rebuilt=False, distribution_bytes_changed=False,

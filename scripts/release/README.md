@@ -88,6 +88,29 @@ the observer. This creates no official release/tag or publication claim. Public
 promotion follows complete observer acceptance; PyPI and live-install checks
 remain separate requirements.
 
+### Recovery of unstarted hosted jobs
+
+The frozen producer encountered a GitHub internal server error (correlation ID
+`6dd9873b-739a-4cb7-a9a7-5fde0aa6d89a`). All six emitted build/security/source/ARM64
+qualification jobs passed; Linux x86_64 and macOS qualification jobs were never
+created, and assembly was skipped. GitHub rejected a failed-job retry.
+
+`recover-qualification.yml` runs those two missing jobs against the exact original
+artifact IDs and ZIP digests in `recovery-inputs.json`. It checks out the frozen
+producer commit and runs its original runtime steps verbatim. The separately
+checked-out verification helper only authenticates and downloads the original
+inputs. It does not build new engine libraries or Python wheels.
+
+This is a distinct, narrowly bounded observer mode: exactly six original jobs
+must remain successful, assembly must remain skipped, and exactly the two missing
+jobs must succeed in the pinned recovery run. Any failed original runtime or
+build job is rejected. Original and recovery artifacts have separate provenance.
+The Linux x86_64 Swift archive is first created by the recovery's unchanged
+producer packaging script from the original library, and is explicitly recorded
+as a derived recovery artifact. All platform/ABI, image identity, archive,
+encryption, and client-suite checks remain mandatory. The original workflow
+continues to be reported as failed; recovery does not rewrite its result.
+
 ## Historical preview assembler
 
 `package_preview.py` exists only to reproduce the old source2551 1.5.6 preview

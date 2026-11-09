@@ -26,6 +26,9 @@ VERIFICATION_ONLY_PATHS = {
     "scripts/release/README.md", "scripts/release/tests/test_pip_report.py",
     "scripts/release/tests/test_observer_protocol.py",
     "scripts/release/tests/test_qualification_gate.py",
+    ".github/workflows/recover-qualification.yml", "scripts/release/fetch_recovery_candidate.py",
+    "scripts/release/recovery-inputs.json", "scripts/release/recovery_protocol.py",
+    "scripts/release/tests/test_recovery_protocol.py",
 }
 
 def required_artifact_names():
@@ -98,12 +101,20 @@ def download_artifact(repository, record, run_id, commit, destination, temporary
 def source_run_evidence(repository, run_id, commit, output):
     run = api(f"repos/{repository}/actions/runs/{run_id}")
     jobs = api(f"repos/{repository}/actions/runs/{run_id}/jobs?per_page=100")["jobs"]
+    (output / "producer-run.json").write_text(json.dumps(run, indent=2) + "\n")
+    (output / "producer-jobs.json").write_text(json.dumps(jobs, indent=2) + "\n")
     aggregate = next((job for job in jobs if job["name"] == "assemble"), None)
     log = None
     if aggregate and aggregate["conclusion"] == "failure":
         log = subprocess.check_output(["gh", "api", f'repos/{repository}/actions/jobs/{aggregate["id"]}/logs'], text=True)
         (output / "original-aggregate-failure.log").write_text(log)
-    evidence = validate_producer(run, jobs, repository, commit, log)
+    from recovery_protocol import recovery_config, recovery_evidence
+    recovery_pin, _ = recovery_config()
+    if recovery_pin:
+        evidence = recovery_evidence(run, jobs, output)
+        assert evidence["candidate_source_commit"] == commit and evidence["producer_run"] == run_id
+    else:
+        evidence = validate_producer(run, jobs, repository, commit, log)
     (output / "producer-run.json").write_text(json.dumps(run, indent=2) + "\n")
     (output / "producer-jobs.json").write_text(json.dumps(jobs, indent=2) + "\n")
     return evidence
@@ -124,6 +135,10 @@ def verify_observer_chain(repository, acceptance, candidate, receipts):
                     "scripts/release/pip_report.py", "scripts/release/verify_qualification.py",
                     "scripts/release/verify_apple_release.py", "scripts/release/archive_native_sdk.py",
                     "scripts/release/qualify_swift_package.py", "scripts/release/inspect_distribution.py"], cwd=ROOT, check=True)
+    subprocess.run(["git", "diff", "--exit-code", observer_commit, "HEAD", "--",
+                    "scripts/release/recovery_protocol.py", "scripts/release/recovery-inputs.json",
+                    "scripts/release/observer-inputs.json", "scripts/release/fetch_recovery_candidate.py",
+                    ".github/workflows/recover-qualification.yml"], cwd=ROOT, check=True)
     catalog = api(f"repos/{repository}/actions/runs/{observer_id}/artifacts?per_page=100")["artifacts"]
     matches = [item for item in catalog if item["name"] == "observed-manifests"]
     assert len(matches) == 1
@@ -146,7 +161,24 @@ def verify_observer_chain(repository, acceptance, candidate, receipts):
         assert observed[key] == value, "Producer evidence differs: " + key
     assert acceptance["producer_run_conclusion"] == actual["producer_run_conclusion"]
     records = observed["producer_artifacts"]
-    assert len(records) == len(required_artifact_names()) and {record["name"] for record in records} == set(required_artifact_names())
+    recovered_records = observed.get("recovery_artifacts", [])
+    from recovery_protocol import RECOVERED_ARTIFACTS, INPUT_ARTIFACTS, verify_input_receipts
+    expected_originals = set(required_artifact_names())
+    if "qualification_recovery_run" in actual:
+        expected_originals -= RECOVERED_ARTIFACTS
+        assert len(recovered_records) == len(RECOVERED_ARTIFACTS | INPUT_ARTIFACTS)
+        assert {r["name"] for r in recovered_records} == RECOVERED_ARTIFACTS | INPUT_ARTIFACTS
+        recovery_catalog = api(f'repos/{repository}/actions/runs/{actual["qualification_recovery_run"]}/artifacts?per_page=100')["artifacts"]
+        recovery_originals = {r["id"]: r for r in recovery_catalog}
+        for record in recovered_records:
+            original = recovery_originals[record["id"]]
+            assert not original["expired"] and all(original[k] == record[k] for k in ["id", "name", "digest", "size_in_bytes"])
+            assert original["workflow_run"]["id"] == actual["qualification_recovery_run"]
+            assert original["workflow_run"]["head_sha"] == actual["qualification_recovery_commit"]
+        verify_input_receipts(directory / "qualification-inputs", actual, records)
+    else:
+        assert not recovered_records
+    assert len(records) == len(expected_originals) and {record["name"] for record in records} == expected_originals
     producer_catalog = api(f"repos/{repository}/actions/runs/{producer_id}/artifacts?per_page=100")["artifacts"]
     originals = {record["id"]: record for record in producer_catalog}
     for record in records:
