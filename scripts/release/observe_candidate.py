@@ -18,6 +18,7 @@ from verify_apple_release import verify as verify_apple
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--config", type=Path, default=ROOT / "scripts/release/observer-inputs.json")
 parser.add_argument("--out", type=Path, required=True)
+parser.add_argument("--apple-inputs", type=Path, required=True)
 parser.add_argument("--wait", action="store_true")
 args = parser.parse_args()
 config = json.loads(args.config.read_text())
@@ -34,15 +35,15 @@ for path in [incoming, temporary, manifests]:
 # Authenticate and validate the separately signed Apple payload before waiting.
 apple_inputs = args.out / "apple-inputs"
 apple_inputs.mkdir()
-release = api(f'repos/{repository}/releases/{int(config["apple_input_release_id"])}')
-assert release["draft"] is True
-available = {asset["id"]: asset for asset in release["assets"]}
+fetch = json.loads((args.apple_inputs / "fetch-verification.json").read_text())
+assert fetch["passed"] is True and fetch["contents_executed"] is False and fetch["contents_unpacked"] is False
+assert fetch["fetch_commit"] == observer and fetch["candidate_source_commit"] == candidate
+assert fetch["input_release_id"] == config["apple_input_release_id"] and fetch["assets"] == config["apple_assets"]
 for name, pin in config["apple_assets"].items():
-    asset = available[pin["id"]]
-    assert asset["name"] == name and asset["digest"] == "sha256:" + pin["sha256"] and asset["size"] == pin["bytes"]
-    with (apple_inputs / name).open("wb") as output:
-        subprocess.run(["gh", "api", "-H", "Accept: application/octet-stream", f'repos/{repository}/releases/assets/{int(pin["id"])}'], stdout=output, check=True)
+    assert Path(name).name == name
+    shutil.copy2(args.apple_inputs / name, apple_inputs / name)
     assert sha(apple_inputs / name) == pin["sha256"]
+shutil.copy2(args.apple_inputs / "fetch-verification.json", manifests / "apple-fetch-verification.json")
 apple_distribution = json.loads((apple_inputs / "apple-distribution.json").read_text())
 apple_archive = apple_inputs / apple_distribution["filename"]
 assert sha(apple_archive) == apple_distribution["sha256"] and apple_distribution["version"] == config["version"]

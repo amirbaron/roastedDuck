@@ -22,6 +22,7 @@ VERIFICATION_ONLY_PATHS = {
     "scripts/release/verify_pypi_install.py", "scripts/release/assemble_python_candidate.py",
     "scripts/release/prepare_pypi.py", "scripts/release/observe_candidate.py",
     "scripts/release/observer_protocol.py", "scripts/release/observer-inputs.json",
+    "scripts/release/fetch_observer_inputs.py",
     "scripts/release/README.md", "scripts/release/tests/test_pip_report.py",
     "scripts/release/tests/test_observer_protocol.py",
     "scripts/release/tests/test_qualification_gate.py",

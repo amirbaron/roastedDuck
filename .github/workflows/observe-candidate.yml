@@ -6,6 +6,7 @@ on:
       - 'scripts/release/observer-inputs.json'
       - 'scripts/release/observer_protocol.py'
       - 'scripts/release/observe_candidate.py'
+      - 'scripts/release/fetch_observer_inputs.py'
       - 'scripts/release/pip_report.py'
       - 'scripts/release/tests/test_observer_protocol.py'
       - 'scripts/release/tests/test_pip_report.py'
@@ -18,7 +19,30 @@ concurrency:
   group: release-observer-${{ github.ref }}
   cancel-in-progress: false
 jobs:
+  fetch-apple:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Fetch pinned private inputs without executing them
+        run: python scripts/release/fetch_observer_inputs.py --config scripts/release/observer-inputs.json --out "$RUNNER_TEMP/apple-inputs"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: observer-apple-inputs
+          path: ${{ runner.temp }}/apple-inputs/
+          if-no-files-found: error
+          retention-days: 30
   observe:
+    needs: fetch-apple
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     env:
@@ -35,8 +59,12 @@ jobs:
       - run: python -m pip install packaging==26.3 twine==7.0.0
       - name: Test strict observer and digest rejection behavior
         run: python -m unittest discover -s scripts/release/tests -v
+      - uses: actions/download-artifact@v4
+        with:
+          name: observer-apple-inputs
+          path: ${{ runner.temp }}/apple-inputs
       - name: Verify original producer bytes and complete qualification
-        run: python scripts/release/observe_candidate.py --out "$RUNNER_TEMP/observed" --wait
+        run: python scripts/release/observe_candidate.py --out "$RUNNER_TEMP/observed" --apple-inputs "$RUNNER_TEMP/apple-inputs" --wait
       - uses: actions/upload-artifact@v4
         if: always()
         with:
