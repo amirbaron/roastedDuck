@@ -20,6 +20,11 @@ and [GitHub-download installation run](https://github.com/amirbaron/roastedDuck/
 both passed. All 16 files on PyPI have the same SHA-256 digests as the accepted
 GitHub release distributions.
 
+The immutable source archive preserves its original developer-test requirements.
+For rerunning validation, use the [current repository tooling](https://github.com/amirbaron/roastedDuck/blob/main/scripts/release/README.md#maintaining-validation-dependencies),
+which updates pytest, PyArrow, and fsspec and audits the resolved test environments.
+Those validation packages are not installed by `pip install roastedduck`.
+
 | Asset | Contents |
 | --- | --- |
 | Native platform archive | CLI, shared/static libraries, C/ADBC headers, pinned Go source, notices |

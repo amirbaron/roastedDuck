@@ -43,12 +43,26 @@ def main():
     parser.add_argument("--wheels", type=Path, required=True)
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path, help="Bind published wheels and native images to the accepted release manifest")
     parser.add_argument("--versions", nargs="+", default=["3.10", "3.11", "3.12", "3.13", "3.14"])
     args = parser.parse_args()
     args.out = args.out.resolve()
     args.wheels = args.wheels.resolve()
     args.source = args.source.resolve()
     args.out.mkdir(parents=True, exist_ok=False)
+    manifest = json.loads(args.manifest.read_text()) if args.manifest else None
+    if manifest:
+        assert manifest["version"] == VERSION
+    accepted = {record["filename"]: record for record in manifest["distributions"]} if manifest else {}
+    provenance = {
+        "validation_tools_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+        "validation_requirements_sha256": hashlib.sha256((ROOT / "scripts/release/requirements-validation.txt").read_bytes()).hexdigest(),
+        "corpus_directory": args.source.name,
+        "reference_distribution": "duckdb==1.5.6",
+        "accepted_manifest_sha256": hashlib.sha256(args.manifest.read_bytes()).hexdigest() if manifest else None,
+        "candidate_source_commit": manifest["source_commit"] if manifest else None,
+    }
+    (args.out / "validation-provenance.json").write_text(json.dumps(provenance, indent=2) + "\n")
     reports = []
     for version in args.versions:
         executable = shutil.which("python" + version)
@@ -56,6 +70,8 @@ def main():
         abi = "cp" + version.replace(".", "")
         wheels = list(args.wheels.glob(f"roastedduck-{VERSION}-{abi}-{abi}-*.whl"))
         assert len(wheels) == 1, wheels
+        if manifest:
+            assert hashlib.sha256(wheels[0].read_bytes()).hexdigest() == accepted[wheels[0].name]["sha256"]
         cell = args.out / abi
         cell.mkdir()
         results = {}
@@ -75,14 +91,24 @@ def main():
             subprocess.run([executable, "-m", "venv", str(venv)], env=env, check=True)
             python = str(venv / "bin/python")
             requirements = [python, "-m", "pip", "install", "--only-binary=:all:", "-r", str(ROOT / "scripts/release/requirements-validation.txt")]
+            if engine == "rust":
+                requirements += ["--constraint", str(cell / "cpp/requirements.txt")]
             assert run(requirements, output / "dependencies.log", env, output) == 0
             package = str(wheels[0]) if engine == "rust" else "duckdb==1.5.6"
             install = [python, "-m", "pip", "install", "--no-deps", "--only-binary=:all:", "--report", str(output / "install.json"), package]
             assert run(install, output / "install.log", env, output) == 0
             assert run([python, "-m", "pip", "check"], output / "pip-check.log", env, output) == 0
+            assert run([python, "-m", "pip", "freeze", "--all"], output / "pip-freeze.txt", env, output) == 0
+            assert run([python, "-m", "pip", "inspect"], output / "pip-inspect.json", env, output) == 0
+            installed = json.loads((output / "pip-inspect.json").read_text())["installed"]
+            resolved = {item["metadata"]["name"]: item["metadata"]["version"] for item in installed}
+            assert len(resolved) == len(installed)
+            (output / "requirements.txt").write_text("".join(f"{name}=={version}\n" for name, version in sorted(resolved.items())))
             identity = subprocess.check_output([python, "-c", "import duckdb,_duckdb,hashlib,json;from pathlib import Path;p=Path(_duckdb.__file__);print(json.dumps({'rust':bool(getattr(_duckdb,'__rust_engine__',False)),'native':str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}))"], cwd=output, env=env, text=True)
             identity = json.loads(identity)
             assert identity["rust"] == (engine == "rust")
+            if engine == "rust" and manifest:
+                assert identity["sha256"] == accepted[wheels[0].name]["native_sha256"]
             (output / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
             if engine == "rust":
                 assert run([python, str(ROOT / "scripts/release/smoke_python.py")], output / "smoke.json", env, output) == 0
@@ -108,6 +134,12 @@ def main():
                                "xfails": sum(e["outcome"] == "skipped" and e["wasxfail"] is not None for e in events),
                                "xpasses": sum(e["outcome"] == "passed" and e["wasxfail"] is not None for e in events)}
         cpp, rust = results["cpp"]["cases"], results["rust"]["cases"]
+        environments = {}
+        for engine in ["cpp", "rust"]:
+            installed = json.loads((cell / engine / "pip-inspect.json").read_text())["installed"]
+            environments[engine] = {item["metadata"]["name"].lower().replace("_", "-"): item["metadata"]["version"]
+                                    for item in installed if item["metadata"]["name"].lower() not in {"duckdb", "roastedduck"}}
+        assert environments["cpp"] == environments["rust"], "Control and Rust validation environments differ"
         differences = {key: {"cpp": cpp.get(key), "rust": rust.get(key)} for key in sorted(cpp.keys() | rust.keys()) if cpp.get(key) != rust.get(key)}
         event_differences = results["cpp"]["explicit_outcomes"] != results["rust"]["explicit_outcomes"]
         record = {"python": version, "abi": abi, "wheel": wheels[0].name, "engines": results,

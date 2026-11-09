@@ -41,7 +41,7 @@ jobs:
           curl -fL https://github.com/google/osv-scanner/releases/download/v2.7.1/osv-scanner_linux_amd64 -o security/osv-scanner
           echo 'fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8  security/osv-scanner' | sha256sum --check
           chmod +x security/osv-scanner
-          security/osv-scanner scan source --lockfile Cargo.lock --no-call-analysis rust --format json --output-file security/report.json
+          security/osv-scanner scan source --lockfile Cargo.lock --lockfile scripts/release/requirements-validation.txt --no-call-analysis rust --no-resolve --all-vulns --format json --output-file security/report.json
       - name: Verify rejection of stale or incomplete release evidence
         run: python3 -m unittest discover -s scripts/release/tests -v
       - uses: actions/upload-artifact@v4
@@ -353,10 +353,13 @@ jobs:
             native-input-verification.json
             native-qualification/
             qualification/summary.json
+            qualification/validation-provenance.json
             qualification/*/*/*.json
             qualification/*/*/*.jsonl
             qualification/*/*/*.xml
             qualification/*/*/*.log
+            qualification/*/*/requirements.txt
+            qualification/*/*/pip-freeze.txt
             qualification/*/comparison.json
           retention-days: 14
   assemble:

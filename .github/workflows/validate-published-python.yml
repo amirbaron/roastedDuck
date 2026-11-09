@@ -1,0 +1,128 @@
+name: Validate published Python with current test dependencies
+on:
+  push:
+    branches: [amirbaron/rust-duckdb-port]
+    paths:
+      - 'scripts/release/requirements-validation.txt'
+      - 'scripts/release/validate_python_matrix.py'
+      - '.github/workflows/validate-published-python.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: published-python-validation-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  TZ: UTC
+  RELEASE_TAG: v1.5.6.post1
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-amd64
+            wheel: manylinux_2_28_x86_64
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+            wheel: manylinux_2_28_aarch64
+          - os: macos-26
+            platform: macos-arm64
+            wheel: macosx_11_0_arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: |
+            3.10
+            3.11
+            3.12
+            3.13
+            3.14
+      - name: Download the exact published wheels and manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WHEEL_PLATFORM: ${{ matrix.wheel }}
+        run: |
+          mkdir wheels
+          gh release download "$RELEASE_TAG" --dir wheels --pattern "roastedduck-${RELEASE_TAG#v}-cp*-cp*-$WHEEL_PLATFORM.whl" --pattern python-distributions.json --pattern SHA256SUMS
+          python scripts/release/verify_downloads.py wheels
+          git diff --exit-code "$RELEASE_TAG^{commit}" HEAD -- Cargo.toml Cargo.lock crates third_party rust-toolchain.toml .cargo pyproject.toml python/duckdb python/adbc_driver_duckdb python/_duckdb.py python/_duckdb-stubs include go swift
+          python - <<'PY'
+          import json, subprocess
+          manifest = json.load(open('wheels/python-distributions.json'))
+          tag = subprocess.check_output(['git', 'rev-parse', 'v1.5.6.post1^{commit}'], text=True).strip()
+          assert manifest['source_commit'] == tag
+          PY
+      - name: Fetch the unchanged upstream corpus
+        run: python scripts/release/fetch_validation_source.py --out upstream
+      - name: Compare all five ABIs with updated validation dependencies
+        run: python scripts/release/validate_python_matrix.py --wheels wheels --manifest wheels/python-distributions.json --source upstream/duckdb-python-802a345bb627435d2a05d63cb74454fa98b60b5e --out qualification
+      - name: Preserve complete resolved environments and raw outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: published-python-${{ matrix.platform }}
+          path: |
+            wheels/python-distributions.json
+            wheels/SHA256SUMS
+            qualification/summary.json
+            qualification/validation-provenance.json
+            qualification/*/*/*.json
+            qualification/*/*/*.jsonl
+            qualification/*/*/*.xml
+            qualification/*/*/*.log
+            qualification/*/*/requirements.txt
+            qualification/*/*/pip-freeze.txt
+            qualification/*/comparison.json
+          if-no-files-found: error
+          retention-days: 30
+  audit:
+    needs: qualify
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: published-python-*
+          path: receipts
+      - name: Audit all thirty resolved test environments and the Rust lockfile
+        run: |
+          mkdir security
+          curl -fL https://github.com/google/osv-scanner/releases/download/v2.7.1/osv-scanner_linux_amd64 -o security/osv-scanner
+          echo 'fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8  security/osv-scanner' | sha256sum --check
+          chmod +x security/osv-scanner
+          python - <<'PY'
+          import json, pathlib, subprocess
+          roots = sorted(pathlib.Path('receipts').glob('published-python-*'))
+          assert len(roots) == 3
+          inventories = []
+          for root in roots:
+              summary = json.loads((root / 'qualification/summary.json').read_text())
+              assert len(summary['cells']) == 5 and all(c['passed'] for c in summary['cells'])
+              files = sorted((root / 'qualification').glob('cp*/*/requirements.txt'))
+              assert len(files) == 10
+              inventories.extend(files)
+          command = ['security/osv-scanner', 'scan', 'source', '--lockfile', 'Cargo.lock',
+                     '--no-call-analysis', 'rust', '--no-resolve', '--all-vulns', '--all-packages',
+                     '--format', 'json', '--output-file', 'security/resolved-environments.json']
+          for path in inventories:
+              command += ['--lockfile', str(path)]
+          subprocess.run(command, check=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: published-python-security
+          path: security/*.json
+          if-no-files-found: error
+          retention-days: 30

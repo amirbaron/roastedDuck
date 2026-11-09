@@ -1,4 +1,6 @@
-pytest==8.4.2
+pip==26.3
+setuptools==84.2.1
+pytest==9.0.3
 pytest-timeout==2.4.0
 pytest-reraise==2.1.2
 packaging==26.3
@@ -6,10 +8,9 @@ numpy==2.2.6; python_version < '3.14'
 numpy==2.3.4; python_version >= '3.14'
 pandas==2.2.3; python_version < '3.14'
 pandas==2.3.3; python_version >= '3.14'
-pyarrow==19.0.1; python_version < '3.14'
-pyarrow==22.0.0; python_version >= '3.14'
+pyarrow==23.0.1
 polars==2.0.0
-fsspec==2025.3.2
+fsspec==2026.6.0
 requests==2.34.2
 psutil==7.2.2
 adbc-driver-manager==1.4.0; python_version < '3.14'

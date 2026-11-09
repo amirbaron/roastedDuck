@@ -111,6 +111,29 @@ as a derived recovery artifact. All platform/ABI, image identity, archive,
 encryption, and client-suite checks remain mandatory. The original workflow
 continues to be reported as failed; recovery does not rewrite its result.
 
+## Maintaining validation dependencies
+
+`validate-published-python.yml` requalifies the immutable 1.5.6.post1 wheels when
+validation dependencies change. It verifies release checksums and native hashes,
+requires unchanged engine/build sources, and runs all five ABIs on each of the
+three supported platforms against the same pinned upstream corpus. It does not
+rebuild or repack release files.
+
+Each C++ environment is resolved first; its exact versions constrain the Rust
+environment. Both full `pip inspect` inventories and `pip freeze` records are
+retained, and the non-engine package/version maps must match. OSV audits all 30
+resolved inventories plus Cargo.lock. `--no-resolve` prevents the scanner from
+substituting hypothetical transitive versions for those actually installed; no
+installed package is omitted from the audit lockfiles. The build workflow also
+checks direct validation pins in addition to its Rust lockfile scan.
+
+The original 1.5.6.post1 Cargo scan covered Rust dependencies. The immutable source
+archive retains the validation requirements present at release time, including
+the older pytest, PyArrow, and fsspec pins. These are not installed by the
+roastedduck distribution. Developers rerunning validation should use the current
+repository's corrected requirements and workflow; historical receipts and source
+archives are not rewritten.
+
 ## Historical preview assembler
 
 `package_preview.py` exists only to reproduce the old source2551 1.5.6 preview
