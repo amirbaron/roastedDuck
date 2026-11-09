@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.6.post1 — candidate, not yet published
+
+- Source-built PyPI packages with complete metadata, README, licenses and tested source archives.
+- PyO3 0.30.1, rsa 0.10.0 and ctutils 0.4.8 address the identified dependency advisories.
+- Explicit GIL requirement preserves normal-CPython scope during the PyO3 upgrade.
+- Fresh native security/persistence and selected-client qualification; historical results stay dated.
+- Trusted publishing and official-index installation verification, pending completed launch gates and PyPI owner setup.
+
 ## 1.5.6
 
 Align the public release tag, Python distribution, native asset names, and

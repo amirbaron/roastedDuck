@@ -86,6 +86,7 @@ def main():
             (output / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
             if engine == "rust":
                 assert run([python, str(ROOT / "scripts/release/smoke_python.py")], output / "smoke.json", env, output) == 0
+                assert run([python, str(ROOT / "scripts/release/smoke_encryption.py")], output / "encryption.json", env, output) == 0
             env.update(PYTHONPATH=str(ROOT / "scripts/release"), ROASTEDDUCK_TEST_ENGINE=engine,
                        ROASTEDDUCK_EXPECTED_NATIVE_SHA256=identity["sha256"],
                        ROASTEDDUCK_PYTEST_IDENTITY=str(output / "pytest-identity.json"),

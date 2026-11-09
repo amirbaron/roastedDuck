@@ -50,6 +50,7 @@ if sys.platform == "darwin":
     for role, path in paths.items():
         verification = subprocess.run(["codesign", "--verify", "--strict", str(path)], capture_output=True)
         if verification.returncode:
+            assert role == "cpp", "Rust candidate signature is invalid; qualification must not repair shipping bytes"
             original = sha(path)
             subprocess.run(["codesign", "--force", "--sign", "-", "--timestamp=none", str(path)], check=True)
             subprocess.run(["codesign", "--verify", "--strict", str(path)], check=True)
@@ -75,6 +76,7 @@ manifest = {
                          "native_sha256": pin["httpfs_sha256"], "unsafe_crypto_enabled": False, "unsigned_extensions_enabled": False},
     "transformations": transformations,
 }
+assert sha(paths["rust"]) == args.rust_sha256, "Rust candidate bytes changed during preparation"
 path = args.out / "input-manifest.json"
 path.write_text(json.dumps(manifest, indent=2) + "\n")
 print(json.dumps({"manifest": str(path), "sha256": sha(path)}))

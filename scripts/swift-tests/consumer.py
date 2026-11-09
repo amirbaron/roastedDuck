@@ -22,6 +22,7 @@ def main():
     parser.add_argument("--apple-sdk", type=Path, help="compiler SDK path, required for iOS")
     parser.add_argument("--build-only", action="store_true", help="sign and verify the consumer without executing it")
     parser.add_argument("--certificate-sha256", help="trusted complete SDK manifest certificate fingerprint")
+    parser.add_argument("--consumer-source", type=Path, help="explicit additional consumer; default preserves the pinned typed consumer")
     args = parser.parse_args()
     sdk, out = args.sdk.resolve(), args.out.resolve()
     if out.exists():
@@ -57,7 +58,8 @@ def main():
     shutil.copytree(package, relocated, symlinks=True)
     client = out / "client"
     (client / "Sources/Consumer").mkdir(parents=True)
-    shutil.copy2(workspace / "scripts/swift-tests/Consumer.swift", client / "Sources/Consumer/main.swift")
+    source_consumer = args.consumer_source.resolve() if args.consumer_source else workspace / "scripts/swift-tests/Consumer.swift"
+    shutil.copy2(source_consumer, client / "Sources/Consumer/main.swift")
     (client / "Package.swift").write_text('''// swift-tools-version: 5.7
 import PackageDescription
 let package = Package(

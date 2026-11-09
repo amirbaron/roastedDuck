@@ -156,6 +156,10 @@ for file in "${FILES[@]}"; do
     install_name_tool -change "$install_name" "$LIBDIR/libduckdb.dylib" "$BIN/$name"
   fi
   "$ROOT/scripts/sign.sh" "$BIN/$name"
+  if [[ "$SYSTEM" == Darwin && "${RUSTDB_TEST_ADHOC_SIGNING:-0}" == 1 ]]; then
+    codesign --force --sign - --timestamp=none "$BIN/$name"
+    codesign --verify --strict "$BIN/$name"
+  fi
   printf '%-36s ' "$name"
   log="$BIN/$name.log"
   RUN_COMMAND=("$BIN/$name")

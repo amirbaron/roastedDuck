@@ -13,6 +13,8 @@ import subprocess
 import urllib.error
 import urllib.request
 
+from verify_qualification import verify as verify_qualification
+
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--tag", required=True)
 parser.add_argument("--out", type=Path, required=True)
@@ -34,7 +36,8 @@ assert acceptance["known_dependency_advisories_unresolved"] == []
 required = {"source_build", "python_15_cells", "sdist_rebuild", "crypto_interoperability", "capi_adbc", "go", "swift", "apple_simulator", "final_artifact_integrity"}
 assert set(acceptance["gates"]) >= required
 assert all(acceptance["gates"][name]["passed"] is True for name in required)
-current = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+subprocess.run(["git", "fetch", "--depth=1", "origin", "refs/tags/" + args.tag + ":refs/tags/" + args.tag], check=True)
+current = subprocess.check_output(["git", "rev-parse", args.tag + "^{commit}"], text=True).strip()
 assert current == acceptance["release_commit"]
 assert acceptance["source_build_commit"] == current
 assert subprocess.check_output(["git", "rev-parse", args.tag + "^{commit}"], text=True).strip() == current
@@ -46,6 +49,34 @@ for run_id in acceptance["required_successful_runs"]:
     assert run["headSha"] in acceptance["verified_source_commits"], run
     if run_id == acceptance["source_build_run"]:
         assert run["headSha"] == current, "Build run must belong to the exact tagged source"
+        repository = subprocess.check_output(["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], text=True).strip()
+        details = json.loads(subprocess.check_output(["gh", "api", f"repos/{repository}/actions/runs/{int(run_id)}"]))
+        assert details["path"].split("@", 1)[0] == ".github/workflows/build-candidate.yml"
+        assert details["head_repository"]["full_name"].lower() == repository.lower()
+producer = args.receipts / "source-build"
+artifacts = json.loads(subprocess.check_output(["gh", "api", f'repos/{repository}/actions/runs/{int(acceptance["source_build_run"])}/artifacts?per_page=100']))
+available = {artifact["name"] for artifact in artifacts["artifacts"] if not artifact["expired"]}
+artifact_name = "qualified-python-manifest" if "qualified-python-manifest" in available else "qualified-python-distributions"
+assert artifact_name in available, "Qualified producer artifact is unavailable"
+subprocess.run(["gh", "run", "download", str(int(acceptance["source_build_run"])),
+                "--name", artifact_name, "--dir", str(producer)], check=True)
+producer_manifest = json.loads((producer / "python-distributions.json").read_text())
+assert producer_manifest == manifest, "Promoted distributions differ from the qualified source-build manifest"
+qualification_inputs = args.receipts / "qualification-inputs"
+subprocess.run(["gh", "run", "download", str(int(acceptance["source_build_run"])),
+                "--pattern", "qualification-*", "--pattern", "candidate-native-manifest-*",
+                "--dir", str(qualification_inputs)], check=True)
+qualified = verify_qualification(qualification_inputs, manifest, current)
+(args.receipts / "qualification-verification.json").write_text(json.dumps(qualified, indent=2) + "\n")
+assert set(acceptance["gates"]["python_15_cells"]["native_image_sha256"]) == set(qualified["python_images"].values())
+for gate in ["crypto_interoperability", "capi_adbc", "go", "swift"]:
+    assert set(acceptance["gates"][gate]["native_image_sha256"]) == set(qualified["native_images"].values()), "Incomplete image coverage: " + gate
+promoted_images = set(acceptance["promoted_native_image_sha256"])
+assert promoted_images and all(re.fullmatch(r"[0-9a-f]{64}", value) for value in promoted_images)
+assert {record["native_sha256"] for record in manifest["distributions"] if "native_sha256" in record} <= promoted_images
+for gate in ["python_15_cells", "crypto_interoperability", "capi_adbc", "go", "swift", "apple_simulator", "final_artifact_integrity"]:
+    observed = set(acceptance["gates"][gate]["native_image_sha256"])
+    assert observed and observed <= promoted_images, "Stale/unbound runtime evidence in " + gate
 assert len(manifest["distributions"]) == 16
 assert len([r for r in manifest["distributions"] if r["filename"].endswith(".whl")]) == 15
 checksums = {}

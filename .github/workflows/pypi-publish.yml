@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -76,7 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
@@ -93,6 +93,7 @@ jobs:
           installed/bin/python -m pip install --no-cache-dir --report pip-install.json roastedduck
           installed/bin/python scripts/release/verify_pypi_install.py --pip-report pip-install.json --manifest receipts/python-distributions.json --out provider-proof.json
           installed/bin/python scripts/release/smoke_python.py
+          installed/bin/python scripts/release/smoke_encryption.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

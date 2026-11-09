@@ -155,9 +155,19 @@ def main():
         assert sha(db) == sealed['database'] and sha(wal) == sealed['wal']
 
     authenticate('after')
+    headers = []
+    for file in sorted(out.rglob('encrypted.duckdb')):
+        with file.open('rb') as stream:
+            head = stream.read(124)
+        assert head[8:12] == b'DUCK' and head[116] == 1, file
+        assert head[118] == {'GCM': 1, 'CTR': 2}[args.cipher], file
+        assert head[119] == {'v0': 0, 'v1': 1}[args.encryption_version], file
+        headers.append({'file': str(file.relative_to(out)), 'metadata_hex': head[116:124].hex(),
+                        'cipher_byte': head[118], 'version_byte': head[119]})
+    assert len(headers) == 14, len(headers)
     verification = {'journeys_pass': 4, 'recovery_processes_pass': 8, 'native_processes': 22,
                     'cipher': args.cipher, 'encryption_version': args.encryption_version,
-                    'journeys': journeys, 'recoveries': recoveries,
+                    'journeys': journeys, 'recoveries': recoveries, 'physical_encrypted_headers': headers,
                     'libraries': {name: {'path': str(path), 'sha256': sha(path)} for name, path in libs.items()},
                     'scope': 'Encrypted native desktop/server checkpoint/nonempty-WAL mutation/readback and two incomplete-tail cases. Actual release/platform scope depends on supplied authenticated artifacts.'}
     (out / 'verification.json').write_text(json.dumps(verification, indent=2) + '\n')

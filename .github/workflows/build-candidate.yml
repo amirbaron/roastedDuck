@@ -10,15 +10,18 @@ on:
       - 'python/**'
       - 'pyproject.toml'
       - 'include/**'
+      - 'go/**'
+      - 'swift/**'
       - 'release.json'
-      - 'scripts/release/**'
+      - 'rust-toolchain.toml'
+      - 'scripts/**'
       - '.github/workflows/build-candidate.yml'
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
   group: release-candidate-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 env:
   CARGO_BUILD_JOBS: 1
   CARGO_INCREMENTAL: 0
@@ -39,6 +42,8 @@ jobs:
           echo 'fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8  security/osv-scanner' | sha256sum --check
           chmod +x security/osv-scanner
           security/osv-scanner scan source --lockfile Cargo.lock --no-call-analysis rust --format json --output-file security/report.json
+      - name: Verify rejection of stale or incomplete release evidence
+        run: python3 -m unittest discover -s scripts/release/tests -v
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -111,7 +116,7 @@ jobs:
             target: aarch64-apple-darwin
             manylinux: 'off'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 240
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
         with:
@@ -136,6 +141,7 @@ jobs:
           rustup target add ${{ matrix.target }}
           cargo build --locked --release -j 1 --target ${{ matrix.target }} -p rustdb-shell -p rustdb-capi -p slt
           python scripts/release/compile_harnesses.py --target ${{ matrix.target }} --out compiled-harnesses
+          python scripts/release/compile_adbc_bridge.py --target ${{ matrix.target }} --out compiled-harnesses/adbc
       - name: Build five normal Python ABI wheels
         uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
         with:
@@ -150,6 +156,7 @@ jobs:
             (
               cargo build --locked --release -j 1 --target ${{ matrix.target }} -p rustdb-shell -p rustdb-capi -p slt
               python3 scripts/release/compile_harnesses.py --target ${{ matrix.target }} --out compiled-harnesses
+              python3 scripts/release/compile_adbc_bridge.py --target ${{ matrix.target }} --out compiled-harnesses/adbc
             )
       - name: Inspect wheel metadata and exact native SDK
         run: |
@@ -160,6 +167,12 @@ jobs:
           python -m twine check --strict wheelhouse/*
           python scripts/release/stage_native.py --target ${{ matrix.target }} --platform ${{ matrix.platform }} --notices notices --harnesses compiled-harnesses --out native
           tar -czf native-${{ matrix.platform }}.tar.gz native
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-native-manifest-${{ matrix.platform }}
+          path: native/build-provenance.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Retain wheel and native inputs
         uses: actions/upload-artifact@v4
         with:
@@ -213,6 +226,7 @@ jobs:
       - name: Run the compiled security and persistence tests natively
         run: |
           tar -xzf candidate/native-${{ matrix.platform }}.tar.gz
+          python scripts/release/verify_native_inputs.py --native native --build-inputs candidate/receipts/build-inputs.json --expected-commit "$(git rev-parse HEAD)" --out native-input-verification.json
           python scripts/release/run_harnesses.py --input native/harnesses --out native-qualification
           result=$(./native/sdk/bin/roastedDuck -csv -noheader -c 'SELECT sum(i) FROM range(10) t(i);')
           test "$result" = 45
@@ -222,13 +236,72 @@ jobs:
         run: python scripts/release/fetch_validation_source.py --out upstream
       - name: Qualify all five Python ABI cells
         run: python scripts/release/validate_python_matrix.py --wheels candidate/wheelhouse --source upstream/duckdb-python-802a345bb627435d2a05d63cb74454fa98b60b5e --out qualification
+      - name: Fetch the pinned native-client fixtures
+        run: python scripts/release/fetch_native_source.py --out upstream-native
+      - name: Qualify all public C API cases
+        run: |
+          library="$PWD/native/sdk/lib/libduckdb.so"
+          if [ "$RUNNER_OS" = macOS ]; then library="$PWD/native/sdk/lib/libduckdb.dylib"; fi
+          digest=$(python -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); j=json.load(open("native/build-provenance.json")); print(j["files_sha256"]["sdk/lib/"+p.name])' "$library")
+          python scripts/release/qualify_capi.py --source "$PWD/upstream-native/duckdb-1.5.6" --library "$library" --expected-sha256 "$digest" --out "$RUNNER_TEMP/capi-qualification"
+      - name: Qualify the complete ADBC suite with the isolated test bridge
+        run: |
+          library="$PWD/native/harnesses/adbc/libduckdb.so"
+          if [ "$RUNNER_OS" = macOS ]; then library="$PWD/native/harnesses/adbc/libduckdb.dylib"; fi
+          digest=$(python -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); j=json.load(open("native/build-provenance.json")); print(j["files_sha256"]["harnesses/adbc/"+p.name])' "$library")
+          python scripts/release/qualify_adbc.py --source "$PWD/upstream-native/duckdb-1.5.6" --library "$library" --expected-sha256 "$digest" --out "$RUNNER_TEMP/adbc-qualification"
+      - name: Qualify the complete Swift client suite
+        run: |
+          library="$PWD/native/sdk/lib/libduckdb.so"
+          if [ "$RUNNER_OS" = macOS ]; then library="$PWD/native/sdk/lib/libduckdb.dylib"; fi
+          digest=$(python -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); j=json.load(open("native/build-provenance.json")); print(j["files_sha256"]["sdk/lib/"+p.name])' "$library")
+          if [ "$RUNNER_OS" = macOS ]; then
+            python scripts/release/qualify_swift.py --source "$PWD/upstream-native/duckdb-1.5.6" --library "$library" --expected-sha256 "$digest" --out "$RUNNER_TEMP/swift-qualification"
+          else
+            docker run --rm -v "$PWD:$PWD" -v "$RUNNER_TEMP:$RUNNER_TEMP" -w "$PWD" \
+              swift:6.2.1-noble@sha256:0e4716bd34384d22963a63afbdbc93be3129dfd0753185aa1ded27755abdcae8 \
+              bash -c 'apt-get update -qq && apt-get install -y -qq python3 binutils && python3 scripts/release/qualify_swift.py "$@"' bash \
+              --source "$PWD/upstream-native/duckdb-1.5.6" --library "$library" --expected-sha256 "$digest" --out "$RUNNER_TEMP/swift-qualification"
+          fi
+      - name: Retain C API, ADBC, and Swift receipts without compiler caches
+        if: always()
+        run: |
+          python - <<'PY'
+          import os, pathlib, shutil
+          for client in ['capi', 'adbc', 'swift']:
+              source = pathlib.Path(os.environ['RUNNER_TEMP']) / (client + '-qualification')
+              output = pathlib.Path('native-qualification') / client
+              output.mkdir(parents=True, exist_ok=True)
+              for file in source.rglob('*'):
+                  relative = file.relative_to(source)
+                  if len(relative.parts) <= 2 and file.is_file() and file.suffix in {'.json', '.log', '.txt', '.xml'}:
+                      target = output / relative
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      shutil.copy2(file, target)
+          PY
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.3'
+          cache: false
+      - name: Qualify the complete pinned Go client suite
+        run: |
+          source=$(python scripts/release/fetch_go_source.py --out upstream-go)
+          library="$PWD/native/sdk/lib/libduckdb.so"
+          if [ "$RUNNER_OS" = macOS ]; then library="$PWD/native/sdk/lib/libduckdb.dylib"; fi
+          digest=$(python -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); j=json.load(open("native/build-provenance.json")); print(j["files_sha256"]["sdk/lib/"+p.name])' "$library")
+          python scripts/release/qualify_go.py --source "$source" --library "$library" --expected-sha256 "$digest" --out "$RUNNER_TEMP/go-qualification"
+      - name: Retain Go receipts without compiler caches
+        if: always()
+        run: |
+          mkdir -p native-qualification/go
+          python -c 'import os,pathlib,shutil; p=pathlib.Path(os.environ["RUNNER_TEMP"])/"go-qualification"; [shutil.copy2(f,"native-qualification/go/"+f.name) for f in p.glob("*") if f.is_file() and f.suffix in {".json",".log",".txt"}]'
       - name: Qualify encrypted checkpoint and WAL interoperability
         env:
           PLATFORM: ${{ matrix.platform }}
         run: |
           library="$PWD/native/sdk/lib/libduckdb.so"
           if [ "$RUNNER_OS" = macOS ]; then library="$PWD/native/sdk/lib/libduckdb.dylib"; fi
-          digest=$(python -c 'import hashlib,sys; print(hashlib.file_digest(open(sys.argv[1],"rb"),"sha256").hexdigest())' "$library")
+          digest=$(python -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); j=json.load(open("native/build-provenance.json")); print(j["files_sha256"]["sdk/lib/"+p.name])' "$library")
           python scripts/release/prepare_encrypted_inputs.py --platform "$PLATFORM" --rust-library "$library" --rust-sha256 "$digest" --cpp-python "$PWD/qualification/cp314/cpp/venv/bin/python" --out "$RUNNER_TEMP/encrypted-inputs"
           pin=$(python -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$RUNNER_TEMP/encrypted-inputs/input-manifest.json")
           for cipher in GCM CTR; do
@@ -236,15 +309,20 @@ jobs:
               python scripts/storage-tests/encrypted_compat.py "$RUNNER_TEMP/encrypted-inputs/rust" "$RUNNER_TEMP/encrypted-inputs/cpp" "$RUNNER_TEMP/encrypted-inputs/httpfs" "native-qualification/encrypted-$cipher-$version" --input-manifest "$RUNNER_TEMP/encrypted-inputs/input-manifest.json" --input-manifest-sha256 "$pin" --cipher "$cipher" --encryption-version "$version"
             done
           done
+          cp "$RUNNER_TEMP/encrypted-inputs/input-manifest.json" native-qualification/
+          cp "$RUNNER_TEMP/encrypted-inputs/httpfs-fetch.json" native-qualification/
+          cp "$RUNNER_TEMP/encrypted-inputs/httpfs-fetch.log" native-qualification/
       - name: Retain raw qualification outcomes
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: qualification-${{ matrix.platform }}
           path: |
+            native-input-verification.json
             native-qualification/
             qualification/summary.json
             qualification/*/*/*.json
+            qualification/*/*/*.jsonl
             qualification/*/*/*.xml
             qualification/*/*/*.log
             qualification/*/comparison.json
@@ -264,12 +342,26 @@ jobs:
         with:
           pattern: candidate-*
           path: incoming
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: qualification-*
+          path: incoming
       - run: python -m pip install packaging==26.3 twine==7.0.0
       - run: python scripts/release/assemble_python_candidate.py --input incoming --out accepted-python
+      - run: python scripts/release/verify_qualification.py --inputs incoming --manifest accepted-python/python-distributions.json --commit "$(git rev-parse HEAD)" --out accepted-python/qualification-verification.json
       - run: python -m twine check --strict accepted-python/*.whl accepted-python/*.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: qualified-python-distributions
           path: accepted-python/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qualified-python-manifest
+          path: |
+            accepted-python/python-distributions.json
+            accepted-python/SHA256SUMS
+            accepted-python/qualification-verification.json
           if-no-files-found: error
           retention-days: 30
