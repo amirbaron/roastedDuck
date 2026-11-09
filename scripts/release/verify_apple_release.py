@@ -58,6 +58,9 @@ def verify(root, commit, temporary):
     assert metadata["compatibility_version"] == "1.5.6"
     assert metadata["physical_device_verified"] is False
     expected_inputs = engine_inputs(commit)
+    tagged_release = json.loads(subprocess.check_output(["git", "show", commit + ":release.json"], cwd=ROOT, text=True))
+    assert metadata["version"] == tagged_release["version"]
+    assert metadata["compatibility_version"] == tagged_release["compatibility_version"]
     assert metadata["engine_inputs"] == expected_inputs
     assert engine_inputs(metadata["engine_source_identity_commit"]) == expected_inputs
     images = {}

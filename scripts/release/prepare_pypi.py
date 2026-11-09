@@ -115,6 +115,13 @@ apple_archive = download_archive(apple_distribution["filename"], apple_distribut
 apple_root = archives / "extracted-apple"
 apple_root.mkdir()
 with tarfile.open(apple_archive) as source:
+    seen = set()
+    for member in source.getmembers():
+        path = Path(member.name)
+        assert not path.is_absolute() and ".." not in path.parts
+        if not member.isdir():
+            assert str(path) not in seen
+            seen.add(str(path))
     source.extractall(apple_root, filter="data")
 apple_source = apple_distribution["engine_source_identity_commit"]
 assert re.fullmatch(r"[0-9a-f]{40}", apple_source)
