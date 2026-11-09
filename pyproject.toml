@@ -7,9 +7,9 @@ name = "roastedduck"
 version = "1.5.6.post1"
 requires-python = ">=3.10,<3.15"
 description = "roastedDuck: an independent Rust SQL engine targeting DuckDB compatibility"
-readme = "PYPI_README.md"
+readme = "python/PYPI_README.md"
 license = "MIT"
-license-files = ["LICENSE", "LICENSE-UPSTREAM"]
+license-files = ["LICENSE", "python/LICENSE-UPSTREAM"]
 authors = [{ name = "Amir Baron" }]
 maintainers = [{ name = "roastedDuck contributors" }]
 keywords = ["sql", "database", "analytics", "rust", "duckdb"]
@@ -33,11 +33,14 @@ Repository = "https://github.com/amirbaron/roastedDuck"
 Issues = "https://github.com/amirbaron/roastedDuck/issues"
 
 [tool.maturin]
-manifest-path = "../crates/python/Cargo.toml"
-python-source = "."
+sdist-generator = "git"
+manifest-path = "crates/python/Cargo.toml"
+python-source = "python"
 module-name = "duckdb._duckdb"
 features = ["extension-module"]
 include = [
+    { path = "third_party/**", format = "sdist" },
+    { path = "rust-toolchain.toml", format = "sdist" },
     { path = "_duckdb.py", format = "wheel" },
     { path = "_duckdb-stubs/**/*.pyi", format = "wheel" },
     { path = "adbc_driver_duckdb/**/*.py", format = "wheel" },
