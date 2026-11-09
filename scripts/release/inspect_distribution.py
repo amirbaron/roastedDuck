@@ -72,6 +72,7 @@ def wheel(path):
         assert any(n.startswith("_duckdb-stubs/") for n in names)
         assert "adbc_driver_duckdb/__init__.py" in names
         assert any(n.startswith(dist + "/licenses/") and n.endswith("LICENSE") for n in names)
+        assert dist + "/licenses/project/crates/common/data/utf8proc-LICENSE" in names
         native = [n for n in names if n.startswith("duckdb/_duckdb") and n.endswith(".so")]
         assert len(native) == 1, native
         module = archive.read(native[0])

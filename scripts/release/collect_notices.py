@@ -36,7 +36,7 @@ for package in tomllib.loads((ROOT / "Cargo.lock").read_text())["package"]:
             relative = Path(member.name).relative_to(key)
             if not member.isfile():
                 continue
-            is_notice = relative.name.upper().startswith(("LICENSE", "LICENCE", "COPYING", "NOTICE"))
+            is_notice = any(marker in relative.name.upper() for marker in ("LICENSE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE"))
             is_context = str(relative) in ("README.md", "AUTHORS")
             if is_notice or is_context or str(relative) == metadata.get("license-file"):
                 assert ".." not in relative.parts

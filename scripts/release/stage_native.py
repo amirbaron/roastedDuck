@@ -22,6 +22,10 @@ sdk = args.out / "sdk"
 (sdk / "bin").mkdir(parents=True)
 (sdk / "lib").mkdir()
 shutil.copytree(ROOT / "include", sdk / "include")
+(sdk / "adbc").mkdir()
+shutil.copy2(ROOT / "include/adbc.h", sdk / "adbc/adbc.h")
+for notice in ["LICENSE-APACHE", "NOTICE"]:
+    shutil.copy2(ROOT / "crates/capi/src/adbc" / notice, sdk / "adbc" / notice)
 go_pin = json.loads((ROOT / "go/upstream.json").read_text())
 go_files = {str(path.relative_to(args.go_source)): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in args.go_source.rglob("*") if path.is_file()}
@@ -51,7 +55,7 @@ shutil.copy2(ROOT / "scripts/release/PACKAGE-README.md", sdk / "README.md")
 shutil.copytree(args.notices, sdk / "notices/rust-dependencies")
 for base in [ROOT / "crates", ROOT / "third_party", ROOT / "python"]:
     for path in base.rglob("*"):
-        if path.is_file() and path.name.upper().startswith(("LICENSE", "NOTICE", "COPYING")):
+        if path.is_file() and any(marker in path.name.upper() for marker in ("LICENSE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE")):
             destination = sdk / "notices/project" / path.relative_to(ROOT)
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, destination)

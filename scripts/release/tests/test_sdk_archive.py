@@ -16,7 +16,7 @@ class SDKArchiveTests(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.sdk = self.root / "sdk"
-        for name in ["bin/rustdb", "lib/libduckdb.so", "lib/libduckdb.a", "include/adbc.h", "notices/LICENSE"]:
+        for name in ["bin/rustdb", "lib/libduckdb.so", "lib/libduckdb.a", "include/adbc.h", "notices/project/crates/common/data/utf8proc-LICENSE"]:
             path = self.sdk / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("synthetic fixture: " + name)

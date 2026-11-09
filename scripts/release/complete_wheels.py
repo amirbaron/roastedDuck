@@ -23,7 +23,7 @@ for path in args.notices.rglob("*"):
         notices["rust-dependencies/" + str(path.relative_to(args.notices))] = path
 for base in [ROOT / "crates", ROOT / "third_party", ROOT / "python"]:
     for path in base.rglob("*"):
-        if path.is_file() and path.name.upper().startswith(("LICENSE", "NOTICE", "COPYING")):
+        if path.is_file() and any(marker in path.name.upper() for marker in ("LICENSE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE")):
             notices["project/" + str(path.relative_to(ROOT))] = path
 reports = []
 for source in sorted(args.input.glob("*.whl")):

@@ -13,6 +13,7 @@ def sha(path):
 def verify_archive(archive, provenance):
     assert sha(archive) == provenance["sdk_archive"]["sha256"]
     expected = {name.removeprefix("sdk/"): digest for name, digest in provenance["files_sha256"].items() if name.startswith("sdk/")}
+    assert "notices/project/crates/common/data/utf8proc-LICENSE" in expected
     actual, links = {}, {}
     with tarfile.open(archive) as source:
         for entry in source:

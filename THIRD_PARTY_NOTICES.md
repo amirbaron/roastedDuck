@@ -16,7 +16,7 @@ does not replace those terms or grant rights to third-party trademarks.
 | Python experimental Spark compatibility helpers | [Retained Apache license](python/duckdb/experimental/spark/LICENSE) |
 | Modified miniz_oxide | [Notices](third_party/miniz_oxide/LICENSE), MIT / Apache-2.0 / zlib texts in that directory |
 | Modified ureq-proto | [MIT](third_party/ureq-proto/LICENSE-MIT.txt), [Apache-2.0](third_party/ureq-proto/LICENSE-APACHE.txt) |
-| Native cryptography | Release archives retain `notices/native-crypto/`, including OpenSSL, ring, and their bundled notices. |
+| Native cryptography | OpenSSL, ring, and their bundled license texts are retained with the generated dependency notices. |
 | Other Rust dependencies | Versions and source identifiers are pinned in `Cargo.lock`; distributions include generated dependency-license notices. |
 | Documentation theme | Material for MkDocs, MIT; installed by `website/requirements.txt`. |
 

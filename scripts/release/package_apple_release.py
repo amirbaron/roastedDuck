@@ -36,7 +36,7 @@ shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.md", package / "DuckDBRust/THIRD_PARTY_
 shutil.copy2(ROOT / "LICENSE", package / "DuckDBRust/LICENSE-roastedDuck")
 for directory in ["crates", "third_party", "python"]:
     for source in (ROOT / directory).rglob("*"):
-        if source.is_file() and source.name.upper().startswith(("LICENSE", "NOTICE", "COPYING")):
+        if source.is_file() and any(marker in source.name.upper() for marker in ("LICENSE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE")):
             destination = package / "DuckDBRust/notices/project" / source.relative_to(ROOT)
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)

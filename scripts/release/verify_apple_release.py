@@ -62,6 +62,7 @@ def verify(root, commit, temporary):
     assert metadata["version"] == tagged_release["version"]
     assert metadata["compatibility_version"] == tagged_release["compatibility_version"]
     assert metadata["engine_inputs"] == expected_inputs
+    assert sha(root / "DuckDBRust/notices/project/crates/common/data/utf8proc-LICENSE") == expected_inputs["crates/common/data/utf8proc-LICENSE"]
     assert engine_inputs(metadata["engine_source_identity_commit"]) == expected_inputs
     images = {}
     xcframework = root / "DuckDBRust/Artifacts/Cduckdb.xcframework"
