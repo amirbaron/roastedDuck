@@ -61,6 +61,33 @@ An already-uploaded PyPI filename must have the exact accepted digest. Never
 replace or silently relabel a previously published native build. Use a post
 release revision when a security or packaging fix keeps the compatibility target.
 
+## Verification-only observer
+
+Python 3.10's bundled pip 23 reports its SHA-256 using the legacy `hash` field;
+newer pip versions also provide `hashes`. Both forms must identify the same
+accepted bytes. Conflicting, absent or non-SHA-256 values are rejected.
+
+When only the aggregate receipt interpreter needs correction, keep the native
+producer and release tag frozen. `observe-candidate.yml` uses a separately
+identified verification-tools commit and the immutable producer artifact IDs
+and ZIP digests pinned through `observer-inputs.json` and GitHub's API. It
+requires every original build, security, source rebuild and runtime qualification
+job to succeed. The only permitted failed aggregate is the specifically diagnosed
+legacy pip `KeyError: 'hashes'`; that failure remains recorded as a failure.
+
+The observer tests its parser, re-evaluates all 15 Python cells and complete native,
+crypto, client, archive and signed Apple evidence, and reconstructs a manifest
+from untouched distributions. It never rebuilds, re-signs or repacks wheels.
+Product/build-input changes require a new producer. The publisher independently
+checks both runs, their commits, job IDs, original artifact IDs/digests, raw
+receipts and promoted archive bytes. A successful observer does not turn a failed
+original workflow into a green one.
+
+Apple input assets are staged in a private draft release solely for transport to
+the observer. This creates no official release/tag or publication claim. Public
+promotion follows complete observer acceptance; PyPI and live-install checks
+remain separate requirements.
+
 ## Historical preview assembler
 
 `package_preview.py` exists only to reproduce the old source2551 1.5.6 preview

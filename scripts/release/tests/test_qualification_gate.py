@@ -89,6 +89,16 @@ class QualificationGateTests(unittest.TestCase):
     def test_complete_fixture(self):
         self.assertEqual(verify(self.root, self.manifest, self.commit)["python_cells"], 15)
 
+    def test_legacy_pip_reports_preserve_full_matrix_checks(self):
+        for platform in PLATFORMS:
+            path = self.root / ("qualification-" + platform) / "qualification/cp310/rust/install.json"
+            report = json.loads(path.read_text())
+            archive = report["install"][0]["download_info"]["archive_info"]
+            digest = archive.pop("hashes")["sha256"]
+            archive["hash"] = "sha256=" + digest
+            self.write(path, report)
+        self.assertEqual(verify(self.root, self.manifest, self.commit)["python_cells"], 15)
+
     def test_missing_platform_wheel(self):
         self.manifest["distributions"].pop()
         with self.assertRaises(AssertionError):

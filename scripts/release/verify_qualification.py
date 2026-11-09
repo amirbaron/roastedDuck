@@ -5,6 +5,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from pip_report import archive_sha256
+
 PLATFORMS = {"macos-arm64": "macosx_11_0_arm64", "linux-arm64": "manylinux_2_28_aarch64", "linux-amd64": "manylinux_2_28_x86_64"}
 ABIS = {"cp310", "cp311", "cp312", "cp313", "cp314"}
 
@@ -48,7 +50,7 @@ def verify(inputs, manifest, commit):
             for file, key in [("identity.json", "sha256"), ("pytest-identity.json", "native_sha256")]:
                 assert read(cell / "rust" / file)[key] == wheel["native_sha256"]
             installed = read(cell / "rust/install.json")["install"]
-            assert len(installed) == 1 and installed[0]["download_info"]["archive_info"]["hashes"]["sha256"] == wheel["sha256"]
+            assert len(installed) == 1 and archive_sha256(installed[0]["download_info"]["archive_info"]) == wheel["sha256"]
             encryption = read(cell / "rust/encryption.json")
             assert encryption["passed"] is True and encryption["parquet_key_bits"] == [128, 192, 256]
             assert {(item["cipher"], item["version"]) for item in encryption["database_profiles"]} == {(c, v) for c in ["GCM", "CTR"] for v in ["v0", "v1"]}

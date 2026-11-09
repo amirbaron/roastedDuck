@@ -18,6 +18,7 @@ from verify_qualification import verify as verify_qualification
 from archive_native_sdk import verify_archive
 from verify_apple_release import verify as verify_apple, sha
 from qualify_swift_package import verify_archive as verify_swift_archive
+from observer_protocol import verify_observer_chain
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--tag", required=True)
@@ -46,30 +47,39 @@ assert current == acceptance["release_commit"]
 assert acceptance["source_build_commit"] == current
 assert subprocess.check_output(["git", "rev-parse", args.tag + "^{commit}"], text=True).strip() == current
 assert acceptance["required_successful_runs"]
-assert acceptance["source_build_run"] in acceptance["required_successful_runs"]
+repository = subprocess.check_output(["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], text=True).strip()
+if acceptance.get("observer_run"):
+    assert acceptance["observer_run"] in acceptance["required_successful_runs"]
+else:
+    assert acceptance["source_build_run"] in acceptance["required_successful_runs"]
 for run_id in acceptance["required_successful_runs"]:
     run = json.loads(subprocess.check_output(["gh", "run", "view", str(int(run_id)), "--json", "status,conclusion,headSha,url"]))
     assert run["status"] == "completed" and run["conclusion"] == "success", run
     assert run["headSha"] in acceptance["verified_source_commits"], run
     if run_id == acceptance["source_build_run"]:
         assert run["headSha"] == current, "Build run must belong to the exact tagged source"
-        repository = subprocess.check_output(["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], text=True).strip()
         details = json.loads(subprocess.check_output(["gh", "api", f"repos/{repository}/actions/runs/{int(run_id)}"]))
         assert details["path"].split("@", 1)[0] == ".github/workflows/build-candidate.yml"
         assert details["head_repository"]["full_name"].lower() == repository.lower()
-producer = args.receipts / "source-build"
-artifacts = json.loads(subprocess.check_output(["gh", "api", f'repos/{repository}/actions/runs/{int(acceptance["source_build_run"])}/artifacts?per_page=100']))
-available = {artifact["name"] for artifact in artifacts["artifacts"] if not artifact["expired"]}
-artifact_name = "qualified-python-manifest" if "qualified-python-manifest" in available else "qualified-python-distributions"
-assert artifact_name in available, "Qualified producer artifact is unavailable"
-subprocess.run(["gh", "run", "download", str(int(acceptance["source_build_run"])),
-                "--name", artifact_name, "--dir", str(producer)], check=True)
+observed = None
+if acceptance.get("observer_run"):
+    producer, observed = verify_observer_chain(repository, acceptance, current, args.receipts)
+    subprocess.run(["gh", "release", "download", args.tag, "--dir", str(args.receipts), "--pattern", "observer-verification.json"], check=True)
+    assert sha(args.receipts / "observer-verification.json") == sha(producer / "observer-verification.json")
+    qualification_inputs = producer / "qualification-inputs"
+else:
+    producer = args.receipts / "source-build"
+    artifacts = json.loads(subprocess.check_output(["gh", "api", f'repos/{repository}/actions/runs/{int(acceptance["source_build_run"])}/artifacts?per_page=100']))
+    available = {artifact["name"] for artifact in artifacts["artifacts"] if not artifact["expired"]}
+    artifact_name = "qualified-python-manifest" if "qualified-python-manifest" in available else "qualified-python-distributions"
+    assert artifact_name in available, "Qualified producer artifact is unavailable"
+    subprocess.run(["gh", "run", "download", str(int(acceptance["source_build_run"])), "--name", artifact_name, "--dir", str(producer)], check=True)
+    qualification_inputs = args.receipts / "qualification-inputs"
+    subprocess.run(["gh", "run", "download", str(int(acceptance["source_build_run"])),
+                    "--pattern", "qualification-*", "--pattern", "candidate-native-manifest-*", "--pattern", "candidate-swift-manifest-*",
+                    "--dir", str(qualification_inputs)], check=True)
 producer_manifest = json.loads((producer / "python-distributions.json").read_text())
-assert producer_manifest == manifest, "Promoted distributions differ from the qualified source-build manifest"
-qualification_inputs = args.receipts / "qualification-inputs"
-subprocess.run(["gh", "run", "download", str(int(acceptance["source_build_run"])),
-                "--pattern", "qualification-*", "--pattern", "candidate-native-manifest-*", "--pattern", "candidate-swift-manifest-*",
-                "--dir", str(qualification_inputs)], check=True)
+assert producer_manifest == manifest, "Promoted distributions differ from the qualified immutable manifest"
 qualified = verify_qualification(qualification_inputs, manifest, current)
 (args.receipts / "qualification-verification.json").write_text(json.dumps(qualified, indent=2) + "\n")
 assert set(acceptance["gates"]["python_15_cells"]["native_image_sha256"]) == set(qualified["python_images"].values())
@@ -85,6 +95,8 @@ for line in (args.receipts / "SHA256SUMS").read_text().splitlines():
     checksums[name] = digest
 for metadata in ["launch-acceptance.json", "python-distributions.json", "apple-distribution.json"]:
     assert hashlib.sha256((args.receipts / metadata).read_bytes()).hexdigest() == checksums[metadata]
+if observed:
+    assert sha(args.receipts / "observer-verification.json") == checksums["observer-verification.json"]
 assets = {asset["name"] for asset in release["assets"]}
 archives = args.receipts / "native-archives"
 archives.mkdir()
@@ -110,6 +122,8 @@ for platform in ["linux-arm64", "linux-amd64"]:
     archive = download_archive(swift["filename"], swift["sha256"])
     verify_swift_archive(archive, swift)
 apple_distribution = json.loads((args.receipts / "apple-distribution.json").read_text())
+if observed:
+    assert observed["apple_archive_sha256"] == apple_distribution["sha256"]
 assert apple_distribution["version"] == version and apple_distribution["filename"] == f"roastedduck-{version}-swift-apple.tar.gz"
 apple_archive = download_archive(apple_distribution["filename"], apple_distribution["sha256"])
 apple_root = archives / "extracted-apple"

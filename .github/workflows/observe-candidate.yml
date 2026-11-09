@@ -1,0 +1,93 @@
+name: Observe immutable release candidate
+on:
+  push:
+    branches: [amirbaron/rust-duckdb-port]
+    paths:
+      - 'scripts/release/observer-inputs.json'
+      - 'scripts/release/observer_protocol.py'
+      - 'scripts/release/observe_candidate.py'
+      - 'scripts/release/pip_report.py'
+      - 'scripts/release/tests/test_observer_protocol.py'
+      - 'scripts/release/tests/test_pip_report.py'
+      - '.github/workflows/observe-candidate.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: release-observer-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  observe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install packaging==26.3 twine==7.0.0
+      - name: Test strict observer and digest rejection behavior
+        run: python -m unittest discover -s scripts/release/tests -v
+      - name: Verify original producer bytes and complete qualification
+        run: python scripts/release/observe_candidate.py --out "$RUNNER_TEMP/observed" --wait
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: observer-diagnostics
+          path: ${{ runner.temp }}/observed/manifests/
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: observed-manifests
+          path: ${{ runner.temp }}/observed/manifests/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qualified-python-distributions
+          path: ${{ runner.temp }}/observed/python/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: observed-sdk-linux-amd64
+          path: ${{ runner.temp }}/observed/sdk-linux-amd64/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: observed-sdk-linux-arm64
+          path: ${{ runner.temp }}/observed/sdk-linux-arm64/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: observed-sdk-macos-arm64
+          path: ${{ runner.temp }}/observed/sdk-macos-arm64/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: observed-swift-linux-amd64
+          path: ${{ runner.temp }}/observed/swift-linux-amd64/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: observed-swift-linux-arm64
+          path: ${{ runner.temp }}/observed/swift-linux-arm64/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: observed-apple
+          path: ${{ runner.temp }}/observed/apple-inputs/
+          if-no-files-found: error
+          retention-days: 30

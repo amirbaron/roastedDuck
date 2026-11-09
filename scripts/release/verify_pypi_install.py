@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
+from pip_report import archive_sha256
+
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--pip-report", type=Path, required=True)
 parser.add_argument("--manifest", type=Path, required=True)
@@ -24,7 +26,7 @@ filename = unquote(Path(url.path).name)
 entries = {record["filename"]: record for record in manifest["distributions"]}
 assert filename in entries, filename
 expected = entries[filename]
-assert item["download_info"]["archive_info"]["hashes"]["sha256"] == expected["sha256"]
+assert archive_sha256(item["download_info"]["archive_info"]) == expected["sha256"]
 assert importlib.metadata.version("roastedduck") == manifest["version"]
 try:
     importlib.metadata.version("duckdb")

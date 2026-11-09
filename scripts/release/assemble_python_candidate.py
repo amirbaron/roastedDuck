@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 
@@ -11,9 +12,11 @@ ROOT = Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--input", type=Path, required=True)
 parser.add_argument("--out", type=Path, required=True)
+parser.add_argument("--source-commit", help="Exact immutable producer source; defaults to the checkout commit")
 args = parser.parse_args()
 args.out.mkdir(parents=True, exist_ok=False)
-commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+commit = args.source_commit or subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+assert re.fullmatch(r"[0-9a-f]{40}", commit)
 for platform in ["macos-arm64", "linux-arm64", "linux-amd64"]:
     directory = args.input / ("candidate-" + platform)
     inputs = json.loads((directory / "receipts/build-inputs.json").read_text())
