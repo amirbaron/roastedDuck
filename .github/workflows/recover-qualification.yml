@@ -1,0 +1,197 @@
+name: Recover interrupted immutable-candidate qualification
+on:
+  push:
+    branches: [amirbaron/rust-duckdb-port]
+    paths:
+      - '.github/workflows/recover-qualification.yml'
+      - 'scripts/release/fetch_recovery_candidate.py'
+      - 'scripts/release/recovery-inputs.json'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: recover-qualification-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  CARGO_BUILD_JOBS: 1
+  CARGO_INCREMENTAL: 0
+  MACOSX_DEPLOYMENT_TARGET: '11.0'
+  TZ: UTC
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-amd64
+          - os: macos-26
+            platform: macos-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: d445a14533e9b76b6b37547b31c00db47f66131d
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: |
+            3.10
+            3.11
+            3.12
+            3.13
+            3.14
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: .observer-tools
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Download and authenticate the original immutable candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python .observer-tools/scripts/release/fetch_recovery_candidate.py --platform "${{ matrix.platform }}" --out candidate --receipt recovery-input.json
+      - name: Run the compiled security and persistence tests natively
+        run: |
+          tar -xzf candidate/native-${{ matrix.platform }}.tar.gz
+          python scripts/release/verify_native_inputs.py --native native --build-inputs candidate/receipts/build-inputs.json --expected-commit "$(git rev-parse HEAD)" --out native-input-verification.json
+          python scripts/release/run_harnesses.py --input native/harnesses --out native-qualification
+          result=$(./native/sdk/bin/roastedDuck -csv -noheader -c 'SELECT sum(i) FROM range(10) t(i);')
+          test "$result" = 45
+          cc scripts/release/smoke_c.c -I"$PWD/native/sdk/include" -L"$PWD/native/sdk/lib" -Wl,-rpath,"$PWD/native/sdk/lib" -lduckdb -o smoke-c
+          ./smoke-c
+      - name: Fetch immutable upstream test inputs
+        run: python scripts/release/fetch_validation_source.py --out upstream
+      - name: Exercise public ADBC on the feature-free SDK
+        run: |
+          library="$PWD/native/sdk/lib/libduckdb.so"
+          if [ "$RUNNER_OS" = macOS ]; then library="$PWD/native/sdk/lib/libduckdb.dylib"; fi
+          digest=$(python -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); j=json.load(open("native/build-provenance.json")); print(j["files_sha256"]["sdk/lib/"+p.name])' "$library")
+          python scripts/release/qualify_public_adbc.py --library "$library" --expected-sha256 "$digest" --headers native/sdk/include --out native-qualification/public-adbc
+      - name: Qualify all five Python ABI cells
+        run: python scripts/release/validate_python_matrix.py --wheels candidate/wheelhouse --source upstream/duckdb-python-802a345bb627435d2a05d63cb74454fa98b60b5e --out qualification
+      - name: Fetch the pinned native-client fixtures
+        run: python scripts/release/fetch_native_source.py --out upstream-native
+      - name: Qualify all public C API cases
+        run: |
+          library="$PWD/native/sdk/lib/libduckdb.so"
+          if [ "$RUNNER_OS" = macOS ]; then library="$PWD/native/sdk/lib/libduckdb.dylib"; fi
+          digest=$(python -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); j=json.load(open("native/build-provenance.json")); print(j["files_sha256"]["sdk/lib/"+p.name])' "$library")
+          python scripts/release/qualify_capi.py --source "$PWD/upstream-native/duckdb-1.5.6" --library "$library" --expected-sha256 "$digest" --out "$RUNNER_TEMP/capi-qualification"
+      - name: Qualify the complete ADBC suite with the isolated test bridge
+        run: |
+          library="$PWD/native/harnesses/adbc/libduckdb.so"
+          if [ "$RUNNER_OS" = macOS ]; then library="$PWD/native/harnesses/adbc/libduckdb.dylib"; fi
+          digest=$(python -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); j=json.load(open("native/build-provenance.json")); print(j["files_sha256"]["harnesses/adbc/"+p.name])' "$library")
+          python scripts/release/qualify_adbc.py --source "$PWD/upstream-native/duckdb-1.5.6" --library "$library" --expected-sha256 "$digest" --out "$RUNNER_TEMP/adbc-qualification"
+      - name: Qualify the complete Swift client suite
+        run: |
+          library="$PWD/native/sdk/lib/libduckdb.so"
+          if [ "$RUNNER_OS" = macOS ]; then library="$PWD/native/sdk/lib/libduckdb.dylib"; fi
+          digest=$(python -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); j=json.load(open("native/build-provenance.json")); print(j["files_sha256"]["sdk/lib/"+p.name])' "$library")
+          if [ "$RUNNER_OS" = macOS ]; then
+            python scripts/release/qualify_swift.py --source "$PWD/upstream-native/duckdb-1.5.6" --library "$library" --expected-sha256 "$digest" --out "$RUNNER_TEMP/swift-qualification"
+          else
+            docker run --rm -v "$PWD:$PWD" -v "$RUNNER_TEMP:$RUNNER_TEMP" -w "$PWD" \
+              -e RUNNER_TEMP -e PLATFORM="${{ matrix.platform }}" -e NATIVE_SHA="$digest" \
+              swift:6.2.1-noble@sha256:0e4716bd34384d22963a63afbdbc93be3129dfd0753185aa1ded27755abdcae8 \
+              bash -c 'apt-get update -qq && apt-get install -y -qq python3 binutils && python3 scripts/release/qualify_swift.py "$@" && python3 scripts/release/qualify_swift_package.py --source "$PWD/upstream-native/duckdb-1.5.6" --sdk "$PWD/native/sdk" --expected-sha256 "$NATIVE_SHA" --platform "$PLATFORM" --out "$RUNNER_TEMP/swift-package-qualification"' bash \
+              --source "$PWD/upstream-native/duckdb-1.5.6" --library "$library" --expected-sha256 "$digest" --out "$RUNNER_TEMP/swift-qualification"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: candidate-swift-${{ matrix.platform }}
+          path: ${{ runner.temp }}/swift-package-qualification/artifacts/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: candidate-swift-manifest-${{ matrix.platform }}
+          path: ${{ runner.temp }}/swift-package-qualification/artifacts/swift-distribution.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Retain C API, ADBC, and Swift receipts without compiler caches
+        if: always()
+        run: |
+          python - <<'PY'
+          import os, pathlib, shutil
+          for client in ['capi', 'adbc', 'swift', 'swift-package']:
+              source = pathlib.Path(os.environ['RUNNER_TEMP']) / (client + '-qualification')
+              output = pathlib.Path('native-qualification') / client
+              output.mkdir(parents=True, exist_ok=True)
+              for file in source.rglob('*'):
+                  relative = file.relative_to(source)
+                  if len(relative.parts) <= 2 and file.is_file() and file.suffix in {'.json', '.log', '.txt', '.xml'}:
+                      target = output / relative
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      shutil.copy2(file, target)
+          PY
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.3'
+          cache: false
+      - name: Qualify the complete pinned Go client suite
+        run: |
+          library="$PWD/native/sdk/lib/libduckdb.so"
+          if [ "$RUNNER_OS" = macOS ]; then library="$PWD/native/sdk/lib/libduckdb.dylib"; fi
+          digest=$(python -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); j=json.load(open("native/build-provenance.json")); print(j["files_sha256"]["sdk/lib/"+p.name])' "$library")
+          python scripts/release/qualify_go.py --source "$PWD/native/sdk/go/duckdb-go" --library "$library" --expected-sha256 "$digest" --out "$RUNNER_TEMP/go-qualification"
+      - name: Retain Go receipts without compiler caches
+        if: always()
+        run: |
+          mkdir -p native-qualification/go
+          python -c 'import os,pathlib,shutil; p=pathlib.Path(os.environ["RUNNER_TEMP"])/"go-qualification"; [shutil.copy2(f,"native-qualification/go/"+f.name) for f in p.glob("*") if f.is_file() and f.suffix in {".json",".log",".txt"}]'
+      - name: Qualify encrypted checkpoint and WAL interoperability
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          library="$PWD/native/sdk/lib/libduckdb.so"
+          if [ "$RUNNER_OS" = macOS ]; then library="$PWD/native/sdk/lib/libduckdb.dylib"; fi
+          digest=$(python -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); j=json.load(open("native/build-provenance.json")); print(j["files_sha256"]["sdk/lib/"+p.name])' "$library")
+          python scripts/release/prepare_encrypted_inputs.py --platform "$PLATFORM" --rust-library "$library" --rust-sha256 "$digest" --cpp-python "$PWD/qualification/cp314/cpp/venv/bin/python" --out "$RUNNER_TEMP/encrypted-inputs"
+          pin=$(python -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$RUNNER_TEMP/encrypted-inputs/input-manifest.json")
+          for cipher in GCM CTR; do
+            for version in v0 v1; do
+              python scripts/storage-tests/encrypted_compat.py "$RUNNER_TEMP/encrypted-inputs/rust" "$RUNNER_TEMP/encrypted-inputs/cpp" "$RUNNER_TEMP/encrypted-inputs/httpfs" "native-qualification/encrypted-$cipher-$version" --input-manifest "$RUNNER_TEMP/encrypted-inputs/input-manifest.json" --input-manifest-sha256 "$pin" --cipher "$cipher" --encryption-version "$version"
+            done
+          done
+      - name: Retain encrypted-input diagnostics even after failures
+        if: always()
+        run: |
+          python - <<'PY'
+          import os, pathlib, shutil
+          source = pathlib.Path(os.environ['RUNNER_TEMP']) / 'encrypted-inputs'
+          output = pathlib.Path('native-qualification')
+          output.mkdir(exist_ok=True)
+          for name in ['input-manifest.json', 'httpfs-fetch.json', 'httpfs-fetch.log']:
+              if (source / name).is_file():
+                  shutil.copy2(source / name, output / name)
+          PY
+      - name: Retain raw qualification outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qualification-${{ matrix.platform }}
+          path: |
+            native-input-verification.json
+            native-qualification/
+            qualification/summary.json
+            qualification/*/*/*.json
+            qualification/*/*/*.jsonl
+            qualification/*/*/*.xml
+            qualification/*/*/*.log
+            qualification/*/comparison.json
+          retention-days: 14
+      - name: Retain immutable input identity
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-input-${{ matrix.platform }}
+          path: recovery-input.json
+          if-no-files-found: error
+          retention-days: 30

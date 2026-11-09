@@ -1,0 +1,20 @@
+{
+  "repository": "amirbaron/roastedDuck",
+  "producer_run": 42629765157,
+  "candidate_source_commit": "d445a14533e9b76b6b37547b31c00db47f66131d",
+  "provider_error": "Internal server error. Correlation ID: 6dd9873b-739a-4cb7-a9a7-5fde0aa6d89a",
+  "artifacts": {
+    "linux-amd64": {
+      "id": 13687513217,
+      "name": "candidate-linux-amd64",
+      "digest": "sha256:0d3ce686c95a3d38662df954af79332b71e67af97a6c53b7b460e9fd2306cef9",
+      "size_in_bytes": 1372007053
+    },
+    "macos-arm64": {
+      "id": 13698238174,
+      "name": "candidate-macos-arm64",
+      "digest": "sha256:8fa71fc9165cbeced29b14fbf82997fc662917db371d5226d46ca46597d88785",
+      "size_in_bytes": 789985592
+    }
+  }
+}
