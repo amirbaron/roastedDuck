@@ -47,9 +47,9 @@ silently reclassify those original outcomes. See [compatibility](compatibility.m
 ## Build a wheel
 
 ```sh
-python -m pip install maturin==1.9.6
-cd python
-maturin build --release --out ../dist
+python -m pip install maturin==1.16.0
+# Run from the repository root.
+maturin build --locked --release --out /path/to/wheel-output
 ```
 
 Choose an external output/cache directory when disk space is limited. The build

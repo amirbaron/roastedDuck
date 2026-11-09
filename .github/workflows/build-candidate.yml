@@ -165,7 +165,8 @@ jobs:
           python scripts/release/complete_wheels.py --input raw-wheels --notices notices --out wheelhouse --report receipts/wheel-transforms.json
           python scripts/release/inspect_distribution.py wheelhouse --report receipts/distributions.json
           python -m twine check --strict wheelhouse/*
-          python scripts/release/stage_native.py --target ${{ matrix.target }} --platform ${{ matrix.platform }} --notices notices --harnesses compiled-harnesses --out native
+          go_source=$(python scripts/release/fetch_go_source.py --out "$RUNNER_TEMP/go-sdk-source")
+          python scripts/release/stage_native.py --target ${{ matrix.target }} --platform ${{ matrix.platform }} --notices notices --harnesses compiled-harnesses --go-source "$go_source" --out native
           python scripts/release/archive_native_sdk.py --native native --out .
           tar -czf native-${{ matrix.platform }}.tar.gz native
       - uses: actions/upload-artifact@v4
@@ -267,16 +268,31 @@ jobs:
             python scripts/release/qualify_swift.py --source "$PWD/upstream-native/duckdb-1.5.6" --library "$library" --expected-sha256 "$digest" --out "$RUNNER_TEMP/swift-qualification"
           else
             docker run --rm -v "$PWD:$PWD" -v "$RUNNER_TEMP:$RUNNER_TEMP" -w "$PWD" \
+              -e RUNNER_TEMP -e PLATFORM="${{ matrix.platform }}" -e NATIVE_SHA="$digest" \
               swift:6.2.1-noble@sha256:0e4716bd34384d22963a63afbdbc93be3129dfd0753185aa1ded27755abdcae8 \
-              bash -c 'apt-get update -qq && apt-get install -y -qq python3 binutils && python3 scripts/release/qualify_swift.py "$@"' bash \
+              bash -c 'apt-get update -qq && apt-get install -y -qq python3 binutils && python3 scripts/release/qualify_swift.py "$@" && python3 scripts/release/qualify_swift_package.py --source "$PWD/upstream-native/duckdb-1.5.6" --sdk "$PWD/native/sdk" --expected-sha256 "$NATIVE_SHA" --platform "$PLATFORM" --out "$RUNNER_TEMP/swift-package-qualification"' bash \
               --source "$PWD/upstream-native/duckdb-1.5.6" --library "$library" --expected-sha256 "$digest" --out "$RUNNER_TEMP/swift-qualification"
           fi
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: candidate-swift-${{ matrix.platform }}
+          path: ${{ runner.temp }}/swift-package-qualification/artifacts/
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: candidate-swift-manifest-${{ matrix.platform }}
+          path: ${{ runner.temp }}/swift-package-qualification/artifacts/swift-distribution.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Retain C API, ADBC, and Swift receipts without compiler caches
         if: always()
         run: |
           python - <<'PY'
           import os, pathlib, shutil
-          for client in ['capi', 'adbc', 'swift']:
+          for client in ['capi', 'adbc', 'swift', 'swift-package']:
               source = pathlib.Path(os.environ['RUNNER_TEMP']) / (client + '-qualification')
               output = pathlib.Path('native-qualification') / client
               output.mkdir(parents=True, exist_ok=True)
@@ -293,11 +309,10 @@ jobs:
           cache: false
       - name: Qualify the complete pinned Go client suite
         run: |
-          source=$(python scripts/release/fetch_go_source.py --out upstream-go)
           library="$PWD/native/sdk/lib/libduckdb.so"
           if [ "$RUNNER_OS" = macOS ]; then library="$PWD/native/sdk/lib/libduckdb.dylib"; fi
           digest=$(python -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); j=json.load(open("native/build-provenance.json")); print(j["files_sha256"]["sdk/lib/"+p.name])' "$library")
-          python scripts/release/qualify_go.py --source "$source" --library "$library" --expected-sha256 "$digest" --out "$RUNNER_TEMP/go-qualification"
+          python scripts/release/qualify_go.py --source "$PWD/native/sdk/go/duckdb-go" --library "$library" --expected-sha256 "$digest" --out "$RUNNER_TEMP/go-qualification"
       - name: Retain Go receipts without compiler caches
         if: always()
         run: |

@@ -56,6 +56,11 @@ def verify(inputs, manifest, commit):
         for client, cases in [("capi", 155), ("go", 652), ("swift", 133)]:
             receipt = read(native / client / "verification.json")
             assert receipt["passed"] is True and receipt["cases"] == cases and receipt["native_sha256"] == native_hash
+        if platform.startswith("linux-"):
+            swift_distribution = read(inputs / ("candidate-swift-manifest-" + platform) / "swift-distribution.json")
+            assert swift_distribution == read(native / "swift-package/verification.json")
+            assert swift_distribution["source_commit"] == commit and swift_distribution["native_sha256"] == native_hash
+            assert swift_distribution["passed"] is True and swift_distribution["extracted_consumer_verified"] is True and swift_distribution["standalone_consumer_verified"] is True
         adbc = read(native / "adbc/verification.json")
         assert adbc["passed"] is True and adbc["test_only_bridge"] is True and adbc["cases"] == 64 and adbc["assertions"] == 3040
         assert adbc["test_bridge_sha256"] == bridge_hash

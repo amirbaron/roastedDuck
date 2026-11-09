@@ -53,6 +53,11 @@ class QualificationGateTests(unittest.TestCase):
                                                  for c in ["GCM", "CTR"] for v in ["v0", "v1"]]})
             for client, cases in [("capi", 155), ("go", 652), ("swift", 133)]:
                 self.write(n / client / "verification.json", {"passed": True, "cases": cases, "native_sha256": native})
+            if platform.startswith("linux-"):
+                swift = {"source_commit": self.commit, "native_sha256": native, "passed": True,
+                         "extracted_consumer_verified": True, "standalone_consumer_verified": True}
+                self.write(self.root / ("candidate-swift-manifest-" + platform) / "swift-distribution.json", swift)
+                self.write(n / "swift-package/verification.json", swift)
             self.write(n / "adbc/verification.json", {"passed": True, "test_only_bridge": True, "cases": 64,
                        "assertions": 3040, "test_bridge_sha256": bridge})
             self.write(n / "public-adbc/verification.json", {"passed": True, "test_only_bridge": False, "adbc_versions": ["1.0", "1.1"],

@@ -17,6 +17,7 @@ import urllib.request
 from verify_qualification import verify as verify_qualification
 from archive_native_sdk import verify_archive
 from verify_apple_release import verify as verify_apple, sha
+from qualify_swift_package import verify_archive as verify_swift_archive
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--tag", required=True)
@@ -67,7 +68,7 @@ producer_manifest = json.loads((producer / "python-distributions.json").read_tex
 assert producer_manifest == manifest, "Promoted distributions differ from the qualified source-build manifest"
 qualification_inputs = args.receipts / "qualification-inputs"
 subprocess.run(["gh", "run", "download", str(int(acceptance["source_build_run"])),
-                "--pattern", "qualification-*", "--pattern", "candidate-native-manifest-*",
+                "--pattern", "qualification-*", "--pattern", "candidate-native-manifest-*", "--pattern", "candidate-swift-manifest-*",
                 "--dir", str(qualification_inputs)], check=True)
 qualified = verify_qualification(qualification_inputs, manifest, current)
 (args.receipts / "qualification-verification.json").write_text(json.dumps(qualified, indent=2) + "\n")
@@ -103,18 +104,22 @@ for platform in qualified["native_platforms"]:
     archive = download_archive(sdk["filename"], sdk["sha256"])
     native_archive_verification[platform] = verify_archive(archive, native_producer)
 (args.receipts / "native-archive-verification.json").write_text(json.dumps(native_archive_verification, indent=2) + "\n")
+for platform in ["linux-arm64", "linux-amd64"]:
+    swift = json.loads((qualification_inputs / ("candidate-swift-manifest-" + platform) / "swift-distribution.json").read_text())
+    assert swift["filename"] == f"roastedduck-{version}-swift-{platform}.tar.gz" and swift["version"] == version
+    archive = download_archive(swift["filename"], swift["sha256"])
+    verify_swift_archive(archive, swift)
 apple_distribution = json.loads((args.receipts / "apple-distribution.json").read_text())
-assert apple_distribution["version"] == version and apple_distribution["filename"] == f"roastedduck-{version}-apple-arm64.tar.gz"
+assert apple_distribution["version"] == version and apple_distribution["filename"] == f"roastedduck-{version}-swift-apple.tar.gz"
 apple_archive = download_archive(apple_distribution["filename"], apple_distribution["sha256"])
 apple_root = archives / "extracted-apple"
 apple_root.mkdir()
 with tarfile.open(apple_archive) as source:
-    assert all(Path(member.name).parts[0] == "apple" for member in source.getmembers())
     source.extractall(apple_root, filter="data")
 apple_source = apple_distribution["engine_source_identity_commit"]
 assert re.fullmatch(r"[0-9a-f]{40}", apple_source)
 subprocess.run(["git", "fetch", "--depth=1", "origin", apple_source], check=True)
-apple_verified = verify_apple(apple_root / "apple", current, archives / "verification-tmp")
+apple_verified = verify_apple(apple_root, current, archives / "verification-tmp")
 assert apple_verified["native_images"] == apple_distribution["native_images"]
 (args.receipts / "apple-archive-verification.json").write_text(json.dumps(apple_verified, indent=2) + "\n")
 expected_images = set(qualified["python_images"].values()) | set(qualified["native_images"].values()) | set(apple_verified["native_images"].values())

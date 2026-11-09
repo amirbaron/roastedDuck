@@ -8,7 +8,7 @@ Native SDK: run `./bin/roastedDuck -c 'SELECT 42;'` after extraction.
 `bin/roastedDuck` is an alias for `bin/rustdb`.
 The library remains `libduckdb` for C API compatibility. SDK archives include
 shared and static libraries plus the public headers. For Go, use the pinned
-client source package with `duckdb_use_lib,duckdb_arrow` and link to this SDK's
+client sources in `go/duckdb-go` with `duckdb_use_lib,duckdb_arrow` and link to this SDK's
 shared library; see the documentation for the complete command.
 
 Swift: add the extracted `DuckDBRust` directory as a local package dependency.

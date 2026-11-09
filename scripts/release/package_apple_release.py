@@ -78,6 +78,15 @@ metadata = {"version": release["version"], "compatibility_version": release["com
     "Mac and simulator runtime evidence is in `evidence`; physical iOS execution remains unverified. "
     "The development signature is self-signed and is not Apple notarization.\n\n"
     "Documentation: https://amirbaron.github.io/roastedDuck/swift/\n")
+sdk_summary = json.loads((args.sdk / "summary.json").read_text())
+sdk_summary["files"] = {str(path.relative_to(package / "DuckDBRust")): sha(path)
+                        for path in (package / "DuckDBRust").rglob("*") if path.is_file() and not path.is_symlink()}
+sdk_summary["release_version"] = release["version"]
+(package / "summary.json").write_text(json.dumps(sdk_summary, indent=2) + "\n")
+shutil.copy2(args.sdk / "preflight.json", package / "preflight.json")
+sdk_links = {str(path.relative_to(package / "DuckDBRust")): str(path.readlink())
+             for path in (package / "DuckDBRust").rglob("*") if path.is_symlink()}
+(package / "sdk-symlinks.json").write_text(json.dumps(sdk_links, indent=2) + "\n")
 links = {str(path.relative_to(package)): str(path.readlink()) for path in package.rglob("*") if path.is_symlink()}
 (package / "symlinks.json").write_text(json.dumps(links, indent=2) + "\n")
 files = sorted(path for path in package.rglob("*") if path.is_file() and not path.is_symlink())
@@ -85,9 +94,9 @@ files = sorted(path for path in package.rglob("*") if path.is_file() and not pat
 subprocess.run(["codesign", "--force", "--sign", "rustdb-dev", "--timestamp=none", "--identifier", "dev.roastedduck.AppleReleaseManifest",
                 "--detached", str(package / "SHA256SUMS.csig"), str(package / "SHA256SUMS")], check=True)
 result = verify(package, args.release_commit, temporary)
-archive = args.out / ("roastedduck-" + release["version"] + "-apple-arm64.tar.gz")
+archive = args.out / ("roastedduck-" + release["version"] + "-swift-apple.tar.gz")
 with tarfile.open(archive, "w:gz") as output:
-    output.add(package, arcname="apple")
+    output.add(package, arcname=".")
 result.update(filename=archive.name, sha256=sha(archive), bytes=archive.stat().st_size, version=release["version"])
 (args.out / "apple-distribution.json").write_text(json.dumps(result, indent=2) + "\n")
 print("Packaged", archive.name, "with signed payloads and runtime evidence")

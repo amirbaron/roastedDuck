@@ -16,12 +16,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sdk", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--expected-library-sha256", help="Independent producer digest; otherwise detached signing is required before execution")
     args = parser.parse_args()
     sdk, out = args.sdk.resolve(), args.out.resolve()
     if out.exists():
         parser.error("preserve evidence: --out must be new")
     report = json.loads((sdk / "summary.json").read_text())
-    original = Path(report["package"])
+    if args.expected_library_sha256:
+        assert report["library_sha256"] == args.expected_library_sha256
+    original = sdk / "DuckDBRust"
     for name, expected in report["files"].items():
         assert digest(original / name) == expected, name
     out.mkdir(parents=True)
@@ -82,7 +85,8 @@ let package = Package(
               "dynamic_section": dynamic, "loader_output": loader,
               "original_package": str(original), "relocated_package": str(relocated),
               "package_hashes_unchanged": True, "build_exit_code": built.returncode,
-              "execution_requires_detached_signature": True,
+              "execution_requires_detached_signature": not bool(args.expected_library_sha256),
+              "producer_library_sha256": args.expected_library_sha256,
               "scope": "Independent Linux Swift consumer build; runtime and persistence verification pending"}
     (out / "summary.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps({k: v for k, v in result.items() if k not in ["dynamic_section", "loader_output"]}))

@@ -52,6 +52,11 @@ checks the Apple archive's pinned signature, three ARM slices, full Mac and
 simulator runtime receipts, and device build-only identity. It never upgrades
 the physical-device exception into a runtime pass.
 
+Native SDKs retain the complete pinned Go client source. Linux Swift packages
+are archived, extracted, built into a separate consumer, and relocated before
+their exact archive and native hashes are accepted. Their source-build artifacts
+and public downloads must agree byte for byte.
+
 An already-uploaded PyPI filename must have the exact accepted digest. Never
 replace or silently relabel a previously published native build. Use a post
 release revision when a security or packaging fix keeps the compatibility target.

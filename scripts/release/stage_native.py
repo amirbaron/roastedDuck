@@ -14,6 +14,7 @@ parser.add_argument("--platform", required=True)
 parser.add_argument("--out", type=Path, required=True)
 parser.add_argument("--notices", type=Path, required=True)
 parser.add_argument("--harnesses", type=Path, required=True)
+parser.add_argument("--go-source", type=Path, required=True)
 args = parser.parse_args()
 compiled = ROOT / "target" / args.target / "release"
 args.out.mkdir(parents=True, exist_ok=False)
@@ -21,6 +22,11 @@ sdk = args.out / "sdk"
 (sdk / "bin").mkdir(parents=True)
 (sdk / "lib").mkdir()
 shutil.copytree(ROOT / "include", sdk / "include")
+go_pin = json.loads((ROOT / "go/upstream.json").read_text())
+go_files = {str(path.relative_to(args.go_source)): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in args.go_source.rglob("*") if path.is_file()}
+assert go_files == go_pin["files"]
+shutil.copytree(args.go_source, sdk / "go/duckdb-go")
 shutil.copy2(compiled / "rustdb", sdk / "bin/rustdb")
 (sdk / "bin/roastedDuck").symlink_to("rustdb")
 library = "libduckdb.dylib" if args.platform == "macos-arm64" else "libduckdb.so"

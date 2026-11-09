@@ -17,7 +17,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", required=True, type=Path)
     parser.add_argument("--signed-engine", required=True, type=Path)
-    parser.add_argument("--certificate-sha256", required=True)
+    authentication = parser.add_mutually_exclusive_group(required=True)
+    authentication.add_argument("--certificate-sha256")
+    authentication.add_argument("--expected-native-sha256", help="Digest from an independently verified producer manifest")
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--tmpdir", required=True, type=Path)
     args = parser.parse_args()
@@ -27,8 +29,13 @@ def main():
     verifier = workspace / "scripts/signing/verify_detached_manifest.py"
     verify = [sys.executable, str(verifier), str(engine / "SHA256SUMS"),
               str(engine / "SHA256SUMS.csig"), str(engine / "rustdb-dev.pem"),
-              "--certificate-sha256", args.certificate_sha256, "--tmpdir", str(args.tmpdir)]
-    subprocess.run(verify, check=True)
+              "--certificate-sha256", args.certificate_sha256 or "", "--tmpdir", str(args.tmpdir)]
+    def authenticate():
+        if args.expected_native_sha256:
+            assert digest(engine / "lib/libduckdb.so") == args.expected_native_sha256
+        else:
+            subprocess.run(verify, check=True)
+    authenticate()
     library = engine / "lib/libduckdb.so"
     with library.open("rb") as stream:
         elf = stream.read(20)
@@ -57,6 +64,11 @@ def main():
     native = package / "Artifacts/lib/libduckdb.so"
     native.parent.mkdir(parents=True)
     shutil.copy2(library, native)
+    if (engine / "notices").is_dir():
+        shutil.copytree(engine / "notices", package / "notices")
+    for name in ["LICENSE", "THIRD_PARTY_NOTICES.md"]:
+        if (engine / name).is_file():
+            shutil.copy2(engine / name, package / ("LICENSE-roastedDuck" if name == "LICENSE" else name))
     # Resolve the package path at manifest evaluation, after relocation. The
     # basename link avoids embedding the original selected engine's full path.
     (package / "Package.swift").write_text('''// swift-tools-version: 5.7
@@ -77,7 +89,7 @@ let package = Package(
 )
 ''')
     assert digest(native) == digest(library)
-    subprocess.run(verify, check=True)
+    authenticate()
     files = {str(p.relative_to(package)): digest(p) for p in sorted(package.rglob("*")) if p.is_file()}
     report = {"package": str(package), "original_library": str(library),
               "library_sha256": digest(library), "architecture": {62: "x86_64", 183: "arm64"}[machine],
