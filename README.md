@@ -81,8 +81,8 @@ before applying the averages to your workload.
 ```sh
 git clone https://github.com/amirbaron/roastedDuck.git
 cd roastedDuck
-cargo build --locked --release -p rustdb-shell -j 1
-./target/release/rustdb -c 'SELECT 42;'
+cargo build --locked --release --bin roastedDuck -j 1
+./target/release/roastedDuck -c 'SELECT 42;'
 ```
 
 The repository pins Rust 1.99.0. The internal crate and native ABI names remain

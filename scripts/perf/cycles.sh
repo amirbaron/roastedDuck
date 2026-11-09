@@ -5,7 +5,7 @@
 # counts barely move when other work shares the machine; alternate the CLIs to compare them.
 #
 # usage: scripts/perf/cycles.sh CLI DB "SQL"|@FILE.sql [THREADS] [N]
-#        (CLI: target/release/rustdb, DuckDB's build/release/duckdb, or another build's CLI)
+#        (CLI: target/release/roastedDuck, DuckDB's build/release/duckdb, or another build's CLI)
 set -euo pipefail
 CLI=$1
 DB=$2

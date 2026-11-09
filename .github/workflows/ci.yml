@@ -24,7 +24,7 @@ jobs:
       - name: Core regression tests
         run: cargo test --locked -p rustdb-common -p rustdb-types -j 1
       - name: Shell source check
-        run: cargo check --locked -p rustdb-shell -j 1
+        run: cargo check --locked -p roastedduck-cli -j 1
   packaging:
     runs-on: ubuntu-24.04
     steps:

@@ -1073,6 +1073,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "roastedduck-cli"
+version = "1.5.6"
+dependencies = [
+ "libc",
+ "rustdb",
+ "rustdb-ast",
+ "rustdb-capi",
+ "rustdb-common",
+ "rustdb-function",
+ "rustdb-functions",
+ "rustdb-parser",
+ "rustdb-planner",
+ "rustdb-serde",
+ "rustdb-types",
+ "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
 name = "rsa"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1441,6 +1460,7 @@ name = "rustdb-python"
 version = "1.5.6"
 dependencies = [
  "pyo3",
+ "roastedduck-cli",
  "rustdb",
  "rustdb-arrow",
  "rustdb-ast",
@@ -1449,7 +1469,6 @@ dependencies = [
  "rustdb-function",
  "rustdb-parser",
  "rustdb-planner",
- "rustdb-shell",
  "rustdb-types",
 ]
 
@@ -1469,25 +1488,6 @@ name = "rustdb-serde"
 version = "1.5.6"
 dependencies = [
  "rustdb-common",
-]
-
-[[package]]
-name = "rustdb-shell"
-version = "1.5.6"
-dependencies = [
- "libc",
- "rustdb",
- "rustdb-ast",
- "rustdb-capi",
- "rustdb-common",
- "rustdb-function",
- "rustdb-functions",
- "rustdb-parser",
- "rustdb-planner",
- "rustdb-serde",
- "rustdb-types",
- "unicode-segmentation",
- "unicode-width",
 ]
 
 [[package]]

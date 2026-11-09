@@ -15,7 +15,7 @@ SQL="${SQL%"${SQL##*[![:space:]]}"}"
 THREADS=${4:-14}
 SECONDS_=${5:-10}
 case "$ENGINE" in
-rust) CLI="$ROOT/target/release/rustdb" ;;
+rust) CLI="$ROOT/target/release/roastedDuck" ;;
 duck) CLI="$REF/build/release/duckdb" ;;
 *) echo "engine must be rust or duck" >&2; exit 1 ;;
 esac

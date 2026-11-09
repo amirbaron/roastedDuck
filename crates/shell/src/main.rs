@@ -1,4 +1,4 @@
-//! `rustdb`: the command-line shell, a port of DuckDB's (`tools/shell`).
+//! `roastedDuck`: the command-line shell, a port of DuckDB's (`tools/shell`).
 
 mod box_renderer;
 mod command_line_option;

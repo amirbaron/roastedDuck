@@ -25,7 +25,7 @@ rustdb-parser.workspace = true
 rustdb-planner.workspace = true
 rustdb-arrow = { path = "../arrow" }
 rustdb-function = { path = "../function" }
-rustdb-shell = { path = "../shell" }
+rustdb-shell = { package = "roastedduck-cli", path = "../shell" }
 rustdb_capi = { package = "rustdb-capi", path = "../capi" }
 
 [lints]

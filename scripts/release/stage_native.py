@@ -31,7 +31,7 @@ go_files = {str(path.relative_to(args.go_source)): hashlib.sha256(path.read_byte
             for path in args.go_source.rglob("*") if path.is_file()}
 assert go_files == go_pin["files"]
 shutil.copytree(args.go_source, sdk / "go/duckdb-go")
-shutil.copy2(compiled / "rustdb", sdk / "bin/rustdb")
+shutil.copy2(compiled / "roastedDuck", sdk / "bin/rustdb")
 (sdk / "bin/roastedDuck").symlink_to("rustdb")
 library = "libduckdb.dylib" if args.platform == "macos-arm64" else "libduckdb.so"
 for name in [library, "libduckdb.a"]:

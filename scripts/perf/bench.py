@@ -32,7 +32,7 @@ REF = os.environ.get("DUCKDB_SRC", os.path.join(ROOT, ".context/duckdb-download/
 LIBS = {"duck": os.path.join(REF, "build/release/src/libduckdb.dylib"),
         "rust": os.environ.get("RUST_LIB", os.path.join(ROOT, "target/release/libduckdb.dylib"))}
 ADHOC = []
-CLIS = {"duck": os.path.join(REF, "build/release/duckdb"), "rust": os.path.join(ROOT, "target/release/rustdb")}
+CLIS = {"duck": os.path.join(REF, "build/release/duckdb"), "rust": os.path.join(ROOT, "target/release/roastedDuck")}
 
 
 def one_line(sql):

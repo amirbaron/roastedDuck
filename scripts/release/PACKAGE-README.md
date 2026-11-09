@@ -5,7 +5,7 @@ Repository: https://github.com/amirbaron/roastedDuck
 License: MIT, with retained third-party notices.
 
 Native SDK: run `./bin/roastedDuck -c 'SELECT 42;'` after extraction.
-`bin/roastedDuck` is an alias for `bin/rustdb`.
+Run the command-line shell with `bin/roastedDuck`.
 The library remains `libduckdb` for C API compatibility. SDK archives include
 shared and static libraries plus the public headers. For Go, use the pinned
 client sources in `go/duckdb-go` with `duckdb_use_lib,duckdb_arrow` and link to this SDK's

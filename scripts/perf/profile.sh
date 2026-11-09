@@ -17,7 +17,7 @@ THREADS=${5:-14}
 REPEAT=${6:-1000}
 OUT=${OUT:-/tmp/profile-$ENGINE.txt}
 case "$ENGINE" in
-rust) CLI="$ROOT/target/release/rustdb" ;;
+rust) CLI="$ROOT/target/release/roastedDuck" ;;
 duck) CLI="$REF/build/release/duckdb" ;;
 *) echo "engine must be rust or duck" >&2; exit 1 ;;
 esac

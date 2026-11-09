@@ -1,13 +1,16 @@
 [package]
-name = "rustdb-shell"
-description = "The rustdb command-line shell (DuckDB's CLI)."
+name = "roastedduck-cli"
+description = "The roastedDuck command-line shell with DuckDB-compatible SQL."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[lib]
+name = "rustdb_shell"
+
 [[bin]]
-name = "rustdb"
+name = "roastedDuck"
 path = "src/main.rs"
 
 [dependencies]

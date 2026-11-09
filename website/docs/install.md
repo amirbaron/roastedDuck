@@ -32,7 +32,7 @@ Apple Developer ID notarization. If macOS blocks a downloaded binary, use the
 normal **System Settings → Privacy & Security → Open Anyway** flow after
 verifying its source. Do not disable Gatekeeper globally.
 
-The archive contains `bin/rustdb` and its `bin/roastedDuck` alias, dynamic
+The archive provides the `bin/roastedDuck` command, dynamic
 and static libraries, C/ADBC headers, the pinned Go source, and license notices. Engine and ABI identifiers intentionally
 remain compatible; branding does not change SQL result bytes.
 
@@ -66,8 +66,8 @@ On Debian-family Linux, install a C compiler, `pkg-config`, `perl`, and
 ```sh
 git clone https://github.com/amirbaron/roastedDuck.git
 cd roastedDuck
-cargo build --locked --release -p rustdb-shell -j 1
-./target/release/rustdb -c 'SELECT 42;'
+cargo build --locked --release --bin roastedDuck -j 1
+./target/release/roastedDuck -c 'SELECT 42;'
 ```
 
 Client-specific instructions: [Python](python.md), [Go](go.md), [Swift](swift.md),

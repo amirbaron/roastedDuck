@@ -2,7 +2,7 @@
 # Runs DuckDB's shell tests (tools/shell/tests, pytest) against a shell binary.
 #
 # Usage: scripts/shell-tests.sh [--binary rust|cpp|PATH] [--no-build] [pytest arguments...]
-#   --binary rust  rustdb's target/release/rustdb (default; built and signed first)
+#   --binary rust  roastedDuck at target/release/roastedDuck (default; built and signed first)
 #   --binary cpp   the reference C++ CLI, to get the baseline
 #   --binary PATH  any shell binary
 #   --no-build     skip `cargo build` (rust only)
@@ -14,7 +14,7 @@
 # tree, as they read files such as data/csv/... and test/storage/bc/... by relative path,
 # and write a few files of their own there.
 #
-# Tests that pass on the C++ CLI but cannot pass on rustdb, and why:
+# Tests that pass on the C++ CLI but cannot pass on roastedDuck, and why:
 #   (none; tests needing extensions the reference build lacks skip on both, e.g.
 #    test_warning.py needs httpfs, test_http_logging.py is skipped upstream)
 set -euo pipefail
@@ -36,9 +36,9 @@ case "$BINARY" in
   rust)
     TARGET="${CARGO_TARGET_DIR:-$ROOT/target}"
     if [[ $BUILD -eq 1 ]]; then
-      cargo build --release -p rustdb-shell --manifest-path "$ROOT/Cargo.toml"
+      cargo build --release -p roastedduck-cli --manifest-path "$ROOT/Cargo.toml"
     fi
-    SHELL_BINARY="$TARGET/release/rustdb"
+    SHELL_BINARY="$TARGET/release/roastedDuck"
     "$ROOT/scripts/sign.sh" "$SHELL_BINARY"
     ;;
   cpp) SHELL_BINARY="$REF/build/release/duckdb" ;;

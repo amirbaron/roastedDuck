@@ -29,9 +29,9 @@ and platform development headers. Linux native dependencies may require
 a native supported Python and the pinned maturin from `python/pyproject.toml`.
 
 ```sh
-cargo build --locked -p rustdb-shell -j 1
+cargo build --locked --bin roastedDuck -j 1
 cargo test --locked -p rustdb-types -p rustdb-common -j 1
-./target/debug/rustdb -c 'SELECT sum(i) FROM range(10) t(i);'
+./target/debug/roastedDuck -c 'SELECT sum(i) FROM range(10) t(i);'
 ```
 
 Keep builds and full corpus jobs serialized on resource-constrained machines.

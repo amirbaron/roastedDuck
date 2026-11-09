@@ -139,7 +139,7 @@ jobs:
         run: |
           rustup show
           rustup target add ${{ matrix.target }}
-          cargo build --locked --release -j 1 --target ${{ matrix.target }} -p rustdb-shell -p rustdb-capi -p slt
+          cargo build --locked --release -j 1 --target ${{ matrix.target }} -p roastedduck-cli -p rustdb-capi -p slt
           python scripts/release/compile_harnesses.py --target ${{ matrix.target }} --out compiled-harnesses
           python scripts/release/compile_adbc_bridge.py --target ${{ matrix.target }} --out compiled-harnesses/adbc
       - name: Build five normal Python ABI wheels
@@ -154,7 +154,7 @@ jobs:
           before-script-linux: |
             yum install -y perl-IPC-Cmd perl-Time-Piece
             (
-              cargo build --locked --release -j 1 --target ${{ matrix.target }} -p rustdb-shell -p rustdb-capi -p slt
+              cargo build --locked --release -j 1 --target ${{ matrix.target }} -p roastedduck-cli -p rustdb-capi -p slt
               python3 scripts/release/compile_harnesses.py --target ${{ matrix.target }} --out compiled-harnesses
               python3 scripts/release/compile_adbc_bridge.py --target ${{ matrix.target }} --out compiled-harnesses/adbc
             )

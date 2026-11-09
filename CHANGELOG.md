@@ -2,6 +2,7 @@
 
 ## Unreleased — validation tooling
 
+- Name the public Cargo CLI package `roastedduck-cli` and source-built executable `roastedDuck`; build it with `cargo build --locked --release --bin roastedDuck -j 1`.
 - Update pytest, PyArrow, and fsspec test dependencies to patched releases and pin current pip/setuptools bootstrap tools.
 - Recheck published wheel/native hashes and paired Python outcomes without rebuilding release payloads; retain and audit complete resolved validation environments.
 - The immutable 1.5.6.post1 source archive retains historical test requirements. Use current repository tooling for developer validation; these packages are not mandatory runtime dependencies of roastedduck.
