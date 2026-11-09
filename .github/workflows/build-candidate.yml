@@ -1,0 +1,260 @@
+name: Build and qualify release candidate
+on:
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'third_party/**'
+      - 'python/**'
+      - 'include/**'
+      - 'release.json'
+      - 'scripts/release/**'
+      - '.github/workflows/build-candidate.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-candidate-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_BUILD_JOBS: 1
+  CARGO_INCREMENTAL: 0
+  MACOSX_DEPLOYMENT_TARGET: '11.0'
+  TZ: UTC
+jobs:
+  security:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Scan exact lockfile against current vulnerability data
+        run: |
+          mkdir security
+          curl -fL https://github.com/google/osv-scanner/releases/download/v2.7.1/osv-scanner_linux_amd64 -o security/osv-scanner
+          echo 'fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8  security/osv-scanner' | sha256sum --check
+          chmod +x security/osv-scanner
+          security/osv-scanner scan source --lockfile Cargo.lock --no-call-analysis rust --format json --output-file security/report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-report
+          path: security/report.json
+          if-no-files-found: error
+  sdist:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build and inspect the source archive
+        run: |
+          rustup show
+          python -m pip install maturin==1.16.0 packaging==26.3 twine==7.0.0
+          python scripts/release/record_build_inputs.py --out source-dist/build-inputs.json
+          cd python
+          maturin sdist --out ../source-dist
+          cd ..
+          python scripts/release/inspect_distribution.py source-dist --report source-dist/metadata.json
+          python -m twine check --strict source-dist/*.tar.gz
+      - id: source
+        name: Verify extracted dependency closure outside the checkout
+        run: python scripts/release/check_sdist_closure.py source-dist/*.tar.gz --out "$RUNNER_TEMP/roastedduck-source-rebuild"
+      - name: Build the extracted source distribution
+        uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
+        with:
+          maturin-version: v1.16.0
+          rust-toolchain: '1.99.0'
+          target: x86_64-unknown-linux-gnu
+          manylinux: '2_28'
+          working-directory: ${{ steps.source.outputs.source_root }}
+          docker-options: -v ${{ runner.temp }}/roastedduck-source-rebuild:${{ runner.temp }}/roastedduck-source-rebuild
+          args: --release --locked -j 1 --compatibility pypi --interpreter python3.12 --out ${{ github.workspace }}/sdist-rebuilt-wheels
+      - name: Install the independently rebuilt wheel
+        run: |
+          python -m venv source-test
+          source-test/bin/python -m pip install sdist-rebuilt-wheels/*.whl
+          source-test/bin/python scripts/release/smoke_python.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-sdist
+          path: source-dist/
+          if-no-files-found: error
+          retention-days: 14
+  build:
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            test_os: ubuntu-24.04
+            platform: linux-amd64
+            target: x86_64-unknown-linux-gnu
+            manylinux: '2_28'
+          - os: ubuntu-24.04-arm
+            test_os: ubuntu-24.04-arm
+            platform: linux-arm64
+            target: aarch64-unknown-linux-gnu
+            manylinux: '2_28'
+          - os: macos-26-intel
+            test_os: macos-26
+            platform: macos-arm64
+            target: aarch64-apple-darwin
+            manylinux: 'off'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: |
+            3.10
+            3.11
+            3.12
+            3.13
+            3.14
+      - name: Record exact build inputs
+        run: |
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+          python scripts/release/record_build_inputs.py --out receipts/build-inputs.json
+      - name: Cross-build Apple libraries on the larger-memory Intel runner
+        if: runner.os == 'macOS'
+        run: |
+          rustup show
+          rustup target add ${{ matrix.target }}
+          cargo build --locked --release -j 1 --target ${{ matrix.target }} -p rustdb-shell -p rustdb-capi -p slt
+          python scripts/release/compile_harnesses.py --target ${{ matrix.target }} --out compiled-harnesses
+      - name: Build five normal Python ABI wheels
+        uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
+        with:
+          maturin-version: v1.16.0
+          rust-toolchain: '1.99.0'
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          working-directory: python
+          args: --release --locked -j 1 --compatibility pypi --out ../raw-wheels --interpreter python3.10 python3.11 python3.12 python3.13 python3.14
+          before-script-linux: |
+            (
+              cd ..
+              cargo build --locked --release -j 1 --target ${{ matrix.target }} -p rustdb-shell -p rustdb-capi -p slt
+              python3 scripts/release/compile_harnesses.py --target ${{ matrix.target }} --out compiled-harnesses
+            )
+      - name: Inspect wheel metadata and exact native SDK
+        run: |
+          python -m pip install packaging==26.3 twine==7.0.0
+          python scripts/release/collect_notices.py --out notices
+          python scripts/release/complete_wheels.py --input raw-wheels --notices notices --out wheelhouse --report receipts/wheel-transforms.json
+          python scripts/release/inspect_distribution.py wheelhouse --report receipts/distributions.json
+          python -m twine check --strict wheelhouse/*
+          python scripts/release/stage_native.py --target ${{ matrix.target }} --platform ${{ matrix.platform }} --notices notices --harnesses compiled-harnesses --out native
+          tar -czf native-${{ matrix.platform }}.tar.gz native
+      - name: Retain wheel and native inputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-${{ matrix.platform }}
+          path: |
+            wheelhouse/
+            native-${{ matrix.platform }}.tar.gz
+            receipts/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Retain build receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-receipts-${{ matrix.platform }}
+          path: |
+            receipts/
+          retention-days: 14
+  qualify:
+    needs: build
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-amd64
+          - os: ubuntu-24.04-arm
+            platform: linux-arm64
+          - os: macos-26
+            platform: macos-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: |
+            3.10
+            3.11
+            3.12
+            3.13
+            3.14
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidate-${{ matrix.platform }}
+          path: candidate
+      - name: Run the compiled security and persistence tests natively
+        run: |
+          tar -xzf candidate/native-${{ matrix.platform }}.tar.gz
+          python scripts/release/run_harnesses.py --input native/harnesses --out native-qualification
+          result=$(./native/sdk/bin/roastedDuck -csv -noheader -c 'SELECT sum(i) FROM range(10) t(i);')
+          test "$result" = 45
+          cc scripts/release/smoke_c.c -I"$PWD/native/sdk/include" -L"$PWD/native/sdk/lib" -Wl,-rpath,"$PWD/native/sdk/lib" -lduckdb -o smoke-c
+          ./smoke-c
+      - name: Fetch immutable upstream test inputs
+        run: python scripts/release/fetch_validation_source.py --out upstream
+      - name: Qualify all five Python ABI cells
+        run: python scripts/release/validate_python_matrix.py --wheels candidate/wheelhouse --source upstream/duckdb-python-802a345bb627435d2a05d63cb74454fa98b60b5e --out qualification
+      - name: Retain raw qualification outcomes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qualification-${{ matrix.platform }}
+          path: |
+            native-qualification/
+            qualification/summary.json
+            qualification/*/*/*.json
+            qualification/*/*/*.xml
+            qualification/*/*/*.log
+            qualification/*/comparison.json
+          retention-days: 14
+  assemble:
+    needs: [security, sdist, qualify]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: candidate-*
+          path: incoming
+      - run: python -m pip install packaging==26.3 twine==7.0.0
+      - run: python scripts/release/assemble_python_candidate.py --input incoming --out accepted-python
+      - run: python -m twine check --strict accepted-python/*.whl accepted-python/*.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qualified-python-distributions
+          path: accepted-python/
+          if-no-files-found: error
+          retention-days: 30

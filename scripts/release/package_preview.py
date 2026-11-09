@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Package the frozen software candidate without rebuilding native engine bytes.
+"""Reproduce the historical source2551 preview without rebuilding engine bytes.
 
 Inputs are a verified candidate payload and an empty output directory. The exact
 original manifest is pinned below; new branding has separate artifact hashes.
-No credentials or local signing keys are copied into public archives.
+No credentials or local signing keys are copied into public archives. This is
+not the builder for security revisions or PyPI releases; use the source-build
+and publication workflows for those.
 """
 from __future__ import annotations
 
@@ -117,7 +119,15 @@ def main() -> None:
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--dependency-notices", type=Path, required=True)
     args = ap.parse_args()
+    if RELEASE["version"] != "1.5.6":
+        raise SystemExit("Historical source2551 packaging is restricted to the 1.5.6 checkout. Security revisions must be built from current source.")
     payload, out = args.payload.resolve(), args.out.resolve()
+    source_manifest = json.loads((payload / "metadata/source-manifest.json").read_text())
+    for name, item in source_manifest["build_inputs"].items():
+        if name.startswith(("crates/", "third_party/")) or name in {"Cargo.toml", "Cargo.lock", "rust-toolchain.toml"}:
+            path = ROOT / name
+            if not path.is_file() or digest(path) != item["sha256"]:
+                raise SystemExit(f"Current runtime differs from frozen source2551: {name}. Build a new candidate from source.")
     out.mkdir(parents=True, exist_ok=True)
     if any(out.iterdir()):
         raise SystemExit("Output directory must be empty; never overwrite release artifacts")

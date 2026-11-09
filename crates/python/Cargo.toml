@@ -16,7 +16,7 @@ doctest = false
 extension-module = ["pyo3/extension-module"]
 
 [dependencies]
-pyo3 = { version = "=0.27.2" }
+pyo3 = { version = "=0.30.1" }
 rustdb.workspace = true
 rustdb-common.workspace = true
 rustdb-types.workspace = true

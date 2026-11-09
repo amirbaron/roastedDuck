@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Install and compare the actual five ABI wheels against pinned upstream controls.
+
+Produces per-process identities, raw JUnit, skip/failure verdicts and installation
+receipts. A failed reference test is retained and does not count as a pass.
+"""
+import argparse
+from collections import Counter
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+
+ROOT = Path(__file__).resolve().parents[2]
+VERSION = json.loads((ROOT / "release.json").read_text())["version"]
+
+
+def run(command, log, env, cwd):
+    with log.open("w") as output:
+        result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT, env=env, cwd=cwd)
+    return result.returncode
+
+
+def verdicts(path):
+    records = {}
+    for case in ET.parse(path).iter("testcase"):
+        key = case.attrib.get("classname", "") + "::" + case.attrib["name"]
+        assert key not in records, key
+        child = next((c for c in case if c.tag in {"failure", "error", "skipped"}), None)
+        records[key] = {"verdict": "pass" if child is None else child.tag,
+                        "type": "" if child is None else child.attrib.get("type", ""),
+                        "reason": "" if child is None else child.attrib.get("message", "")}
+    assert records, "No upstream tests executed"
+    return records
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--wheels", type=Path, required=True)
+    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--versions", nargs="+", default=["3.10", "3.11", "3.12", "3.13", "3.14"])
+    args = parser.parse_args()
+    args.out = args.out.resolve()
+    args.wheels = args.wheels.resolve()
+    args.source = args.source.resolve()
+    args.out.mkdir(parents=True, exist_ok=False)
+    reports = []
+    for version in args.versions:
+        executable = shutil.which("python" + version)
+        assert executable, f"Required native interpreter Python {version} is unavailable"
+        abi = "cp" + version.replace(".", "")
+        wheels = list(args.wheels.glob(f"roastedduck-{VERSION}-{abi}-{abi}-*.whl"))
+        assert len(wheels) == 1, wheels
+        cell = args.out / abi
+        cell.mkdir()
+        results = {}
+        for engine in ["cpp", "rust"]:
+            output = cell / engine
+            output.mkdir()
+            env = dict(os.environ, TMPDIR=str(output / "tmp"), PYTHONDONTWRITEBYTECODE="1", TZ="UTC",
+                       PIP_CONFIG_FILE=os.devnull, PIP_DISABLE_PIP_VERSION_CHECK="1")
+            Path(env["TMPDIR"]).mkdir()
+            env.pop("PYTHONPATH", None)
+            env.pop("PIP_INDEX_URL", None)
+            env.pop("PIP_EXTRA_INDEX_URL", None)
+            for key in list(env):
+                if key.startswith(("AWS_", "AZURE_", "OPENAI_", "ANTHROPIC_", "VERCEL_", "TWINE_", "PYPI_")) or key in {"GH_TOKEN", "GITHUB_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS"}:
+                    env.pop(key)
+            venv = output / "venv"
+            subprocess.run([executable, "-m", "venv", str(venv)], env=env, check=True)
+            python = str(venv / "bin/python")
+            requirements = [python, "-m", "pip", "install", "--only-binary=:all:", "-r", str(ROOT / "scripts/release/requirements-validation.txt")]
+            assert run(requirements, output / "dependencies.log", env, output) == 0
+            package = str(wheels[0]) if engine == "rust" else "duckdb==1.5.6"
+            install = [python, "-m", "pip", "install", "--no-deps", "--only-binary=:all:", "--report", str(output / "install.json"), package]
+            assert run(install, output / "install.log", env, output) == 0
+            assert run([python, "-m", "pip", "check"], output / "pip-check.log", env, output) == 0
+            identity = subprocess.check_output([python, "-c", "import duckdb,_duckdb,hashlib,json;from pathlib import Path;p=Path(_duckdb.__file__);print(json.dumps({'rust':bool(getattr(_duckdb,'__rust_engine__',False)),'native':str(p),'sha256':hashlib.sha256(p.read_bytes()).hexdigest()}))"], cwd=output, env=env, text=True)
+            identity = json.loads(identity)
+            assert identity["rust"] == (engine == "rust")
+            (output / "identity.json").write_text(json.dumps(identity, indent=2) + "\n")
+            if engine == "rust":
+                assert run([python, str(ROOT / "scripts/release/smoke_python.py")], output / "smoke.json", env, output) == 0
+            env.update(PYTHONPATH=str(ROOT / "scripts/release"), ROASTEDDUCK_TEST_ENGINE=engine,
+                       ROASTEDDUCK_EXPECTED_NATIVE_SHA256=identity["sha256"],
+                       ROASTEDDUCK_PYTEST_IDENTITY=str(output / "pytest-identity.json"),
+                       ROASTEDDUCK_PYTEST_EVENTS=str(output / "pytest-events.jsonl"))
+            command = [python, "-m", "pytest", "-q", "-p", "pytest_release_guard", "--continue-on-collection-errors", "--timeout=120",
+                       "-o", "cache_dir=" + str(output / "pytest-cache"), "--basetemp=" + str(output / "pytest-tmp"),
+                       "--junitxml=" + str(output / "junit.xml"), str(args.source / "tests/fast")]
+            code = run(command, output / "pytest.log", env, output)
+            raw = verdicts(output / "junit.xml")
+            (output / "verdicts.json").write_text(json.dumps(raw, indent=2) + "\n")
+            events = [json.loads(line) for line in (output / "pytest-events.jsonl").read_text().splitlines()]
+            statuses = {}
+            for event in events:
+                if event["when"] == "call" or event["outcome"] != "passed":
+                    key = event["nodeid"] + "::" + event["when"]
+                    statuses[key] = {"outcome": event["outcome"], "wasxfail": event["wasxfail"]}
+            results[engine] = {"exit_code": code, "counts": dict(Counter(v["verdict"] for v in raw.values())), "cases": raw,
+                               "explicit_outcomes": statuses,
+                               "xfails": sum(e["outcome"] == "skipped" and e["wasxfail"] is not None for e in events),
+                               "xpasses": sum(e["outcome"] == "passed" and e["wasxfail"] is not None for e in events)}
+        cpp, rust = results["cpp"]["cases"], results["rust"]["cases"]
+        differences = {key: {"cpp": cpp.get(key), "rust": rust.get(key)} for key in sorted(cpp.keys() | rust.keys()) if cpp.get(key) != rust.get(key)}
+        event_differences = results["cpp"]["explicit_outcomes"] != results["rust"]["explicit_outcomes"]
+        record = {"python": version, "abi": abi, "wheel": wheels[0].name, "engines": results,
+                  "differences": differences, "explicit_outcome_difference": event_differences,
+                  "passed": not differences and not event_differences and all(r["exit_code"] == 0 for r in results.values())}
+        (cell / "comparison.json").write_text(json.dumps(record, indent=2) + "\n")
+        reports.append({k: v for k, v in record.items() if k != "engines"})
+        (args.out / "summary.json").write_text(json.dumps({"version": VERSION, "cells": reports}, indent=2) + "\n")
+        print(abi, "PASS" if record["passed"] else "FAIL", flush=True)
+    assert all(r["passed"] for r in reports), "Candidate qualification failed; see raw comparisons"
+
+
+if __name__ == "__main__":
+    main()

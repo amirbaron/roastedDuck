@@ -1,0 +1,28 @@
+{
+  "version": "1.5.6",
+  "note": "Public release SDK comparators; distinct from historical source-built performance references.",
+  "macos-arm64": {
+    "duckdb_platform": "osx_arm64",
+    "archive": "libduckdb-osx-universal.zip",
+    "archive_sha256": "e0bc007d9b0094c0970ac1847a8601d10aad07cbd2910ce586ec810f77b638d6",
+    "library": "libduckdb.dylib",
+    "library_sha256": "75a519cb914ae36ca22cff0995a8a2e8c9a46990b8c0a479514f741a0d93f344",
+    "httpfs_sha256": "0cde1f5acd1970bfd414b11f5e945a1eddd8425e96e273f6411538d8fe3d951d"
+  },
+  "linux-arm64": {
+    "duckdb_platform": "linux_arm64",
+    "archive": "libduckdb-linux-arm64.zip",
+    "archive_sha256": "b72ed9f05003f5e9d2015f7ceada6416b377d9dd33169cdde3c9e33897856eee",
+    "library": "libduckdb.so",
+    "library_sha256": "23686593dba4ec22c6e581bb1c843b3964e84c4bc4d0063d8b4daddd2e20e30a",
+    "httpfs_sha256": "ae940d800b7f938a4848d0eebcffb28dda0bbed76987f11dc55faa6d1a86db0d"
+  },
+  "linux-amd64": {
+    "duckdb_platform": "linux_amd64",
+    "archive": "libduckdb-linux-amd64.zip",
+    "archive_sha256": "b845005f5132a7d8180057c35e14a7626632258782f871a90861b19c1c03841b",
+    "library": "libduckdb.so",
+    "library_sha256": "3f4962cdd266eab2b479a5b5a4a6d063d279b2954ae814ed00385d553b747633",
+    "httpfs_sha256": "ff36e7d2561e21b958c243c6bd5f6a10cfc055a98ea76c0280b94728b57588e2"
+  }
+}

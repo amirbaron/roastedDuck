@@ -336,11 +336,9 @@ fn export_with_options(
         private_data: Box::into_raw(private).cast::<c_void>(),
     });
     if capsule {
-        return Ok(
-            PyCapsule::new(py, stream, Some(c"arrow_array_stream".to_owned()))?
-                .unbind()
-                .into_any(),
-        );
+        return Ok(PyCapsule::new_with_value(py, stream, c"arrow_array_stream")?
+            .unbind()
+            .into_any());
     }
     Ok(py
         .import("pyarrow")?

@@ -1,0 +1,103 @@
+name: Publish accepted candidate to PyPI
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Qualified public GitHub release tag
+        required: true
+        default: v1.5.6.post1
+permissions:
+  contents: read
+concurrency:
+  group: pypi-publish-${{ inputs.tag }}
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install twine==7.0.0
+      - run: python scripts/release/prepare_pypi.py --tag "$RELEASE_TAG" --out dist --receipts receipts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: accepted-pypi-distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: accepted-pypi-manifests
+          path: receipts/
+          if-no-files-found: error
+          retention-days: 14
+  publish:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/roastedduck/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: accepted-pypi-distributions
+          path: dist
+      - name: Publish the exact accepted files using PyPI trusted publishing
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086
+        with:
+          packages-dir: dist/
+          attestations: true
+          skip-existing: true
+  verify-index:
+    needs: publish
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-26]
+        python: ['3.10', '3.11', '3.12', '3.13', '3.14']
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: accepted-pypi-manifests
+          path: receipts
+      - name: Ordinary PyPI install in an empty environment
+        run: |
+          python -m venv installed
+          unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL
+          export PIP_CONFIG_FILE=/dev/null
+          installed/bin/python -m pip install --no-cache-dir --report pip-install.json roastedduck
+          installed/bin/python scripts/release/verify_pypi_install.py --pip-report pip-install.json --manifest receipts/python-distributions.json --out provider-proof.json
+          installed/bin/python scripts/release/smoke_python.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pypi-proof-${{ matrix.os }}-${{ matrix.python }}
+          path: |
+            pip-install.json
+            provider-proof.json
+          retention-days: 30

@@ -16,7 +16,7 @@ adbc-test-api = []
 
 [dependencies]
 libloading = "0.8"
-rsa = { version = "=0.9.10", features = ["sha2"] }
+rsa = { version = "=0.10.0", features = ["pkcs1v15"] }
 sha2 = { version = "0.11", default-features = false }
 libc = "0.2"
 rustdb.workspace = true

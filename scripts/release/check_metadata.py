@@ -9,7 +9,12 @@ project = tomllib.loads((root / "python/pyproject.toml").read_text())["project"]
 release = json.loads((root / "release.json").read_text())
 workspace = tomllib.loads((root / "Cargo.toml").read_text())["workspace"]["package"]
 assert project["name"] == "roastedduck" and project["version"] == release["version"]
-assert release["version"] == release["compatibility_version"] == workspace["version"]
+assert release["compatibility_version"] == workspace["version"]
+assert release["version"] == release["compatibility_version"] or (
+    release["version"].startswith(release["compatibility_version"] + ".post")
+    and release["version"].split(".post", 1)[1].isdigit()
+    and int(release["version"].split(".post", 1)[1]) > 0
+)
 assert project["license"] == "MIT"
 for name in ["LICENSE", "README.md", "THIRD_PARTY_NOTICES.md", "SECURITY.md", "CONTRIBUTING.md", "mkdocs.yml"]:
     assert (root / name).is_file(), name

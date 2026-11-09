@@ -1,13 +1,31 @@
 [build-system]
-requires = ["maturin==1.9.6"]
+requires = ["maturin==1.16.0"]
 build-backend = "maturin"
 
 [project]
 name = "roastedduck"
-version = "1.5.6"
-requires-python = ">=3.10"
+version = "1.5.6.post1"
+requires-python = ">=3.10,<3.15"
 description = "roastedDuck: an independent Rust SQL engine targeting DuckDB compatibility"
+readme = "PYPI_README.md"
 license = "MIT"
+license-files = ["LICENSE", "LICENSE-UPSTREAM"]
+authors = [{ name = "Amir Baron" }]
+maintainers = [{ name = "roastedDuck contributors" }]
+keywords = ["sql", "database", "analytics", "rust", "duckdb"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Rust",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Database :: Database Engines/Servers",
+]
 
 [project.urls]
 Documentation = "https://amirbaron.github.io/roastedDuck/"

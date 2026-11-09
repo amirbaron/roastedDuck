@@ -174,7 +174,7 @@ fn _dataframe_arguments_error(
     };
     Err(error::arguments(py, name, signature, None, args, Some(kwargs))?)
 }
-#[pymodule]
+#[pymodule(gil_used = true)]
 fn _duckdb(module: &Bound<'_, PyModule>) -> PyResult<()> {
     rustdb_capi::register_extension_loader();
     let py = module.py();

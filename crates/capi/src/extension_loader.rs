@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use libloading::Library;
-use rsa::{Pkcs1v15Sign, RsaPublicKey, pkcs8::DecodePublicKey};
+use rsa::{Pkcs1v15Sign, PublicKey, pkcs8::DecodePublicKey};
 use rustdb::{Database, Error, ErrorKind, Result};
 use rustdb_common::{ByteString, byte_format};
 use rustdb_function::cast::ValueCast;
@@ -176,7 +176,7 @@ fn signature_valid_with_keys(file: &mut File, keys: impl Iterator<Item = &'stati
     file.read_exact(&mut signature)
         .map_err(|error| io_error(&error))?;
     Ok(keys
-        .filter_map(|pem| RsaPublicKey::from_public_key_pem(pem).ok())
+        .filter_map(|pem| PublicKey::from_public_key_pem(pem).ok())
         .any(|key| {
             key.verify(Pkcs1v15Sign::new::<rsa::sha2::Sha256>(), &digest, &signature)
                 .is_ok()
