@@ -1,5 +1,17 @@
 name: Build and qualify release candidate
 on:
+  push:
+    branches: [amirbaron/rust-duckdb-port]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/**'
+      - 'third_party/**'
+      - 'python/**'
+      - 'include/**'
+      - 'release.json'
+      - 'scripts/release/**'
+      - '.github/workflows/build-candidate.yml'
   pull_request:
     paths:
       - 'Cargo.toml'
