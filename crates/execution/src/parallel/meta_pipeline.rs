@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use super::pipeline::{BATCH_INCREMENT, Pipeline, is_order_dependent};
 use crate::operator::PhysicalRef;

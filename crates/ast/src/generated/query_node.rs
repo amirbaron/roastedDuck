@@ -4,7 +4,9 @@ use crate::{
     AggregateHandling, CommonTableExpressionMap, ParsedExpression, QueryNodeType, ResultModifier,
     SampleOptions, SetOperationNode, TableRef,
 };
-use rustdb_serde::{DeserializeObject, Deserializer, Error, Result, SerializeObject, Serializer, required};
+use roastedduck_serde::{
+    DeserializeObject, Deserializer, Error, Result, SerializeObject, Serializer, required,
+};
 use std::collections::BTreeSet;
 
 /// DuckDB's `QueryNode`: the members shared by all subclasses, with the subclass in `kind`.
@@ -94,7 +96,7 @@ impl DeserializeObject for QueryNode {
     }
 }
 
-rustdb_serde::impl_pointee_serde!(QueryNode);
+roastedduck_serde::impl_pointee_serde!(QueryNode);
 
 /// DuckDB's `SelectNode`.
 #[derive(Clone, Debug, PartialEq)]
@@ -171,7 +173,7 @@ impl DeserializeObject for SelectNode {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RecursiveCteNode {
     /// `cte_name` (property 200).
-    pub cte_name: rustdb_common::ByteString,
+    pub cte_name: roastedduck_common::ByteString,
     /// `union_all` (property 201).
     pub union_all: bool,
     /// `left` (property 202).
@@ -179,7 +181,7 @@ pub struct RecursiveCteNode {
     /// `right` (property 203).
     pub right: Box<QueryNode>,
     /// `aliases` (property 204).
-    pub aliases: Vec<rustdb_common::ByteString>,
+    pub aliases: Vec<roastedduck_common::ByteString>,
     /// `key_targets` (property 205).
     pub key_targets: Vec<ParsedExpression>,
 }
@@ -198,7 +200,8 @@ impl SerializeObject for RecursiveCteNode {
 
 impl DeserializeObject for RecursiveCteNode {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let cte_name: rustdb_common::ByteString = deserializer.read_property_with_default(200, "cte_name")?;
+        let cte_name: roastedduck_common::ByteString =
+            deserializer.read_property_with_default(200, "cte_name")?;
         let union_all: bool = deserializer.read_property_with_explicit_default(201, "union_all", false)?;
         let left: Box<QueryNode> = required(
             deserializer.read_property_with_default(202, "left")?,
@@ -210,7 +213,7 @@ impl DeserializeObject for RecursiveCteNode {
             "RecursiveCTENode",
             "right",
         )?;
-        let aliases: Vec<rustdb_common::ByteString> =
+        let aliases: Vec<roastedduck_common::ByteString> =
             deserializer.read_property_with_default(204, "aliases")?;
         let key_targets: Vec<ParsedExpression> =
             deserializer.read_property_with_default(205, "key_targets")?;

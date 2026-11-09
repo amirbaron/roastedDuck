@@ -1,11 +1,11 @@
 //! Operators (`transform_operator.cpp`).
 
-use rustdb_ast::{
+use roastedduck_ast::{
     BetweenExpression, ExpressionType, ParsedExpression, ParsedExpressionKind, QueryNodeKind,
     SubqueryExpression, SubqueryType,
 };
-use rustdb_common::{Error, Result};
-use rustdb_pg_parser::nodes::{AExpr, AExprKind, Node};
+use roastedduck_common::{Error, Result};
+use roastedduck_pg_parser::nodes::{AExpr, AExprKind, Node};
 
 use super::build::{self, set_location};
 use super::expression::{negate_comparison, operator_to_expression_type};
@@ -103,7 +103,7 @@ impl<'a> Transformer<'a> {
                 match (left, right) {
                     (None, Some(right)) => Ok(Self::transform_unary_operator(name, right)),
                     (Some(left), None) => Ok(Self::transform_unary_operator(
-                        &rustdb_common::byte_format!("{name}__postfix"),
+                        &roastedduck_common::byte_format!("{name}__postfix"),
                         left,
                     )),
                     (Some(left), Some(right)) => Ok(self.transform_binary_operator(name, left, right)),
@@ -129,7 +129,7 @@ impl<'a> Transformer<'a> {
             location = Some(loc);
         }
         if comparison_type == ExpressionType::Invalid {
-            return Err(Error::parser(rustdb_common::byte_format!(
+            return Err(Error::parser(roastedduck_common::byte_format!(
                 "Unsupported comparison \"{name}\" for ANY/ALL subquery"
             )));
         }

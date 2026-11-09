@@ -1,0 +1,40 @@
+[package]
+name = "roastedduck"
+description = "An in-process analytical SQL database: a 1:1 Rust port of DuckDB."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+flate2 = "1"
+roastedduck-common.workspace = true
+roastedduck-types.workspace = true
+roastedduck-ast.workspace = true
+roastedduck-parser.workspace = true
+roastedduck-catalog = { path = "../catalog" }
+roastedduck-function = { path = "../function" }
+roastedduck-functions = { path = "../functions" }
+roastedduck-planner = { path = "../planner" }
+roastedduck-execution = { path = "../execution" }
+roastedduck-row = { path = "../row" }
+roastedduck-optimizer = { path = "../optimizer" }
+roastedduck-storage = { path = "../storage" }
+roastedduck-buffer = { path = "../buffer" }
+roastedduck-crypto = { path = "../crypto" }
+roastedduck-serde = { path = "../serde" }
+roastedduck-csv = { path = "../csv" }
+roastedduck-parquet = { path = "../parquet" }
+roastedduck-json = { path = "../json" }
+roastedduck-tpch = { path = "../tpch" }
+roastedduck-tpcds = { path = "../tpcds" }
+roastedduck-icu = { path = "../icu" }
+roastedduck-arrow = { path = "../arrow" }
+roastedduck-autocomplete = { path = "../autocomplete" }
+roastedduck-httpfs = { path = "../httpfs" }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }

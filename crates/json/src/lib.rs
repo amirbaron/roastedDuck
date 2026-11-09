@@ -20,7 +20,7 @@ mod json_to_variant;
 mod variant_to_json;
 pub mod yyjson;
 
-use rustdb_types::LogicalType;
+use roastedduck_types::LogicalType;
 
 pub use json_casts::register_json_casts;
 pub use json_functions::json_serialize_sql::execute_serialized_sql_pragma;

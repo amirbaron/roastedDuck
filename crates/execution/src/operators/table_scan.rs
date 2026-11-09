@@ -1,10 +1,10 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::tree_renderer::RenderParams;
-use rustdb_common::{Error, Result};
-use rustdb_function::{FunctionData, TableFunction, TablePartitionInfo, TableScanState};
-use rustdb_storage::table_filter::DynamicTableFilterSet;
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_common::tree_renderer::RenderParams;
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{FunctionData, TableFunction, TablePartitionInfo, TableScanState};
+use roastedduck_storage::table_filter::DynamicTableFilterSet;
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use crate::operator::{
     ErasedSource, OperatorPartitionData, OperatorPartitionInfo, PhysicalOperator, PhysicalRef, SinkState,
@@ -20,12 +20,12 @@ pub struct PhysicalTableScan {
     column_ids: Vec<u64>,
     /// The scanned columns with the fields read of nested ones (DuckDB's
     /// `column_indexes`).
-    column_indexes: Vec<rustdb_types::ColumnIndex>,
+    column_indexes: Vec<roastedduck_types::ColumnIndex>,
     /// The positions in `column_ids` that are output; empty for all of them (columns
     /// read only for pushed-down filters are not output).
     projection: Vec<usize>,
     /// The filters the function applies (shown by `EXPLAIN`).
-    filters: Option<rustdb_storage::TableFilterSet>,
+    filters: Option<roastedduck_storage::TableFilterSet>,
     /// Join filters populated before this source opens (keyed by scan position).
     dynamic_filters: Option<Arc<DynamicTableFilterSet>>,
     /// What `EXPLAIN` shows about the scan.
@@ -54,7 +54,7 @@ impl PhysicalTableScan {
             bind_data,
             column_indexes: column_ids
                 .iter()
-                .map(|&id| rustdb_types::ColumnIndex::new(id))
+                .map(|&id| roastedduck_types::ColumnIndex::new(id))
                 .collect(),
             column_ids,
             projection: Vec::new(),
@@ -89,7 +89,7 @@ impl PhysicalTableScan {
 
     /// The scanned columns with the fields read of nested ones.
     #[must_use]
-    pub fn with_column_indexes(mut self, column_indexes: Vec<rustdb_types::ColumnIndex>) -> Self {
+    pub fn with_column_indexes(mut self, column_indexes: Vec<roastedduck_types::ColumnIndex>) -> Self {
         self.column_indexes = column_indexes;
         self
     }
@@ -103,7 +103,7 @@ impl PhysicalTableScan {
 
     /// Records the filters pushed into the function.
     #[must_use]
-    pub fn with_filters(mut self, filters: Option<rustdb_storage::TableFilterSet>) -> Self {
+    pub fn with_filters(mut self, filters: Option<roastedduck_storage::TableFilterSet>) -> Self {
         self.filters = filters;
         self
     }
@@ -147,7 +147,7 @@ impl PhysicalOperator for PhysicalTableScan {
             !partition_info.requires_partition_columns() || parallel.partition_data.is_some()
         })
     }
-    fn table_filters(&self) -> Option<&rustdb_storage::TableFilterSet> {
+    fn table_filters(&self) -> Option<&roastedduck_storage::TableFilterSet> {
         self.filters.as_ref().filter(|filters| !filters.is_empty())
     }
 
@@ -174,12 +174,12 @@ impl PhysicalOperator for PhysicalTableScan {
             };
             result.insert(
                 "Projections".to_owned(),
-                rustdb_common::ByteString::join(&names, b"\n"),
+                roastedduck_common::ByteString::join(&names, b"\n"),
             );
         }
         if self.function.filter_pushdown {
-            let mut add_filters = |label: &str, filters: &rustdb_storage::TableFilterSet| {
-                let info: Vec<rustdb_common::ByteString> = filters
+            let mut add_filters = |label: &str, filters: &roastedduck_storage::TableFilterSet| {
+                let info: Vec<roastedduck_common::ByteString> = filters
                     .filters
                     .iter()
                     .filter_map(|(&column, filter)| {
@@ -189,7 +189,10 @@ impl PhysicalOperator for PhysicalTableScan {
                             .map(|name| filter.to_sql(name))
                     })
                     .collect();
-                result.insert(label.to_owned(), rustdb_common::ByteString::join(&info, b"\n"));
+                result.insert(
+                    label.to_owned(),
+                    roastedduck_common::ByteString::join(&info, b"\n"),
+                );
             };
             if let Some(filters) = &self.filters {
                 add_filters("Filters", filters);
@@ -216,7 +219,7 @@ pub struct TableScanGlobal {
     /// Per-execution bind data containing the final static and dynamic filters.
     bind_data: Option<Arc<dyn FunctionData>>,
     state: Mutex<(TableScanState, bool)>,
-    parallel: Option<rustdb_function::ParallelScanGlobal>,
+    parallel: Option<roastedduck_function::ParallelScanGlobal>,
 }
 
 impl std::fmt::Debug for TableScanGlobal {
@@ -268,7 +271,7 @@ impl PhysicalTableScan {
 
 impl Source for PhysicalTableScan {
     type Global = TableScanGlobal;
-    type Local = Option<rustdb_function::ParallelScanLocal>;
+    type Local = Option<roastedduck_function::ParallelScanLocal>;
 
     fn global_source_state(&self, ctx: &ExecutionContext, _: Option<&SinkState>) -> Result<TableScanGlobal> {
         let mut bind_data = self.bind_data.clone();
@@ -302,7 +305,7 @@ impl Source for PhysicalTableScan {
         &self,
         _: &ExecutionContext,
         global: &TableScanGlobal,
-    ) -> Result<Option<rustdb_function::ParallelScanLocal>> {
+    ) -> Result<Option<roastedduck_function::ParallelScanLocal>> {
         match (&self.function.parallel_scan, &global.parallel) {
             (Some(parallel), Some(shared)) => Ok(Some((parallel.init_local)(shared)?)),
             _ => Ok(None),
@@ -320,7 +323,7 @@ impl Source for PhysicalTableScan {
         &self,
         global: &TableScanGlobal,
         _: &Self::Local,
-    ) -> Vec<(rustdb_common::ByteString, rustdb_common::ByteString)> {
+    ) -> Vec<(roastedduck_common::ByteString, roastedduck_common::ByteString)> {
         match (&self.function.parallel_scan, &global.parallel) {
             (Some(parallel), Some(shared)) => parallel
                 .dynamic_to_string
@@ -439,7 +442,7 @@ impl Source for PhysicalTableScan {
 mod empty_output_tests {
     use super::*;
     use crate::ClientEnv;
-    use rustdb_types::Value;
+    use roastedduck_types::Value;
 
     #[test]
     fn scan_replaces_empty_output_without_losing_previous_batch_ownership() -> Result<()> {

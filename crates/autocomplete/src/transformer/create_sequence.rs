@@ -3,8 +3,8 @@
 
 use std::cmp::Ordering;
 
-use rustdb_function::cast::ValueCast;
-use rustdb_parser::hash_order::CiHashMap;
+use roastedduck_function::cast::ValueCast;
+use roastedduck_parser::hash_order::CiHashMap;
 
 use super::create_table::{create_info, on_create_conflict};
 use super::prelude::*;

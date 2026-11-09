@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::{Aggregate, AggregateInput, States, Typed};
-use rustdb_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
-use rustdb_serde::Serializer;
-use rustdb_types::{LogicalType, LogicalTypeId, StringT, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::{Aggregate, AggregateInput, States, Typed};
+use roastedduck_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
+use roastedduck_serde::Serializer;
+use roastedduck_types::{LogicalType, LogicalTypeId, StringT, Vector};
 
 use crate::signature::any_params;
 

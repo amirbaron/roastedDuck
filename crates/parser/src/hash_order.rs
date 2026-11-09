@@ -196,7 +196,7 @@ impl HashOrder {
     }
 }
 
-pub(crate) use rustdb_common::libcxx::ci_hash;
+pub(crate) use roastedduck_common::libcxx::ci_hash;
 
 /// A `case_insensitive_map_t` or `case_insensitive_set_t` whose iteration order follows
 /// libc++, built by unique insertions.
@@ -300,8 +300,8 @@ impl<V> CiHashMap<V> {
         self.iter_keys().map(|(key, value)| (key.as_str(), value))
     }
 }
-impl<V> CiHashMap<V, rustdb_common::ByteString> {
-    pub fn iter(&self) -> impl Iterator<Item = (&rustdb_common::ByteString, &V)> {
+impl<V> CiHashMap<V, roastedduck_common::ByteString> {
+    pub fn iter(&self) -> impl Iterator<Item = (&roastedduck_common::ByteString, &V)> {
         self.iter_keys()
     }
 }

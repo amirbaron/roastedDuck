@@ -2,13 +2,13 @@
 
 use std::sync::Arc;
 
-use rustdb_csv::{
+use roastedduck_csv::{
     multi_file::{FileList, MultiFileOptions},
     options::CsvReaderOptions,
     read_csv::{bind_csv_files, read_csv_functions},
 };
-use rustdb_function::{TableScanState, cast::CastFunctionSet};
-use rustdb_types::{DataChunk, LogicalType, SelectionVector};
+use roastedduck_function::{TableScanState, cast::CastFunctionSet};
+use roastedduck_types::{DataChunk, LogicalType, SelectionVector};
 
 #[test]
 fn retained_strings_outlive_csv_scan_and_file() {

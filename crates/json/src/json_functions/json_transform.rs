@@ -10,11 +10,11 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::{BoundCastInfo, CastFunctionSet, CastParameters, cast_vector};
-use rustdb_function::{BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
-use rustdb_functions::strtime::StrpTimeFormat;
-use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Value, Vector, kernels::scatter};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::{BoundCastInfo, CastFunctionSet, CastParameters, cast_vector};
+use roastedduck_function::{BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
+use roastedduck_functions::strtime::StrpTimeFormat;
+use roastedduck_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Value, Vector, kernels::scatter};
 
 use crate::json_common::{read_document, val_to_string, val_type_to_string};
 use crate::json_executors::{ColumnBuilder, StrBuilder, StrInput, addressable, local_arena};
@@ -390,7 +390,7 @@ fn transform_from_string_with_format(
         if is_date {
             match format.try_parse_date(text) {
                 Some(date) => {
-                    result.values_mut::<rustdb_types::Date>()[row] = date;
+                    result.values_mut::<roastedduck_types::Date>()[row] = date;
                     true
                 }
                 None => false,
@@ -398,7 +398,7 @@ fn transform_from_string_with_format(
         } else {
             match format.try_parse_timestamp(text) {
                 Some(timestamp) => {
-                    result.values_mut::<rustdb_types::Timestamp>()[row] = timestamp;
+                    result.values_mut::<roastedduck_types::Timestamp>()[row] = timestamp;
                     true
                 }
                 None => false,
@@ -437,7 +437,7 @@ fn transform_from_string_with_format(
 }
 
 /// Names of a struct type.
-fn struct_names(ty: &LogicalType) -> Vec<rustdb_common::ByteString> {
+fn struct_names(ty: &LogicalType) -> Vec<roastedduck_common::ByteString> {
     ty.struct_children()
         .unwrap_or_default()
         .iter()
@@ -447,14 +447,14 @@ fn struct_names(ty: &LogicalType) -> Vec<rustdb_common::ByteString> {
 
 /// Looks up keys in a set of column names (a hash map for many columns).
 pub(crate) struct KeyMap<'n> {
-    names: &'n [rustdb_common::ByteString],
+    names: &'n [roastedduck_common::ByteString],
     map: Option<HashMap<&'n [u8], usize>>,
     /// Whether the names are distinct, so that a guessed match is the first match.
     distinct: bool,
 }
 
 impl<'n> KeyMap<'n> {
-    pub(crate) fn new(names: &'n [rustdb_common::ByteString]) -> Self {
+    pub(crate) fn new(names: &'n [roastedduck_common::ByteString]) -> Self {
         let mut map = HashMap::with_capacity(names.len());
         for (index, name) in names.iter().enumerate() {
             map.entry(name.as_bytes()).or_insert(index);
@@ -493,7 +493,7 @@ impl<'n> KeyMap<'n> {
 pub(crate) fn transform_object(
     doc: &Doc<'_>,
     objects: &Vals,
-    names: &[rustdb_common::ByteString],
+    names: &[roastedduck_common::ByteString],
     types: &[LogicalType],
     options: &mut TransformOptions,
     error_unknown_key: bool,
@@ -563,7 +563,7 @@ pub(crate) fn transform_object(
                     continue;
                 }
                 if success && options.error_missing_key {
-                    options.error_message = rustdb_common::byte_format!(
+                    options.error_message = roastedduck_common::byte_format!(
                         "Object {} does not have key \"{}\"",
                         val_to_string(doc, obj, Some(50)),
                         names[col]
@@ -583,7 +583,7 @@ pub(crate) fn transform_object(
     }
     if !options.delay_error && !success {
         return Err(Error::new_bytes(
-            rustdb_common::ErrorKind::InvalidInput,
+            roastedduck_common::ErrorKind::InvalidInput,
             options.error_message.clone(),
         ));
     }
@@ -678,7 +678,7 @@ fn transform_list(
     }
     if !options.delay_error && !success {
         return Err(Error::new_bytes(
-            rustdb_common::ErrorKind::InvalidInput,
+            roastedduck_common::ErrorKind::InvalidInput,
             options.error_message.clone(),
         ));
     }
@@ -751,7 +751,7 @@ fn transform_array(
     }
     if !options.delay_error && !success {
         return Err(Error::new_bytes(
-            rustdb_common::ErrorKind::InvalidInput,
+            roastedduck_common::ErrorKind::InvalidInput,
             options.error_message.clone(),
         ));
     }
@@ -803,7 +803,10 @@ fn transform_map(
     if !keys_ok {
         let mut message = options.error_message.clone();
         message.extend_from_slice(b". Cannot default to NULL, because map keys cannot be NULL");
-        return Err(Error::new_bytes(rustdb_common::ErrorKind::Conversion, message));
+        return Err(Error::new_bytes(
+            roastedduck_common::ErrorKind::Conversion,
+            message,
+        ));
     }
     let (value_vector, values_ok) = transform(doc, &values, &value_type, options)?;
     success &= values_ok;
@@ -828,7 +831,7 @@ fn transform_map(
     }
     if !options.delay_error && !success {
         return Err(Error::new_bytes(
-            rustdb_common::ErrorKind::InvalidInput,
+            roastedduck_common::ErrorKind::InvalidInput,
             options.error_message.clone(),
         ));
     }
@@ -842,7 +845,7 @@ fn transform_union(
     target: &LogicalType,
     options: &mut TransformOptions,
 ) -> Result<(Vector, bool)> {
-    let members: Vec<(rustdb_common::ByteString, LogicalType)> =
+    let members: Vec<(roastedduck_common::ByteString, LogicalType)> =
         target.union_members().unwrap_or_default().to_vec();
     let count = vals.len();
     let mut success = true;
@@ -1058,10 +1061,10 @@ impl FunctionData for TransformBindData {
 }
 
 /// The client context of a bind.
-fn bind_context<'a>(input: &BindInput<'a>) -> Option<&'a rustdb_planner::ClientContext> {
+fn bind_context<'a>(input: &BindInput<'a>) -> Option<&'a roastedduck_planner::ClientContext> {
     input
         .binder
-        .and_then(|binder| binder.downcast_ref::<rustdb_planner::ClientContext>())
+        .and_then(|binder| binder.downcast_ref::<roastedduck_planner::ClientContext>())
 }
 
 /// The types suggested when a type name does not parse (`TransformStringToUnboundType`).
@@ -1118,23 +1121,23 @@ const SUGGESTED_TYPES: [&str; 47] = [
 /// `TransformStringToLogicalType` (`TypeManager::ParseLogicalType`): a type name as
 /// written in SQL.
 pub(crate) fn string_to_logical_type(
-    context: Option<&rustdb_planner::ClientContext>,
+    context: Option<&roastedduck_planner::ClientContext>,
     text: &str,
 ) -> Result<LogicalType> {
     if text.eq_ignore_ascii_case("null") {
         return Ok(LogicalType::SQLNULL);
     }
-    let column = match rustdb_parser::parse_column_definition(
+    let column = match roastedduck_parser::parse_column_definition(
         &format!("dummy {text}"),
-        &rustdb_parser::ParserOptions::default(),
+        &roastedduck_parser::ParserOptions::default(),
     ) {
         Ok(column) => column,
-        Err(error) if error.kind() == rustdb_common::ErrorKind::Parser => {
+        Err(error) if error.kind() == roastedduck_common::ErrorKind::Parser => {
             let candidates: Vec<String> = SUGGESTED_TYPES.iter().map(|ty| (*ty).to_owned()).collect();
             let mut message = format!(
                 "Value \"{text}\" can not be converted to a DuckDB Type.\nPossible examples as suggestions: \n"
             );
-            for suggestion in rustdb_common::string_util::top_n_jaro_winkler(&candidates, text) {
+            for suggestion in roastedduck_common::string_util::top_n_jaro_winkler(&candidates, text) {
                 message.push_str("* ");
                 message.push_str(&suggestion);
                 message.push('\n');
@@ -1144,7 +1147,7 @@ pub(crate) fn string_to_logical_type(
         Err(error) => return Err(error),
     };
     match context {
-        Some(context) => rustdb_planner::bind_logical_type(context, &column.logical_type),
+        Some(context) => roastedduck_planner::bind_logical_type(context, &column.logical_type),
         None => Err(Error::internal("type binding without a client context")),
     }
 }
@@ -1153,7 +1156,7 @@ pub(crate) fn string_to_logical_type(
 fn structure_string_to_type(
     doc: &Doc<'_>,
     val: ValId,
-    context: Option<&rustdb_planner::ClientContext>,
+    context: Option<&roastedduck_planner::ClientContext>,
 ) -> Result<LogicalType> {
     match doc.get_type(val) {
         crate::yyjson::ValType::Arr => {
@@ -1169,7 +1172,7 @@ fn structure_string_to_type(
             for (key, value) in doc.obj_iter(val) {
                 let name = String::from_utf8_lossy(doc.str(key)).into_owned();
                 if !names.insert(name.clone()) {
-                    return Err(Error::invalid_input(rustdb_common::byte_format!(
+                    return Err(Error::invalid_input(roastedduck_common::byte_format!(
                         "Duplicate keys in object in JSON structure: {}",
                         val_to_string(doc, value, None)
                     )));
@@ -1199,7 +1202,7 @@ fn transform_bind(
         .get(1)
         .is_some_and(|ty| ty.id() == LogicalTypeId::Unknown)
     {
-        return Err(rustdb_planner::expression_binder::parameter_not_resolved());
+        return Err(roastedduck_planner::expression_binder::parameter_not_resolved());
     }
     let Some(Some(structure)) = input.constants.get(1) else {
         return Err(Error::binder("JSON structure must be a constant!"));
@@ -1280,7 +1283,7 @@ fn transform_rows(
         transform_function_internal(args.column(0), args.len(), &target, arena, &mut options)?;
     if !success {
         return Err(Error::new_bytes(
-            rustdb_common::ErrorKind::InvalidInput,
+            roastedduck_common::ErrorKind::InvalidInput,
             options.error_message,
         ));
     }

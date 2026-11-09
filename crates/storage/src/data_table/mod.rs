@@ -11,9 +11,9 @@ use std::fmt;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
-use rustdb_buffer::{BlockManager, BufferManager};
-use rustdb_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_buffer::{BlockManager, BufferManager};
+use roastedduck_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use crate::checkpoint::pointers::PersistentCollectionData;
 use crate::checkpoint_lock::CheckpointLock;
@@ -72,7 +72,7 @@ impl TableIoManager {
             buffer_manager,
             block_manager,
             row_group_size,
-            storage_version: rustdb_serde::SerializationCompatibility::latest().serialization_version,
+            storage_version: roastedduck_serde::SerializationCompatibility::latest().serialization_version,
             file: None,
             optimistic_write: Mutex::default(),
             variant_shredding: Mutex::default(),
@@ -190,13 +190,13 @@ impl TableIoManager {
 #[derive(Debug)]
 pub struct DataTableInfo {
     io: Arc<TableIoManager>,
-    schema: RwLock<rustdb_common::ByteString>,
-    table: RwLock<rustdb_common::ByteString>,
+    schema: RwLock<roastedduck_common::ByteString>,
+    table: RwLock<roastedduck_common::ByteString>,
     /// The indexes, shared by every version of the table.
     indexes: TableIndexList,
     /// The storage versions recorded with the indexes read from the database file, until
     /// the indexes are built (`IndexStorageInfo::options`).
-    stored_index_versions: Mutex<HashMap<rustdb_common::ByteString, Option<u64>>>,
+    stored_index_versions: Mutex<HashMap<roastedduck_common::ByteString, Option<u64>>>,
     /// Held shared by commits that append to the table or remove rows from its indexes,
     /// exclusively by a checkpoint while it writes the table (`checkpoint_lock`).
     checkpoint_lock: Arc<CheckpointLock>,
@@ -209,8 +209,8 @@ pub struct DataTableInfo {
 impl DataTableInfo {
     pub fn new(
         io: Arc<TableIoManager>,
-        schema: impl Into<rustdb_common::ByteString>,
-        table: impl Into<rustdb_common::ByteString>,
+        schema: impl Into<roastedduck_common::ByteString>,
+        table: impl Into<roastedduck_common::ByteString>,
     ) -> Self {
         Self {
             io,
@@ -264,7 +264,7 @@ impl DataTableInfo {
     }
 
     /// Records the storage versions of the indexes read with the table.
-    pub fn set_stored_index_versions(&self, versions: HashMap<rustdb_common::ByteString, Option<u64>>) {
+    pub fn set_stored_index_versions(&self, versions: HashMap<roastedduck_common::ByteString, Option<u64>>) {
         *self
             .stored_index_versions
             .lock()
@@ -299,15 +299,15 @@ impl DataTableInfo {
         &self.io
     }
 
-    pub fn schema_name(&self) -> rustdb_common::ByteString {
+    pub fn schema_name(&self) -> roastedduck_common::ByteString {
         self.schema.read().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
-    pub fn table_name(&self) -> rustdb_common::ByteString {
+    pub fn table_name(&self) -> roastedduck_common::ByteString {
         self.table.read().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
-    pub fn set_table_name(&self, name: impl Into<rustdb_common::ByteString>) {
+    pub fn set_table_name(&self, name: impl Into<roastedduck_common::ByteString>) {
         *self.table.write().unwrap_or_else(PoisonError::into_inner) = name.into();
     }
 }
@@ -315,14 +315,14 @@ impl DataTableInfo {
 /// A stored column of a table (the storage part of DuckDB's `ColumnDefinition`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ColumnDefinition {
-    pub name: rustdb_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     pub ty: LogicalType,
     /// `USING COMPRESSION` (`ColumnDefinition::CompressionType`); `Auto` by default.
     pub compression: crate::compression::CompressionType,
 }
 
 impl ColumnDefinition {
-    pub fn new(name: impl Into<rustdb_common::ByteString>, ty: LogicalType) -> Self {
+    pub fn new(name: impl Into<roastedduck_common::ByteString>, ty: LogicalType) -> Self {
         Self {
             name: name.into(),
             ty,
@@ -367,7 +367,7 @@ pub struct TableConstraints {
     pub foreign_keys: Vec<BoundForeignKey>,
     /// The catalog names of the physical columns, for error messages (empty: the names
     /// the storage was created with; columns can be renamed since).
-    pub column_names: Vec<rustdb_common::ByteString>,
+    pub column_names: Vec<roastedduck_common::ByteString>,
 }
 
 /// Whether a table is still the current version (DuckDB's `DataTableVersion`).
@@ -408,7 +408,7 @@ pub struct DataTable {
     version: AtomicU8,
 }
 
-pub(crate) fn constraint_error(message: impl Into<rustdb_common::ByteString>) -> Error {
+pub(crate) fn constraint_error(message: impl Into<roastedduck_common::ByteString>) -> Error {
     Error::new_bytes(ErrorKind::Constraint, message.into().into_bytes())
 }
 
@@ -416,8 +416,8 @@ impl DataTable {
     /// An empty table.
     pub fn new(
         io: Arc<TableIoManager>,
-        schema: impl Into<rustdb_common::ByteString>,
-        table: impl Into<rustdb_common::ByteString>,
+        schema: impl Into<roastedduck_common::ByteString>,
+        table: impl Into<roastedduck_common::ByteString>,
         columns: Vec<ColumnDefinition>,
     ) -> Arc<Self> {
         let types: Vec<LogicalType> = columns.iter().map(|column| column.ty.clone()).collect();
@@ -434,8 +434,8 @@ impl DataTable {
     /// A table over existing row groups (read from a checkpoint).
     pub fn from_collection(
         io: Arc<TableIoManager>,
-        schema: impl Into<rustdb_common::ByteString>,
-        table: impl Into<rustdb_common::ByteString>,
+        schema: impl Into<roastedduck_common::ByteString>,
+        table: impl Into<roastedduck_common::ByteString>,
         columns: Vec<ColumnDefinition>,
         row_groups: RowGroupCollection,
     ) -> Arc<Self> {
@@ -464,7 +464,7 @@ impl DataTable {
         self.columns.iter().map(|column| column.ty.clone()).collect()
     }
 
-    pub fn name(&self) -> rustdb_common::ByteString {
+    pub fn name(&self) -> roastedduck_common::ByteString {
         self.info.table_name()
     }
 
@@ -476,7 +476,7 @@ impl DataTable {
     /// How many threads can usefully scan the table: one per row group
     /// (`DataTable::MaxThreads`).
     pub fn max_threads(&self) -> usize {
-        let vector_size = rustdb_common::STANDARD_VECTOR_SIZE as u64;
+        let vector_size = roastedduck_common::STANDARD_VECTOR_SIZE as u64;
         let parallel_scan_tuple_count = (self.row_groups.row_group_size() / vector_size).max(1) * vector_size;
         usize::try_from(self.total_rows() / parallel_scan_tuple_count + 1).unwrap_or(usize::MAX)
     }
@@ -536,7 +536,7 @@ impl DataTable {
         }
         Err(Error::new_bytes(
             ErrorKind::Transaction,
-            rustdb_common::byte_format!(
+            roastedduck_common::byte_format!(
                 "Transaction conflict: attempting to {action} table \"{}\" but it has been {} by a different transaction",
                 self.name(),
                 version.describe()
@@ -551,7 +551,7 @@ impl DataTable {
         }
         Err(Error::new_bytes(
             ErrorKind::Transaction,
-            rustdb_common::byte_format!(
+            roastedduck_common::byte_format!(
                 "Attempting to modify table {} but another transaction has {} this table",
                 self.name(),
                 version.describe()
@@ -816,7 +816,7 @@ impl DataTable {
                 function(&chunk)?;
             } else {
                 let offset = (chunk_start - current_row) as u32;
-                let sel = rustdb_types::SelectionVector::new(
+                let sel = roastedduck_types::SelectionVector::new(
                     (offset..offset + chunk_count as u32).collect::<Vec<_>>(),
                 );
                 let columns = chunk
@@ -878,7 +878,7 @@ impl DataTable {
     }
 
     /// "NOT NULL constraint failed: t.c", naming the column by `names` if given.
-    fn not_null_error(&self, column: usize, names: &[rustdb_common::ByteString]) -> Error {
+    fn not_null_error(&self, column: usize, names: &[roastedduck_common::ByteString]) -> Error {
         let name = names.get(column).map_or_else(
             || {
                 self.columns
@@ -1122,8 +1122,9 @@ impl DataTable {
         let (local, global): (Vec<usize>, Vec<usize>) =
             (0..updates.len()).partition(|&row| row_ids[row] as u64 >= MAX_ROW_ID);
         let slice = |rows: &[usize]| -> (Vec<i64>, DataChunk) {
-            let sel =
-                rustdb_types::SelectionVector::new(rows.iter().map(|&row| row as u32).collect::<Vec<_>>());
+            let sel = roastedduck_types::SelectionVector::new(
+                rows.iter().map(|&row| row as u32).collect::<Vec<_>>(),
+            );
             let ids = rows.iter().map(|&row| row_ids[row]).collect();
             let columns = updates
                 .columns()
@@ -1349,7 +1350,7 @@ impl DataTable {
         self: &Arc<Self>,
         transaction: &Transaction,
         column: usize,
-        names: &[rustdb_common::ByteString],
+        names: &[roastedduck_common::ByteString],
     ) -> Result<Arc<Self>> {
         let _lock = self.append_lock();
         let local = transaction.local_storage().storage(self);
@@ -1369,7 +1370,7 @@ impl DataTable {
 
 /// Whether any of the first `count` rows of `vector` is NULL (`VectorOperations::HasNull`).
 pub(crate) fn has_null(vector: &Vector, count: usize) -> bool {
-    if vector.kind() == rustdb_types::VectorKind::Sequence {
+    if vector.kind() == roastedduck_types::VectorKind::Sequence {
         return false;
     }
     let validity = vector.validity();

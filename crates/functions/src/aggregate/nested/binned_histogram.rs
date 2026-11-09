@@ -4,13 +4,13 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::{Aggregate, AggregateInput, AggregateOps, States, Typed};
-use rustdb_function::cast::values_not_distinct;
-use rustdb_function::{
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::{Aggregate, AggregateInput, AggregateOps, States, Typed};
+use roastedduck_function::cast::values_not_distinct;
+use roastedduck_function::{
     AggregateFunction, AggregateFunctionSet, BindInput, FunctionData, ScalarFunction, ScalarFunctionSet,
 };
-use rustdb_types::{ListEntry, LogicalType, LogicalTypeId, PhysicalType, Value, Vector};
+use roastedduck_types::{ListEntry, LogicalType, LogicalTypeId, PhysicalType, Value, Vector};
 
 use crate::aggregate::nested::histogram::{histogram_function, write_map};
 use crate::aggregate::stored::{Bytes, Fixed, SortKey, StoredKind};

@@ -1,14 +1,14 @@
 //! Reads real C++ Parquet files, verifies native metadata/data, rewrites with Rust.
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_csv::multi_file::{FileList, MultiFileOptions};
-use rustdb_function::{TableScanState, cast::CastFunctionSet};
-use rustdb_parquet::{
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_csv::multi_file::{FileList, MultiFileOptions};
+use roastedduck_function::{TableScanState, cast::CastFunctionSet};
+use roastedduck_parquet::{
     reader::ParquetReader,
     scan::{bind_files, read_parquet_functions},
     schema::ParquetOptions,
     writer::{ParquetWriter, WriterOptions},
 };
-use rustdb_types::DataChunk;
+use roastedduck_types::DataChunk;
 use std::sync::Arc;
 fn run(directory: &str) -> Result<()> {
     for (label, name) in [
@@ -46,7 +46,7 @@ fn run(directory: &str) -> Result<()> {
         let mut chunk = DataChunk::default();
         let mut rows = 0;
         let options = WriterOptions {
-            codec: rustdb_parquet::thrift::CompressionCodec::UNCOMPRESSED,
+            codec: roastedduck_parquet::thrift::CompressionCodec::UNCOMPRESSED,
             ..WriterOptions::default()
         };
         let mut writer = ParquetWriter::new(output.as_bytes(), &data.names, &data.types, options)?;
@@ -59,7 +59,7 @@ fn run(directory: &str) -> Result<()> {
                         .get_value(row)
                         .children()
                         .and_then(|v| v.first())
-                        .and_then(rustdb_types::Value::as_i32)
+                        .and_then(roastedduck_types::Value::as_i32)
                         != Some(rows + 10)
                 {
                     return Err(Error::internal("Parquet row data mismatch"));

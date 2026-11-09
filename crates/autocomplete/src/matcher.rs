@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::keyword_helper::{PegKeywordCategory, PegKeywordHelper};
 use crate::peg_parser::{PegParser, PegTokenType};
@@ -54,7 +54,7 @@ pub enum CandidateType {
 /// A possible completion before scoring (DuckDB's `AutoCompleteCandidate`).
 #[derive(Clone, Debug)]
 pub struct AutoCompleteCandidate {
-    pub candidate: rustdb_common::ByteString,
+    pub candidate: roastedduck_common::ByteString,
     /// The type being suggested.
     pub suggestion_type: SuggestionState,
     /// The higher the bonus, the better the candidate ranks.
@@ -70,7 +70,7 @@ pub struct AutoCompleteCandidate {
 
 impl AutoCompleteCandidate {
     pub fn new(
-        candidate: impl Into<rustdb_common::ByteString>,
+        candidate: impl Into<roastedduck_common::ByteString>,
         suggestion_type: SuggestionState,
         score_bonus: i32,
         candidate_type: CandidateType,
@@ -88,7 +88,7 @@ impl AutoCompleteCandidate {
 
     /// An identifier candidate (the defaults of DuckDB's constructor).
     pub fn identifier(
-        candidate: impl Into<rustdb_common::ByteString>,
+        candidate: impl Into<roastedduck_common::ByteString>,
         suggestion_type: SuggestionState,
         score_bonus: i32,
     ) -> Self {

@@ -1,7 +1,7 @@
 //! `Value::Serialize` / `Value::Deserialize` (`src/common/types/value.cpp`).
 
-use rustdb_common::blob;
-use rustdb_serde::{DeserializeObject, Deserializer, Error, Result, SerializeObject, Serializer};
+use roastedduck_common::blob;
+use roastedduck_serde::{DeserializeObject, Deserializer, Error, Result, SerializeObject, Serializer};
 
 use super::{Payload, Value};
 use crate::{GeometryStorageType, Interval, LogicalType, LogicalTypeId, PhysicalType};
@@ -203,13 +203,13 @@ impl DeserializeObject for Value {
     }
 }
 
-rustdb_serde::impl_object_serde!(Value);
+roastedduck_serde::impl_object_serde!(Value);
 
 #[cfg(test)]
 mod tests {
-    use rustdb_serde::SerializationOptions;
-    use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
-    use rustdb_serde::json::{JsonDeserializer, JsonOptions, JsonSerializer, write_json};
+    use roastedduck_serde::SerializationOptions;
+    use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
+    use roastedduck_serde::json::{JsonDeserializer, JsonOptions, JsonSerializer, write_json};
 
     use super::*;
 
@@ -251,7 +251,7 @@ mod tests {
         assert_eq!(read, value);
 
         let latest = SerializationOptions {
-            compatibility: rustdb_serde::SerializationCompatibility::latest(),
+            compatibility: roastedduck_serde::SerializationCompatibility::latest(),
             ..options
         };
         let bytes = BinarySerializer::serialize(&value, latest).unwrap();

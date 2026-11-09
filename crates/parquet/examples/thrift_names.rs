@@ -1,6 +1,6 @@
 //! Native Parquet names against C++ Thrift compact-protocol wire bytes.
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_parquet::thrift::{
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_parquet::thrift::{
     self, ColumnMetaData, CompressionCodec, Encoding, EncryptionWithColumnKey, FieldRepetitionType,
     SchemaElement, ThriftValue, Type,
 };

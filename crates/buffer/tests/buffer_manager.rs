@@ -5,18 +5,18 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use rustdb_buffer::{
+use roastedduck_buffer::{
     BlockHandle, BlockId, BlockManager, BlockRegistry, BlockState, BufferHandle, BufferManager,
     BufferManagerConfig, DEFAULT_BLOCK_ALLOC_SIZE, FileBuffer, MemoryTag,
 };
-use rustdb_common::{ErrorKind, Result};
+use roastedduck_common::{ErrorKind, Result};
 
 const BLOCK: usize = DEFAULT_BLOCK_ALLOC_SIZE;
 
 /// A fresh, unique temporary directory path (not created).
 fn temp_dir(name: &str) -> PathBuf {
     let unique = format!(
-        "rustdb-buffer-{name}-{}-{:?}",
+        "roastedduck-buffer-{name}-{}-{:?}",
         std::process::id(),
         std::time::SystemTime::now()
     );

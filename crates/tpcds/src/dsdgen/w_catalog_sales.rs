@@ -1,7 +1,7 @@
 //! The `catalog_sales` table and its child `catalog_returns` (`w_catalog_sales.c`,
 //! `w_catalog_returns.c`).
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use super::Output;
 use super::build_support::{get_permutation_entry, make_permutation};

@@ -2,9 +2,9 @@
 #[path = "native_names.rs"]
 #[allow(dead_code, reason = "reuse hex decoder")]
 pub mod schema;
-use rustdb_arrow::{ClientProperties, ffi::ArrowArrayWrapper, to_arrow_array};
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_arrow::{ClientProperties, ffi::ArrowArrayWrapper, to_arrow_array};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 use std::io::{self, BufRead};
 pub fn compare(line: &str) -> Result<()> {
     let f: Vec<_> = line.split('\t').collect();

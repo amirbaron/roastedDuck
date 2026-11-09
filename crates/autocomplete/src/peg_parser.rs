@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 /// The kind of a grammar token (DuckDB's `PEGTokenType`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

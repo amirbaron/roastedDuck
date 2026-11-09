@@ -4,12 +4,12 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{
     FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
     TableScanState,
 };
-use rustdb_types::{DataChunk, Date, Interval, LogicalType, Time, TimeNs, Timestamp, Value, Vector};
+use roastedduck_types::{DataChunk, Date, Interval, LogicalType, Time, TimeNs, Timestamp, Value, Vector};
 
 use crate::limits::{double_max_bignum, maximum_value, minimum_value};
 
@@ -179,7 +179,7 @@ fn test_types(use_large_enum: bool, use_large_bignum: bool) -> Result<Vec<TestTy
     ));
     let bit = |text: &str| -> Result<Value> {
         let mut bits = Vec::new();
-        rustdb_types::bit::parse_text(text.as_bytes(), &mut bits).map_err(Error::conversion)?;
+        roastedduck_types::bit::parse_text(text.as_bytes(), &mut bits).map_err(Error::conversion)?;
         Ok(Value::bytes(LogicalType::BIT, &bits))
     };
     result.push(TestType::new(
@@ -515,11 +515,11 @@ fn test_types(use_large_enum: bool, use_large_bignum: bool) -> Result<Vec<TestTy
         "geometry",
         Value::bytes(
             LogicalType::GEOMETRY,
-            &rustdb_types::geometry::from_text(b"POINT EMPTY")?,
+            &roastedduck_types::geometry::from_text(b"POINT EMPTY")?,
         ),
         Value::bytes(
             LogicalType::GEOMETRY,
-            &rustdb_types::geometry::from_text(MAX_GEOMETRY_WKT.as_bytes())?,
+            &roastedduck_types::geometry::from_text(MAX_GEOMETRY_WKT.as_bytes())?,
         ),
     ));
     Ok(result)
@@ -527,7 +527,7 @@ fn test_types(use_large_enum: bool, use_large_bignum: bool) -> Result<Vec<TestTy
 
 /// The type id, minimum and maximum of every `test_all_types` column, in column order
 /// (`TestAllTypesFun::GetTestTypes`, used by `test_vector_types`).
-pub(crate) fn test_type_limits() -> Result<Vec<(rustdb_types::LogicalTypeId, Value, Value)>> {
+pub(crate) fn test_type_limits() -> Result<Vec<(roastedduck_types::LogicalTypeId, Value, Value)>> {
     Ok(test_types(false, false)?
         .into_iter()
         .map(|test| (test.ty.id(), test.min, test.max))

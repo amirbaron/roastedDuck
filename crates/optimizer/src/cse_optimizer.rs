@@ -2,7 +2,7 @@
 //! `CommonSubExpressionOptimizer`): they move into a projection below the operator,
 //! which then references their results.
 
-use rustdb_planner::{ColumnBinding, Expression, ExpressionKind, LogicalOperator, LogicalOperatorType};
+use roastedduck_planner::{ColumnBinding, Expression, ExpressionKind, LogicalOperator, LogicalOperatorType};
 
 use crate::optimizer::Optimizer;
 

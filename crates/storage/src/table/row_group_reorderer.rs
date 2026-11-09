@@ -9,8 +9,8 @@
 
 use std::cmp::Ordering;
 
-use rustdb_row::sort::{NullOrder, OrderType};
-use rustdb_types::Value;
+use roastedduck_row::sort::{NullOrder, OrderType};
+use roastedduck_types::Value;
 
 use super::chunk_info::ScanOptions;
 use super::row_group::RowGroup;
@@ -51,10 +51,13 @@ pub struct RowGroupOrderOptions {
     pub leading_null_group_offset: u64,
 }
 
-impl rustdb_serde::SerializeObject for RowGroupOrderOptions {
+impl roastedduck_serde::SerializeObject for RowGroupOrderOptions {
     /// `RowGroupOrderOptions::Serialize`; the order is written as DuckDB's `OrderType` and
     /// `OrderByNullType`.
-    fn serialize_fields(&self, serializer: &mut dyn rustdb_serde::Serializer) -> rustdb_common::Result<()> {
+    fn serialize_fields(
+        &self,
+        serializer: &mut dyn roastedduck_serde::Serializer,
+    ) -> roastedduck_common::Result<()> {
         let (order_type, order_number) = match self.order_type {
             OrderType::Ascending => ("ASCENDING", 2),
             OrderType::Descending => ("DESCENDING", 3),
@@ -66,17 +69,17 @@ impl rustdb_serde::SerializeObject for RowGroupOrderOptions {
         serializer.write_property(100, "column_idx", &super::StorageIndex::new(self.column as u64))?;
         serializer.write_property(101, "order_by", &self.order_by)?;
         serializer.on_property_begin(102, "order_type");
-        rustdb_serde::write_enum(serializer, order_type, |serializer| {
+        roastedduck_serde::write_enum(serializer, order_type, |serializer| {
             serializer.write_u8(order_number);
         });
         serializer.on_property_end();
         serializer.on_property_begin(103, "null_order");
-        rustdb_serde::write_enum(serializer, null_order, |serializer| {
+        roastedduck_serde::write_enum(serializer, null_order, |serializer| {
             serializer.write_u8(null_number);
         });
         serializer.on_property_end();
         serializer.write_property(104, "column_type", &self.column_type)?;
-        serializer.write_property(105, "row_limit", &rustdb_serde::OptionalIdx(self.row_limit))?;
+        serializer.write_property(105, "row_limit", &roastedduck_serde::OptionalIdx(self.row_limit))?;
         serializer.write_property_with_default(106, "row_group_offset", &self.row_group_offset)?;
         serializer.write_property_with_default(
             107,
@@ -86,7 +89,7 @@ impl rustdb_serde::SerializeObject for RowGroupOrderOptions {
     }
 }
 
-rustdb_serde::impl_pointee_serialize!(RowGroupOrderOptions);
+roastedduck_serde::impl_pointee_serialize!(RowGroupOrderOptions);
 
 /// What an OFFSET leaves of the row groups (DuckDB's `OffsetPruningResult`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

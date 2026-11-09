@@ -8,10 +8,10 @@ use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use rustdb_common::Result;
-use rustdb_function::aggregate::{Aggregate, AggregateInput, AggregateOps, States, Typed};
-use rustdb_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData, NullHandling};
-use rustdb_types::{Interval, LogicalType, PhysicalType, Vector};
+use roastedduck_common::Result;
+use roastedduck_function::aggregate::{Aggregate, AggregateInput, AggregateOps, States, Typed};
+use roastedduck_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData, NullHandling};
+use roastedduck_types::{Interval, LogicalType, PhysicalType, Vector};
 
 use crate::aggregate::stored::{Bytes, Fixed, OrdKey, SortKey, StoredKind};
 

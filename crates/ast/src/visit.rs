@@ -4,8 +4,8 @@
 //! matching `walk_*` function from them to continue into the children:
 //!
 //! ```
-//! use rustdb_ast::visit::{VisitorMut, walk_table_ref};
-//! use rustdb_ast::TableRef;
+//! use roastedduck_ast::visit::{VisitorMut, walk_table_ref};
+//! use roastedduck_ast::TableRef;
 //!
 //! /// Drops all table aliases.
 //! struct ClearAliases;

@@ -65,4 +65,4 @@ pub use generated::enums::{
 pub use operator::{BoundLimitNode, LogicalKind, LogicalOperator, render_plan};
 pub use planner::{PlannedStatement, Planner};
 pub use prepared::{PreparedStatementData, StatementProperties, StatementReturnType};
-pub use rustdb_ast::{ExpressionClass, ExpressionType, JoinType, SubqueryType};
+pub use roastedduck_ast::{ExpressionClass, ExpressionType, JoinType, SubqueryType};

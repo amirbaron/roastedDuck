@@ -4,9 +4,9 @@
 
 use std::sync::{Arc, OnceLock};
 
-use rustdb_common::{Error, Result};
-use rustdb_function::caching_file_system::{CachedRead, CachingFileHandle};
-use rustdb_function::external_file_cache::{CacheValidationMode, ExternalFileCache};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::caching_file_system::{CachedRead, CachingFileHandle};
+use roastedduck_function::external_file_cache::{CacheValidationMode, ExternalFileCache};
 
 use crate::thrift::{FileMetaData, ThriftValue};
 
@@ -148,7 +148,7 @@ impl ReadAheadBuffer {
         }
         self.registered.insert(0, (pos, len, merge));
         if pos + len > file.size() {
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "Prefetch registered for bytes outside file: {}, attempted range: [{pos}, {}), file size: {}",
                 file.path(),
                 pos + len,
@@ -233,7 +233,7 @@ pub fn load_metadata(
     let path = file.path();
     let size = file.size();
     if size < 12 {
-        return Err(Error::invalid_input(rustdb_common::byte_format!(
+        return Err(Error::invalid_input(roastedduck_common::byte_format!(
             "File '{path}' too small to be a Parquet file"
         )));
     }
@@ -250,7 +250,7 @@ pub fn load_metadata(
     let footer_encrypted = match &tail[4..] {
         b"PAR1" => {
             if key.is_some() {
-                return Err(Error::invalid_input(rustdb_common::byte_format!(
+                return Err(Error::invalid_input(roastedduck_common::byte_format!(
                     "File '{path}' is not encrypted, but 'encryption_config' was set"
                 )));
             }
@@ -258,21 +258,21 @@ pub fn load_metadata(
         }
         b"PARE" => {
             if key.is_none() {
-                return Err(Error::invalid_input(rustdb_common::byte_format!(
+                return Err(Error::invalid_input(roastedduck_common::byte_format!(
                     "File '{path}' is encrypted, but 'encryption_config' was not set"
                 )));
             }
             true
         }
         _ => {
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "No magic bytes found at end of file '{path}'"
             )));
         }
     };
     let footer_len = u32::from_le_bytes([tail[0], tail[1], tail[2], tail[3]]);
     if footer_len == 0 || size < 12 + u64::from(footer_len) {
-        return Err(Error::invalid_input(rustdb_common::byte_format!(
+        return Err(Error::invalid_input(roastedduck_common::byte_format!(
             "Footer length error in file '{path}'"
         )));
     }
@@ -291,7 +291,7 @@ pub fn load_metadata(
         Some(key) if footer_encrypted => {
             let crypto = crate::thrift::FileCryptoMetaData::read(&mut reader)?;
             if crypto.encryption_algorithm.aes_gcm_ctr_v1.is_some() {
-                return Err(Error::invalid_input(rustdb_common::byte_format!(
+                return Err(Error::invalid_input(roastedduck_common::byte_format!(
                     "File '{path}' is encrypted with AES_GCM_CTR_V1, but only AES_GCM_V1 is supported"
                 )));
             }
@@ -313,7 +313,7 @@ pub fn load_metadata(
         _ => FileMetaData::read(&mut reader)?,
     };
     if metadata.num_rows < 0 {
-        return Err(Error::invalid_input(rustdb_common::byte_format!(
+        return Err(Error::invalid_input(roastedduck_common::byte_format!(
             "Failed to read Parquet file \"{path}\": has negative number of rows"
         )));
     }

@@ -12,10 +12,10 @@
 //! [`encode`] converts a batch of [`Value`]s column-wise exactly like DuckDB's
 //! `ConvertToVariant`, so that the layout (and therefore hashing and grouping) matches.
 
-use rustdb_common::ByteString;
+use roastedduck_common::ByteString;
 use std::collections::BTreeMap;
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::{
     Date, Interval, ListEntry, LogicalType, LogicalTypeId, PhysicalType, StringT, Time, TimeNs, TimeTz,
@@ -727,14 +727,17 @@ impl VariantData {
         Ok(match type_id {
             VariantLogicalType::Decimal => {
                 let (width, scale, _) = self.decimal(value_index)?;
-                rustdb_common::byte_format!("DECIMAL({width}, {scale})")
+                roastedduck_common::byte_format!("DECIMAL({width}, {scale})")
             }
             VariantLogicalType::Object => {
                 let nested = self.nested(value_index)?;
-                rustdb_common::byte_format!("OBJECT({})", ByteString::join(&self.object_keys(nested)?, ", "))
+                roastedduck_common::byte_format!(
+                    "OBJECT({})",
+                    ByteString::join(&self.object_keys(nested)?, ", ")
+                )
             }
             VariantLogicalType::Array => {
-                rustdb_common::byte_format!("ARRAY({})", self.nested(value_index)?.child_count)
+                roastedduck_common::byte_format!("ARRAY({})", self.nested(value_index)?.child_count)
             }
             other => other.name().into(),
         })

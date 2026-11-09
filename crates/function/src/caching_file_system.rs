@@ -9,19 +9,19 @@
 use std::fs::File;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rustdb_buffer::{BufferHandle, MemoryTag};
-use rustdb_common::{Error, ErrorKind, Result};
+use roastedduck_buffer::{BufferHandle, MemoryTag};
+use roastedduck_common::{Error, ErrorKind, Result};
 
 use crate::external_file_cache::{
     CacheValidationMode, CachedFile, CachedFileRange, ExternalFileCache, Overlap,
 };
 
-fn io_error(message: impl Into<rustdb_common::ByteString>) -> Error {
+fn io_error(message: impl Into<roastedduck_common::ByteString>) -> Error {
     Error::new_bytes(ErrorKind::Io, message.into())
 }
 
 #[cfg(unix)]
-fn native_io_reason(error: &std::io::Error) -> rustdb_common::ByteString {
+fn native_io_reason(error: &std::io::Error) -> roastedduck_common::ByteString {
     unsafe extern "C" {
         #[cfg_attr(target_env = "gnu", link_name = "__xpg_strerror_r")]
         fn strerror_r(
@@ -42,7 +42,7 @@ fn native_io_reason(error: &std::io::Error) -> rustdb_common::ByteString {
     error.to_string().into()
 }
 #[cfg(not(unix))]
-fn native_io_reason(error: &std::io::Error) -> rustdb_common::ByteString {
+fn native_io_reason(error: &std::io::Error) -> roastedduck_common::ByteString {
     error.to_string().into()
 }
 
@@ -93,7 +93,7 @@ impl OpenFile {
         let local = path.split(|byte| *byte == 0).next().unwrap_or_default();
         let file = File::open(crate::file_system::native_path(local)?).map_err(|error| {
             let reason = native_io_reason(&error);
-            let result = io_error(rustdb_common::byte_format!(
+            let result = io_error(roastedduck_common::byte_format!(
                 "Cannot open file \"{path}\": {reason}"
             ));
             match error.raw_os_error() {
@@ -102,7 +102,7 @@ impl OpenFile {
             }
         })?;
         let metadata = file.metadata().map_err(|error| {
-            io_error(rustdb_common::byte_format!(
+            io_error(roastedduck_common::byte_format!(
                 "Could not get file size of \"{path}\": {error}"
             ))
         })?;
@@ -119,7 +119,7 @@ impl OpenFile {
     fn read_exact_at(&self, path: &[u8], buffer: &mut [u8], location: u64) -> Result<()> {
         let end = location.checked_add(buffer.len() as u64);
         if end.is_none_or(|end| end > self.size) {
-            return Err(io_error(rustdb_common::byte_format!(
+            return Err(io_error(roastedduck_common::byte_format!(
                 "Could not read enough bytes from file \"{path}\": attempted to read {} bytes from location {location}",
                 buffer.len()
             )));
@@ -141,7 +141,7 @@ impl OpenFile {
             return Err(Error::internal("Missing local file handle"));
         };
         read_exact_at(file, buffer, location).map_err(|error| {
-            io_error(rustdb_common::byte_format!(
+            io_error(roastedduck_common::byte_format!(
                 "Could not read from file \"{path}\": {error}"
             ))
         })
@@ -241,7 +241,7 @@ impl CachedRead {
 pub struct CachingFileHandle {
     /// The database's cache; `None` outside a database, where reads go to the file.
     cache: Option<Arc<ExternalFileCache>>,
-    path: rustdb_common::ByteString,
+    path: roastedduck_common::ByteString,
     /// Whether cached data is checked against the file (`Validate()`).
     validate: bool,
     /// The file's entry in the cache (`cached_file`).
@@ -251,7 +251,7 @@ pub struct CachingFileHandle {
 }
 
 /// The block header DuckDB's temporary buffers carry (`Storage::DEFAULT_BLOCK_HEADER_SIZE`,
-/// in `AllocateTemporaryMemory`); rustdb's have none, so a cached range reserves its
+/// in `AllocateTemporaryMemory`); roastedduck's have none, so a cached range reserves its
 /// bytes to take the same memory (its size plus the header, rounded to sectors).
 const DEFAULT_BLOCK_HEADER_SIZE: usize = 8;
 
@@ -644,11 +644,11 @@ impl CachingFileHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustdb_buffer::{BufferManager, BufferManagerConfig};
+    use roastedduck_buffer::{BufferManager, BufferManagerConfig};
 
     /// A file of `len` bytes whose byte `i` is `i % 251`, unique to the test.
     fn test_file(name: &str, len: usize) -> String {
-        let path = std::env::temp_dir().join(format!("rustdb-efc-{name}-{}", std::process::id()));
+        let path = std::env::temp_dir().join(format!("roastedduck-efc-{name}-{}", std::process::id()));
         let bytes: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
         std::fs::write(&path, bytes).unwrap();
         path.to_string_lossy().into_owned()

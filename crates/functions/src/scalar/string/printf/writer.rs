@@ -5,7 +5,7 @@
 //! Widths and precisions count bytes, as `{fmt}` does for `char` strings. The locale is
 //! DuckDB's fixed one: groups of three digits and `.` as the decimal point.
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 /// Text alignment (`fmt::align`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

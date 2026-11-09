@@ -1,8 +1,8 @@
 //! `strip_accents` (DuckDB's `strip_accents.cpp`) and `nfc_normalize`
 //! (`nfc_normalize.cpp`).
 
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::LogicalType;
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::LogicalType;
 use unicode_normalization::UnicodeNormalization;
 use unicode_normalization::char::is_combining_mark;
 

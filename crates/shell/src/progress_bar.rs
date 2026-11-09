@@ -4,7 +4,7 @@
 
 use std::fmt::Write as _;
 
-use rustdb::{Error, Result};
+use roastedduck::{Error, Result};
 
 use crate::prompt::{PROMPT_SETTINGS, Prompt, PromptContext, PromptOptions};
 
@@ -102,7 +102,7 @@ pub struct ProgressBarPrompt {
     alignment: ProgressBarAlignment,
     content_alignment: ProgressBarAlignment,
     /// The component is hidden while its text contains this.
-    does_not_contain: rustdb_common::ByteString,
+    does_not_contain: roastedduck_common::ByteString,
     min_size: Option<usize>,
 }
 
@@ -111,7 +111,7 @@ pub struct ProgressBarPrompt {
 struct ProgressBarOptions {
     alignment: ProgressBarAlignment,
     content_alignment: ProgressBarAlignment,
-    does_not_contain: rustdb_common::ByteString,
+    does_not_contain: roastedduck_common::ByteString,
     min_size: Option<usize>,
 }
 
@@ -123,7 +123,7 @@ impl PromptOptions for ProgressBarOptions {
                     b"right" => ProgressBarAlignment::Right,
                     b"left" => ProgressBarAlignment::Left,
                     _ => {
-                        return Err(Error::invalid_input(rustdb_common::byte_format!(
+                        return Err(Error::invalid_input(roastedduck_common::byte_format!(
                             "Unsupported type {value} for align: expected left or right"
                         )));
                     }
@@ -135,7 +135,7 @@ impl PromptOptions for ProgressBarOptions {
                     b"left" => ProgressBarAlignment::Left,
                     b"middle" => ProgressBarAlignment::Middle,
                     _ => {
-                        return Err(Error::invalid_input(rustdb_common::byte_format!(
+                        return Err(Error::invalid_input(roastedduck_common::byte_format!(
                             "Unsupported type {value} for content_align: expected left or right"
                         )));
                     }
@@ -161,7 +161,7 @@ impl ProgressBarPrompt {
         let mut options = ProgressBarOptions {
             alignment: ProgressBarAlignment::Left,
             content_alignment: ProgressBarAlignment::Left,
-            does_not_contain: rustdb_common::ByteString::new(),
+            does_not_contain: roastedduck_common::ByteString::new(),
             min_size: None,
         };
         let prompt = Prompt::parse(text, &mut options)?;
@@ -175,7 +175,7 @@ impl ProgressBarPrompt {
     }
 
     /// `AddPaddingIfRequired`: pads the text to the minimum size.
-    fn add_padding_if_required(&self, text: &mut rustdb_common::ByteString, render_length: &mut usize) {
+    fn add_padding_if_required(&self, text: &mut roastedduck_common::ByteString, render_length: &mut usize) {
         let Some(min_size) = self.min_size.filter(|&min_size| *render_length < min_size) else {
             return;
         };
@@ -185,8 +185,11 @@ impl ProgressBarPrompt {
             ProgressBarAlignment::Middle => (padding_required - padding_required / 2, padding_required / 2),
             ProgressBarAlignment::Right => (padding_required - 1, 1),
         };
-        *text =
-            rustdb_common::byte_format!("{}{text}{}", " ".repeat(left_padding), " ".repeat(right_padding));
+        *text = roastedduck_common::byte_format!(
+            "{}{text}{}",
+            " ".repeat(left_padding),
+            " ".repeat(right_padding)
+        );
         *render_length += padding_required;
     }
 }
@@ -206,7 +209,7 @@ struct ProgressBarContext<'a> {
 }
 
 impl PromptContext for ProgressBarContext<'_> {
-    fn setting(&mut self, name: &[u8]) -> Result<rustdb_common::ByteString> {
+    fn setting(&mut self, name: &[u8]) -> Result<roastedduck_common::ByteString> {
         match name {
             b"progress_bar_percentage" => {
                 let mut result = String::new();
@@ -225,7 +228,7 @@ impl PromptContext for ProgressBarContext<'_> {
         }
     }
 
-    fn execute_sql(&mut self, query: &[u8]) -> rustdb_common::ByteString {
+    fn execute_sql(&mut self, query: &[u8]) -> roastedduck_common::ByteString {
         self.base.execute_sql(query)
     }
 }
@@ -271,10 +274,10 @@ impl ShellProgressBar {
         status: ProgressStatus,
         base: &mut dyn PromptContext,
         terminal_width: usize,
-    ) -> Result<rustdb_common::ByteString> {
+    ) -> Result<roastedduck_common::ByteString> {
         let mut context = ProgressBarContext { status, base };
-        let mut lhs = rustdb_common::ByteString::new();
-        let mut rhs = rustdb_common::ByteString::new();
+        let mut lhs = roastedduck_common::ByteString::new();
+        let mut rhs = roastedduck_common::ByteString::new();
         let mut total_render_length = 0;
         for component in &self.components {
             let mut text = component.prompt.generate_prompt(&mut context)?;

@@ -3,10 +3,10 @@
 //! DuckDB's transformer turns every type name into an UNBOUND type holding a
 //! `TypeExpression`; here that expression is an [`UnboundTypeInfo`] directly.
 
-use rustdb_ast::{ExpressionClass, ParsedExpressionKind};
-use rustdb_common::{Error, Result};
-use rustdb_pg_parser::nodes::{Node, TypeName, Value};
-use rustdb_types::{
+use roastedduck_ast::{ExpressionClass, ParsedExpressionKind};
+use roastedduck_common::{Error, Result};
+use roastedduck_pg_parser::nodes::{Node, TypeName, Value};
+use roastedduck_types::{
     LogicalType, LogicalTypeId, TypeInfo, TypeParameter, TypeParameterValue, UnboundTypeInfo,
     Value as DuckValue, builtin_type_id,
 };
@@ -37,11 +37,13 @@ impl<'a> Transformer<'a> {
             }
         };
         // Normalize builtin type names to DuckDB's names (`int4` becomes `INTEGER`).
-        let name = builtin_type_id(name)
-            .map_or_else(|| rustdb_common::ByteString::from(name), |id| id.name().into());
+        let name = builtin_type_id(name).map_or_else(
+            || roastedduck_common::ByteString::from(name),
+            |id| id.name().into(),
+        );
         let mut parameters = Vec::with_capacity(type_name.typmods.len());
         for typemod in &type_name.typmods {
-            let mut parameter_name = rustdb_common::ByteString::new();
+            let mut parameter_name = roastedduck_common::ByteString::new();
             let mut node = typemod;
             if let Node::List(pair) = typemod {
                 let [name_node, value_node] = pair.as_slice() else {

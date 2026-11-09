@@ -1,6 +1,6 @@
 # Release pipeline
 
-The current source candidate is `1.5.6.post1`, a security and packaging revision
+The current source candidate is `1.5.6.post2`, a branding and validation-tooling revision
 of the DuckDB 1.5.6 compatibility target. Public API compatibility version
 identifiers remain 1.5.6.
 
@@ -125,7 +125,7 @@ they do not qualify those unpublished source changes.
 Each C++ environment is resolved first; its exact versions constrain the Rust
 environment. Both full `pip inspect` inventories and `pip freeze` records are
 retained, and the non-engine package/version maps must match. OSV audits all 30
-resolved inventories plus Cargo.lock. `--no-resolve` prevents the scanner from
+resolved inventories plus the immutable release tag’s Cargo.lock. `--no-resolve` prevents the scanner from
 substituting hypothetical transitive versions for those actually installed; no
 installed package is omitted from the audit lockfiles. The build workflow also
 checks direct validation pins in addition to its Rust lockfile scan.

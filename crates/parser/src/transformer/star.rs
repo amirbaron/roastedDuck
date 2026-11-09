@@ -4,12 +4,12 @@
 //! `unordered_set`s in DuckDB and are serialized in their iteration order, which
 //! [`HashOrder`] reproduces.
 
-use rustdb_ast::{
+use roastedduck_ast::{
     ExpressionClass, ExpressionType, ParsedExpression, ParsedExpressionKind, QualifiedColumnName,
     StarExpression,
 };
-use rustdb_common::{CaseInsensitiveMap, Error, OrderedMap, Result};
-use rustdb_pg_parser::nodes::{AStar, ColumnRef, List, Node};
+use roastedduck_common::{CaseInsensitiveMap, Error, OrderedMap, Result};
+use roastedduck_pg_parser::nodes::{AStar, ColumnRef, List, Node};
 
 use super::build::{self, set_location};
 use super::{Transformer, node_string};
@@ -93,7 +93,7 @@ impl<V> QualifiedColumnMap<V> {
 /// `qualified_column_set_t`).
 pub fn serialized_exclude_list(exclude: QualifiedColumnMap<()>) -> Vec<QualifiedColumnName> {
     let ordered = exclude.into_ordered();
-    let mut plain: CiHashMap<(), rustdb_common::ByteString> = CiHashMap::new_with_keys();
+    let mut plain: CiHashMap<(), roastedduck_common::ByteString> = CiHashMap::new_with_keys();
     let mut qualified = QualifiedColumnMap::default();
     for (name, ()) in ordered {
         if name.is_qualified() {
@@ -129,7 +129,7 @@ impl<'a> Transformer<'a> {
                 let names = root
                     .fields
                     .iter()
-                    .map(|node| node_string(node).map(rustdb_common::ByteString::from))
+                    .map(|node| node_string(node).map(roastedduck_common::ByteString::from))
                     .collect::<Result<Vec<_>>>()?;
                 let mut column_ref = build::column_ref(names);
                 set_location(&mut column_ref, root.location);
@@ -151,13 +151,14 @@ impl<'a> Transformer<'a> {
             };
             let column = transform_qualified_column_name(parts)?;
             if exclude.contains(&column) {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Duplicate entry \"{column}\" in EXCLUDE list"
                 )));
             }
             exclude.insert(column, ());
         }
-        let mut replace: CiHashMap<ParsedExpression, rustdb_common::ByteString> = CiHashMap::new_with_keys();
+        let mut replace: CiHashMap<ParsedExpression, roastedduck_common::ByteString> =
+            CiHashMap::new_with_keys();
         for item in &star.replace_list {
             let Node::List(pair) = item else {
                 return Err(Error::internal("REPLACE entry is not a list"));
@@ -168,18 +169,18 @@ impl<'a> Transformer<'a> {
             let replace_expression = self.transform_expression(expression)?;
             let entry = node_string(name)?.to_owned();
             if replace.contains_key(&entry) {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Duplicate entry \"{entry}\" in REPLACE list"
                 )));
             }
             if exclude.contains(&QualifiedColumnName::column(entry.clone())) {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Column \"{entry}\" cannot occur in both EXCLUDE and REPLACE list"
                 )));
             }
             replace.insert(entry, replace_expression);
         }
-        let mut rename: QualifiedColumnMap<rustdb_common::ByteString> = QualifiedColumnMap::default();
+        let mut rename: QualifiedColumnMap<roastedduck_common::ByteString> = QualifiedColumnMap::default();
         for item in &star.rename_list {
             let Node::List(pair) = item else {
                 return Err(Error::internal("RENAME entry is not a list"));
@@ -190,17 +191,17 @@ impl<'a> Transformer<'a> {
             let rename_column = transform_qualified_column_name(column)?;
             let new_name = node_string(new_name)?.to_owned();
             if rename.contains(&rename_column) {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Duplicate entry \"{rename_column}\" in EXCLUDE list"
                 )));
             }
             if exclude.contains(&rename_column) {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Column \"{rename_column}\" cannot occur in both EXCLUDE and RENAME list"
                 )));
             }
             if replace.contains_key(&rename_column.column) {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Column \"{rename_column}\" cannot occur in both REPLACE and RENAME list"
                 )));
             }
@@ -210,7 +211,7 @@ impl<'a> Transformer<'a> {
         result.replace_list = replace
             .into_ordered()
             .into_iter()
-            .collect::<CaseInsensitiveMap<_, rustdb_common::ByteString>>();
+            .collect::<CaseInsensitiveMap<_, roastedduck_common::ByteString>>();
         result.rename_list = rename.into_ordered().into_iter().collect::<OrderedMap<_, _>>();
         if let Some(expr) = &star.expr {
             let child = self.transform_expression(expr)?;

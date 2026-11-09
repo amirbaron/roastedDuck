@@ -2,11 +2,11 @@
 //! `NotNullExpressionAnalyzer`): from filters that reject NULLs, joins that keep a side's
 //! rows intact, and table statistics without NULLs.
 
-use rustdb_ast::{ExpressionType, JoinType};
-use rustdb_catalog::EntryKind;
-use rustdb_planner::operator::COLUMN_IDENTIFIER_ROW_ID;
-use rustdb_planner::{ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator};
-use rustdb_storage::statistics::BaseStatistics;
+use roastedduck_ast::{ExpressionType, JoinType};
+use roastedduck_catalog::EntryKind;
+use roastedduck_planner::operator::COLUMN_IDENTIFIER_ROW_ID;
+use roastedduck_planner::{ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator};
+use roastedduck_storage::statistics::BaseStatistics;
 
 /// Proves expressions non-NULL over a plan (DuckDB's `NotNullExpressionAnalyzer`).
 #[derive(Debug)]
@@ -71,7 +71,7 @@ const fn join_preserves_child_non_nullability(join_type: JoinType, child_index: 
 /// The statistics of column `column` of the scanned base table, as the storage keeps
 /// them (DuckDB's `DuckTableEntry::GetStatistics`): none for the row id and generated
 /// columns.
-fn table_statistics(get: &rustdb_planner::operator::LogicalGet, column: u64) -> Option<BaseStatistics> {
+fn table_statistics(get: &roastedduck_planner::operator::LogicalGet, column: u64) -> Option<BaseStatistics> {
     if column == COLUMN_IDENTIFIER_ROW_ID {
         return None;
     }
@@ -141,7 +141,7 @@ impl<'a> NotNullExpressionAnalyzer<'a> {
                 matches!(op.children.as_slice(), [child] if self.is_not_null_inner(child, expression, seen_ctes))
             }
             LogicalKind::ComparisonJoin(join)
-                if op.operator_type() == rustdb_planner::LogicalOperatorType::LogicalComparisonJoin =>
+                if op.operator_type() == roastedduck_planner::LogicalOperatorType::LogicalComparisonJoin =>
             {
                 if op.children.len() != 2 {
                     return false;

@@ -1,6 +1,6 @@
 [package]
-name = "rustdb-bench"
-description = "Benchmark harness: runs DuckDB's benchmark suites on C++ DuckDB and rustdb and compares them."
+name = "roastedduck-bench"
+description = "Benchmark harness: runs DuckDB's benchmark suites on C++ DuckDB and roastedduck and compares them."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,7 +16,7 @@ name = "bench-driver"
 path = "src/bin/bench-driver.rs"
 
 [dependencies]
-rustdb.workspace = true
+roastedduck.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 libc = "0.2"
 regex = "1"

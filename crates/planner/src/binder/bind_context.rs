@@ -2,17 +2,17 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::{
+use roastedduck_ast::{
     ColumnRefExpression, ExpressionType, OperatorExpression, ParsedExpression, ParsedExpressionKind,
     PositionalReferenceExpression, QualifiedColumnName, StarExpression,
 };
-use rustdb_common::string_util::{
+use roastedduck_common::string_util::{
     candidates_message_bytes, similarity_rating, top_n_jaro_winkler, top_n_strings,
 };
-use rustdb_common::{
+use roastedduck_common::{
     ByteString, CaseInsensitiveMap, CaseInsensitiveSet, Error, ErrorKind, Result, byte_format,
 };
-use rustdb_types::{LogicalType, LogicalTypeId};
+use roastedduck_types::{LogicalType, LogicalTypeId};
 
 use super::BindingMode;
 use super::binding::{Binding, BindingAlias, BindingKind};
@@ -434,7 +434,7 @@ impl BindContext {
         else {
             return None;
         };
-        let rustdb_catalog::EntryKind::Table(table) = &entry.kind else {
+        let roastedduck_catalog::EntryKind::Table(table) = &entry.kind else {
             return None;
         };
         let column_index = usize::try_from(binding.binding_index(column_name)?).ok()?;
@@ -453,7 +453,7 @@ impl BindContext {
             names: &binding.names,
             prefix: &prefix,
         };
-        rustdb_ast::visit::VisitorMut::visit_expression(&mut qualify, &mut expression);
+        roastedduck_ast::visit::VisitorMut::visit_expression(&mut qualify, &mut expression);
         expression.alias = column_name.into();
         Some(expression)
     }
@@ -836,14 +836,14 @@ pub fn alias_column_names(
 /// Renames the column references of a generated expression to a binding's names and
 /// qualifies them with its alias (`ReplaceAliases` + `BakeTableName`).
 struct QualifyGenerated<'a> {
-    table: &'a rustdb_catalog::TableEntry,
+    table: &'a roastedduck_catalog::TableEntry,
     names: &'a [ByteString],
     prefix: &'a [ByteString],
 }
 
-impl rustdb_ast::visit::VisitorMut for QualifyGenerated<'_> {
+impl roastedduck_ast::visit::VisitorMut for QualifyGenerated<'_> {
     fn visit_expression(&mut self, expression: &mut ParsedExpression) {
-        if let rustdb_ast::ParsedExpressionKind::ColumnRef(column) = &mut expression.kind
+        if let roastedduck_ast::ParsedExpressionKind::ColumnRef(column) = &mut expression.kind
             && let [name] = column.column_names.as_slice()
         {
             let renamed = self
@@ -856,6 +856,6 @@ impl rustdb_ast::visit::VisitorMut for QualifyGenerated<'_> {
             names.push(renamed);
             column.column_names = names;
         }
-        rustdb_ast::visit::walk_expression(self, expression);
+        roastedduck_ast::visit::walk_expression(self, expression);
     }
 }

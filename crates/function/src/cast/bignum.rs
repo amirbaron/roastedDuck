@@ -1,6 +1,6 @@
 //! Casts from and to BIGNUM (DuckDB's `bignum_casts.cpp`).
 
-use rustdb_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType};
+use roastedduck_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType};
 
 use super::BoundCastInfo;
 use super::executor::{

@@ -1,7 +1,7 @@
 //! The `customer_demographics` table (`w_customer_demographics.c`): every combination of
 //! the demographic values, spelled by the row number.
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use super::Output;
 use super::build_support::{bitmap_to_dist_int, bitmap_to_dist_str};

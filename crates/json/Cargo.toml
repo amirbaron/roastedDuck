@@ -1,5 +1,5 @@
 [package]
-name = "rustdb-json"
+name = "roastedduck-json"
 description = "The JSON extension: the JSON type and its casts, the json_* scalar functions, read_json and COPY ... (FORMAT json) (DuckDB's extension/json), on a port of yyjson."
 version.workspace = true
 edition.workspace = true
@@ -7,23 +7,23 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-rustdb-common.workspace = true
-rustdb-types.workspace = true
-rustdb-ast.workspace = true
-rustdb-parser.workspace = true
-rustdb-planner.workspace = true
-rustdb-optimizer = { path = "../optimizer" }
-rustdb-serde.workspace = true
-rustdb-function = { path = "../function" }
-rustdb-functions = { path = "../functions" }
-rustdb-csv = { path = "../csv" }
+roastedduck-common.workspace = true
+roastedduck-types.workspace = true
+roastedduck-ast.workspace = true
+roastedduck-parser.workspace = true
+roastedduck-planner.workspace = true
+roastedduck-optimizer = { path = "../optimizer" }
+roastedduck-serde.workspace = true
+roastedduck-function = { path = "../function" }
+roastedduck-functions = { path = "../functions" }
+roastedduck-csv = { path = "../csv" }
 zmij = "1.0.23"
 memchr = "2"
 flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
-rustdb-zstd = { path = "../zstd" }
+roastedduck-zstd = { path = "../zstd" }
 
 [dev-dependencies]
-rustdb-catalog = { path = "../catalog" }
+roastedduck-catalog = { path = "../catalog" }
 
 [lints]
 workspace = true

@@ -3,14 +3,14 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use rustdb_ast::{ExpressionType, JoinRefType, JoinType};
-use rustdb_common::{Error, Result};
-use rustdb_planner::operator::JoinCondition;
-use rustdb_planner::{
+use roastedduck_ast::{ExpressionType, JoinRefType, JoinType};
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::operator::JoinCondition;
+use roastedduck_planner::{
     Expression, ExpressionKind, JoinSide, LogicalKind, LogicalOperator, LogicalOperatorType, create_join,
     extract_join_conditions,
 };
-use rustdb_types::Value;
+use roastedduck_types::Value;
 
 use super::{Filter, FilterPushdown, empty_result, table_references};
 use crate::expression_rewriter::ExpressionRewriter;

@@ -3,11 +3,11 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::QueryNode;
-use rustdb_ast::keyword::write_optionally_quoted_bytes;
-use rustdb_catalog::CatalogEntry;
-use rustdb_common::{ByteString, CaseInsensitiveMap, Error, ErrorKind, Result, byte_format};
-use rustdb_types::LogicalType;
+use roastedduck_ast::QueryNode;
+use roastedduck_ast::keyword::write_optionally_quoted_bytes;
+use roastedduck_catalog::CatalogEntry;
+use roastedduck_common::{ByteString, CaseInsensitiveMap, Error, ErrorKind, Result, byte_format};
+use roastedduck_types::LogicalType;
 
 use super::BoundStatement;
 use crate::ColumnBinding;
@@ -76,7 +76,7 @@ impl BindingAlias {
     }
 }
 
-impl rustdb_common::byte_format::NativeByteFormat for BindingAlias {
+impl roastedduck_common::byte_format::NativeByteFormat for BindingAlias {
     fn append_native_bytes(&self, out: &mut ByteString) {
         out.push_bytes(self.to_bytes());
     }
@@ -112,12 +112,12 @@ pub enum BindingKind {
         bound_column_ids: SharedColumnIds,
         entry: Option<Arc<CatalogEntry>>,
         /// `rowid` and similar columns: `(column id, name, type)`.
-        virtual_columns: Vec<(u64, rustdb_common::ByteString, LogicalType)>,
+        virtual_columns: Vec<(u64, roastedduck_common::ByteString, LogicalType)>,
     },
     /// Macro parameters or lambda parameters.
     Dummy {
         /// The macro's argument expressions, by parameter.
-        arguments: Vec<rustdb_ast::ParsedExpression>,
+        arguments: Vec<roastedduck_ast::ParsedExpression>,
     },
     /// A view or other catalog entry.
     Entry { entry: Arc<CatalogEntry> },
@@ -137,8 +137,8 @@ pub struct Binding {
     /// The table index of the relation's columns.
     pub index: u64,
     pub types: Vec<LogicalType>,
-    pub names: Vec<rustdb_common::ByteString>,
-    name_map: CaseInsensitiveMap<u64, rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
+    name_map: CaseInsensitiveMap<u64, roastedduck_common::ByteString>,
     /// The catalog and schema of the binding's catalog entry (DuckDB reads them from
     /// `GetStandardEntry()->ParentCatalog()` / `ParentSchema()`), whatever its alias.
     pub entry_parent: Option<(ByteString, ByteString)>,
@@ -150,7 +150,7 @@ impl Binding {
         kind: BindingKind,
         alias: BindingAlias,
         types: Vec<LogicalType>,
-        names: Vec<rustdb_common::ByteString>,
+        names: Vec<roastedduck_common::ByteString>,
         index: u64,
     ) -> Result<Self> {
         let mut binding = Self {
@@ -177,7 +177,7 @@ impl Binding {
         for (i, name) in self.names.iter().enumerate() {
             if self.name_map.contains_key(name) {
                 return Err(Error::new_bytes(
-                    rustdb_common::ErrorKind::Binder,
+                    roastedduck_common::ErrorKind::Binder,
                     [
                         b"table \"".as_slice(),
                         self.alias.alias.as_bytes(),
@@ -229,13 +229,13 @@ impl Binding {
         let column_name = column_name.as_ref();
         match &self.kind {
             BindingKind::Table { .. } => {
-                let candidates = rustdb_common::string_util::candidates_error_message_bytes(
+                let candidates = roastedduck_common::string_util::candidates_error_message_bytes(
                     &self.names,
                     column_name,
                     b"Candidate bindings: ",
                 );
                 Error::new_bytes(
-                    rustdb_common::ErrorKind::Binder,
+                    roastedduck_common::ErrorKind::Binder,
                     [
                         b"Table \"".as_slice(),
                         self.alias.alias.as_bytes(),
@@ -282,9 +282,9 @@ impl Binding {
             (
                 ty,
                 if alias.is_empty() {
-                    rustdb_common::ByteString::from(column_name)
+                    roastedduck_common::ByteString::from(column_name)
                 } else {
-                    rustdb_common::ByteString::from(alias)
+                    roastedduck_common::ByteString::from(alias)
                 },
             )
         } else {
@@ -293,7 +293,7 @@ impl Binding {
             let name = if alias.is_empty() {
                 self.names.get(index).cloned().unwrap_or_default()
             } else {
-                rustdb_common::ByteString::from(alias)
+                roastedduck_common::ByteString::from(alias)
             };
             (ty, name)
         };
@@ -320,7 +320,7 @@ impl Binding {
         &self,
         column_name: impl AsRef<[u8]>,
         alias: impl AsRef<[u8]>,
-    ) -> Result<rustdb_ast::ParsedExpression> {
+    ) -> Result<roastedduck_ast::ParsedExpression> {
         let column_name = column_name.as_ref();
         let alias = alias.as_ref();
         let index = self.binding_index(column_name).ok_or_else(|| {
@@ -379,7 +379,7 @@ impl Binding {
     /// Sets names and types once a lazily bound CTE is known.
     pub fn set_columns(
         &mut self,
-        names: Vec<rustdb_common::ByteString>,
+        names: Vec<roastedduck_common::ByteString>,
         types: Vec<LogicalType>,
     ) -> Result<()> {
         self.names = names;

@@ -11,14 +11,14 @@ mod serialize;
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::{
+use roastedduck_ast::{
     ExpressionClass, ExpressionType, OrderByNullType, OrderType, SubqueryType, WindowBoundary,
     WindowExcludeMode,
 };
-use rustdb_common::Result;
-use rustdb_function::cast::BoundCastInfo;
-use rustdb_function::{AggregateFunction, FunctionData, NullHandling, ScalarFunction, Stability};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::Result;
+use roastedduck_function::cast::BoundCastInfo;
+use roastedduck_function::{AggregateFunction, FunctionData, NullHandling, ScalarFunction, Stability};
+use roastedduck_types::{LogicalType, Value};
 
 use crate::ColumnBinding;
 use crate::binder::{Binder, BoundStatement};
@@ -30,7 +30,7 @@ pub use display::expression_list_to_string;
 pub struct Expression {
     pub expression_type: ExpressionType,
     /// The name given with `AS`, or the name the binder derived.
-    pub alias: rustdb_common::ByteString,
+    pub alias: roastedduck_common::ByteString,
     /// Byte offset in the query text, for error messages.
     pub query_location: Option<u64>,
     /// The type the expression evaluates to.
@@ -221,7 +221,7 @@ impl BoundParameterData {
     /// A parameter with a known value; its type is the value's, with strings typed as
     /// string literals so that they can still be implicitly cast.
     pub fn from_value(value: Value) -> Self {
-        let return_type = if value.logical_type().id() == rustdb_types::LogicalTypeId::Varchar {
+        let return_type = if value.logical_type().id() == roastedduck_types::LogicalTypeId::Varchar {
             LogicalType::STRING_LITERAL
         } else {
             value.logical_type().clone()
@@ -236,7 +236,7 @@ pub type SharedParameterData = Arc<Mutex<BoundParameterData>>;
 /// A prepared statement parameter `$n` / `?` (DuckDB's `BoundParameterExpression`).
 #[derive(Clone, Debug)]
 pub struct BoundParameterExpression {
-    pub identifier: rustdb_common::ByteString,
+    pub identifier: roastedduck_common::ByteString,
     pub parameter_data: SharedParameterData,
 }
 
@@ -347,7 +347,7 @@ impl Expression {
     pub fn new(expression_type: ExpressionType, return_type: LogicalType, kind: ExpressionKind) -> Self {
         Self {
             expression_type,
-            alias: rustdb_common::ByteString::new(),
+            alias: roastedduck_common::ByteString::new(),
             query_location: None,
             return_type,
             kind,
@@ -366,7 +366,7 @@ impl Expression {
 
     /// A reference to `binding` (`BOUND_COLUMN_REF`).
     pub fn column_ref(
-        alias: impl Into<rustdb_common::ByteString>,
+        alias: impl Into<roastedduck_common::ByteString>,
         return_type: LogicalType,
         binding: ColumnBinding,
         depth: u64,
@@ -382,7 +382,7 @@ impl Expression {
 
     /// Column `index` of the input chunk (`BOUND_REF`).
     pub fn reference(
-        alias: impl Into<rustdb_common::ByteString>,
+        alias: impl Into<roastedduck_common::ByteString>,
         return_type: LogicalType,
         index: u64,
     ) -> Self {
@@ -445,7 +445,7 @@ impl Expression {
 
     /// The same expression under an alias.
     #[must_use]
-    pub fn with_alias(mut self, alias: impl Into<rustdb_common::ByteString>) -> Self {
+    pub fn with_alias(mut self, alias: impl Into<roastedduck_common::ByteString>) -> Self {
         self.alias = alias.into();
         self
     }
@@ -476,7 +476,7 @@ impl Expression {
     }
 
     /// The alias, or else the expression's text (DuckDB's `GetName`).
-    pub fn name(&self) -> rustdb_common::ByteString {
+    pub fn name(&self) -> roastedduck_common::ByteString {
         if self.alias.is_empty() {
             self.to_bytes()
         } else {

@@ -4,8 +4,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rustdb_ast::{ExpressionType, JoinType};
-use rustdb_planner::ColumnBinding;
+use roastedduck_ast::{ExpressionType, JoinType};
+use roastedduck_planner::ColumnBinding;
 
 use super::query_graph_manager::FilterInfo;
 use super::relation_set::RelationSet;

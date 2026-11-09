@@ -2,12 +2,12 @@
 //! VARCHAR parses WKT, GEOMETRY prints WKT, and GEOMETRY types with the same (or no)
 //! coordinate reference system share their data.
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId, TypeInfo};
 
 use super::BoundCastInfo;
 use super::executor::{RowError, try_map_strings_to_string};
-use rustdb_types::geometry;
+use roastedduck_types::geometry;
 
 /// The CRS definition of a GEOMETRY type, if it has one (`GeoType::GetCRS`).
 fn crs(ty: &LogicalType) -> Option<&str> {

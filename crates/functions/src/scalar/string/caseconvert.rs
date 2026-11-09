@@ -1,8 +1,8 @@
 //! `lower`/`lcase` and `upper`/`ucase` (DuckDB's `caseconvert.cpp`), using utf8proc's
 //! simple (one-to-one) case mappings.
 
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::LogicalType;
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::LogicalType;
 
 use crate::scalar::executor::{Str, StrOut, unary};
 use crate::scalar::string::utf8::{push_char, simple_lower, simple_upper, text};

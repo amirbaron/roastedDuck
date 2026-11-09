@@ -5,16 +5,16 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::cast::executor::{RowError, addressable, cast_rows};
-use rustdb_function::cast::{BindCastFn, BoundCastInfo, CastFunctionSet, CastParameters};
-use rustdb_function::{
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::cast::executor::{RowError, addressable, cast_rows};
+use roastedduck_function::cast::{BindCastFn, BoundCastInfo, CastFunctionSet, CastParameters};
+use roastedduck_function::{
     BindInput, FunctionClient, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet, Stability,
     TableFunction, TableFunctionBindOutput, TableFunctionSet,
 };
-use rustdb_functions::scalar::executor::{Str, binary, unary};
-use rustdb_functions::temporal::{time_add_interval, time_tz_normalized_micros};
-use rustdb_types::{
+use roastedduck_functions::scalar::executor::{Str, binary, unary};
+use roastedduck_functions::temporal::{time_add_interval, time_tz_normalized_micros};
+use roastedduck_types::{
     DataChunk, Date, Interval, LogicalType, LogicalTypeId, Time, TimeTz, Timestamp, Value, Vector,
     implicit_cast_cost, timestamp as ts,
 };
@@ -400,7 +400,7 @@ pub(crate) fn add_casts(casts: &mut CastFunctionSet) {
 type TimeZoneOp<T> = fn(&mut Calendar, T) -> Result<T>;
 
 /// `ICUTimeZoneFunc::Execute`.
-fn time_zone_execute<T: rustdb_types::NativeType + Copy>(
+fn time_zone_execute<T: roastedduck_types::NativeType + Copy>(
     args: &DataChunk,
     state: &FunctionState,
     result: &mut Vector,
@@ -418,7 +418,7 @@ fn time_zone_execute<T: rustdb_types::NativeType + Copy>(
             return Ok(());
         }
         let tz_id = String::from_utf8_lossy(
-            rustdb_functions::scalar::executor::str_at(tz_vec, 0).unwrap_or_default(),
+            roastedduck_functions::scalar::executor::str_at(tz_vec, 0).unwrap_or_default(),
         )
         .into_owned();
         set_time_zone(&mut calendar, &tz_id)?;

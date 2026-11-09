@@ -2,15 +2,15 @@
 //! runs the plan, discarding its rows, then returns the plan annotated with the rows
 //! and time of every operator.
 
-use rustdb_common::{ByteString, byte_format, byte_write};
+use roastedduck_common::{ByteString, byte_format, byte_write};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::ExplainFormat;
-use rustdb_common::Result;
-use rustdb_common::tree_renderer::{RenderParams, RenderSource, RenderTree, RenderTreeNode, render};
-use rustdb_planner::operator::renderer_kind;
-use rustdb_types::{DataChunk, LogicalType, Value};
+use roastedduck_ast::ExplainFormat;
+use roastedduck_common::Result;
+use roastedduck_common::tree_renderer::{RenderParams, RenderSource, RenderTree, RenderTreeNode, render};
+use roastedduck_planner::operator::renderer_kind;
+use roastedduck_types::{DataChunk, LogicalType, Value};
 
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
 use crate::plan_generator::explain::{DelimExplain, operator_key};
@@ -23,7 +23,7 @@ pub struct PhysicalExplainAnalyze {
     format: ExplainFormat,
     /// The statement's text, shown above the profile.
     query: ByteString,
-    client: Option<Arc<rustdb_function::FunctionClient>>,
+    client: Option<Arc<roastedduck_function::FunctionClient>>,
     children: [PhysicalRef; 1],
     /// How the delim joins of the plan are shown, by operator.
     delim_joins: HashMap<usize, DelimExplain>,
@@ -41,7 +41,7 @@ impl PhysicalExplainAnalyze {
             types,
             format,
             query,
-            client: rustdb_function::file_system::opener(),
+            client: roastedduck_function::file_system::opener(),
             children: [child],
             delim_joins,
         }
@@ -128,7 +128,7 @@ fn json_escape(text: impl AsRef<[u8]>) -> Result<ByteString> {
     let value = Value::try_varchar(text.as_ref())?;
     let bytes = value.as_bytes().unwrap_or_default();
     let bytes = bytes.split(|byte| *byte == 0).next().unwrap_or_default();
-    let quoted = rustdb_common::string_util::json_quote_bytes(bytes);
+    let quoted = roastedduck_common::string_util::json_quote_bytes(bytes);
     Ok(quoted[1..quoted.len() - 1].into())
 }
 

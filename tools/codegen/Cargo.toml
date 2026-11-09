@@ -1,6 +1,6 @@
 [package]
 name = "codegen"
-description = "Generates rustdb's (de)serialization code from DuckDB's serialization specs."
+description = "Generates roastedduck's (de)serialization code from DuckDB's serialization specs."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

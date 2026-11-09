@@ -6,12 +6,12 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::{Aggregate, AggregateInput, States, Typed};
-use rustdb_function::cast::ValueCast;
-use rustdb_function::cast::numeric::TryCastTo;
-use rustdb_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
-use rustdb_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType, TimeTz, Value, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::{Aggregate, AggregateInput, States, Typed};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_function::cast::numeric::TryCastTo;
+use roastedduck_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
+use roastedduck_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType, TimeTz, Value, Vector};
 
 use super::tdigest::TDigest;
 use crate::aggregate::nested::list::append_list;
@@ -75,8 +75,8 @@ impl Coding for TimeTz {
                 let micros = (sort_key >> OFFSET_BITS).wrapping_sub(offset * 1_000_000);
                 TimeTz((micros << OFFSET_BITS) | offset)
             }
-            None if value < 0.0 => TimeTz::new(rustdb_types::Time(0), TimeTz::MAX_OFFSET),
-            None => TimeTz::new(rustdb_types::Time(86_400_000_000), TimeTz::MIN_OFFSET),
+            None if value < 0.0 => TimeTz::new(roastedduck_types::Time(0), TimeTz::MAX_OFFSET),
+            None => TimeTz::new(roastedduck_types::Time(86_400_000_000), TimeTz::MIN_OFFSET),
         }
     }
 }
@@ -199,13 +199,13 @@ fn typed_ops(
     physical: PhysicalType,
     ty: &LogicalType,
     list: bool,
-) -> Result<Arc<dyn rustdb_function::AggregateOps>> {
+) -> Result<Arc<dyn roastedduck_function::AggregateOps>> {
     macro_rules! ops {
         ($t:ty) => {
             Arc::new(Typed(ApproxQuantile::<$t> {
                 list,
                 _marker: std::marker::PhantomData,
-            })) as Arc<dyn rustdb_function::AggregateOps>
+            })) as Arc<dyn roastedduck_function::AggregateOps>
         };
     }
     if ty.id() == LogicalTypeId::TimeTz {
@@ -273,7 +273,7 @@ fn bind(function: &mut AggregateFunction, input: &BindInput<'_>) -> Result<Optio
 
 /// `ApproximateQuantileBindData::Serialize`.
 fn serialize_quantiles(
-    serializer: &mut dyn rustdb_serde::Serializer,
+    serializer: &mut dyn roastedduck_serde::Serializer,
     bind_data: Option<&dyn FunctionData>,
     _: &AggregateFunction,
 ) -> Result<()> {

@@ -10,9 +10,9 @@
 use std::ops::Range;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
-use rustdb_common::{Error, Result};
-use rustdb_row::{ParallelScanState, PinProperties, ScanState, TupleDataCollection};
-use rustdb_types::{DataChunk, STANDARD_VECTOR_SIZE};
+use roastedduck_common::{Error, Result};
+use roastedduck_row::{ParallelScanState, PinProperties, ScanState, TupleDataCollection};
+use roastedduck_types::{DataChunk, STANDARD_VECTOR_SIZE};
 
 use super::super::{construct_empty_join_result, empty_result_if_rhs_is_empty, propagates_build_side};
 use super::{HashJoinGlobalSinkState, PhysicalHashJoin};

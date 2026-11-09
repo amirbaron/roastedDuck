@@ -1,11 +1,11 @@
 //! Actual Arrow C-string schema export/import against C++ 1.5.6.
-use rustdb_arrow::{
+use roastedduck_arrow::{
     ArrowTableSchema, ClientProperties,
     ffi::{ArrowSchema, ArrowSchemaWrapper},
     populate_arrow_table_schema, to_arrow_schema,
 };
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_types::LogicalType;
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_types::LogicalType;
 use std::fmt::Write as _;
 use std::io::{self, BufRead};
 pub fn decode(hex: &str) -> Result<Vec<u8>> {
@@ -78,8 +78,8 @@ fn outcome(mode: &str, name: ByteString) -> Result<ByteString> {
     // SAFETY: schema is a live exported struct schema owned for the whole call.
     unsafe { populate_arrow_table_schema(&mut imported, &schema.arrow_schema) }?;
     if mode == "nested-import" {
-        use rustdb_serde::{SerializationOptions, Serializer};
-        let mut writer = rustdb_serde::binary::BinarySerializer::new(SerializationOptions::default());
+        use roastedduck_serde::{SerializationOptions, Serializer};
+        let mut writer = roastedduck_serde::binary::BinarySerializer::new(SerializationOptions::default());
         writer.begin();
         (&mut writer as &mut dyn Serializer).write_property(100, "payload", &imported.types().to_vec())?;
         writer.end();

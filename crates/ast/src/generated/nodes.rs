@@ -4,15 +4,15 @@ use crate::{
     CompressionType, CteMaterialize, OrderByNullType, OrderType, ParsedExpression, SelectStatement,
     TableColumnType,
 };
-use rustdb_common::OrderedMap;
-use rustdb_serde::{DeserializeObject, Deserializer, Result, SerializeObject, Serializer, required};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::OrderedMap;
+use roastedduck_serde::{DeserializeObject, Deserializer, Result, SerializeObject, Serializer, required};
+use roastedduck_types::{LogicalType, Value};
 
 /// DuckDB's `CommonTableExpressionInfo`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CommonTableExpressionInfo {
     /// `aliases` (property 100).
-    pub aliases: Vec<rustdb_common::ByteString>,
+    pub aliases: Vec<roastedduck_common::ByteString>,
     /// `query` (property 101).
     pub query: Box<SelectStatement>,
     /// `materialized` (property 102).
@@ -41,7 +41,7 @@ impl SerializeObject for CommonTableExpressionInfo {
 
 impl DeserializeObject for CommonTableExpressionInfo {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let aliases: Vec<rustdb_common::ByteString> =
+        let aliases: Vec<roastedduck_common::ByteString> =
             deserializer.read_property_with_default(100, "aliases")?;
         let query: Box<SelectStatement> = required(
             deserializer.read_property_with_default(101, "query")?,
@@ -60,13 +60,14 @@ impl DeserializeObject for CommonTableExpressionInfo {
     }
 }
 
-rustdb_serde::impl_pointee_serde!(CommonTableExpressionInfo);
+roastedduck_serde::impl_pointee_serde!(CommonTableExpressionInfo);
 
 /// DuckDB's `CommonTableExpressionMap`.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct CommonTableExpressionMap {
     /// `map` (property 100).
-    pub map: rustdb_common::CaseInsensitiveMap<CommonTableExpressionInfo, rustdb_common::ByteString>,
+    pub map:
+        roastedduck_common::CaseInsensitiveMap<CommonTableExpressionInfo, roastedduck_common::ByteString>,
 }
 
 impl SerializeObject for CommonTableExpressionMap {
@@ -78,13 +79,15 @@ impl SerializeObject for CommonTableExpressionMap {
 
 impl DeserializeObject for CommonTableExpressionMap {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let map: rustdb_common::CaseInsensitiveMap<CommonTableExpressionInfo, rustdb_common::ByteString> =
-            deserializer.read_property_with_default(100, "map")?;
+        let map: roastedduck_common::CaseInsensitiveMap<
+            CommonTableExpressionInfo,
+            roastedduck_common::ByteString,
+        > = deserializer.read_property_with_default(100, "map")?;
         Ok(Self { map })
     }
 }
 
-rustdb_serde::impl_object_serde!(CommonTableExpressionMap);
+roastedduck_serde::impl_object_serde!(CommonTableExpressionMap);
 
 /// DuckDB's `OrderByNode`.
 #[derive(Clone, Debug, PartialEq)]
@@ -123,7 +126,7 @@ impl DeserializeObject for OrderByNode {
     }
 }
 
-rustdb_serde::impl_object_serde!(OrderByNode);
+roastedduck_serde::impl_object_serde!(OrderByNode);
 
 /// DuckDB's `CaseCheck`.
 #[derive(Clone, Debug, PartialEq)]
@@ -158,7 +161,7 @@ impl DeserializeObject for CaseCheck {
     }
 }
 
-rustdb_serde::impl_object_serde!(CaseCheck);
+roastedduck_serde::impl_object_serde!(CaseCheck);
 
 /// DuckDB's `PivotColumn`.
 #[derive(Clone, Debug, PartialEq)]
@@ -166,11 +169,11 @@ pub struct PivotColumn {
     /// `pivot_expressions` (property 100).
     pub pivot_expressions: Vec<ParsedExpression>,
     /// `unpivot_names` (property 101).
-    pub unpivot_names: Vec<rustdb_common::ByteString>,
+    pub unpivot_names: Vec<roastedduck_common::ByteString>,
     /// `entries` (property 102).
     pub entries: Vec<PivotColumnEntry>,
     /// `pivot_enum` (property 103).
-    pub pivot_enum: rustdb_common::ByteString,
+    pub pivot_enum: roastedduck_common::ByteString,
     /// `subquery`: the query of `IN (SELECT ...)`, which the binder rejects.
     pub subquery: Option<Box<crate::QueryNode>>,
 }
@@ -193,10 +196,10 @@ impl DeserializeObject for PivotColumn {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
         let pivot_expressions: Vec<ParsedExpression> =
             deserializer.read_property_with_default(100, "pivot_expressions")?;
-        let unpivot_names: Vec<rustdb_common::ByteString> =
+        let unpivot_names: Vec<roastedduck_common::ByteString> =
             deserializer.read_property_with_default(101, "unpivot_names")?;
         let entries: Vec<PivotColumnEntry> = deserializer.read_property_with_default(102, "entries")?;
-        let pivot_enum: rustdb_common::ByteString =
+        let pivot_enum: roastedduck_common::ByteString =
             deserializer.read_property_with_default(103, "pivot_enum")?;
         Ok(Self {
             pivot_expressions,
@@ -208,7 +211,7 @@ impl DeserializeObject for PivotColumn {
     }
 }
 
-rustdb_serde::impl_object_serde!(PivotColumn);
+roastedduck_serde::impl_object_serde!(PivotColumn);
 
 /// DuckDB's `PivotColumnEntry`.
 #[derive(Clone, Debug, PartialEq)]
@@ -218,7 +221,7 @@ pub struct PivotColumnEntry {
     /// `star_expr` (property 101).
     pub star_expr: Option<Box<ParsedExpression>>,
     /// `alias` (property 102).
-    pub alias: rustdb_common::ByteString,
+    pub alias: roastedduck_common::ByteString,
 }
 
 impl SerializeObject for PivotColumnEntry {
@@ -235,7 +238,7 @@ impl DeserializeObject for PivotColumnEntry {
         let values: Vec<Value> = deserializer.read_property_with_default(100, "values")?;
         let star_expr: Option<Box<ParsedExpression>> =
             deserializer.read_property_with_default(101, "star_expr")?;
-        let alias: rustdb_common::ByteString = deserializer.read_property_with_default(102, "alias")?;
+        let alias: roastedduck_common::ByteString = deserializer.read_property_with_default(102, "alias")?;
         Ok(Self {
             values,
             star_expr,
@@ -244,13 +247,13 @@ impl DeserializeObject for PivotColumnEntry {
     }
 }
 
-rustdb_serde::impl_object_serde!(PivotColumnEntry);
+roastedduck_serde::impl_object_serde!(PivotColumnEntry);
 
 /// DuckDB's `ColumnDefinition`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ColumnDefinition {
     /// `name` (property 100).
-    pub name: rustdb_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     /// `type` (property 101).
     pub logical_type: LogicalType,
     /// `expression` (property 102).
@@ -280,7 +283,7 @@ impl SerializeObject for ColumnDefinition {
 
 impl DeserializeObject for ColumnDefinition {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let name: rustdb_common::ByteString = deserializer.read_property_with_default(100, "name")?;
+        let name: roastedduck_common::ByteString = deserializer.read_property_with_default(100, "name")?;
         let logical_type: LogicalType = deserializer.read_property(101, "type")?;
         let expression: Option<Box<ParsedExpression>> =
             deserializer.read_property_with_default(102, "expression")?;
@@ -302,7 +305,7 @@ impl DeserializeObject for ColumnDefinition {
     }
 }
 
-rustdb_serde::impl_object_serde!(ColumnDefinition);
+roastedduck_serde::impl_object_serde!(ColumnDefinition);
 
 /// DuckDB's `ColumnList`.
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -325,7 +328,7 @@ impl DeserializeObject for ColumnList {
     }
 }
 
-rustdb_serde::impl_object_serde!(ColumnList);
+roastedduck_serde::impl_object_serde!(ColumnList);
 
 /// DuckDB's `VacuumOptions`.
 #[derive(Clone, Debug, PartialEq, Default, Copy, Eq, Hash)]
@@ -352,19 +355,19 @@ impl DeserializeObject for VacuumOptions {
     }
 }
 
-rustdb_serde::impl_object_serde!(VacuumOptions);
+roastedduck_serde::impl_object_serde!(VacuumOptions);
 
 /// DuckDB's `QualifiedColumnName`.
 #[derive(Clone, Debug, PartialEq, Default, Eq, Hash)]
 pub struct QualifiedColumnName {
     /// `catalog` (property 100).
-    pub catalog: rustdb_common::ByteString,
+    pub catalog: roastedduck_common::ByteString,
     /// `schema` (property 101).
-    pub schema: rustdb_common::ByteString,
+    pub schema: roastedduck_common::ByteString,
     /// `table` (property 102).
-    pub table: rustdb_common::ByteString,
+    pub table: roastedduck_common::ByteString,
     /// `column` (property 103).
-    pub column: rustdb_common::ByteString,
+    pub column: roastedduck_common::ByteString,
 }
 
 impl SerializeObject for QualifiedColumnName {
@@ -379,10 +382,13 @@ impl SerializeObject for QualifiedColumnName {
 
 impl DeserializeObject for QualifiedColumnName {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let catalog: rustdb_common::ByteString = deserializer.read_property_with_default(100, "catalog")?;
-        let schema: rustdb_common::ByteString = deserializer.read_property_with_default(101, "schema")?;
-        let table: rustdb_common::ByteString = deserializer.read_property_with_default(102, "table")?;
-        let column: rustdb_common::ByteString = deserializer.read_property_with_default(103, "column")?;
+        let catalog: roastedduck_common::ByteString =
+            deserializer.read_property_with_default(100, "catalog")?;
+        let schema: roastedduck_common::ByteString =
+            deserializer.read_property_with_default(101, "schema")?;
+        let table: roastedduck_common::ByteString = deserializer.read_property_with_default(102, "table")?;
+        let column: roastedduck_common::ByteString =
+            deserializer.read_property_with_default(103, "column")?;
         Ok(Self {
             catalog,
             schema,
@@ -392,7 +398,7 @@ impl DeserializeObject for QualifiedColumnName {
     }
 }
 
-rustdb_serde::impl_object_serde!(QualifiedColumnName);
+roastedduck_serde::impl_object_serde!(QualifiedColumnName);
 
 /// DuckDB's `ExportedTableInfo`.
 #[derive(Clone, Debug, PartialEq)]
@@ -415,21 +421,21 @@ impl DeserializeObject for ExportedTableInfo {
     }
 }
 
-rustdb_serde::impl_object_serde!(ExportedTableInfo);
+roastedduck_serde::impl_object_serde!(ExportedTableInfo);
 
 /// DuckDB's `ExportedTableData`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExportedTableData {
     /// `table_name` (property 1).
-    pub table_name: rustdb_common::ByteString,
+    pub table_name: roastedduck_common::ByteString,
     /// `schema_name` (property 2).
-    pub schema_name: rustdb_common::ByteString,
+    pub schema_name: roastedduck_common::ByteString,
     /// `database_name` (property 3).
-    pub database_name: rustdb_common::ByteString,
+    pub database_name: roastedduck_common::ByteString,
     /// `file_path` (property 4).
-    pub file_path: rustdb_common::ByteString,
+    pub file_path: roastedduck_common::ByteString,
     /// `not_null_columns` (property 5).
-    pub not_null_columns: Vec<rustdb_common::ByteString>,
+    pub not_null_columns: Vec<roastedduck_common::ByteString>,
 }
 
 impl SerializeObject for ExportedTableData {
@@ -445,14 +451,15 @@ impl SerializeObject for ExportedTableData {
 
 impl DeserializeObject for ExportedTableData {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let table_name: rustdb_common::ByteString =
+        let table_name: roastedduck_common::ByteString =
             deserializer.read_property_with_default(1, "table_name")?;
-        let schema_name: rustdb_common::ByteString =
+        let schema_name: roastedduck_common::ByteString =
             deserializer.read_property_with_default(2, "schema_name")?;
-        let database_name: rustdb_common::ByteString =
+        let database_name: roastedduck_common::ByteString =
             deserializer.read_property_with_default(3, "database_name")?;
-        let file_path: rustdb_common::ByteString = deserializer.read_property_with_default(4, "file_path")?;
-        let not_null_columns: Vec<rustdb_common::ByteString> =
+        let file_path: roastedduck_common::ByteString =
+            deserializer.read_property_with_default(4, "file_path")?;
+        let not_null_columns: Vec<roastedduck_common::ByteString> =
             deserializer.read_property_with_default(5, "not_null_columns")?;
         Ok(Self {
             table_name,
@@ -464,4 +471,4 @@ impl DeserializeObject for ExportedTableData {
     }
 }
 
-rustdb_serde::impl_object_serde!(ExportedTableData);
+roastedduck_serde::impl_object_serde!(ExportedTableData);

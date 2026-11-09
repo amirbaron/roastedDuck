@@ -8,7 +8,7 @@
 //! as DuckDB (underscores between digits, `0x`/`0b` prefixes, `.5`, `1.`, `1e3`, trailing
 //! whitespace) and round exactly like it.
 
-use rustdb_types::format::is_space;
+use roastedduck_types::format::is_space;
 
 /// The per-target callbacks of the number scanner (DuckDB's `*CastOperation` structs).
 ///

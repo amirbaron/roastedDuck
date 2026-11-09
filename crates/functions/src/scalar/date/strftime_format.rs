@@ -1,7 +1,7 @@
 //! The `strftime`/`strptime` format engine (DuckDB's `strftime_format.cpp`).
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{Date, Interval, Time, Timestamp};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{Date, Interval, Time, Timestamp};
 
 use super::calendar::{self, DAY_NAMES, DAY_NAMES_ABBREVIATED, MONTH_NAMES, MONTH_NAMES_ABBREVIATED};
 use crate::temporal::timestamp_from_datetime;

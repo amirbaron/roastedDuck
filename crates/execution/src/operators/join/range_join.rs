@@ -4,18 +4,18 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use rustdb_ast::ExpressionType;
-use rustdb_buffer::{BufferManager, MemoryTag};
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_planner::operator::JoinCondition;
-use rustdb_row::sort::{
+use roastedduck_ast::ExpressionType;
+use roastedduck_buffer::{BufferManager, MemoryTag};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_planner::operator::JoinCondition;
+use roastedduck_row::sort::{
     ExternalBlockIteratorState, NullOrder, OrderModifiers, OrderType, Sort, SortColumn, SortConfig,
     SortGlobalSinkState, SortKeyType, SortLocalSinkState, SortSource, SortedRun,
 };
-use rustdb_row::{
+use roastedduck_row::{
     ChunkIterator, HeapKeepAlive, PinProperties, RowPtr, TupleDataCollection, TupleDataLayout, ValidityType,
 };
-use rustdb_types::{DataChunk, LogicalType, ValidityMask, Vector};
+use roastedduck_types::{DataChunk, LogicalType, ValidityMask, Vector};
 
 use crate::expression_executor::compare_vectors;
 use crate::{ExecutionContext, ExpressionExecutor};
@@ -35,7 +35,7 @@ pub(crate) fn order_modifiers(descending: bool) -> OrderModifiers {
 /// `lhs` sorts before `rhs`, or (unless `strict`) is equal to it, for sort keys
 /// (`MergeJoinBefore`, `IEJoinUnion::Compare`).
 #[inline]
-pub(crate) fn key_before<K: rustdb_row::sort::SortKey>(lhs: &K, rhs: &K, strict: bool) -> bool {
+pub(crate) fn key_before<K: roastedduck_row::sort::SortKey>(lhs: &K, rhs: &K, strict: bool) -> bool {
     let less_than = lhs.less(rhs);
     if !less_than && !strict {
         return !rhs.less(lhs);
@@ -125,7 +125,7 @@ pub struct LocalSortedTable {
 
 impl LocalSortedTable {
     /// A sink for the side whose condition expressions are `expressions`.
-    pub(crate) fn new(table: &SortedTable, expressions: Vec<rustdb_planner::Expression>) -> Self {
+    pub(crate) fn new(table: &SortedTable, expressions: Vec<roastedduck_planner::Expression>) -> Self {
         Self {
             executor: ExpressionExecutor::new(expressions),
             sort: table.sort.local_sink_state(),
@@ -408,7 +408,7 @@ impl SortedTable {
     }
 
     /// Payload column `column` of every row, in order (`ExtractColumn`).
-    pub(crate) fn extract_column<T: rustdb_types::NativeType>(&self, column: usize) -> Result<Vec<T>> {
+    pub(crate) fn extract_column<T: roastedduck_types::NativeType>(&self, column: usize) -> Result<Vec<T>> {
         let sorted = self.sorted()?;
         let mut result = Vec::with_capacity(self.count());
         let Some(payload) = sorted.payload_data() else {
@@ -434,7 +434,7 @@ pub(crate) fn slice_sorted_payload(
     decode_buffer: &mut Vec<u8>,
 ) -> Result<()> {
     let sorted = table.sorted()?;
-    rustdb_row::dispatch_sort_key!(sorted.key_type(), K => {
+    roastedduck_row::dispatch_sort_key!(sorted.key_type(), K => {
         let mut keys: Vec<K> = Vec::with_capacity(indices.len());
         for &index in indices {
             keys.push(state.get::<K>(sorted, index as usize)?);

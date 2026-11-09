@@ -1,11 +1,11 @@
 //! Statistics of expressions (DuckDB's `statistics/expression/propagate_*.cpp`):
 //! comparisons, conjunctions, BETWEENs and NULL tests the statistics decide are folded.
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::Result;
-use rustdb_planner::{Expression, ExpressionKind};
-use rustdb_storage::statistics::{BaseStatistics, FilterPropagateResult, StatisticsType};
-use rustdb_types::{LogicalTypeId, PhysicalType, Value};
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::Result;
+use roastedduck_planner::{Expression, ExpressionKind};
+use roastedduck_storage::statistics::{BaseStatistics, FilterPropagateResult, StatisticsType};
+use roastedduck_types::{LogicalTypeId, PhysicalType, Value};
 
 use super::{
     StatisticsPropagator, function, greater, greater_equal, has_min_max, numeric_max, numeric_min,
@@ -459,9 +459,9 @@ impl StatisticsPropagator<'_> {
 /// primitive type has the statistics of the typed values, cast if they are of another type.
 fn propagate_variant_cast(
     stats: &BaseStatistics,
-    target: &rustdb_types::LogicalType,
+    target: &roastedduck_types::LogicalType,
 ) -> Option<BaseStatistics> {
-    use rustdb_storage::statistics::{is_fully_shredded, structured_type, typed_stats};
+    use roastedduck_storage::statistics::{is_fully_shredded, structured_type, typed_stats};
     if target.is_nested() || target.id() == LogicalTypeId::Variant {
         return None;
     }
@@ -483,10 +483,10 @@ fn propagate_variant_cast(
 /// `VariantStats::PushdownExtract`): `index` is the extract's path below the column.
 pub(crate) fn pushdown_extract_statistics(
     stats: &BaseStatistics,
-    index: &rustdb_types::ColumnIndex,
+    index: &roastedduck_types::ColumnIndex,
 ) -> Option<BaseStatistics> {
-    use rustdb_storage::statistics::{StatisticsType, find_child_stats, is_fully_shredded, typed_stats};
-    use rustdb_types::variant::VariantPathComponent;
+    use roastedduck_storage::statistics::{StatisticsType, find_child_stats, is_fully_shredded, typed_stats};
+    use roastedduck_types::variant::VariantPathComponent;
     match stats.stats_type() {
         StatisticsType::Struct => {
             let child_index = usize::try_from(index.index).ok()?;
@@ -549,14 +549,14 @@ pub(crate) fn pushdown_extract_statistics(
 /// Whether statistics survive a cast (DuckDB's `StatisticsPropagator::CanPropagateCast`):
 /// only between numeric types, and not between differently scaled timestamps.
 pub(super) fn can_propagate_cast(
-    source: &rustdb_types::LogicalType,
-    target: &rustdb_types::LogicalType,
+    source: &roastedduck_types::LogicalType,
+    target: &roastedduck_types::LogicalType,
 ) -> bool {
     use LogicalTypeId as T;
     if source == target {
         return true;
     }
-    let numeric = |ty: &rustdb_types::LogicalType| {
+    let numeric = |ty: &roastedduck_types::LogicalType| {
         matches!(
             ty.physical_type(),
             PhysicalType::Int8
@@ -605,10 +605,10 @@ pub(super) fn can_propagate_cast(
 /// shredded VARIANT, or of numeric to numeric casts.
 pub(super) fn try_propagate_cast(
     stats: &BaseStatistics,
-    source: &rustdb_types::LogicalType,
-    target: &rustdb_types::LogicalType,
+    source: &roastedduck_types::LogicalType,
+    target: &roastedduck_types::LogicalType,
 ) -> Option<BaseStatistics> {
-    use rustdb_function::cast::ValueCast;
+    use roastedduck_function::cast::ValueCast;
     if source.id() == LogicalTypeId::Variant {
         return propagate_variant_cast(stats, target);
     }

@@ -2,9 +2,9 @@
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
+use roastedduck_common::{Result, STANDARD_VECTOR_SIZE};
 
-use rustdb_buffer::{BufferManager, MemoryReservation, MemoryTag};
+use roastedduck_buffer::{BufferManager, MemoryReservation, MemoryTag};
 
 use super::chunk_info::{ChunkVectorInfo, DeletedRows, ScanOptions, VersionCompression};
 use crate::VECTOR_SIZE;

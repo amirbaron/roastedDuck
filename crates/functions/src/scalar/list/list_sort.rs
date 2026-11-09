@@ -4,12 +4,12 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::string_util::{candidates_message, top_n_jaro_winkler};
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_function::{BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
-use rustdb_row::sort::{NullOrder, OrderModifiers, OrderType, create_sort_keys};
-use rustdb_types::kernels::scatter;
-use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Vector};
+use roastedduck_common::string_util::{candidates_message, top_n_jaro_winkler};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_function::{BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
+use roastedduck_row::sort::{NullOrder, OrderModifiers, OrderType, create_sort_keys};
+use roastedduck_types::kernels::scatter;
+use roastedduck_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Vector};
 
 use crate::scalar::executor::addressable;
 use crate::scalar::nested::{ListInput, all_constant, list_child_type};

@@ -100,8 +100,8 @@ let package = Package(
         "expected_additional_case_count": 1,
         "fixture_adaptations": [],
         "runtime_expectations": {
-            "RUSTDB_SWIFT_EXPECTED_LIBRARY": "exact installed Cduckdb.framework/Cduckdb path",
-            "RUSTDB_SWIFT_IDENTITY_REPORT": "fresh JSON path inside the dedicated simulator",
+            "ROASTEDDUCK_SWIFT_EXPECTED_LIBRARY": "exact installed Cduckdb.framework/Cduckdb path",
+            "ROASTEDDUCK_SWIFT_IDENTITY_REPORT": "fresh JSON path inside the dedicated simulator",
         },
         "build_or_tests_executed": False,
         "scope": "Complete pinned Swift suite inputs only; simulator build, signing, execution, case coverage and physical-device verification remain required",

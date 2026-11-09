@@ -1,9 +1,9 @@
 use std::sync::{Arc, OnceLock};
 
-use rustdb_ast::OnCreateConflict;
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_function::{AggregateFunctionSet, ScalarFunctionSet, TableFunctionSet};
-use rustdb_types::Value;
+use roastedduck_ast::OnCreateConflict;
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_function::{AggregateFunctionSet, ScalarFunctionSet, TableFunctionSet};
+use roastedduck_types::Value;
 
 use crate::{
     CatalogEntry, CatalogName, CatalogSet, CatalogType, EntryKind, SchemaEntry, StorageHook, Transaction,
@@ -20,9 +20,9 @@ pub struct Catalog {
     name: CatalogName,
     schemas: Arc<CatalogSet>,
     /// Where the database's tables keep their data.
-    io: OnceLock<Arc<rustdb_storage::TableIoManager>>,
+    io: OnceLock<Arc<roastedduck_storage::TableIoManager>>,
     /// The WAL changes to this database are logged to (database files only).
-    wal: OnceLock<Arc<rustdb_storage::wal::WriteAheadLog>>,
+    wal: OnceLock<Arc<roastedduck_storage::wal::WriteAheadLog>>,
     /// The object id of the database (`AttachedDatabase::oid`; 0 for `system`).
     oid: OnceLock<u64>,
     /// Ordinary attached databases have an entry identity while initializing their
@@ -35,9 +35,9 @@ pub struct Catalog {
     default_table: std::sync::Mutex<Option<(ByteString, ByteString)>>,
     default_entries: Arc<std::sync::Mutex<Vec<(ByteString, ByteString, DefaultEntryKind)>>>,
     /// The storage of a database file (unset in memory), for `pragma_metadata_info`.
-    storage: OnceLock<std::sync::Weak<rustdb_storage::storage_manager::StorageManager>>,
+    storage: OnceLock<std::sync::Weak<roastedduck_storage::storage_manager::StorageManager>>,
     /// The locks transactions writing to the database hold and checkpoints take.
-    locks: rustdb_storage::checkpoint_lock::DatabaseLocks,
+    locks: roastedduck_storage::checkpoint_lock::DatabaseLocks,
 }
 
 /// How a database is attached (the parts of DuckDB's `AttachedDatabase` the catalog
@@ -110,7 +110,7 @@ impl Catalog {
             default_table: std::sync::Mutex::default(),
             default_entries: Arc::default(),
             storage: OnceLock::new(),
-            locks: rustdb_storage::checkpoint_lock::DatabaseLocks::default(),
+            locks: roastedduck_storage::checkpoint_lock::DatabaseLocks::default(),
         };
         if registered && !catalog.name().eq_ignore_ascii_case(b"system") {
             catalog.finalize_registration();
@@ -219,7 +219,7 @@ impl Catalog {
 
     /// The locks transactions writing to the database hold and checkpoints take
     /// (`DuckTransactionManager::checkpoint_lock` and `vacuum_lock`).
-    pub fn locks(&self) -> &rustdb_storage::checkpoint_lock::DatabaseLocks {
+    pub fn locks(&self) -> &roastedduck_storage::checkpoint_lock::DatabaseLocks {
         &self.locks
     }
 
@@ -265,7 +265,7 @@ impl Catalog {
     }
 
     /// Records the storage of the database file (once).
-    pub fn set_storage(&self, storage: &Arc<rustdb_storage::storage_manager::StorageManager>) {
+    pub fn set_storage(&self, storage: &Arc<roastedduck_storage::storage_manager::StorageManager>) {
         let _ = self.storage.set(Arc::downgrade(storage));
     }
 
@@ -280,7 +280,7 @@ impl Catalog {
 
     /// The metadata blocks of the database file; empty in memory
     /// (`DuckCatalog::GetMetadataInfo`).
-    pub fn metadata_info(&self) -> Vec<rustdb_storage::metadata::MetadataBlockInfo> {
+    pub fn metadata_info(&self) -> Vec<roastedduck_storage::metadata::MetadataBlockInfo> {
         self.storage
             .get()
             .and_then(std::sync::Weak::upgrade)
@@ -294,16 +294,16 @@ impl Catalog {
     }
 
     /// Sets where the database's tables keep their data (once).
-    pub fn set_io(&self, io: Arc<rustdb_storage::TableIoManager>) -> Result<()> {
+    pub fn set_io(&self, io: Arc<roastedduck_storage::TableIoManager>) -> Result<()> {
         self.io
             .set(io)
             .map_err(|_| Error::internal("the storage of a catalog is set once"))
     }
 
     /// Where the database's tables keep their data.
-    pub fn io(&self) -> Result<&Arc<rustdb_storage::TableIoManager>> {
+    pub fn io(&self) -> Result<&Arc<roastedduck_storage::TableIoManager>> {
         self.io.get().ok_or_else(|| {
-            Error::internal(rustdb_common::byte_format!(
+            Error::internal(roastedduck_common::byte_format!(
                 "catalog \"{}\" has no storage",
                 self.name()
             ))
@@ -311,14 +311,14 @@ impl Catalog {
     }
 
     /// Logs every following commit to this database to `wal` (once, after replay).
-    pub fn set_wal(&self, wal: Arc<rustdb_storage::wal::WriteAheadLog>) -> Result<()> {
+    pub fn set_wal(&self, wal: Arc<roastedduck_storage::wal::WriteAheadLog>) -> Result<()> {
         self.wal
             .set(wal)
             .map_err(|_| Error::internal("the WAL of a database is set once"))
     }
 
     /// The WAL changes to this database are logged to.
-    pub fn wal(&self) -> Option<&Arc<rustdb_storage::wal::WriteAheadLog>> {
+    pub fn wal(&self) -> Option<&Arc<roastedduck_storage::wal::WriteAheadLog>> {
         self.wal.get()
     }
 
@@ -352,13 +352,13 @@ impl Catalog {
     }
 
     /// Registers a built-in pragma in `main`.
-    pub fn register_pragma_functions(&self, set: rustdb_function::PragmaFunctionSet) -> Result<()> {
+    pub fn register_pragma_functions(&self, set: roastedduck_function::PragmaFunctionSet) -> Result<()> {
         let name = set.name.to_string();
         self.register_builtin(name.into(), EntryKind::PragmaFunction(set))
     }
 
     /// Registers a built-in COPY file format in `main`.
-    pub fn register_copy_function(&self, function: rustdb_function::CopyFunction) -> Result<()> {
+    pub fn register_copy_function(&self, function: roastedduck_function::CopyFunction) -> Result<()> {
         let name = function.name.to_string();
         self.register_builtin(name.into(), EntryKind::CopyFunction(Box::new(function)))
     }
@@ -405,10 +405,9 @@ impl Catalog {
             return self.register_scalar_functions(set);
         };
         let EntryKind::ScalarFunction(current) = &existing.kind else {
-            return Err(rustdb_common::Error::internal(rustdb_common::byte_format!(
-                "\"{}\" is not a scalar function",
-                set.name
-            )));
+            return Err(roastedduck_common::Error::internal(
+                roastedduck_common::byte_format!("\"{}\" is not a scalar function", set.name),
+            ));
         };
         let mut merged = current.clone();
         merged.merge_function_set(set, true);
@@ -433,17 +432,18 @@ impl Catalog {
             return self.register_table_functions(set);
         };
         let EntryKind::TableFunction(current) = &existing.kind else {
-            return Err(rustdb_common::Error::internal(rustdb_common::byte_format!(
-                "\"{}\" is not a table function",
-                set.name
-            )));
+            return Err(roastedduck_common::Error::internal(
+                roastedduck_common::byte_format!("\"{}\" is not a table function", set.name),
+            ));
         };
         let mut merged = current.clone();
         let name = Arc::clone(&set.name);
         if !merged.merge_function_set(set) {
-            return Err(rustdb_common::Error::catalog(rustdb_common::byte_format!(
-                "Failed to add new function overloads to function \"{name}\": function overload already exists"
-            )));
+            return Err(roastedduck_common::Error::catalog(
+                roastedduck_common::byte_format!(
+                    "Failed to add new function overloads to function \"{name}\": function overload already exists"
+                ),
+            ));
         }
         let mut kind = EntryKind::TableFunction(merged);
         kind.set_function_catalog(self.name(), DEFAULT_SCHEMA);
@@ -468,12 +468,14 @@ impl Catalog {
             .ok_or_else(missing_main)?;
         let schema = schema.as_schema().ok_or_else(missing_main)?;
         let existing = schema.functions.get_committed(name).ok_or_else(|| {
-            rustdb_common::Error::internal(rustdb_common::byte_format!("Function \"{name}\" not found"))
+            roastedduck_common::Error::internal(roastedduck_common::byte_format!(
+                "Function \"{name}\" not found"
+            ))
         })?;
         let EntryKind::ScalarFunction(current) = &existing.kind else {
-            return Err(rustdb_common::Error::internal(rustdb_common::byte_format!(
-                "\"{name}\" is not a scalar function"
-            )));
+            return Err(roastedduck_common::Error::internal(
+                roastedduck_common::byte_format!("\"{name}\" is not a scalar function"),
+            ));
         };
         let mut altered = current.clone();
         alter(&mut altered)?;
@@ -719,7 +721,7 @@ impl Catalog {
                 ));
             }
             if old.catalog_type() != ty {
-                return Err(Error::catalog(rustdb_common::byte_format!(
+                return Err(Error::catalog(roastedduck_common::byte_format!(
                     "Existing object {name} is of type {}, trying to replace with type {}",
                     old.catalog_type().display_name(),
                     ty.display_name()
@@ -770,7 +772,7 @@ impl Catalog {
         name: impl AsRef<[u8]>,
         entry: CatalogEntry,
         hook: StorageHook,
-        info: Option<rustdb_ast::AlterInfo>,
+        info: Option<roastedduck_ast::AlterInfo>,
     ) -> Result<()> {
         let name = name.as_ref();
         let schema = schema.as_ref();
@@ -795,7 +797,7 @@ impl Catalog {
         name: impl AsRef<[u8]>,
         entry: CatalogEntry,
         hook: StorageHook,
-        info: Option<rustdb_ast::AlterInfo>,
+        info: Option<roastedduck_ast::AlterInfo>,
     ) -> Result<()> {
         let name = name.as_ref();
         let schema = schema.as_ref();
@@ -812,7 +814,7 @@ impl Catalog {
             return Ok(());
         }
         if set.get(transaction, entry.name()).is_some() {
-            return Err(Error::catalog(rustdb_common::byte_format!(
+            return Err(Error::catalog(roastedduck_common::byte_format!(
                 "Could not rename \"{name}\" to \"{}\": another entry with this name already exists!",
                 entry.name()
             )));
@@ -919,14 +921,14 @@ impl Catalog {
             return Err(missing_entry(ty, name));
         };
         if existing.catalog_type() != ty {
-            return Err(Error::catalog(rustdb_common::byte_format!(
+            return Err(Error::catalog(roastedduck_common::byte_format!(
                 "Existing object {name} is of type {}, trying to drop type {}",
                 existing.catalog_type().display_name(),
                 ty.display_name()
             )));
         }
         if existing.internal && !allow_internal {
-            return Err(Error::catalog(rustdb_common::byte_format!(
+            return Err(Error::catalog(roastedduck_common::byte_format!(
                 "Cannot drop entry \"{}\" because it is an internal system entry",
                 existing.name()
             )));
@@ -1042,14 +1044,14 @@ impl Catalog {
         schema: impl AsRef<[u8]>,
         entry: &CatalogEntry,
         (owner_schema, owner_name): (impl AsRef<[u8]>, impl AsRef<[u8]>),
-        info: Option<rustdb_ast::AlterInfo>,
+        info: Option<roastedduck_ast::AlterInfo>,
     ) -> Result<()> {
         let schema = schema.as_ref();
         let owner_schema = owner_schema.as_ref();
         let owner_name = owner_name.as_ref();
 
         let missing = || {
-            Error::catalog(rustdb_common::byte_format!(
+            Error::catalog(roastedduck_common::byte_format!(
                 "CatalogElement \"{owner_schema}.{owner_name}\" does not exist!"
             ))
         };
@@ -1070,16 +1072,16 @@ impl Catalog {
             .ok_or_else(missing)?;
         let owner_schema = owner_schema_entry.name().to_owned();
         let dependency_error =
-            |message: ByteString| Error::new_bytes(rustdb_common::ErrorKind::Dependency, message);
+            |message: ByteString| Error::new_bytes(roastedduck_common::ErrorKind::Dependency, message);
         if let Some(other) = self.owner(transaction, &owner) {
-            return Err(dependency_error(rustdb_common::byte_format!(
+            return Err(dependency_error(roastedduck_common::byte_format!(
                 "{} can not become the owner, it is already owned by {}",
                 owner.name(),
                 other.name()
             )));
         }
         if let Some((_, owned)) = self.owned_entries(transaction, schema, entry).first() {
-            return Err(dependency_error(rustdb_common::byte_format!(
+            return Err(dependency_error(roastedduck_common::byte_format!(
                 "{} already owns {}. Cannot have circular dependencies",
                 entry.name(),
                 owned.name()
@@ -1089,7 +1091,7 @@ impl Catalog {
             if Arc::ptr_eq(&other, &owner) {
                 return Ok(());
             }
-            return Err(dependency_error(rustdb_common::byte_format!(
+            return Err(dependency_error(roastedduck_common::byte_format!(
                 "{} is already owned by {}",
                 entry.name(),
                 other.name()
@@ -1129,7 +1131,7 @@ impl Catalog {
         schema: impl AsRef<[u8]>,
         entry: &CatalogEntry,
         comment: Value,
-        info: Option<rustdb_ast::AlterInfo>,
+        info: Option<roastedduck_ast::AlterInfo>,
     ) -> Result<()> {
         let schema = schema.as_ref();
 
@@ -1156,7 +1158,7 @@ impl Catalog {
         schema: impl AsRef<[u8]>,
         entry: &CatalogEntry,
         (column, comment): (impl AsRef<[u8]>, Value),
-        info: Option<rustdb_ast::AlterInfo>,
+        info: Option<roastedduck_ast::AlterInfo>,
     ) -> Result<()> {
         let schema = schema.as_ref();
         let column = column.as_ref();
@@ -1171,7 +1173,7 @@ impl Catalog {
                     .iter_mut()
                     .find(|candidate| candidate.name.eq_ignore_ascii_case(column))
                 else {
-                    return Err(Error::binder(rustdb_common::byte_format!(
+                    return Err(Error::binder(roastedduck_common::byte_format!(
                         "Table \"{}\" does not have a column with name \"{column}\"",
                         entry.name()
                     )));
@@ -1186,7 +1188,7 @@ impl Catalog {
                         .is_some_and(|name| name.as_bytes() == column)
                 });
                 if !exists {
-                    return Err(Error::binder(rustdb_common::byte_format!(
+                    return Err(Error::binder(roastedduck_common::byte_format!(
                         "View \"{}\" does not have a column with name \"{column}\"",
                         entry.name()
                     )));
@@ -1266,13 +1268,16 @@ impl Catalog {
             return Ok(());
         }
         if !cascade {
-            let mut message = rustdb_common::byte_format!(
+            let mut message = roastedduck_common::byte_format!(
                 "Cannot drop entry \"{}\" because there are entries that depend on it.\n",
                 entry.name()
             );
             self.collect_dependents(transaction, &dependents, entry, &mut message);
             message.push_bytes("Use DROP...CASCADE to drop all dependents.");
-            return Err(Error::new_bytes(rustdb_common::ErrorKind::Dependency, message));
+            return Err(Error::new_bytes(
+                roastedduck_common::ErrorKind::Dependency,
+                message,
+            ));
         }
         for (dependent_schema, dependent) in dependents {
             self.drop_entry(
@@ -1296,7 +1301,7 @@ impl Catalog {
         message: &mut ByteString,
     ) {
         for (schema, dependent) in dependents {
-            let _ = rustdb_common::byte_write!(
+            let _ = roastedduck_common::byte_write!(
                 message,
                 "{} depends on {}.\n",
                 entry_to_string(dependent),
@@ -1325,7 +1330,7 @@ impl Catalog {
             return Err(missing_entry(CatalogType::Schema, name));
         };
         if schema.internal {
-            return Err(Error::catalog(rustdb_common::byte_format!(
+            return Err(Error::catalog(roastedduck_common::byte_format!(
                 "Cannot drop entry \"{}\" because it is an internal system entry",
                 schema.name()
             )));
@@ -1345,12 +1350,12 @@ impl Catalog {
             .filter(|entry| !entry.internal)
             .collect();
         if !dependents.is_empty() && !cascade {
-            let mut message = rustdb_common::byte_format!(
+            let mut message = roastedduck_common::byte_format!(
                 "Cannot drop entry \"{}\" because there are entries that depend on it.\n",
                 schema.name()
             );
             for entry in dependents.iter().rev() {
-                let _ = rustdb_common::byte_write!(
+                let _ = roastedduck_common::byte_write!(
                     message,
                     "{} \"{}\" depends on schema \"{}\".\n",
                     entry.catalog_type().display_name().to_lowercase(),
@@ -1359,7 +1364,10 @@ impl Catalog {
                 );
             }
             message.push_bytes("Use DROP...CASCADE to drop all dependents.");
-            return Err(Error::new_bytes(rustdb_common::ErrorKind::Dependency, message));
+            return Err(Error::new_bytes(
+                roastedduck_common::ErrorKind::Dependency,
+                message,
+            ));
         }
         for set in sets {
             for entry in set.scan(transaction) {
@@ -1401,7 +1409,7 @@ fn entry_to_string(entry: &CatalogEntry) -> ByteString {
         CatalogType::Macro => "macro function",
         CatalogType::TableMacro => "table macro function",
     };
-    rustdb_common::byte_format!("{kind} \"{}\"", entry.name())
+    roastedduck_common::byte_format!("{kind} \"{}\"", entry.name())
 }
 
 /// Whether `name` is one of the builtin types every `main` schema holds (DuckDB's
@@ -1410,14 +1418,15 @@ fn is_builtin_type(schema: impl AsRef<[u8]>, name: impl AsRef<[u8]>) -> bool {
     let name = name.as_ref();
     let schema = schema.as_ref();
 
-    schema.eq_ignore_ascii_case(DEFAULT_SCHEMA.as_bytes()) && rustdb_types::builtin_type_id(name).is_some()
+    schema.eq_ignore_ascii_case(DEFAULT_SCHEMA.as_bytes())
+        && roastedduck_types::builtin_type_id(name).is_some()
 }
 
 /// DuckDB's error for dropping or replacing an internal entry.
 fn internal_entry_error(name: impl AsRef<[u8]>) -> Error {
     let name = name.as_ref();
 
-    Error::catalog(rustdb_common::byte_format!(
+    Error::catalog(roastedduck_common::byte_format!(
         "Cannot drop entry \"{name}\" because it is an internal system entry"
     ))
 }
@@ -1431,7 +1440,7 @@ fn missing_main() -> Error {
 fn missing_entry(ty: CatalogType, name: impl AsRef<[u8]>) -> Error {
     let name = name.as_ref();
 
-    Error::catalog(rustdb_common::byte_format!(
+    Error::catalog(roastedduck_common::byte_format!(
         "{} with name {name} does not exist!",
         ty.display_name()
     ))
@@ -1447,7 +1456,7 @@ fn missing_entry(ty: CatalogType, name: impl AsRef<[u8]>) -> Error {
 fn entry_already_exists(ty: CatalogType, name: impl AsRef<[u8]>) -> Error {
     let name = name.as_ref();
 
-    Error::catalog(rustdb_common::byte_format!(
+    Error::catalog(roastedduck_common::byte_format!(
         "{} with name \"{name}\" already exists!",
         ty.display_name()
     ))
@@ -1459,7 +1468,7 @@ fn entry_already_exists(ty: CatalogType, name: impl AsRef<[u8]>) -> Error {
 
 #[cfg(test)]
 mod tests {
-    use rustdb_types::LogicalType;
+    use roastedduck_types::LogicalType;
 
     use super::*;
     use crate::{TransactionManager, TypeEntry};
@@ -1468,7 +1477,7 @@ mod tests {
     fn collation_entries_keep_their_transform_and_ignore_duplicate_extension_registration() {
         let catalog = Catalog::new("system").unwrap();
         let collation = |combinable| crate::CollationEntry {
-            function: rustdb_function::ScalarFunction::new(
+            function: roastedduck_function::ScalarFunction::new(
                 "test_transform",
                 vec![LogicalType::VARCHAR],
                 LogicalType::VARCHAR,
@@ -1782,7 +1791,7 @@ mod tests {
         let transaction = manager.begin();
         let mut entry = CatalogEntry::new(
             "python_udf",
-            EntryKind::ScalarFunction(rustdb_function::ScalarFunctionSet::new("python_udf")),
+            EntryKind::ScalarFunction(roastedduck_function::ScalarFunctionSet::new("python_udf")),
         );
         entry.internal = true;
         catalog

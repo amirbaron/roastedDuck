@@ -1,9 +1,9 @@
 //! `product(DOUBLE)` (DuckDB's `product.cpp`).
 
-use rustdb_common::Result;
-use rustdb_function::aggregate::{Unary, UnaryAggregate};
-use rustdb_function::{AggregateFunction, AggregateFunctionSet};
-use rustdb_types::LogicalType;
+use roastedduck_common::Result;
+use roastedduck_function::aggregate::{Unary, UnaryAggregate};
+use roastedduck_function::{AggregateFunction, AggregateFunctionSet};
+use roastedduck_types::LogicalType;
 
 /// Whether any value was seen, and the running product.
 #[derive(Clone, Copy, Debug)]

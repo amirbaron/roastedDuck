@@ -4,9 +4,9 @@ use std::io::Read as _;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
-use rustdb_buffer::{BufferHandle, BufferManager, MemoryTag};
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_function::registered_files::FileHandle;
+use roastedduck_buffer::{BufferHandle, BufferManager, MemoryTag};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_function::registered_files::FileHandle;
 
 use super::{S3Request, encode, io_error, optional_tag, setting};
 use crate::HttpFile;
@@ -38,7 +38,7 @@ impl PartBuffer {
 struct WriteContext {
     transport: HttpFile,
     source: String,
-    opener: Option<Arc<rustdb_function::FunctionClient>>,
+    opener: Option<Arc<roastedduck_function::FunctionClient>>,
 }
 
 struct Response {
@@ -70,7 +70,7 @@ impl WriteContext {
         let _opener = self
             .opener
             .clone()
-            .map(rustdb_function::file_system::activate_opener);
+            .map(roastedduck_function::file_system::activate_opener);
         let mut request = self.transport.clone();
         if !query.is_empty() {
             request.url = format!("{}?{query}", self.transport.url);
@@ -269,7 +269,7 @@ impl S3WriteFile {
     pub(super) fn open(request: S3Request, manager: BufferManager) -> Result<Self> {
         let text =
             |name, default| setting(name).map_or_else(|| Ok(String::from(default)), |v| v.to_varchar());
-        let max_size = rustdb_buffer::parse_memory_limit(&text("s3_uploader_max_filesize", "800GB")?)?;
+        let max_size = roastedduck_buffer::parse_memory_limit(&text("s3_uploader_max_filesize", "800GB")?)?;
         let max_parts: usize = text("s3_uploader_max_parts_per_file", "10000")?
             .parse()
             .map_err(io_error)?;
@@ -282,8 +282,8 @@ impl S3WriteFile {
             ));
         }
         let part_size = usize::try_from((max_size / max_parts as u64).max(5_242_880)).map_err(io_error)?;
-        let block_size =
-            rustdb_buffer::DEFAULT_BLOCK_ALLOC_SIZE - rustdb_buffer::DEFAULT_BLOCK_HEADER_STORAGE_SIZE;
+        let block_size = roastedduck_buffer::DEFAULT_BLOCK_ALLOC_SIZE
+            - roastedduck_buffer::DEFAULT_BLOCK_HEADER_STORAGE_SIZE;
         let part_size = part_size
             .checked_add(block_size - 1)
             .ok_or_else(|| Error::invalid_input("S3 uploader part size is too large"))?
@@ -295,7 +295,7 @@ impl S3WriteFile {
             context: Arc::new(WriteContext {
                 transport,
                 source,
-                opener: rustdb_function::file_system::opener(),
+                opener: roastedduck_function::file_system::opener(),
             }),
             manager,
             part_size,
@@ -386,7 +386,7 @@ impl S3WriteFile {
             .unwrap_or_else(PoisonError::into_inner)
             .active += 1;
         let spawned = std::thread::Builder::new()
-            .name("rustdb-s3-upload".into())
+            .name("roastedduck-s3-upload".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     context.put(&query, buffer.bytes())

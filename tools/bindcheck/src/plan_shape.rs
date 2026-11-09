@@ -1,13 +1,13 @@
 //! The shape of a logical plan: operator types, their expressions (class and type, with
-//! nested expressions) and children. Computed from rustdb's plan and from DuckDB's
-//! `json_serialize_plan`, it shows whether the binder built the same plan where rustdb
+//! nested expressions) and children. Computed from roastedduck's plan and from DuckDB's
+//! `json_serialize_plan`, it shows whether the binder built the same plan where roastedduck
 //! cannot execute it yet.
 
 use std::fmt::Write as _;
 
-use rustdb_planner::operator::LogicalKind;
-use rustdb_planner::{Expression, LogicalOperator};
-use rustdb_serde::json::{JsonValue, parse_json};
+use roastedduck_planner::operator::LogicalKind;
+use roastedduck_planner::{Expression, LogicalOperator};
+use roastedduck_serde::json::{JsonValue, parse_json};
 
 fn join(parts: impl IntoIterator<Item = String>) -> String {
     parts.into_iter().collect::<Vec<_>>().join(",")
@@ -16,7 +16,7 @@ fn join(parts: impl IntoIterator<Item = String>) -> String {
 /// The nested expressions in DuckDB's serialization order (which, for window
 /// functions, differs from the expression iterator's).
 fn serialization_children(expression: &Expression) -> Vec<&Expression> {
-    if let rustdb_planner::ExpressionKind::Window(window) = &expression.kind {
+    if let roastedduck_planner::ExpressionKind::Window(window) = &expression.kind {
         let mut children: Vec<&Expression> = window.children.iter().collect();
         children.extend(&window.partitions);
         children.extend(window.orders.iter().map(|order| &order.expression));
@@ -45,7 +45,7 @@ fn rust_expression(expression: &Expression) -> String {
     }
 }
 
-/// The shape of rustdb's (resolved, unoptimized) plan.
+/// The shape of roastedduck's (resolved, unoptimized) plan.
 pub fn rust_shape(op: &LogicalOperator) -> String {
     let mut text = op.operator_type().name().to_owned();
     if let LogicalKind::ExpressionGet { expressions, .. } = &op.kind {

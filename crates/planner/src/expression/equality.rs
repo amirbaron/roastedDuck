@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use rustdb_function::{AggregateFunction, FunctionData, ScalarFunction};
+use roastedduck_function::{AggregateFunction, FunctionData, ScalarFunction};
 
 use super::{BoundOrderByNode, BoundOrderModifier, Expression, ExpressionKind};
 

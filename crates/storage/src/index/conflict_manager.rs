@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use rustdb_common::ByteString;
+use roastedduck_common::ByteString;
 
 use super::VerifyExistenceType;
 

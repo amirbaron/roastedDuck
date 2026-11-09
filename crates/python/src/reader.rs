@@ -3,9 +3,9 @@ use crate::connection::{ResultCursor, lock};
 use crate::{error, host};
 use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyDict, PyTuple};
-use rustdb_arrow::ffi::{ArrowArray, ArrowArrayStream, ArrowSchema};
-use rustdb_common::{Error, Result};
-use rustdb_types::DataChunk;
+use roastedduck_arrow::ffi::{ArrowArray, ArrowArrayStream, ArrowSchema};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::DataChunk;
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::sync::{Arc, Mutex};
 
@@ -66,7 +66,7 @@ pub(super) fn batch_arguments(
 }
 
 struct ReaderData {
-    connection: Arc<Mutex<rustdb::Connection>>,
+    connection: Arc<Mutex<roastedduck::Connection>>,
     cursor: Option<ResultCursor>,
     metadata: host::Metadata,
     chunk: Option<DataChunk>,
@@ -94,13 +94,13 @@ impl ReaderData {
             self.chunk = None;
             if self.error_on_closed {
                 return Err(Error::new(
-                    rustdb_common::ErrorKind::Invalid,
+                    roastedduck_common::ErrorKind::Invalid,
                     "Query Stream is closed",
                 ));
             }
             return Ok(None);
         }
-        let mut appender = rustdb_arrow::ArrowAppender::new(
+        let mut appender = roastedduck_arrow::ArrowAppender::new(
             self.metadata.types.clone(),
             self.batch_size.min(2048),
             self.metadata.arrow.clone(),
@@ -185,7 +185,7 @@ unsafe extern "C" fn get_schema(stream: *mut ArrowArrayStream, out: *mut ArrowSc
             }
         }
         // SAFETY: out is writable for the duration of this callback.
-        rustdb_arrow::to_arrow_schema(
+        roastedduck_arrow::to_arrow_schema(
             unsafe { &mut *out },
             &value.metadata.types,
             &value.metadata.names,
@@ -265,7 +265,7 @@ unsafe extern "C" fn release(stream: *mut ArrowArrayStream) {
 
 pub(super) fn export(
     py: Python<'_>,
-    connection: Arc<Mutex<rustdb::Connection>>,
+    connection: Arc<Mutex<roastedduck::Connection>>,
     cursor: ResultCursor,
     batch_size: usize,
     capsule: bool,
@@ -274,14 +274,14 @@ pub(super) fn export(
 }
 pub(super) fn export_polars(
     py: Python<'_>,
-    connection: Arc<Mutex<rustdb::Connection>>,
+    connection: Arc<Mutex<roastedduck::Connection>>,
     cursor: ResultCursor,
 ) -> PyResult<Py<PyAny>> {
     export_with_options(py, connection, cursor, 1_000_000, false, false, true)
 }
 fn export_with_options(
     py: Python<'_>,
-    connection: Arc<Mutex<rustdb::Connection>>,
+    connection: Arc<Mutex<roastedduck::Connection>>,
     mut cursor: ResultCursor,
     batch_size: usize,
     capsule: bool,

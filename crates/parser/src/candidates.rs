@@ -1,7 +1,7 @@
 //! "Did you mean" candidates for unrecognized names (DuckDB's
 //! `StringUtil::TopNJaroWinkler` and `StringUtil::CandidatesMessage`).
 
-use rustdb_common::Error;
+use roastedduck_common::Error;
 
 /// The Jaro similarity of two byte strings (rapidfuzz's `jaro_similarity`, as vendored
 /// by DuckDB).
@@ -99,7 +99,7 @@ fn candidates_message(candidates: &[&str], label: &str) -> String {
 pub(crate) fn enum_error(value: impl AsRef<[u8]>, enum_name: &str, names: &[&str]) -> Error {
     let value = value.as_ref();
     let closest = top_n_jaro_winkler(names, value);
-    Error::not_implemented(rustdb_common::byte_format!(
+    Error::not_implemented(roastedduck_common::byte_format!(
         "Enum value: unrecognized value \"{value}\" for enum \"{enum_name}\"\n{}",
         candidates_message(&closest, "Candidates")
     ))

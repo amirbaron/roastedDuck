@@ -4,9 +4,9 @@
 //! `[u64 size][u64 checksum][size bytes]`, each a `BinarySerializer` object whose first
 //! property (100) is the `WALType`.
 
-use rustdb_ast::{AlterInfoKind, CreateInfo, ParseInfo};
-use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
-use rustdb_serde::{
+use roastedduck_ast::{AlterInfoKind, CreateInfo, ParseInfo};
+use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
+use roastedduck_serde::{
     DeserializePointee, Deserializer, Pointee, SerializationCompatibility, SerializationOptions,
     deserialize_present, serialize_present,
 };
@@ -72,7 +72,7 @@ pub struct Mismatch {
 }
 
 /// Round-trips the catalog entry of a WAL entry (a `CreateInfo` or `AlterInfo`) through
-/// rustdb's parse tree: `None` for entries that hold none, else the entry's kind or
+/// roastedduck's parse tree: `None` for entries that hold none, else the entry's kind or
 /// how it differs.
 pub fn check_entry(
     entry: &Entry<'_>,
@@ -101,7 +101,7 @@ fn round_trip<T: Pointee + DeserializePointee>(
     compatibility: &SerializationCompatibility,
     describe: impl Fn(&T) -> String,
 ) -> Result<String, Mismatch> {
-    let read_error = |e: rustdb_common::Error| Mismatch {
+    let read_error = |e: roastedduck_common::Error| Mismatch {
         kind: "unreadable".to_owned(),
         detail: e.to_string(),
     };

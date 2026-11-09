@@ -3,8 +3,8 @@
 use std::ffi::{c_char, c_void};
 use std::sync::Arc;
 
-use rustdb::LogStorage;
-use rustdb_function::logging::LogLevel;
+use roastedduck::LogStorage;
+use roastedduck_function::logging::LogLevel;
 
 use crate::function::DuckdbDeleteCallback;
 use crate::helper::{opt_str, to_cstring};

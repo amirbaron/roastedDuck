@@ -7,8 +7,8 @@
 use std::collections::BTreeMap;
 use std::ffi::c_char;
 
-use rustdb_common::string_util::json_quote;
-use rustdb_common::{Error, Result};
+use roastedduck_common::string_util::json_quote;
+use roastedduck_common::{Error, Result};
 
 use crate::type_extension::ArrowExtensionMetadata;
 

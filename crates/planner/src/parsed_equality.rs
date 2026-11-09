@@ -2,10 +2,10 @@
 //! aliases and query locations are ignored and column names compare case-insensitively.
 //! The binder uses it to match select-list, GROUP BY and ORDER BY expressions.
 
-use rustdb_ast::visit::{VisitorMut, walk_expression, walk_table_ref};
-use rustdb_ast::{ExpressionType, ParsedExpression, ParsedExpressionKind, TableRef};
-use rustdb_common::ByteString;
-use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo, TypeParameterValue, UnboundTypeInfo};
+use roastedduck_ast::visit::{VisitorMut, walk_expression, walk_table_ref};
+use roastedduck_ast::{ExpressionType, ParsedExpression, ParsedExpressionKind, TableRef};
+use roastedduck_common::ByteString;
+use roastedduck_types::{LogicalType, LogicalTypeId, TypeInfo, TypeParameterValue, UnboundTypeInfo};
 use std::collections::HashMap;
 
 /// Clears what equality ignores.
@@ -121,7 +121,7 @@ impl<V> ParsedExpressionMap<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustdb_types::Value;
+    use roastedduck_types::Value;
 
     #[test]
     fn wide_column_reference_map_preserves_normalized_expression_equality() {

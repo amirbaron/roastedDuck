@@ -1,9 +1,9 @@
 //! The public `sql_auto_complete` bind/scan path with real catalog entries.
-use rustdb_catalog::{Catalog, TransactionManager};
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_function::{FunctionClient, TableFunctionBindInput, TableScanState, cast::CastFunctionSet};
-use rustdb_planner::{ClientContext, Expression, ExpressionEvaluator, PlannerConfig};
-use rustdb_types::{DataChunk, Value};
+use roastedduck_catalog::{Catalog, TransactionManager};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_function::{FunctionClient, TableFunctionBindInput, TableScanState, cast::CastFunctionSet};
+use roastedduck_planner::{ClientContext, Expression, ExpressionEvaluator, PlannerConfig};
+use roastedduck_types::{DataChunk, Value};
 use std::sync::Arc;
 #[derive(Debug)]
 struct UnusedEvaluator;
@@ -25,14 +25,14 @@ fn suggestions(name: ByteString) -> Result<Vec<ByteString>> {
         casts: Arc::new(CastFunctionSet::new()),
         evaluator: Arc::new(UnusedEvaluator),
         config: PlannerConfig::default(),
-        prepared_statements: rustdb_common::CaseInsensitiveMap::default(),
+        prepared_statements: roastedduck_common::CaseInsensitiveMap::default(),
         function_client: Arc::new(FunctionClient::default()),
         dependency_recorder: Arc::default(),
         database_state: None,
-        user_variables: rustdb_common::CaseInsensitiveMap::default(),
+        user_variables: roastedduck_common::CaseInsensitiveMap::default(),
         replacement_scans: Vec::new(),
     };
-    let functions = rustdb_autocomplete::autocomplete_table_functions(Arc::new(Vec::new));
+    let functions = roastedduck_autocomplete::autocomplete_table_functions(Arc::new(Vec::new));
     let function = &functions[0].functions[0];
     let input = [Value::varchar("USE ")];
     let parameters = [

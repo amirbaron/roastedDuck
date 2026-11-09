@@ -1,10 +1,10 @@
 //! Frozen C++ pivot/name codecs and value rendering outcomes, including exceptions.
-use rustdb_ast::SelectStatement;
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_function::cast::ValueCast;
-use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
-use rustdb_serde::{Deserializer, SerializationOptions, Serializer};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_ast::SelectStatement;
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
+use roastedduck_serde::{Deserializer, SerializationOptions, Serializer};
+use roastedduck_types::{LogicalType, Value};
 fn decode(hex: &str) -> Result<Vec<u8>> {
     if !hex.len().is_multiple_of(2) {
         return Err(Error::invalid_input("odd oracle hex length"));

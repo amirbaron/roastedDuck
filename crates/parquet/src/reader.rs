@@ -3,9 +3,9 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_storage::TableFilter;
-use rustdb_types::{LogicalType, Sel, SelectionVector, Value, Vector, VectorKind};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_storage::TableFilter;
+use roastedduck_types::{LogicalType, Sel, SelectionVector, Value, Vector, VectorKind};
 
 use crate::column_reader::{ChildProjection, ColumnReader, ReaderContext, RowNumberReader, StructReader};
 use crate::file::{ParquetFile, load_metadata};
@@ -15,7 +15,7 @@ use crate::thrift::FileMetaData;
 /// A column of a file as the multi-file reader sees it (`MultiFileColumnDefinition`).
 #[derive(Clone, Debug)]
 pub struct ColumnDefinition {
-    pub name: rustdb_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     pub logical_type: LogicalType,
     /// The field id, if the file has one for the column.
     pub identifier: Option<Value>,
@@ -40,7 +40,7 @@ impl ParquetReader {
         // Remote footer reads use the same bounded 16–256 KiB estimate as C++.
         // Row-group buffering remains controlled independently by `prefetch`.
         let prefetch_footer = options.prefetch
-            || (!options.disable_prefetch && rustdb_function::file_system::is_remote_file(path));
+            || (!options.disable_prefetch && roastedduck_function::file_system::is_remote_file(path));
         let file = Arc::new(ParquetFile::open(
             path,
             options.file_cache.clone(),
@@ -88,16 +88,16 @@ impl ParquetReader {
         footer_len: u32,
         options: ParquetOptions,
     ) -> Result<Self> {
-        let path = rustdb_common::ByteString::from(file.path());
+        let path = roastedduck_common::ByteString::from(file.path());
         if let Some(algorithm) = &metadata.encryption_algorithm
             && algorithm.aes_gcm_ctr_v1.is_some()
         {
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "File '{path}' is encrypted with AES_GCM_CTR_V1, but only AES_GCM_V1 is supported"
             )));
         }
         if metadata.schema.len() < 2 {
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "Failed to read Parquet file '{path}': Need at least one non-root column in the file"
             )));
         }
@@ -147,14 +147,14 @@ impl ParquetReader {
     pub fn read_statistics(
         &self,
         name: &[u8],
-        casts: &rustdb_function::cast::CastFunctionSet,
-    ) -> Option<rustdb_storage::statistics::BaseStatistics> {
+        casts: &roastedduck_function::cast::CastFunctionSet,
+    ) -> Option<roastedduck_storage::statistics::BaseStatistics> {
         let index = self
             .columns
             .iter()
             .position(|column| column.name.as_bytes() == name)?;
         let schema = self.root_schema.children.get(index)?;
-        let mut result: Option<rustdb_storage::statistics::BaseStatistics> = None;
+        let mut result: Option<roastedduck_storage::statistics::BaseStatistics> = None;
         for group in &self.context.metadata.row_groups {
             let stats = crate::statistics::transform_column_statistics(
                 schema,
@@ -175,8 +175,8 @@ impl ParquetReader {
     pub fn row_number_statistics_of(
         &self,
         row_group: usize,
-    ) -> Option<rustdb_storage::statistics::BaseStatistics> {
-        use rustdb_storage::statistics::BaseStatistics;
+    ) -> Option<roastedduck_storage::statistics::BaseStatistics> {
+        use roastedduck_storage::statistics::BaseStatistics;
         let groups = &self.context.metadata.row_groups;
         let group = groups.get(row_group)?;
         if group.num_rows == 0 {
@@ -184,9 +184,9 @@ impl ParquetReader {
         }
         let offset: i64 = groups[..row_group].iter().map(|group| group.num_rows).sum();
         let mut stats = BaseStatistics::create_unknown(LogicalType::BIGINT);
-        if let rustdb_storage::statistics::StatsData::Numeric(numeric) = stats.data_mut() {
-            numeric.min = Some(rustdb_storage::statistics::NumericValue::I64(offset));
-            numeric.max = Some(rustdb_storage::statistics::NumericValue::I64(
+        if let roastedduck_storage::statistics::StatsData::Numeric(numeric) = stats.data_mut() {
+            numeric.min = Some(roastedduck_storage::statistics::NumericValue::I64(offset));
+            numeric.max = Some(roastedduck_storage::statistics::NumericValue::I64(
                 offset + group.num_rows - 1,
             ));
         }
@@ -196,8 +196,8 @@ impl ParquetReader {
 
     /// The statistics of the `file_row_number` column (`ParquetColumnSchema::Stats` of a
     /// `FILE_ROW_NUMBER` column): each row group's range of row numbers.
-    pub fn row_number_statistics(&self) -> Option<rustdb_storage::statistics::BaseStatistics> {
-        use rustdb_storage::statistics::BaseStatistics;
+    pub fn row_number_statistics(&self) -> Option<roastedduck_storage::statistics::BaseStatistics> {
+        use roastedduck_storage::statistics::BaseStatistics;
         let mut result: Option<BaseStatistics> = None;
         let mut offset = 0i64;
         for group in &self.context.metadata.row_groups {
@@ -205,9 +205,9 @@ impl ParquetReader {
                 BaseStatistics::create_empty(LogicalType::BIGINT)
             } else {
                 let mut stats = BaseStatistics::create_unknown(LogicalType::BIGINT);
-                if let rustdb_storage::statistics::StatsData::Numeric(numeric) = stats.data_mut() {
-                    numeric.min = Some(rustdb_storage::statistics::NumericValue::I64(offset));
-                    numeric.max = Some(rustdb_storage::statistics::NumericValue::I64(
+                if let roastedduck_storage::statistics::StatsData::Numeric(numeric) = stats.data_mut() {
+                    numeric.min = Some(roastedduck_storage::statistics::NumericValue::I64(offset));
+                    numeric.max = Some(roastedduck_storage::statistics::NumericValue::I64(
                         offset + group.num_rows - 1,
                     ));
                 }
@@ -294,31 +294,33 @@ pub struct CachedMetadata {
 
 impl CachedMetadata {
     /// The object cache key of the footer of `path` (`GetWithTypePrefix`).
-    pub fn key(path: &[u8]) -> rustdb_common::ByteString {
-        rustdb_common::byte_format!("parquet_metadata{path}")
+    pub fn key(path: &[u8]) -> roastedduck_common::ByteString {
+        roastedduck_common::byte_format!("parquet_metadata{path}")
     }
 
     /// Whether the cached footer is that of the file `handle` reads
     /// (`ParquetFileMetadataCache::IsValid`).
     pub fn is_valid_for(
         &self,
-        handle: &rustdb_function::caching_file_system::CachingFileHandle,
+        handle: &roastedduck_function::caching_file_system::CachingFileHandle,
     ) -> Result<bool> {
-        Ok(rustdb_function::external_file_cache::ExternalFileCache::is_valid(
-            self.validate,
-            &self.version_tag,
-            self.last_modified,
-            &handle.version_tag()?,
-            handle.last_modified()?,
-        ))
+        Ok(
+            roastedduck_function::external_file_cache::ExternalFileCache::is_valid(
+                self.validate,
+                &self.version_tag,
+                self.last_modified,
+                &handle.version_tag()?,
+                handle.last_modified()?,
+            ),
+        )
     }
 
     /// The cached footer of `path`, if the file has not changed since (`TryLoadCaches`).
-    pub fn lookup(cache: &rustdb_function::ObjectCache, path: &[u8]) -> Option<Arc<Self>> {
+    pub fn lookup(cache: &roastedduck_function::ObjectCache, path: &[u8]) -> Option<Arc<Self>> {
         let entry = cache.get::<Self>(&Self::key(path))?;
-        let metadata = std::fs::metadata(rustdb_function::file_system::native_path(path).ok()?).ok()?;
-        let (last_modified, version_tag) = rustdb_function::caching_file_system::file_version(&metadata);
-        rustdb_function::external_file_cache::ExternalFileCache::is_valid(
+        let metadata = std::fs::metadata(roastedduck_function::file_system::native_path(path).ok()?).ok()?;
+        let (last_modified, version_tag) = roastedduck_function::caching_file_system::file_version(&metadata);
+        roastedduck_function::external_file_cache::ExternalFileCache::is_valid(
             entry.validate,
             &entry.version_tag,
             entry.last_modified,
@@ -523,8 +525,8 @@ impl ReaderScanState {
         let span = group_span(group);
         if to_scan > span {
             return Err(Error::new_bytes(
-                rustdb_common::ErrorKind::Io,
-                rustdb_common::byte_format!(
+                roastedduck_common::ErrorKind::Io,
+                roastedduck_common::byte_format!(
                     "The parquet file '{}' seems to have incorrectly set page offsets. This interferes with DuckDB's prefetching optimization. DuckDB may still be able to scan this file by manually disabling the prefetching mechanism using: 'SET disable_parquet_prefetching=true'.",
                     self.context.file_name
                 ),
@@ -575,7 +577,7 @@ impl ReaderScanState {
         let mut vector = Vector::flat(reader.logical_type(), STANDARD_VECTOR_SIZE);
         let read = reader.read(count, &mut self.defines, &mut self.repeats, &mut vector)?;
         if read != count {
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "Mismatch in parquet read for column {column}, expected {count} rows, got {read}"
             )));
         }

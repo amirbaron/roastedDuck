@@ -1,6 +1,6 @@
 //! Byte-oriented diagnostic format shared by the C++ comparator and frozen fixture tests.
-use rustdb_common::{ByteString, ErrorKind, byte_format};
-use rustdb_pg_parser::{ParserOptions, nodes, parse_bytes_with_options, strip_unicode_spaces_bytes};
+use roastedduck_common::{ByteString, ErrorKind, byte_format};
+use roastedduck_pg_parser::{ParserOptions, nodes, parse_bytes_with_options, strip_unicode_spaces_bytes};
 use std::fmt::Write as _;
 
 fn json_string(out: &mut ByteString, s: &[u8]) {

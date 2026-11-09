@@ -6,7 +6,7 @@
 
 use std::convert::Infallible;
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use crate::{NativeType, ValidityMask, Vector, VectorKind};
 

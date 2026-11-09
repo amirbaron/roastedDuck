@@ -1,17 +1,17 @@
 use crate::operator::set_estimated_cardinality;
-use rustdb_common::tree_renderer::RenderParams;
+use roastedduck_common::tree_renderer::RenderParams;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::cast::CastFunctionSet;
-use rustdb_function::random::RandomEngine;
-use rustdb_storage::table::{RowGroupOrderOptions, ScanCasts, ScanRandom, ScanSampling};
-use rustdb_storage::table_filter::DynamicTableFilterSet;
-use rustdb_storage::{
+use roastedduck_common::{Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::cast::CastFunctionSet;
+use roastedduck_function::random::RandomEngine;
+use roastedduck_storage::table::{RowGroupOrderOptions, ScanCasts, ScanRandom, ScanSampling};
+use roastedduck_storage::table_filter::DynamicTableFilterSet;
+use roastedduck_storage::{
     DataTable, ParallelTableScanState, StorageIndex, TableFilterSet, TableScanState, Transaction,
 };
-use rustdb_types::{DataChunk, LogicalType};
+use roastedduck_types::{DataChunk, LogicalType};
 
 use crate::operator::{
     ErasedSource, OperatorPartitionData, OperatorPartitionInfo, PhysicalOperator, PhysicalRef, SinkState,
@@ -74,13 +74,13 @@ impl ScanRandom for SamplingRandom {
 #[derive(Clone, Debug, Default)]
 pub struct ScanExplainInfo {
     /// The qualified table name (`TableScanToString`); empty for table functions.
-    pub table: rustdb_common::ByteString,
+    pub table: roastedduck_common::ByteString,
     /// The name of each scanned column, by position in the scan's column list.
-    pub column_names: Vec<rustdb_common::ByteString>,
+    pub column_names: Vec<roastedduck_common::ByteString>,
     /// What `Projections` lists for each scanned column, by position in the scan's
     /// column list: its name, or the fields read (`AddProjectionNames`); empty for the
     /// names themselves.
-    pub projection_names: Vec<rustdb_common::ByteString>,
+    pub projection_names: Vec<roastedduck_common::ByteString>,
     /// Positions of virtual columns (`rowid`), which DuckDB does not list as projections
     /// (`AddProjectionNames` skips ids past the table's columns).
     pub virtual_columns: Vec<usize>,
@@ -96,7 +96,7 @@ impl ScanExplainInfo {
         self.projection_names
             .get(index)
             .or_else(|| self.column_names.get(index))
-            .map(rustdb_common::ByteString::as_bytes)
+            .map(roastedduck_common::ByteString::as_bytes)
     }
 
     /// DuckDB's `PhysicalTableScan::ParamsToString` for a scan with projection and filter
@@ -128,11 +128,11 @@ impl ScanExplainInfo {
         };
         result.insert(
             "Projections".to_owned(),
-            rustdb_common::ByteString::join(&projected, b"\n"),
+            roastedduck_common::ByteString::join(&projected, b"\n"),
         );
         // DuckDB's `GetFilterInfo`.
         let filter_info = |filters: &TableFilterSet| {
-            rustdb_common::ByteString::join(
+            roastedduck_common::ByteString::join(
                 &filters
                     .filters
                     .iter()
@@ -350,7 +350,7 @@ pub struct SeqScanGlobal {
     /// An index scan holds the database's vacuum lock shared while it fetches the row
     /// ids it found: with `vacuum_rebuild_indexes`, a vacuum moves row ids and rebuilds
     /// the indexes (`IndexScanGlobalState::vacuum_lock`).
-    _vacuum_lock: Option<rustdb_storage::checkpoint_lock::SharedCheckpointGuard>,
+    _vacuum_lock: Option<roastedduck_storage::checkpoint_lock::SharedCheckpointGuard>,
 }
 
 /// A thread's scan: its storage scan state and, with a projection, the scanned chunk.

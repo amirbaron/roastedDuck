@@ -1,8 +1,8 @@
-//! DuckDB's SQL parser: SQL text in, parse trees ([`rustdb_ast::SqlStatement`]) out.
+//! DuckDB's SQL parser: SQL text in, parse trees ([`roastedduck_ast::SqlStatement`]) out.
 //!
 //! Parsing happens in two steps, exactly as in DuckDB:
 //!
-//! 1. [`rustdb_pg_parser`] runs the Postgres-derived grammar and produces a
+//! 1. [`roastedduck_pg_parser`] runs the Postgres-derived grammar and produces a
 //!    `libpg_query`-style node tree;
 //! 2. the transformer turns that tree into DuckDB's parse tree — statements, query
 //!    nodes, table refs and parsed expressions — applying the same rewrites and raising
@@ -42,7 +42,7 @@
 //! option variants it records:
 //!
 //! ```text
-//! cargo run --release -p rustdb-parser --example json_check -- \
+//! cargo run --release -p roastedduck-parser --example json_check -- \
 //!     target/corpus/statements.jsonl target/corpus/serialized.jsonl
 //! ```
 //!
@@ -72,16 +72,16 @@ pub use transformer::star::{QualifiedColumnMap, serialized_exclude_list};
 /// transformer.
 pub use equality::{children as expression_children, has_subquery, is_scalar};
 
-use rustdb_ast::{CreateInfo, SqlStatement, SqlStatementKind};
-use rustdb_common::{Error, Result};
+use roastedduck_ast::{CreateInfo, SqlStatement, SqlStatementKind};
+use roastedduck_common::{Error, Result};
 
 pub use lists::{
     GroupBy, parse_column_definition, parse_column_definition_bytes, parse_column_list,
     parse_column_list_bytes, parse_expression_list, parse_group_by_list, parse_order_list, parse_update_list,
     parse_values_list,
 };
-pub use rustdb_pg_parser::keywords::{Keyword, KeywordCategory, keyword_list};
-pub use rustdb_pg_parser::{
+pub use roastedduck_pg_parser::keywords::{Keyword, KeywordCategory, keyword_list};
+pub use roastedduck_pg_parser::{
     SimplifiedToken, SimplifiedTokenType, keyword_category, strip_unicode_spaces, tokenize, tokenize_bytes,
 };
 
@@ -131,13 +131,13 @@ pub fn parse_bytes(query: &[u8]) -> Result<Vec<SqlStatement>> {
 
 /// Native SQL ingress with the same syntax and transformer options as the text API.
 pub fn parse_bytes_with_options(query: &[u8], options: &ParserOptions) -> Result<Vec<SqlStatement>> {
-    if let Some(stripped) = rustdb_pg_parser::strip_unicode_spaces_bytes(query) {
+    if let Some(stripped) = roastedduck_pg_parser::strip_unicode_spaces_bytes(query) {
         return parse_bytes_with_options(&stripped, options);
     }
-    let pg_options = rustdb_pg_parser::ParserOptions {
+    let pg_options = roastedduck_pg_parser::ParserOptions {
         preserve_identifier_case: options.preserve_identifier_case,
     };
-    let raw = rustdb_pg_parser::parse_bytes_with_options(query, &pg_options)
+    let raw = roastedduck_pg_parser::parse_bytes_with_options(query, &pg_options)
         .map_err(|error| syntax_error(&error))?;
     if raw.is_empty() {
         return Ok(Vec::new());
@@ -165,12 +165,12 @@ pub fn parse_bytes_with_options(query: &[u8], options: &ParserOptions) -> Result
 
 /// `SplitQueries`: the statements of `query` at its `;` tokens, trimmed and each ending in
 /// its `;` (the last one as it is).
-pub fn split_queries(query: &str) -> Vec<rustdb_common::ByteString> {
+pub fn split_queries(query: &str) -> Vec<roastedduck_common::ByteString> {
     split_queries_bytes(query.as_bytes())
 }
 
 /// Native byte statement splitting at scanner semicolon tokens.
-pub fn split_queries_bytes(query: &[u8]) -> Vec<rustdb_common::ByteString> {
+pub fn split_queries_bytes(query: &[u8]) -> Vec<roastedduck_common::ByteString> {
     let trim = |mut segment: &[u8]| {
         let space = |byte: u8| matches!(byte, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r');
         while segment.first().is_some_and(|byte| space(*byte)) {
@@ -179,11 +179,11 @@ pub fn split_queries_bytes(query: &[u8]) -> Vec<rustdb_common::ByteString> {
         while segment.last().is_some_and(|byte| space(*byte)) {
             segment = &segment[..segment.len() - 1];
         }
-        rustdb_common::ByteString::from(segment)
+        roastedduck_common::ByteString::from(segment)
     };
     let mut queries = Vec::new();
     let mut last_split = 0;
-    for token in rustdb_pg_parser::tokenize_bytes(query) {
+    for token in roastedduck_pg_parser::tokenize_bytes(query) {
         if token.kind == SimplifiedTokenType::Operator && query.get(token.start) == Some(&b';') {
             let mut segment = trim(&query[last_split..token.start]);
             if !segment.is_empty() {

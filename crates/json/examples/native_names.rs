@@ -1,10 +1,10 @@
 //! JSON function/cast binding and output against actual frozen C++ relation queries.
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_function::{
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_function::{
     BindInput, FunctionClient, FunctionState,
     cast::{CastFunctionSet, CastParameters},
 };
-use rustdb_types::{DataChunk, Value, Vector};
+use roastedduck_types::{DataChunk, Value, Vector};
 use std::io::{self, BufRead};
 use std::sync::Arc;
 fn decode(hex: &str) -> Result<Vec<u8>> {
@@ -30,18 +30,15 @@ fn outcome(mode: &str, name: ByteString) -> Result<ByteString> {
     let ty = value.logical_type().clone();
     let mut source = Vector::flat(ty.clone(), 1);
     source.set_value(0, &value)?;
-    let mut result = Vector::flat(rustdb_json::json_type(), 1);
+    let mut result = Vector::flat(roastedduck_json::json_type(), 1);
     if mode == "cast" {
         let mut casts = CastFunctionSet::new();
-        rustdb_json::register_json_casts(&mut casts);
-        casts.get_cast_function(&ty, &rustdb_json::json_type())?.execute(
-            &source,
-            &mut result,
-            1,
-            &mut CastParameters::new(),
-        )?;
+        roastedduck_json::register_json_casts(&mut casts);
+        casts
+            .get_cast_function(&ty, &roastedduck_json::json_type())?
+            .execute(&source, &mut result, 1, &mut CastParameters::new())?;
     } else {
-        let functions = rustdb_json::json_scalar_functions();
+        let functions = roastedduck_json::json_scalar_functions();
         let mut function = functions
             .iter()
             .find(|set| set.name.as_bytes() == b"to_json")

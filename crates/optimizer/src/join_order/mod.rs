@@ -13,8 +13,8 @@ pub(crate) mod relation_statistics;
 
 use std::collections::{HashMap, HashSet};
 
-use rustdb_common::Result;
-use rustdb_planner::{ClientContext, LogicalKind, LogicalOperator};
+use roastedduck_common::Result;
+use roastedduck_planner::{ClientContext, LogicalKind, LogicalOperator};
 
 use plan_enumerator::PlanEnumerator;
 use query_graph_manager::QueryGraphManager;

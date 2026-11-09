@@ -87,6 +87,8 @@ pub use value_fetch::*;
 
 /// Install the C extension adapter for embeddings that open the core directly.
 pub fn register_extension_loader() {
-    rustdb::external_extensions::register_external_extension_loader(extension_loader::load);
-    rustdb::external_extensions::register_extension_install_validator(extension_loader::validate_install);
+    roastedduck::external_extensions::register_external_extension_loader(extension_loader::load);
+    roastedduck::external_extensions::register_extension_install_validator(
+        extension_loader::validate_install,
+    );
 }

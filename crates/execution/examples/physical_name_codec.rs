@@ -1,12 +1,12 @@
 //! Real physical projection parameters and operator-log errors against C++ 1.5.6.
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_execution::{
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_execution::{
     PhysicalOperator,
     operators::{PhysicalDummyScan, PhysicalProjection},
 };
-use rustdb_function::logging::operator_log_message;
-use rustdb_planner::{ColumnBinding, Expression};
-use rustdb_types::LogicalType;
+use roastedduck_function::logging::operator_log_message;
+use roastedduck_planner::{ColumnBinding, Expression};
+use roastedduck_types::LogicalType;
 use std::io::{self, BufRead};
 use std::sync::Arc;
 fn decode(hex: &str) -> Result<Vec<u8>> {

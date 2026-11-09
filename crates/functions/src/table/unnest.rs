@@ -4,12 +4,12 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::{
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::{
     FunctionData, InOutResult, TableFunction, TableFunctionBindInput, TableFunctionBindOutput,
     TableFunctionSet, TableScanState,
 };
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
 
 /// The list of one call and its element type (`UnnestBindData`, plus the constant input
 /// row of the in-out function).

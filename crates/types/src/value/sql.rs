@@ -1,7 +1,7 @@
 //! Values as SQL literals.
 
 use crate::{LogicalTypeId, Value};
-use rustdb_common::{ByteString, Result, byte_format as format};
+use roastedduck_common::{ByteString, Result, byte_format as format};
 
 impl Value {
     /// The legacy infallible SQL formatter. Native callers that must propagate
@@ -97,11 +97,11 @@ impl Value {
             LogicalTypeId::Union => {
                 let (tag, member) = self
                     .union_tag_and_value()
-                    .ok_or_else(|| rustdb_common::Error::internal("union value without a valid tag"))?;
+                    .ok_or_else(|| roastedduck_common::Error::internal("union value without a valid tag"))?;
                 let (name, _) = ty
                     .union_members()
                     .and_then(|members| members.get(usize::from(tag)))
-                    .ok_or_else(|| rustdb_common::Error::internal("union tag out of range"))?;
+                    .ok_or_else(|| roastedduck_common::Error::internal("union tag out of range"))?;
                 format!("union_value({name} := {})", member.try_to_sql_string()?)
             }
             LogicalTypeId::Variant => format!("VARIANT({})", text()?),

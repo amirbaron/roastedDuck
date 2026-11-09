@@ -1,6 +1,6 @@
 [package]
 name = "corpus"
-description = "Extracts SQL statements from DuckDB's sqllogictest corpus and checks rustdb against DuckDB on them."
+description = "Extracts SQL statements from DuckDB's sqllogictest corpus and checks roastedduck against DuckDB on them."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,9 +8,9 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-rustdb-ast.workspace = true
-rustdb-common.workspace = true
-rustdb-serde.workspace = true
+roastedduck-ast.workspace = true
+roastedduck-common.workspace = true
+roastedduck-serde.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

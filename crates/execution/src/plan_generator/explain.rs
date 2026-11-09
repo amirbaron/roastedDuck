@@ -4,12 +4,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rustdb_ast::{ExplainFormat, ExplainType};
-use rustdb_common::tree_renderer::{RenderSource, RenderTree, RenderTreeNode, render};
-use rustdb_common::{Error, Result};
-use rustdb_planner::LogicalOperator;
-use rustdb_planner::operator::renderer_kind;
-use rustdb_types::{DataChunk, LogicalType, Value};
+use roastedduck_ast::{ExplainFormat, ExplainType};
+use roastedduck_common::tree_renderer::{RenderSource, RenderTree, RenderTreeNode, render};
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::LogicalOperator;
+use roastedduck_planner::operator::renderer_kind;
+use roastedduck_types::{DataChunk, LogicalType, Value};
 
 use super::PlanGenerator;
 use crate::operator::{PhysicalOperator, PhysicalRef};
@@ -62,7 +62,7 @@ impl PhysicalOperator for PhysicalUtility {
 
 /// The physical operator name of statements without a physical plan here.
 fn utility_name(op: &LogicalOperator) -> Option<&'static str> {
-    use rustdb_planner::LogicalKind as K;
+    use roastedduck_planner::LogicalKind as K;
     Some(match &op.kind {
         K::Pragma { .. } => "PRAGMA",
         K::Set { .. } => "SET",
@@ -145,15 +145,15 @@ impl RenderSource for PhysicalRenderNode<'_> {
                 RenderTreeNode::new(op.explain_name(), params)
             }
             Self::DelimDistinct { delim } => {
-                let mut params = rustdb_common::tree_renderer::RenderParams::new();
-                let groups: Vec<rustdb_common::ByteString> = delim
+                let mut params = roastedduck_common::tree_renderer::RenderParams::new();
+                let groups: Vec<roastedduck_common::ByteString> = delim
                     .distinct_groups
                     .iter()
-                    .map(|index| rustdb_common::byte_format!("#{index}"))
+                    .map(|index| roastedduck_common::byte_format!("#{index}"))
                     .collect();
                 params.insert(
                     "Groups".to_owned(),
-                    rustdb_common::ByteString::join(&groups, b"\n"),
+                    roastedduck_common::ByteString::join(&groups, b"\n"),
                 );
                 crate::operator::set_estimated_cardinality(&mut params, delim.distinct_estimate);
                 RenderTreeNode::new("HASH_GROUP_BY".to_owned(), params)
@@ -190,7 +190,7 @@ fn render_physical_plan(
     estimates: &HashMap<usize, u64>,
     delim_joins: &HashMap<usize, DelimExplain>,
     format: ExplainFormat,
-) -> Result<rustdb_common::ByteString> {
+) -> Result<roastedduck_common::ByteString> {
     let info = ExplainInfo {
         estimates,
         delim_joins,
@@ -226,13 +226,13 @@ impl PlanGenerator {
         &mut self,
         explain_type: ExplainType,
         explain_format: ExplainFormat,
-        logical_plan_unopt: rustdb_common::ByteString,
+        logical_plan_unopt: roastedduck_common::ByteString,
         child: LogicalOperator,
         types: Vec<LogicalType>,
     ) -> Result<PhysicalRef> {
         let logical_plan_opt = child.to_explain_string(explain_format)?;
         let mut child = child;
-        if let rustdb_planner::LogicalKind::Execute { .. } = &child.kind
+        if let roastedduck_planner::LogicalKind::Execute { .. } = &child.kind
             && let Some(prepared) = child.children.pop()
         {
             // EXPLAIN EXECUTE shows the plan of the prepared statement.
@@ -266,7 +266,7 @@ impl PlanGenerator {
             .context
             .as_ref()
             .map_or(ExplainOutput::default(), |context| context.explain_output);
-        let rows: Vec<(&str, rustdb_common::ByteString)> = match output {
+        let rows: Vec<(&str, roastedduck_common::ByteString)> = match output {
             ExplainOutput::OptimizedOnly => vec![("logical_opt", logical_plan_opt)],
             ExplainOutput::PhysicalOnly => vec![("physical_plan", physical_plan)],
             ExplainOutput::All => vec![

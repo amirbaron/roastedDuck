@@ -1,4 +1,4 @@
-//! Generates rustdb's (de)serialization code from DuckDB's own specs.
+//! Generates roastedduck's (de)serialization code from DuckDB's own specs.
 //!
 //! DuckDB generates its serializers from `src/include/duckdb/storage/serialization/*.json`
 //! (`scripts/generate_serialization.py`) and its enum string tables from the C++ headers

@@ -3,12 +3,12 @@
 
 use std::cmp::Ordering;
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::ValueCast;
-use rustdb_planner::expression::{BoundColumnRefExpression, BoundFunctionExpression};
-use rustdb_planner::{ClientContext, ColumnBinding, Expression, ExpressionKind};
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_planner::expression::{BoundColumnRefExpression, BoundFunctionExpression};
+use roastedduck_planner::{ClientContext, ColumnBinding, Expression, ExpressionKind};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 /// Calls `callback` on every column reference in `expression` (DuckDB's
 /// `ExpressionIterator::VisitExpression<BoundColumnRefExpression>`).

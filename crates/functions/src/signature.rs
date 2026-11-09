@@ -1,7 +1,7 @@
 //! Special argument types used in function signatures (DuckDB's `LogicalType::ANY_PARAMS`,
 //! `LogicalType::TEMPLATE`, ...).
 
-use rustdb_types::{AnyTypeInfo, LogicalType, LogicalTypeId, TemplateTypeInfo, TypeInfo};
+use roastedduck_types::{AnyTypeInfo, LogicalType, LogicalTypeId, TemplateTypeInfo, TypeInfo};
 
 /// `ANY` that the binder casts to `target` (DuckDB's `LogicalType::ANY_PARAMS`).
 pub(crate) fn any_params(target: LogicalType) -> LogicalType {

@@ -192,10 +192,10 @@ static ERROR_RENDERING: AtomicBool = AtomicBool::new(true);
 /// `scrollUpPrompt`, `scrollDownPrompt`).
 #[derive(Debug)]
 struct ContinuationPrompts {
-    continuation: rustdb_common::ByteString,
-    continuation_selected: rustdb_common::ByteString,
-    scroll_up: rustdb_common::ByteString,
-    scroll_down: rustdb_common::ByteString,
+    continuation: roastedduck_common::ByteString,
+    continuation_selected: roastedduck_common::ByteString,
+    scroll_up: roastedduck_common::ByteString,
+    scroll_down: roastedduck_common::ByteString,
 }
 
 static PROMPTS: Mutex<Option<ContinuationPrompts>> = Mutex::new(None);
@@ -212,7 +212,12 @@ fn with_prompts<T>(f: impl FnOnce(&ContinuationPrompts) -> T) -> T {
 }
 
 /// `linenoiseSetPrompt`: the prompts of continuation lines.
-pub fn set_prompt(continuation: impl AsRef<[u8]>, continuation_selected: impl AsRef<[u8]>, scroll_up: impl AsRef<[u8]>, scroll_down: impl AsRef<[u8]>) {
+pub fn set_prompt(
+    continuation: impl AsRef<[u8]>,
+    continuation_selected: impl AsRef<[u8]>,
+    scroll_up: impl AsRef<[u8]>,
+    scroll_down: impl AsRef<[u8]>,
+) {
     *PROMPTS.lock().unwrap_or_else(PoisonError::into_inner) = Some(ContinuationPrompts {
         continuation: continuation.as_ref().into(),
         continuation_selected: continuation_selected.as_ref().into(),

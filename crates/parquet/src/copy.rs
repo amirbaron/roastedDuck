@@ -5,14 +5,14 @@
 use std::any::Any;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::{CaseInsensitiveMap, Error, Result};
-use rustdb_function::copy::{
+use roastedduck_common::{CaseInsensitiveMap, Error, Result};
+use roastedduck_function::copy::{
     CopyFromBindInput, CopyFunctionBindInput, CopyGlobalState, CopyOption, CopyOptionMode, CopyToSelectInput,
     CopyToType,
 };
-use rustdb_function::{CopyFunction, FunctionData};
-use rustdb_planner::ClientContext;
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value};
+use roastedduck_function::{CopyFunction, FunctionData};
+use roastedduck_planner::ClientContext;
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, Value};
 
 use crate::scan::{ParquetBindData, bind_files_with_client};
 use crate::schema::ParquetOptions;
@@ -25,7 +25,7 @@ const DUCKDB_FIELD_ID: &str = "__duckdb_field_id";
 /// The bind data of a Parquet write (`ParquetWriteBindData`).
 #[derive(Debug)]
 pub struct ParquetWriteBindData {
-    pub names: Vec<rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
     pub types: Vec<LogicalType>,
     pub options: WriterOptions,
 }
@@ -53,9 +53,9 @@ pub struct ParquetWriteGlobal {
     /// Prepares batches without the writer's lock (`prepare_batch`).
     preparer: crate::writer::RowGroupPreparer,
     /// The path of the file.
-    file_name: rustdb_common::ByteString,
+    file_name: roastedduck_common::ByteString,
     /// The COPY operator's logger, if the query logs it (`op`).
-    logger: std::sync::OnceLock<rustdb_function::logging::OperatorLogger>,
+    logger: std::sync::OnceLock<roastedduck_function::logging::OperatorLogger>,
 }
 
 impl ParquetWriteGlobal {
@@ -82,20 +82,20 @@ impl RowBuffer {
     /// (`SizeInBytes`): every column takes a vector of `STANDARD_VECTOR_SIZE` values and
     /// its validity mask per 2048 rows, strings longer than 12 bytes their bytes besides.
     fn collection_size_in_bytes(&self) -> usize {
-        const VALIDITY_MASK_SIZE: usize = rustdb_common::STANDARD_VECTOR_SIZE / 8;
+        const VALIDITY_MASK_SIZE: usize = roastedduck_common::STANDARD_VECTOR_SIZE / 8;
         let Some(first) = self.chunks.first() else {
             return 0;
         };
-        let vectors = self.rows.div_ceil(rustdb_common::STANDARD_VECTOR_SIZE);
+        let vectors = self.rows.div_ceil(roastedduck_common::STANDARD_VECTOR_SIZE);
         let mut size = 0;
         for (index, column) in first.columns().iter().enumerate() {
             let physical = column.logical_type().physical_type();
             let width = physical.size().max(1);
-            size += vectors * (width * rustdb_common::STANDARD_VECTOR_SIZE + VALIDITY_MASK_SIZE);
-            if physical == rustdb_types::PhysicalType::Varchar {
+            size += vectors * (width * roastedduck_common::STANDARD_VECTOR_SIZE + VALIDITY_MASK_SIZE);
+            if physical == roastedduck_types::PhysicalType::Varchar {
                 for chunk in &self.chunks {
                     let column = chunk.column(index);
-                    if column.kind() != rustdb_types::VectorKind::Flat {
+                    if column.kind() != roastedduck_types::VectorKind::Flat {
                         continue;
                     }
                     size += (0..chunk.len())
@@ -161,19 +161,19 @@ fn parquet_copy_options() -> Vec<(String, CopyOption)> {
 
 /// The value of an option as a `u64` (`Value::GetValue<uint64_t>`).
 fn u64_value(context: &ClientContext, value: &Value) -> Result<u64> {
-    use rustdb_function::cast::ValueCast as _;
+    use roastedduck_function::cast::ValueCast as _;
     let value = value.try_cast_as(&context.casts, &LogicalType::UBIGINT, false)?;
     Ok(value.as_u64().unwrap_or(0))
 }
 
 fn i64_value(context: &ClientContext, value: &Value) -> Result<i64> {
-    use rustdb_function::cast::ValueCast as _;
+    use roastedduck_function::cast::ValueCast as _;
     let value = value.try_cast_as(&context.casts, &LogicalType::BIGINT, false)?;
     Ok(value.as_i64().unwrap_or(0))
 }
 
 fn f64_value(context: &ClientContext, value: &Value) -> Result<f64> {
-    use rustdb_function::cast::ValueCast as _;
+    use roastedduck_function::cast::ValueCast as _;
     let value = value.try_cast_as(&context.casts, &LogicalType::DOUBLE, false)?;
     Ok(value.as_f64().unwrap_or(0.0))
 }
@@ -194,7 +194,7 @@ pub(crate) fn type_id_name(ty: &LogicalType) -> String {
 /// The children of a nested type as `FIELD_IDS` sees them (`GetChildNameToTypeMap`).
 fn child_name_to_type(
     ty: &LogicalType,
-) -> Result<CaseInsensitiveMap<LogicalType, rustdb_common::ByteString>> {
+) -> Result<CaseInsensitiveMap<LogicalType, roastedduck_common::ByteString>> {
     let mut map = CaseInsensitiveMap::default();
     match ty.id() {
         LogicalTypeId::List => {
@@ -212,7 +212,7 @@ fn child_name_to_type(
         LogicalTypeId::Struct => {
             for (name, child) in ty.struct_children().unwrap_or_default() {
                 if name == DUCKDB_FIELD_ID {
-                    return Err(Error::binder(rustdb_common::byte_format!(
+                    return Err(Error::binder(roastedduck_common::byte_format!(
                         "Cannot have column named \"{DUCKDB_FIELD_ID}\" with FIELD_IDS"
                     )));
                 }
@@ -225,7 +225,7 @@ fn child_name_to_type(
 }
 
 /// The names and types below a nested type (`GetChildNamesAndTypes`).
-fn child_names_and_types(ty: &LogicalType) -> Vec<(rustdb_common::ByteString, LogicalType)> {
+fn child_names_and_types(ty: &LogicalType) -> Vec<(roastedduck_common::ByteString, LogicalType)> {
     match ty.id() {
         LogicalTypeId::List => vec![(
             "element".into(),
@@ -242,9 +242,9 @@ fn child_names_and_types(ty: &LogicalType) -> Vec<(rustdb_common::ByteString, Lo
 
 /// `FieldID::GenerateFieldIDs`: sequential ids in depth-first order.
 fn generate_field_ids(
-    ids: &mut CaseInsensitiveMap<FieldId, rustdb_common::ByteString>,
+    ids: &mut CaseInsensitiveMap<FieldId, roastedduck_common::ByteString>,
     next: &mut i32,
-    columns: &[(rustdb_common::ByteString, LogicalType)],
+    columns: &[(roastedduck_common::ByteString, LogicalType)],
 ) {
     for (name, ty) in columns {
         let mut field = FieldId {
@@ -266,17 +266,17 @@ fn generate_field_ids(
 fn parse_field_ids(
     context: &ClientContext,
     value: &Value,
-    ids: &mut CaseInsensitiveMap<FieldId, rustdb_common::ByteString>,
+    ids: &mut CaseInsensitiveMap<FieldId, roastedduck_common::ByteString>,
     unique: &mut std::collections::HashSet<i32>,
-    name_to_type: &CaseInsensitiveMap<LogicalType, rustdb_common::ByteString>,
+    name_to_type: &CaseInsensitiveMap<LogicalType, roastedduck_common::ByteString>,
 ) -> Result<()> {
     let ty = value.logical_type();
     if ty.id() != LogicalTypeId::Struct {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "Expected FIELD_IDS to be a STRUCT, e.g., {{col1: 42, col2: {{{DUCKDB_FIELD_ID}: 43, nested_col: 44}}, col3: 44}}"
         )));
     }
-    let names: Vec<rustdb_common::ByteString> = ty
+    let names: Vec<roastedduck_common::ByteString> = ty
         .struct_children()
         .unwrap_or_default()
         .iter()
@@ -289,11 +289,11 @@ fn parse_field_ids(
             continue;
         }
         let Some(column_type) = name_to_type.get(&column) else {
-            let available: Vec<&rustdb_common::ByteString> =
+            let available: Vec<&roastedduck_common::ByteString> =
                 name_to_type.iter().map(|(name, _)| name).collect();
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Column name \"{column}\" specified in FIELD_IDS not found. Consider using WRITE_PARTITION_COLUMNS if this column is a partition column. Available column names: [{}]",
-                rustdb_common::ByteString::join(&available, b", ")
+                roastedduck_common::ByteString::join(&available, b", ")
             )));
         };
         let mut field_id_value = None;
@@ -314,19 +314,19 @@ fn parse_field_ids(
         }
         let mut field = FieldId::default();
         if let Some(id_value) = field_id_value {
-            use rustdb_function::cast::ValueCast as _;
+            use roastedduck_function::cast::ValueCast as _;
             // `Value::DefaultCastAs`.
             let id_value = id_value
                 .try_cast_as(&context.casts, &LogicalType::INTEGER, false)
                 .map_err(|error| {
-                    Error::invalid_input(rustdb_common::byte_format!(
+                    Error::invalid_input(roastedduck_common::byte_format!(
                         "Failed to cast value: {}",
                         error.raw_message()
                     ))
                 })?;
             let id = id_value.as_i32().unwrap_or(0);
             if !unique.insert(id) {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Duplicate field_id {id} found in FIELD_IDS"
                 )));
             }
@@ -337,7 +337,7 @@ fn parse_field_ids(
                 column_type.id(),
                 LogicalTypeId::List | LogicalTypeId::Map | LogicalTypeId::Struct
             ) {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Column \"{column}\" with type \"{}\" cannot have a nested FIELD_IDS specification",
                     type_id_name(column_type)
                 )));
@@ -353,7 +353,7 @@ fn parse_field_ids(
 /// `ParquetWriteBind`.
 fn parquet_write_bind(
     input: &mut CopyFunctionBindInput<'_>,
-    names: &[rustdb_common::ByteString],
+    names: &[roastedduck_common::ByteString],
     types: &[LogicalType],
 ) -> Result<Arc<dyn FunctionData>> {
     let context = client_context(input.binder)?;
@@ -366,7 +366,7 @@ fn parquet_write_bind(
     for (name, values) in input.options.iter() {
         let option = name.to_ascii_lowercase();
         let [value] = values.as_slice() else {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "{} requires exactly one argument",
                 option.to_ascii_uppercase()
             )));
@@ -377,7 +377,7 @@ fn parquet_write_bind(
             }
             b"row_group_size_bytes" => {
                 let bytes = if value.logical_type().id() == LogicalTypeId::Varchar {
-                    rustdb_buffer::parse_memory_limit(&value.to_varchar()?)?
+                    roastedduck_buffer::parse_memory_limit(&value.to_varchar()?)?
                 } else {
                     u64_value(context, value)?
                 };
@@ -394,7 +394,7 @@ fn parquet_write_bind(
                     "brotli" => CompressionCodec::BROTLI,
                     "lz4" | "lz4_raw" => CompressionCodec::LZ4_RAW,
                     _ => {
-                        return Err(Error::binder(rustdb_common::byte_format!(
+                        return Err(Error::binder(roastedduck_common::byte_format!(
                             "Expected {option} argument to be any of [uncompressed, brotli, gzip, snappy, lz4, lz4_raw or zstd]"
                         )));
                     }
@@ -404,7 +404,7 @@ fn parquet_write_bind(
                 if value.logical_type().id() == LogicalTypeId::Varchar
                     && value.to_varchar()?.eq_ignore_ascii_case("auto")
                 {
-                    let columns: Vec<(rustdb_common::ByteString, LogicalType)> =
+                    let columns: Vec<(roastedduck_common::ByteString, LogicalType)> =
                         names.iter().cloned().zip(types.iter().cloned()).collect();
                     let mut next = 0;
                     generate_field_ids(&mut options.field_ids, &mut next, &columns);
@@ -412,7 +412,7 @@ fn parquet_write_bind(
                     let mut name_to_type = CaseInsensitiveMap::default();
                     for (column, ty) in names.iter().zip(types) {
                         if column == DUCKDB_FIELD_ID {
-                            return Err(Error::binder(rustdb_common::byte_format!(
+                            return Err(Error::binder(roastedduck_common::byte_format!(
                                 "Cannot have a column named \"{DUCKDB_FIELD_ID}\" when writing FIELD_IDS"
                             )));
                         }
@@ -430,7 +430,7 @@ fn parquet_write_bind(
                         "The 'auto' option is not yet implemented for 'shredding'",
                     ));
                 }
-                let variant_names: Vec<rustdb_common::ByteString> = names
+                let variant_names: Vec<roastedduck_common::ByteString> = names
                     .iter()
                     .zip(types)
                     .filter(|(_, ty)| ty.id() == LogicalTypeId::Variant)
@@ -449,13 +449,13 @@ fn parquet_write_bind(
                         .any(|name| name.eq_ignore_ascii_case(&column))
                     {
                         if variant_names.is_empty() {
-                            return Err(Error::binder(rustdb_common::byte_format!(
+                            return Err(Error::binder(roastedduck_common::byte_format!(
                                 "VARIANT by name \"{column}\" specified in SHREDDING not found. There are no VARIANT columns present."
                             )));
                         }
-                        return Err(Error::binder(rustdb_common::byte_format!(
+                        return Err(Error::binder(roastedduck_common::byte_format!(
                             "VARIANT by name \"{column}\" specified in SHREDDING not found. Consider using WRITE_PARTITION_COLUMNS if this column is a partition column. Available names of VARIANT columns: [{}]",
-                            rustdb_common::ByteString::join(&variant_names, b", ")
+                            roastedduck_common::ByteString::join(&variant_names, b", ")
                         )));
                     }
                     if child.logical_type().id() != LogicalTypeId::Varchar {
@@ -463,7 +463,7 @@ fn parquet_write_bind(
                             "SHREDDING value should be of type VARCHAR, a stringified type to use for the column",
                         ));
                     }
-                    let ty = rustdb_csv::read_csv::transform_string_to_logical_type(
+                    let ty = roastedduck_csv::read_csv::transform_string_to_logical_type(
                         context,
                         &child.to_varchar()?,
                     )?;
@@ -506,7 +506,7 @@ fn parquet_write_bind(
             b"string_dictionary_page_size_limit" => {
                 let limit = u64_value(context, value)?;
                 if limit > crate::writer::MAX_UNCOMPRESSED_DICT_PAGE_SIZE as u64 || limit == 0 {
-                    return Err(Error::binder(rustdb_common::byte_format!(
+                    return Err(Error::binder(roastedduck_common::byte_format!(
                         "string_dictionary_page_size_limit cannot be 0 and must be less than or equal to {}",
                         crate::writer::MAX_UNCOMPRESSED_DICT_PAGE_SIZE
                     )));
@@ -514,7 +514,7 @@ fn parquet_write_bind(
                 options.string_dictionary_page_size_limit = limit as usize;
             }
             b"write_bloom_filter" => {
-                use rustdb_function::cast::ValueCast as _;
+                use roastedduck_function::cast::ValueCast as _;
                 options.enable_bloom_filters = value
                     .try_cast_as(&context.casts, &LogicalType::BOOLEAN, false)?
                     .as_bool()
@@ -559,7 +559,7 @@ fn parquet_write_bind(
                 };
             }
             _ => {
-                return Err(Error::internal(rustdb_common::byte_format!(
+                return Err(Error::internal(roastedduck_common::byte_format!(
                     "Unrecognized option for PARQUET: {name}"
                 )));
             }
@@ -621,7 +621,7 @@ fn parquet_write_initialize_global(data: &dyn FunctionData, path: &[u8]) -> Resu
 /// `ParquetWriteInitializeOperator`: the writer logs for the COPY operator.
 fn parquet_write_initialize_operator(
     state: &CopyGlobalState,
-    logger: &rustdb_function::logging::OperatorLogger,
+    logger: &roastedduck_function::logging::OperatorLogger,
 ) {
     if let Ok(global) = global_state(state) {
         let _ = global.logger.set(logger.clone());
@@ -652,7 +652,7 @@ fn flush_rows(global: &ParquetWriteGlobal, buffer: &RowBuffer) -> Result<()> {
 fn parquet_write_sink_local(
     data: &dyn FunctionData,
     state: &CopyGlobalState,
-    local: &mut rustdb_function::copy::CopyLocalState,
+    local: &mut roastedduck_function::copy::CopyLocalState,
     chunk: &DataChunk,
 ) -> Result<()> {
     let data = bind_data(data)?;
@@ -679,7 +679,7 @@ fn parquet_write_sink_local(
 fn parquet_write_combine(
     data: &dyn FunctionData,
     state: &CopyGlobalState,
-    local: rustdb_function::copy::CopyLocalState,
+    local: roastedduck_function::copy::CopyLocalState,
 ) -> Result<()> {
     let data = bind_data(data)?;
     let global = global_state(state)?;
@@ -719,8 +719,8 @@ fn parquet_write_execution_mode(
     data: &dyn FunctionData,
     preserve_insertion_order: bool,
     supports_batch_index: bool,
-) -> rustdb_function::copy::CopyFunctionExecutionMode {
-    use rustdb_function::copy::CopyFunctionExecutionMode as Mode;
+) -> roastedduck_function::copy::CopyFunctionExecutionMode {
+    use roastedduck_function::copy::CopyFunctionExecutionMode as Mode;
     let batches = bind_data(data).is_ok_and(|data| ParquetWriter::supports_batches(&data.types));
     if !preserve_insertion_order {
         return if batches {
@@ -739,8 +739,8 @@ fn parquet_write_execution_mode(
 fn parquet_write_prepare_batch(
     _: &dyn FunctionData,
     state: &CopyGlobalState,
-    batch: &dyn rustdb_function::copy::CopyBatch,
-) -> Result<rustdb_function::copy::PreparedBatch> {
+    batch: &dyn roastedduck_function::copy::CopyBatch,
+) -> Result<roastedduck_function::copy::PreparedBatch> {
     let global = global_state(state)?;
     Ok(Box::new(global.preparer.prepare_batch(batch)?))
 }
@@ -749,7 +749,7 @@ fn parquet_write_prepare_batch(
 fn parquet_write_flush_batch(
     _: &dyn FunctionData,
     state: &CopyGlobalState,
-    batch: rustdb_function::copy::PreparedBatch,
+    batch: roastedduck_function::copy::PreparedBatch,
 ) -> Result<()> {
     let global = global_state(state)?;
     let prepared = batch
@@ -767,8 +767,8 @@ fn chunk_size_in_bytes(chunk: &DataChunk) -> usize {
         .map(|column| {
             let width = column.logical_type().physical_type().size().max(1);
             let mut size = width * chunk.len();
-            if column.logical_type().physical_type() == rustdb_types::PhysicalType::Varchar
-                && column.kind() == rustdb_types::VectorKind::Flat
+            if column.logical_type().physical_type() == roastedduck_types::PhysicalType::Varchar
+                && column.kind() == roastedduck_types::VectorKind::Flat
             {
                 size += (0..chunk.len())
                     .filter(|&row| !column.is_null(row))
@@ -838,7 +838,7 @@ fn parquet_write_finalize(data: &dyn FunctionData, state: &CopyGlobalState) -> R
 fn parquet_write_get_written_statistics(
     _: &dyn FunctionData,
     state: &CopyGlobalState,
-) -> Result<rustdb_function::copy::CopyFunctionFileStatistics> {
+) -> Result<roastedduck_function::copy::CopyFunctionFileStatistics> {
     let global = global_state(state)?;
     let inner = global.inner.lock().unwrap_or_else(PoisonError::into_inner);
     Ok(inner.0.written_statistics())
@@ -889,13 +889,13 @@ fn parquet_write_rotate_next_file(
 /// `MultiFileBindCopy` for Parquet.
 fn parquet_copy_from_bind(
     input: &CopyFromBindInput<'_>,
-    expected_names: &[rustdb_common::ByteString],
+    expected_names: &[roastedduck_common::ByteString],
     expected_types: &[LogicalType],
 ) -> Result<Arc<dyn FunctionData>> {
     let context = client_context(input.binder)?;
-    let files = rustdb_csv::multi_file::create_file_list(
+    let files = roastedduck_csv::multi_file::create_file_list(
         "COPY",
-        &[rustdb_common::ByteString::from(input.file_path)],
+        &[roastedduck_common::ByteString::from(input.file_path)],
         "parquet",
     )?;
     let mut options = ParquetOptions {
@@ -906,7 +906,7 @@ fn parquet_copy_from_bind(
     for (name, values) in input.options.iter() {
         let option = name.to_ascii_lowercase();
         let boolean = || -> Result<bool> {
-            use rustdb_function::cast::ValueCast as _;
+            use roastedduck_function::cast::ValueCast as _;
             let Some(value) = values.first() else {
                 return Ok(true);
             };
@@ -914,7 +914,7 @@ fn parquet_copy_from_bind(
                 .try_cast_as(&context.casts, &LogicalType::BOOLEAN, false)
                 .map(|value| value.as_bool().unwrap_or(false))
                 .map_err(|_| {
-                    Error::invalid_input(rustdb_common::byte_format!(
+                    Error::invalid_input(roastedduck_common::byte_format!(
                         "Unable to cast \"{}\" to BOOLEAN for Parquet option \"{option}\"",
                         value.to_varchar().unwrap_or_default()
                     ))
@@ -938,37 +938,42 @@ fn parquet_copy_from_bind(
                 options.encryption = Some(crate::crypto::parse_encryption_config(value, cache.as_deref())?);
             }
             _ => {
-                return Err(Error::not_implemented(rustdb_common::byte_format!(
+                return Err(Error::not_implemented(roastedduck_common::byte_format!(
                     "Unsupported option for COPY FROM: {name}"
                 )));
             }
         }
     }
-    let file_options = rustdb_csv::multi_file::MultiFileOptions {
+    let file_options = roastedduck_csv::multi_file::MultiFileOptions {
         auto_detect_hive_partitioning: false,
-        ..rustdb_csv::multi_file::MultiFileOptions::default()
+        ..roastedduck_csv::multi_file::MultiFileOptions::default()
     };
-    let mut data: ParquetBindData =
-        bind_files_with_client(&context.casts, &context.function_client, files, file_options, &options)?;
+    let mut data: ParquetBindData = bind_files_with_client(
+        &context.casts,
+        &context.function_client,
+        files,
+        file_options,
+        &options,
+    )?;
     if expected_types.len() != data.types.len() {
-        let table: Vec<rustdb_common::ByteString> = expected_names
+        let table: Vec<roastedduck_common::ByteString> = expected_names
             .iter()
             .zip(expected_types)
-            .map(|(name, ty)| rustdb_common::byte_format!("{name} {ty}"))
+            .map(|(name, ty)| roastedduck_common::byte_format!("{name} {ty}"))
             .collect();
-        let parquet: Vec<rustdb_common::ByteString> = data
+        let parquet: Vec<roastedduck_common::ByteString> = data
             .names
             .iter()
             .zip(&data.types)
-            .map(|(name, ty)| rustdb_common::byte_format!("{name} {ty}"))
+            .map(|(name, ty)| roastedduck_common::byte_format!("{name} {ty}"))
             .collect();
-        return Err(Error::conversion(rustdb_common::byte_format!(
+        return Err(Error::conversion(roastedduck_common::byte_format!(
             "Failed to read file(s) \"{}\" - column count mismatch: expected {} columns but found {}\nTable schema: {}\nParquet schema: {}\n\nPossible solutions:\n* Manually specify which columns to insert using \"INSERT INTO tbl SELECT ... FROM read_parquet(...)\"",
             data.files.first_file().unwrap_or_default(),
             expected_types.len(),
             data.types.len(),
-            rustdb_common::ByteString::join(&table, b", "),
-            rustdb_common::ByteString::join(&parquet, b", ")
+            roastedduck_common::ByteString::join(&table, b", "),
+            roastedduck_common::ByteString::join(&parquet, b", ")
         )));
     }
     data.types = expected_types.to_vec();
@@ -1068,18 +1073,18 @@ fn parquet_write_select(input: &CopyToSelectInput<'_>) -> Option<Vec<LogicalType
 /// The entries of a `case_insensitive_map_t` filled in `entries`' order, in libc++'s
 /// iteration order.
 fn case_insensitive_map_order<'a, V>(
-    entries: Vec<(&'a rustdb_common::ByteString, V)>,
-) -> Vec<(&'a rustdb_common::ByteString, V)> {
-    let mut map = rustdb_common::libcxx::UnorderedOrder::default();
+    entries: Vec<(&'a roastedduck_common::ByteString, V)>,
+) -> Vec<(&'a roastedduck_common::ByteString, V)> {
+    let mut map = roastedduck_common::libcxx::UnorderedOrder::default();
     for (index, (name, _)) in entries.iter().enumerate() {
         map.insert(
-            rustdb_common::libcxx::ci_hash(name),
+            roastedduck_common::libcxx::ci_hash(name),
             index,
             |a: &usize, b: &usize| entries[*a].0.eq_ignore_ascii_case(entries[*b].0),
         );
     }
     let order: Vec<usize> = map.order().into_iter().map(|node| map.keys()[node]).collect();
-    let mut entries: Vec<Option<(&'a rustdb_common::ByteString, V)>> =
+    let mut entries: Vec<Option<(&'a roastedduck_common::ByteString, V)>> =
         entries.into_iter().map(Some).collect();
     order
         .into_iter()
@@ -1089,8 +1094,8 @@ fn case_insensitive_map_order<'a, V>(
 
 /// `ChildFieldIDs::Serialize`.
 fn serialize_child_field_ids(
-    serializer: &mut dyn rustdb_serde::Serializer,
-    field_ids: &CaseInsensitiveMap<FieldId, rustdb_common::ByteString>,
+    serializer: &mut dyn roastedduck_serde::Serializer,
+    field_ids: &CaseInsensitiveMap<FieldId, roastedduck_common::ByteString>,
 ) -> Result<()> {
     let entries = case_insensitive_map_order(field_ids.iter().collect());
     serializer.write_optional_with(100, "ids", entries.is_empty(), |serializer| {
@@ -1116,9 +1121,9 @@ fn serialize_child_field_ids(
 /// `ShreddingType::Serialize` of the shredding of `ty` (`ConvertShreddingTypeRecursive`),
 /// or of the root (`None`) over the shredded columns `children`.
 fn serialize_shredding_type(
-    serializer: &mut dyn rustdb_serde::Serializer,
+    serializer: &mut dyn roastedduck_serde::Serializer,
     ty: Option<&LogicalType>,
-    children: &[(rustdb_common::ByteString, LogicalType)],
+    children: &[(roastedduck_common::ByteString, LogicalType)],
 ) -> Result<()> {
     let ty = match ty {
         None => LogicalType::INVALID,
@@ -1135,7 +1140,7 @@ fn serialize_shredding_type(
             for (name, child) in &children {
                 serializer.on_object_begin();
                 serializer.write_property(0, "key", *name)?;
-                let grandchildren: Vec<(rustdb_common::ByteString, LogicalType)> = match child.id() {
+                let grandchildren: Vec<(roastedduck_common::ByteString, LogicalType)> = match child.id() {
                     LogicalTypeId::Struct => child
                         .struct_children()
                         .unwrap_or_default()
@@ -1161,11 +1166,11 @@ fn serialize_shredding_type(
 
 /// `ParquetCopySerialize`: the columns and options of the write.
 fn serialize_parquet_copy(
-    serializer: &mut dyn rustdb_serde::Serializer,
+    serializer: &mut dyn roastedduck_serde::Serializer,
     bind_data: &dyn FunctionData,
     _: &CopyFunction,
 ) -> Result<()> {
-    use rustdb_serde::OptionalIdx;
+    use roastedduck_serde::OptionalIdx;
     let data = bind_data
         .as_any()
         .downcast_ref::<ParquetWriteBindData>()
@@ -1261,7 +1266,7 @@ fn serialize_parquet_copy(
         options.geoparquet_version == defaults.geoparquet_version,
         geoparquet_version,
     )?;
-    let shredded: Vec<(rustdb_common::ByteString, LogicalType)> = options
+    let shredded: Vec<(roastedduck_common::ByteString, LogicalType)> = options
         .shredding
         .iter()
         .map(|(column, ty)| (column.clone(), ty.clone()))
@@ -1286,7 +1291,7 @@ pub fn parquet_copy_function() -> CopyFunction {
     function.flush_batch = Some(Arc::new(parquet_write_flush_batch));
     // `ParquetWriteDesiredBatchSize`.
     function.copy_to_initialize_local = Some(Arc::new(|_| {
-        Ok(Box::new(RowBuffer::default()) as rustdb_function::copy::CopyLocalState)
+        Ok(Box::new(RowBuffer::default()) as roastedduck_function::copy::CopyLocalState)
     }));
     function.copy_to_sink_local = Some(Arc::new(parquet_write_sink_local));
     function.copy_to_combine = Some(Arc::new(parquet_write_combine));

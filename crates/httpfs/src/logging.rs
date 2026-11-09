@@ -2,15 +2,15 @@
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use rustdb_function::logging::{ClientLogger, LogLevel, LogScope};
-use rustdb_types::{LogicalType, Timestamp, Value};
+use roastedduck_function::logging::{ClientLogger, LogLevel, LogScope};
+use roastedduck_types::{LogicalType, Timestamp, Value};
 
 #[derive(Clone, Debug)]
 pub(super) struct HttpLogger(Arc<dyn ClientLogger>);
 
 impl HttpLogger {
     pub(super) fn current() -> Option<Self> {
-        Some(Self(rustdb_function::file_system::opener()?.logger()?))
+        Some(Self(roastedduck_function::file_system::opener()?.logger()?))
     }
 
     #[allow(clippy::too_many_arguments)]

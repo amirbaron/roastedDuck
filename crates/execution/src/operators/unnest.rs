@@ -1,6 +1,6 @@
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_planner::{Expression, ExpressionKind};
-use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, SelectionVector, Value, Vector};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_planner::{Expression, ExpressionKind};
+use roastedduck_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, SelectionVector, Value, Vector};
 
 use crate::operator::{ErasedOperator, PhysicalOperator, PhysicalRef};
 use crate::{ExecutionContext, ExpressionExecutor, Operator, OperatorResult};

@@ -22,8 +22,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
-use rustdb_common::{Error, Result};
-use rustdb_crypto::{ENCRYPTED_BUFFER_HEADER_SIZE, EncryptionKeyManager};
+use roastedduck_common::{Error, Result};
+use roastedduck_crypto::{ENCRYPTED_BUFFER_HEADER_SIZE, EncryptionKeyManager};
 
 use crate::DEFAULT_BLOCK_ALLOC_SIZE;
 use crate::allocator::BlockAllocator;
@@ -222,7 +222,7 @@ impl TemporaryFileEncryption {
         let metadata: &mut [u8; ENCRYPTED_BUFFER_HEADER_SIZE] = metadata
             .try_into()
             .map_err(|_| Error::internal("encryption metadata size"))?;
-        rustdb_crypto::encrypt_temporary_buffer(&key, payload, metadata)?;
+        roastedduck_crypto::encrypt_temporary_buffer(&key, payload, metadata)?;
         Ok(encrypted)
     }
 
@@ -234,7 +234,7 @@ impl TemporaryFileEncryption {
         data: &mut [u8],
     ) -> Result<()> {
         let key = self.keys.temp_key()?;
-        rustdb_crypto::decrypt_temporary_buffer(&key, data, metadata)
+        roastedduck_crypto::decrypt_temporary_buffer(&key, data, metadata)
     }
 }
 
@@ -523,7 +523,7 @@ fn compress_buffer(data: &[u8], level: i32) -> Option<(TemporaryBufferSize, Vec<
     if data.len() as u64 <= TemporaryBufferSize::S32K.bytes() {
         return None; // No point compressing.
     }
-    let frame = rustdb_zstd::compress(data, level);
+    let frame = roastedduck_zstd::compress(data, level);
     let size = TemporaryBufferSize::for_compressed(size_of::<u64>() + frame.len())?;
     let mut slot = Vec::with_capacity(size.bytes() as usize);
     slot.extend_from_slice(&(frame.len() as u64).to_le_bytes());
@@ -546,7 +546,7 @@ fn decompress_slot(slot: &[u8], target: &mut [u8]) -> Result<()> {
             frame.len()
         ))
     })?;
-    let size = rustdb_zstd::decompress(target, frame)
+    let size = roastedduck_zstd::decompress(target, frame)
         .map_err(|error| corrupt(format!("failed to decompress block ({error})")))?;
     if size != target.len() {
         return Err(corrupt(format!(
@@ -855,7 +855,7 @@ impl TemporaryDirectoryHandle {
                     let error = io_error(format!(
                         "Failed to create directory \"{}\": {}",
                         path.display(),
-                        rustdb_common::os_error_text(&err)
+                        roastedduck_common::os_error_text(&err)
                     ));
                     match err.raw_os_error() {
                         Some(code) => error.with_extra_info("errno", code.to_string()),
@@ -936,7 +936,7 @@ mod tests {
     fn directory_fixture(label: &str) -> PathBuf {
         static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
-            "rustdb-temp-directory-{label}-{}-{}",
+            "roastedduck-temp-directory-{label}-{}-{}",
             std::process::id(),
             NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)
         ));

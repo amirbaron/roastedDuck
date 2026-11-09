@@ -8,7 +8,7 @@
 
 use std::time::{Duration, Instant};
 
-use rustdb_function::random::RandomEngine;
+use roastedduck_function::random::RandomEngine;
 
 use crate::table_filter::TableFilter;
 
@@ -126,7 +126,7 @@ impl TableFilter {
     /// comparisons first, optional and dynamic filters first of all (they stop filtering
     /// when they do not pay off), unknown filters (IN lists, expressions) last.
     pub fn cost(&self) -> u64 {
-        use rustdb_types::PhysicalType;
+        use roastedduck_types::PhysicalType;
         match self {
             Self::Dynamic(_) | Self::Optional(_) | Self::SelectivityOptional(_) => 0,
             Self::And(children) | Self::Or(children) => 5 + children.iter().map(Self::cost).sum::<u64>(),

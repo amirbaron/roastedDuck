@@ -5,6 +5,7 @@ on:
     paths:
       - 'scripts/release/requirements-validation.txt'
       - 'scripts/release/validate_python_matrix.py'
+      - 'scripts/release/audit_validation_environments.py'
       - '.github/workflows/validate-published-python.yml'
   workflow_dispatch:
 permissions:
@@ -56,7 +57,7 @@ jobs:
           python scripts/release/verify_downloads.py wheels
           # This validates the published artifacts, whose source is the release
           # tag, not unpublished engine/CLI changes in the tooling checkout.
-          git diff --exit-code "$RELEASE_TAG^{commit}" HEAD -- scripts/release/fetch_validation_source.py scripts/release/pytest_release_guard.py
+          git diff --exit-code "$RELEASE_TAG^{commit}" HEAD -- scripts/release/fetch_validation_source.py scripts/release/pytest_release_guard.py python/upstream.json
           python - <<'PY'
           import json, subprocess
           manifest = json.load(open('wheels/python-distributions.json'))
@@ -77,6 +78,7 @@ jobs:
             wheels/SHA256SUMS
             qualification/summary.json
             qualification/validation-provenance.json
+            qualification/release.json
             qualification/*/*/*.json
             qualification/*/*/*.jsonl
             qualification/*/*/*.xml
@@ -92,6 +94,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
@@ -99,28 +102,12 @@ jobs:
           path: receipts
       - name: Audit all thirty resolved test environments and the Rust lockfile
         run: |
-          mkdir security
+          mkdir -p security/release-source
+          git show "$RELEASE_TAG:Cargo.lock" > security/release-source/Cargo.lock
           curl -fL https://github.com/google/osv-scanner/releases/download/v2.7.1/osv-scanner_linux_amd64 -o security/osv-scanner
           echo 'fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8  security/osv-scanner' | sha256sum --check
           chmod +x security/osv-scanner
-          python - <<'PY'
-          import json, pathlib, subprocess
-          roots = sorted(pathlib.Path('receipts').glob('published-python-*'))
-          assert len(roots) == 3
-          inventories = []
-          for root in roots:
-              summary = json.loads((root / 'qualification/summary.json').read_text())
-              assert len(summary['cells']) == 5 and all(c['passed'] for c in summary['cells'])
-              files = sorted((root / 'qualification').glob('cp*/*/requirements.txt'))
-              assert len(files) == 10
-              inventories.extend(files)
-          command = ['security/osv-scanner', 'scan', 'source', '--lockfile', 'Cargo.lock',
-                     '--no-call-analysis', 'rust', '--no-resolve', '--all-vulns', '--all-packages',
-                     '--format', 'json', '--output-file', 'security/resolved-environments.json']
-          for path in inventories:
-              command += ['--lockfile', str(path)]
-          subprocess.run(command, check=True)
-          PY
+          python scripts/release/audit_validation_environments.py --inputs receipts --cargo-lock security/release-source/Cargo.lock --scanner security/osv-scanner --out security/resolved-environments.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -3,14 +3,14 @@
 
 use std::sync::Arc;
 
-use rustdb_ast::{
+use roastedduck_ast::{
     CatalogEntryInfo, CatalogType as AstCatalogType, ColumnDefinition, CompressionType, Constraint,
     CreateInfo, CreateInfoKind, DropInfo, ForeignKeyConstraint, ForeignKeyType, LogicalDependency,
     LogicalDependencyList, NotNullConstraint, OnEntryNotFound, TableColumnType,
 };
-use rustdb_catalog::{CatalogType, EntryKind, TableEntry};
-use rustdb_common::{ByteString, CaseInsensitiveSet, Error, LogicalIndex, PhysicalIndex, Result};
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_catalog::{CatalogType, EntryKind, TableEntry};
+use roastedduck_common::{ByteString, CaseInsensitiveSet, Error, LogicalIndex, PhysicalIndex, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use super::super::expression::{bind_logical_type, bind_logical_type_in_schema};
 use super::super::query_node::bind_node;
@@ -34,10 +34,12 @@ pub fn bind_create(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<B
             if catalog.eq_ignore_ascii_case("system") {
                 return Err(Error::binder("Cannot create schema in system catalog"));
             }
-            if catalog.eq_ignore_ascii_case(rustdb_catalog::TEMP_CATALOG)
-                && !info.schema.eq_ignore_ascii_case(rustdb_catalog::DEFAULT_SCHEMA)
+            if catalog.eq_ignore_ascii_case(roastedduck_catalog::TEMP_CATALOG)
+                && !info
+                    .schema
+                    .eq_ignore_ascii_case(roastedduck_catalog::DEFAULT_SCHEMA)
             {
-                return Err(Error::invalid_input(rustdb_common::byte_format!(
+                return Err(Error::invalid_input(roastedduck_common::byte_format!(
                     "Cannot create non-temporary entry \"{}\" in temporary catalog",
                     info.schema
                 )));
@@ -100,7 +102,7 @@ pub fn bind_create(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Result<B
 /// `ConstantBinder` and executes them).
 fn evaluate_secret_expression(
     scope: &mut BindScope<'_>,
-    expression: &rustdb_ast::ParsedExpression,
+    expression: &roastedduck_ast::ParsedExpression,
 ) -> Result<Value> {
     let mut copy = expression.clone();
     if crate::expression_binder::parsed_has_parameter(&mut copy) {
@@ -120,10 +122,10 @@ fn evaluate_secret_expression(
 /// provider, scope and options are evaluated; the secret manager checks them.
 fn bind_create_secret(
     scope: &mut BindScope<'_>,
-    info: &rustdb_ast::CreateSecretInfo,
-    on_conflict: rustdb_ast::OnCreateConflict,
+    info: &roastedduck_ast::CreateSecretInfo,
+    on_conflict: roastedduck_ast::OnCreateConflict,
 ) -> Result<crate::operator::CreateSecretInput> {
-    let mut lowered = |expression: Option<&rustdb_ast::ParsedExpression>| -> Result<String> {
+    let mut lowered = |expression: Option<&roastedduck_ast::ParsedExpression>| -> Result<String> {
         match expression {
             Some(expression) => Ok(evaluate_secret_expression(scope, expression)?
                 .to_varchar()?
@@ -242,11 +244,11 @@ pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Resul
     let (mut catalog, mut schema) = bind_schema_or_catalog(scope, &info.catalog, &info.schema)?;
     // `Binder::SearchSchema`: temporary entries go to the connection's `temp` catalog
     // (without one, to the default database).
-    let has_temp = scope.context.catalog(rustdb_catalog::TEMP_CATALOG).is_some();
+    let has_temp = scope.context.catalog(roastedduck_catalog::TEMP_CATALOG).is_some();
     if catalog.is_empty() && info.temporary && has_temp {
-        catalog = rustdb_catalog::TEMP_CATALOG.into();
+        catalog = roastedduck_catalog::TEMP_CATALOG.into();
     }
-    if !has_temp && catalog.eq_ignore_ascii_case(rustdb_catalog::TEMP_CATALOG) {
+    if !has_temp && catalog.eq_ignore_ascii_case(roastedduck_catalog::TEMP_CATALOG) {
         catalog.clear();
     }
     match (catalog.is_empty(), schema.is_empty()) {
@@ -259,7 +261,7 @@ pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Resul
         (false, false) => {}
     }
     if has_temp {
-        let is_temp = catalog.eq_ignore_ascii_case(rustdb_catalog::TEMP_CATALOG);
+        let is_temp = catalog.eq_ignore_ascii_case(roastedduck_catalog::TEMP_CATALOG);
         if !info.temporary && is_temp {
             return Err(Error::parser(
                 "Only TEMPORARY table names can use the \"temp\" catalog",
@@ -273,7 +275,7 @@ pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Resul
     }
     let Some(found) = scope.context.catalog(&catalog) else {
         // `Catalog::GetSchema` (`BindSchema`).
-        return Err(Error::catalog(rustdb_common::byte_format!(
+        return Err(Error::catalog(roastedduck_common::byte_format!(
             "Catalog with name {catalog} does not exist!"
         )));
     };
@@ -281,7 +283,7 @@ pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Resul
         return Err(Error::binder("Cannot create entry in system catalog"));
     }
     let Some(schema_entry) = found.schema(&scope.context.transaction, &schema) else {
-        return Err(Error::catalog(rustdb_common::byte_format!(
+        return Err(Error::catalog(roastedduck_common::byte_format!(
             "Schema with name {schema} does not exist!"
         )));
     };
@@ -352,7 +354,7 @@ pub(crate) fn add_recorded_dependencies(
 }
 
 /// A column definition with `name` and `ty`.
-fn column(name: impl Into<rustdb_common::ByteString>, ty: LogicalType) -> ColumnDefinition {
+fn column(name: impl Into<roastedduck_common::ByteString>, ty: LogicalType) -> ColumnDefinition {
     ColumnDefinition {
         name: name.into(),
         logical_type: ty,
@@ -360,7 +362,7 @@ fn column(name: impl Into<rustdb_common::ByteString>, ty: LogicalType) -> Column
         category: TableColumnType::Standard,
         compression_type: CompressionType::CompressionAuto,
         comment: Value::null(LogicalType::SQLNULL),
-        tags: rustdb_common::OrderedMap::default(),
+        tags: roastedduck_common::OrderedMap::default(),
     }
 }
 
@@ -377,7 +379,7 @@ fn push_deduplicated(
         definition.name = base.clone();
         definition
             .name
-            .push_bytes(rustdb_common::byte_format!("_{index}"));
+            .push_bytes(roastedduck_common::byte_format!("_{index}"));
         index += 1;
     }
     names.insert(definition.name.clone());
@@ -456,7 +458,7 @@ pub fn bind_create_table_info(
 /// `VerifyCompressionType`: every `USING COMPRESSION` must name a codec that can be
 /// written with the database's storage version and that supports the column's type.
 fn verify_compression_types(storage_version: Option<u64>, columns: &[ColumnDefinition]) -> Result<()> {
-    use rustdb_storage::compression::{
+    use roastedduck_storage::compression::{
         CompressionAvailability, CompressionType as Storage, compression_type_is_available,
         has_compression_function,
     };
@@ -465,13 +467,13 @@ fn verify_compression_types(storage_version: Option<u64>, columns: &[ColumnDefin
         match compression_type_is_available(compression, storage_version) {
             CompressionAvailability::Available => {}
             CompressionAvailability::Deprecated => {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Can't compress using user-provided compression type '{compression}', that type is deprecated \
                      and only has decompress support"
                 )));
             }
             CompressionAvailability::NotAvailableYet => {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Can't compress using user-provided compression type '{compression}', that type is not \
                      available yet"
                 )));
@@ -482,7 +484,7 @@ fn verify_compression_types(storage_version: Option<u64>, columns: &[ColumnDefin
         }
         let physical = column.logical_type.physical_type();
         if !has_compression_function(compression, physical) {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Can't compress column \"{}\" with type '{}' (physical: {}) using compression type '{compression}'",
                 column.name,
                 column.logical_type,
@@ -499,12 +501,12 @@ fn bind_table_definition(
     scope: &mut BindScope<'_>,
     catalog: impl AsRef<[u8]>,
     schema: impl AsRef<[u8]>,
-    table: &mut rustdb_ast::CreateTableInfo,
+    table: &mut roastedduck_ast::CreateTableInfo,
 ) -> Result<()> {
     let catalog = catalog.as_ref();
     let schema = schema.as_ref();
     for column in &mut table.columns.columns {
-        if column.logical_type.id() != rustdb_types::LogicalTypeId::Any {
+        if column.logical_type.id() != roastedduck_types::LogicalTypeId::Any {
             column.logical_type =
                 bind_logical_type_in_schema(&scope.context, &column.logical_type, catalog, schema)?;
         }
@@ -557,25 +559,28 @@ fn bind_table_definition(
 
 /// The names of the columns `expression` references (`ColumnDefinition::
 /// GetListOfDependencies`); lambdas are rejected.
-fn referenced_columns(expression: &rustdb_ast::ParsedExpression, out: &mut Vec<ByteString>) -> Result<()> {
+fn referenced_columns(
+    expression: &roastedduck_ast::ParsedExpression,
+    out: &mut Vec<ByteString>,
+) -> Result<()> {
     struct Collect<'a>(&'a mut Vec<ByteString>, bool);
-    impl rustdb_ast::visit::VisitorMut for Collect<'_> {
-        fn visit_expression(&mut self, expression: &mut rustdb_ast::ParsedExpression) {
-            if let rustdb_ast::ParsedExpressionKind::Lambda(_) = &expression.kind {
+    impl roastedduck_ast::visit::VisitorMut for Collect<'_> {
+        fn visit_expression(&mut self, expression: &mut roastedduck_ast::ParsedExpression) {
+            if let roastedduck_ast::ParsedExpressionKind::Lambda(_) = &expression.kind {
                 self.1 = true;
             }
-            if let rustdb_ast::ParsedExpressionKind::ColumnRef(column) = &expression.kind
+            if let roastedduck_ast::ParsedExpressionKind::ColumnRef(column) = &expression.kind
                 && let Some(name) = column.column_names.last()
                 && !self.0.iter().any(|seen| seen.eq_ignore_ascii_case(name))
             {
                 self.0.push(name.clone());
             }
-            rustdb_ast::visit::walk_expression(self, expression);
+            roastedduck_ast::visit::walk_expression(self, expression);
         }
     }
     let mut copy = expression.clone();
     let mut collect = Collect(out, false);
-    rustdb_ast::visit::VisitorMut::visit_expression(&mut collect, &mut copy);
+    roastedduck_ast::visit::VisitorMut::visit_expression(&mut collect, &mut copy);
     if collect.1 {
         return Err(Error::not_implemented(
             "Lambda functions are currently not supported in generated columns.",
@@ -635,7 +640,7 @@ fn bind_generated_columns(
         referenced_columns(expression, &mut names)?;
         for name in names {
             let Some(dependency) = columns.iter().position(|c| c.name.eq_ignore_ascii_case(&name)) else {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Column \"{name}\" referenced by generated column does not exist"
                 )));
             };
@@ -664,7 +669,7 @@ fn bind_generated_columns(
         };
         if bound.has_subquery() {
             return Err(Error::new_bytes(
-                rustdb_common::ErrorKind::Binder,
+                roastedduck_common::ErrorKind::Binder,
                 [
                     "Failed to bind generated column '".as_bytes(),
                     columns[index].name.as_bytes(),
@@ -674,13 +679,13 @@ fn bind_generated_columns(
             ));
         }
         let column = &mut columns[index];
-        if column.logical_type.id() == rustdb_types::LogicalTypeId::Any {
+        if column.logical_type.id() == roastedduck_types::LogicalTypeId::Any {
             // `ColumnDefinition::ChangeGeneratedExpressionType`.
             column.logical_type = bound.return_type.clone();
             if let Some(expression) = column.expression.take() {
-                column.expression = Some(Box::new(rustdb_ast::ParsedExpression::new(
-                    rustdb_ast::ExpressionType::OperatorCast,
-                    rustdb_ast::ParsedExpressionKind::Cast(rustdb_ast::CastExpression {
+                column.expression = Some(Box::new(roastedduck_ast::ParsedExpression::new(
+                    roastedduck_ast::ExpressionType::OperatorCast,
+                    roastedduck_ast::ParsedExpressionKind::Cast(roastedduck_ast::CastExpression {
                         child: expression,
                         cast_type: bound.return_type.clone(),
                         try_cast: false,
@@ -784,7 +789,7 @@ fn bind_new_constraints(
             Constraint::NotNull(constraint) => not_null.push(constraint.index.0 as usize),
             Constraint::Unique(unique) if unique.is_primary_key => {
                 if primary_keys.is_some() {
-                    return Err(Error::parser(rustdb_common::byte_format!(
+                    return Err(Error::parser(roastedduck_common::byte_format!(
                         "table \"{table}\" has more than one primary key"
                     )));
                 }
@@ -793,13 +798,13 @@ fn bind_new_constraints(
                     for name in &unique.columns {
                         let Some(index) = columns.iter().position(|c| c.name.eq_ignore_ascii_case(name))
                         else {
-                            return Err(Error::catalog(rustdb_common::byte_format!(
+                            return Err(Error::catalog(roastedduck_common::byte_format!(
                                 "table \"{table}\" does not have a column named \"{name}\""
                             )));
                         };
                         if columns[index].category == TableColumnType::Generated {
                             return Err(Error::new_bytes(
-                                rustdb_common::ErrorKind::Binder,
+                                roastedduck_common::ErrorKind::Binder,
                                 [
                                     "cannot create a PRIMARY KEY on a generated column: ".as_bytes(),
                                     columns[index].name.as_bytes(),
@@ -809,7 +814,7 @@ fn bind_new_constraints(
                             ));
                         }
                         if keys.contains(&index) {
-                            return Err(Error::parser(rustdb_common::byte_format!(
+                            return Err(Error::parser(roastedduck_common::byte_format!(
                                 "column \"{name}\" appears twice in primary key constraint"
                             )));
                         }
@@ -842,12 +847,12 @@ fn bind_new_constraints(
                 let mut seen = Vec::new();
                 for name in &unique.columns {
                     let Some(index) = columns.iter().position(|c| c.name.eq_ignore_ascii_case(name)) else {
-                        return Err(Error::catalog(rustdb_common::byte_format!(
+                        return Err(Error::catalog(roastedduck_common::byte_format!(
                             "table \"{table}\" does not have a column named \"{name}\""
                         )));
                     };
                     if seen.contains(&index) {
-                        return Err(Error::parser(rustdb_common::byte_format!(
+                        return Err(Error::parser(roastedduck_common::byte_format!(
                             "column \"{name}\" appears twice in primary key constraint"
                         )));
                     }
@@ -870,7 +875,7 @@ fn bind_new_constraints(
 }
 
 /// The key column names of a UNIQUE constraint.
-fn unique_names(columns: &[ColumnDefinition], unique: &rustdb_ast::UniqueConstraint) -> Vec<ByteString> {
+fn unique_names(columns: &[ColumnDefinition], unique: &roastedduck_ast::UniqueConstraint) -> Vec<ByteString> {
     if unique.index.0 == u64::MAX {
         unique.columns.clone()
     } else {
@@ -900,7 +905,7 @@ fn find_matching_primary_key_columns(
         let pk_names = unique_names(columns, unique);
         if find_primary_key {
             if pk_names.len() != fk.fk_columns.len() {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Failed to create foreign key: number of referencing ({}) and referenced columns ({}) differ",
                     ByteString::join(&fk.fk_columns, ","),
                     ByteString::join(&pk_names, ",")
@@ -927,20 +932,20 @@ fn find_matching_primary_key_columns(
         } else {
             "primary key or unique constraint"
         };
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "Failed to create foreign key: there is no {search} for referenced table \"{}\"",
             fk.table
         )));
     }
     for name in &fk.pk_columns {
         if !columns.iter().any(|c| c.name.eq_ignore_ascii_case(name)) {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Failed to create foreign key: referenced table \"{}\" does not have a column named \"{name}\"",
                 fk.table
             )));
         }
     }
-    Err(Error::binder(rustdb_common::byte_format!(
+    Err(Error::binder(roastedduck_common::byte_format!(
         "Failed to create foreign key: referenced table \"{}\" does not have a primary key or unique constraint on the columns {}",
         fk.table,
         ByteString::join(&fk.pk_columns, ",")
@@ -955,13 +960,13 @@ fn find_foreign_key_indexes(
     let mut indexes = Vec::with_capacity(names.len());
     for name in names {
         let Some(logical) = columns.iter().position(|c| c.name.eq_ignore_ascii_case(name)) else {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "column \"{name}\" named in key does not exist"
             )));
         };
         let Some(physical) = physical_index(columns, logical) else {
             return Err(Error::new_bytes(
-                rustdb_common::ErrorKind::Binder,
+                roastedduck_common::ErrorKind::Binder,
                 [
                     "Failed to create foreign key: referenced column \"".as_bytes(),
                     columns[logical].name.as_bytes(),
@@ -996,7 +1001,7 @@ fn check_foreign_key_types(
             continue;
         };
         if pk_col.logical_type != fk_col.logical_type {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Failed to create foreign key: incompatible types between column \"{}\" (\"{}\") and column \"{}\" (\"{}\")",
                 pk_col.name,
                 pk_col.logical_type,
@@ -1077,11 +1082,11 @@ fn bind_create_table_constraints(
                 .indexes()
                 .find_foreign_key_index(
                     &keys,
-                    rustdb_storage::index::table_index_list::ForeignKeyType::PrimaryKeyTable,
+                    roastedduck_storage::index::table_index_list::ForeignKeyType::PrimaryKeyTable,
                 )
                 .is_none()
             {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Failed to create foreign key on {}({}): no UNIQUE or PRIMARY KEY constraint present on these columns",
                     found.entry.name(),
                     ByteString::join(&fk.pk_columns, ",")
@@ -1113,7 +1118,7 @@ pub fn bind_drop(scope: &mut BindScope<'_>, drop: &mut DropInfo) -> Result<Bound
         AstCatalogType::IndexEntry => Some(CatalogType::Index),
         AstCatalogType::TypeEntry => Some(CatalogType::Type),
         other => {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Unknown catalog type for drop statement: '{}'",
                 other.name()
             )));
@@ -1139,7 +1144,7 @@ pub fn bind_drop(scope: &mut BindScope<'_>, drop: &mut DropInfo) -> Result<Bound
         }
         if let Some(found) = found {
             if found.entry.internal {
-                return Err(Error::catalog(rustdb_common::byte_format!(
+                return Err(Error::catalog(roastedduck_common::byte_format!(
                     "Cannot drop internal catalog entry \"{}\"!",
                     found.entry.name()
                 )));
@@ -1170,7 +1175,7 @@ fn is_bound(ty: &LogicalType) -> bool {
 
 /// The table entry of a found catalog entry, for DML on it.
 #[allow(dead_code, reason = "shared helper")]
-pub fn table_entry(entry: &rustdb_catalog::CatalogEntry) -> Result<&TableEntry> {
+pub fn table_entry(entry: &roastedduck_catalog::CatalogEntry) -> Result<&TableEntry> {
     table_of(entry)
 }
 

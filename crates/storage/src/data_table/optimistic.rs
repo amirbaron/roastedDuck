@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::DataChunk;
+use roastedduck_common::{Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::DataChunk;
 
 use super::{DataTable, LocalAppendState};
 use crate::MAX_ROW_ID;

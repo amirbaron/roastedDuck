@@ -32,8 +32,8 @@ mod vergesort;
 
 use std::sync::Arc;
 
-use rustdb_buffer::BufferManager;
-use rustdb_types::LogicalType;
+use roastedduck_buffer::BufferManager;
+use roastedduck_types::LogicalType;
 
 pub use block_iterator::ExternalBlockIteratorState;
 pub use encode::{

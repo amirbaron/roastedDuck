@@ -27,10 +27,10 @@ def sha(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 assert sha(args.library) == args.expected_sha256
-env = dict(os.environ, REF=str(args.source.resolve()), RUSTDB_CAPI_LIBRARY_DIR=str(args.library.parent),
-           RUSTDB_CAPI_TEST_OUTPUT_DIR=str(args.out / "build"), RUSTDB_CAPI_TEST_BIN_DIR=str(args.out / "bin"),
+env = dict(os.environ, REF=str(args.source.resolve()), ROASTEDDUCK_CAPI_LIBRARY_DIR=str(args.library.parent),
+           ROASTEDDUCK_CAPI_TEST_OUTPUT_DIR=str(args.out / "build"), ROASTEDDUCK_CAPI_TEST_BIN_DIR=str(args.out / "bin"),
            CAPI_TEST_DIR=str(args.out / "data"), TMPDIR=str(args.out / "tmp"), TZ="UTC",
-           RUSTDB_TEST_ADHOC_SIGNING="1", DUCKDB_INSTALL_LIB=str(args.library))
+           ROASTEDDUCK_TEST_ADHOC_SIGNING="1", DUCKDB_INSTALL_LIB=str(args.library))
 env.pop("LD_LIBRARY_PATH", None)
 env.pop("LD_PRELOAD", None)
 if sys.platform != "darwin":

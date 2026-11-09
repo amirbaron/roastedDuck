@@ -1,9 +1,9 @@
 //! Serialization of vectors and data chunks (DuckDB's `Vector::Serialize/Deserialize` and
 //! `DataChunk::Serialize/Deserialize`), used by the WAL and by table samples.
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_serde::{Deserializer, Serializer};
-use rustdb_types::{
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_serde::{Deserializer, Serializer};
+use roastedduck_types::{
     DataChunk, GeometryStorageType, ListEntry, LogicalType, LogicalTypeId, PhysicalType, SelectionVector,
     StringT, ValidityMask, Vector, geometry,
 };

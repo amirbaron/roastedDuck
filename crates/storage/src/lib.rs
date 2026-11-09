@@ -66,4 +66,4 @@ pub const MAX_ROW_GROUP_SIZE: u64 = 1 << 30;
 pub const COLUMN_IDENTIFIER_ROW_ID: u64 = u64::MAX;
 
 /// `STANDARD_VECTOR_SIZE` as a `u64`, for row arithmetic.
-pub(crate) const VECTOR_SIZE: u64 = rustdb_common::STANDARD_VECTOR_SIZE as u64;
+pub(crate) const VECTOR_SIZE: u64 = roastedduck_common::STANDARD_VECTOR_SIZE as u64;

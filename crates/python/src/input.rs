@@ -3,14 +3,14 @@
 use crate::connection::lock;
 use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyList};
-use rustdb_arrow::ffi::{ArrowArrayStream, ArrowArrayStreamWrapper, ArrowSchema};
-use rustdb_ast::{
+use roastedduck_arrow::ffi::{ArrowArrayStream, ArrowArrayStreamWrapper, ArrowSchema};
+use roastedduck_ast::{
     CreateInfoKind, ExternalDependency, OrdinalityType, QueryNodeKind, SelectStatement, SqlStatementKind,
     TableFunctionRef, TableRef, TableRefKind,
 };
-use rustdb_common::{Error, Result};
-use rustdb_function::{FunctionData, TableFunctionBindInput, TableFunctionSet};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{FunctionData, TableFunctionBindInput, TableFunctionSet};
+use roastedduck_types::{LogicalType, Value};
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -66,7 +66,7 @@ pub(super) fn python_error(error: &PyErr) -> Error {
             }
         }
     });
-    Error::new(rustdb_common::ErrorKind::Invalid, message).with_subtype("python_callback")
+    Error::new(roastedduck_common::ErrorKind::Invalid, message).with_subtype("python_callback")
 }
 impl ArrowInput {
     fn schema(&self, out: &mut ArrowSchema) -> Result<()> {
@@ -147,7 +147,7 @@ impl ArrowInput {
     }
     fn stream_projected(
         &self,
-        parameters: Option<&rustdb_arrow::ArrowStreamParameters>,
+        parameters: Option<&roastedduck_arrow::ArrowStreamParameters>,
     ) -> Result<Box<ArrowArrayStreamWrapper>> {
         Python::attach(|py| {
             let object = self.object.bind(py);
@@ -251,15 +251,15 @@ impl ArrowInput {
 }
 
 pub(super) fn select(table: TableRef) -> SelectStatement {
-    let mut node = rustdb_parser::build::select_node();
-    node.select_list.push(rustdb_parser::build::star());
+    let mut node = roastedduck_parser::build::select_node();
+    node.select_list.push(roastedduck_parser::build::star());
     *node.from_table = table;
-    rustdb_parser::build::select_statement(rustdb_parser::build::query_node(QueryNodeKind::Select(Box::new(
-        node,
-    ))))
+    roastedduck_parser::build::select_statement(roastedduck_parser::build::query_node(QueryNodeKind::Select(
+        Box::new(node),
+    )))
 }
 pub(super) fn create_view(
-    connection: &mut rustdb::Connection,
+    connection: &mut roastedduck::Connection,
     source: SelectStatement,
     name: impl AsRef<[u8]>,
     replace: bool,
@@ -267,12 +267,12 @@ pub(super) fn create_view(
 ) -> Result<()> {
     // The name is assigned to the AST, like C++ ViewRelation::CreateView. A raw
     // catalog name may contain NUL, which must not pass through the SQL scanner.
-    let sql = rustdb_common::byte_format!(
+    let sql = roastedduck_common::byte_format!(
         "CREATE {} {} VIEW __python_view_name__ AS SELECT 42",
         if replace { "OR REPLACE" } else { "" },
         if temporary { "TEMP" } else { "" }
     );
-    let mut statement = rustdb_parser::parse_bytes(&sql)?
+    let mut statement = roastedduck_parser::parse_bytes(&sql)?
         .pop()
         .ok_or_else(|| Error::internal("Missing view statement"))?;
     let SqlStatementKind::Create(info) = &mut statement.kind else {
@@ -291,7 +291,7 @@ pub(super) fn create_view(
 // data below retains the factory until every execution/scan has finished.
 unsafe fn produce(
     factory: usize,
-    parameters: &rustdb_arrow::ArrowStreamParameters,
+    parameters: &roastedduck_arrow::ArrowStreamParameters,
 ) -> Result<Box<ArrowArrayStreamWrapper>> {
     // SAFETY: factory comes from the retained ArrowInput in the bind callback.
     unsafe { &*(factory as *const ArrowInput) }.stream_projected(Some(parameters))
@@ -311,7 +311,7 @@ impl FunctionData for InputOwner {
 }
 unsafe fn produce_dumb(
     factory: usize,
-    _parameters: &rustdb_arrow::ArrowStreamParameters,
+    _parameters: &roastedduck_arrow::ArrowStreamParameters,
 ) -> Result<Box<ArrowArrayStreamWrapper>> {
     // SAFETY: the retained owner is the factory that supplied this pointer.
     unsafe { &*(factory as *const ArrowInput) }.stream()
@@ -322,15 +322,15 @@ pub(super) fn functions() -> Result<Vec<TableFunctionSet>> {
         (
             "arrow_scan",
             FUNCTION,
-            produce as rustdb_arrow::StreamFactoryProduce,
+            produce as roastedduck_arrow::StreamFactoryProduce,
         ),
         (
             "arrow_scan_dumb",
             DUMB_FUNCTION,
-            produce_dumb as rustdb_arrow::StreamFactoryProduce,
+            produce_dumb as roastedduck_arrow::StreamFactoryProduce,
         ),
     ] {
-        let mut function = rustdb_arrow::arrow_table_functions()
+        let mut function = roastedduck_arrow::arrow_table_functions()
             .into_iter()
             .find(|set| set.name.as_ref() == native)
             .and_then(|mut set| set.functions.pop())
@@ -369,7 +369,7 @@ pub(super) fn functions() -> Result<Vec<TableFunctionSet>> {
                 .bind_data
                 .take()
                 .ok_or_else(|| Error::internal("Missing Arrow bind data"))?;
-            output.bind_data = Some(rustdb_arrow::retain_factory_owner(
+            output.bind_data = Some(roastedduck_arrow::retain_factory_owner(
                 inner.as_ref(),
                 Arc::new(InputOwner { _owner: owner }),
             )?);
@@ -392,7 +392,7 @@ pub(super) fn table_named(object: &Bound<'_, PyAny>, name: impl AsRef<[u8]>) -> 
     {
         return Err(crate::error::native(
             object.py(),
-            &Error::invalid_input(rustdb_common::byte_format!(
+            &Error::invalid_input(roastedduck_common::byte_format!(
                 "Python Object \"{}\" of type \"{}\" not suitable for replacement scans.\nMake sure that \"{}\" is either a pandas.DataFrame, duckdb.DuckDBPyRelation, pyarrow Table, Dataset, RecordBatchReader, Scanner, or NumPy ndarrays with supported format",
                 name.as_ref(),
                 object.get_type().name()?.extract::<String>()?.as_bytes(),
@@ -454,12 +454,14 @@ pub(super) fn table(object: &Bound<'_, PyAny>) -> PyResult<TableRef> {
         object: object.clone().unbind(),
     });
     lock(inputs()).insert(owner.id, Arc::downgrade(&owner));
-    let mut table = rustdb_parser::build::table_ref(TableRefKind::TableFunction(TableFunctionRef {
-        function: Box::new(rustdb_parser::build::function(
+    let mut table = roastedduck_parser::build::table_ref(TableRefKind::TableFunction(TableFunctionRef {
+        function: Box::new(roastedduck_parser::build::function(
             function,
             vec![
-                rustdb_parser::build::constant(Value::ubigint(owner.id).reinterpret(LogicalType::POINTER)),
-                rustdb_parser::build::constant(
+                roastedduck_parser::build::constant(
+                    Value::ubigint(owner.id).reinterpret(LogicalType::POINTER),
+                ),
+                roastedduck_parser::build::constant(
                     Value::ubigint(if function == DUMB_FUNCTION {
                         produce_dumb as *const () as usize
                     } else {
@@ -467,7 +469,7 @@ pub(super) fn table(object: &Bound<'_, PyAny>) -> PyResult<TableRef> {
                     } as u64)
                     .reinterpret(LogicalType::POINTER),
                 ),
-                rustdb_parser::build::constant(
+                roastedduck_parser::build::constant(
                     Value::ubigint(schema as *const () as usize as u64).reinterpret(LogicalType::POINTER),
                 ),
             ],
@@ -530,7 +532,7 @@ fn capsule_stream(object: &Bound<'_, PyAny>) -> PyResult<Option<NonNull<ArrowArr
         if name != b"arrow_array_stream" {
             return Err(crate::error::native(
                 object.py(),
-                &Error::invalid_input(rustdb_common::byte_format!(
+                &Error::invalid_input(roastedduck_common::byte_format!(
                     "Expected a 'arrow_array_stream' PyCapsule, got: {}",
                     &name[..]
                 )),
@@ -547,8 +549,8 @@ enum Found {
     Unsupported(String),
 }
 
-pub(super) fn replacement_scan() -> rustdb_planner::ReplacementScan {
-    rustdb_planner::ReplacementScan(Arc::new(|input| {
+pub(super) fn replacement_scan() -> roastedduck_planner::ReplacementScan {
+    roastedduck_planner::ReplacementScan(Arc::new(|input| {
         let setting = |name: &str, default: bool| {
             input
                 .context

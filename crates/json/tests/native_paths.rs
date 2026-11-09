@@ -1,9 +1,9 @@
 //! Real JSON reader binding/scanning through Unicode paths and hive metadata.
-use rustdb_catalog::{Catalog, TransactionManager};
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_function::{FunctionClient, TableFunctionBindInput, TableScanState, cast::CastFunctionSet};
-use rustdb_planner::{ClientContext, Expression, ExpressionEvaluator, PlannerConfig};
-use rustdb_types::{DataChunk, Value};
+use roastedduck_catalog::{Catalog, TransactionManager};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_function::{FunctionClient, TableFunctionBindInput, TableScanState, cast::CastFunctionSet};
+use roastedduck_planner::{ClientContext, Expression, ExpressionEvaluator, PlannerConfig};
+use roastedduck_types::{DataChunk, Value};
 use std::sync::Arc;
 #[derive(Debug)]
 struct UnusedEvaluator;
@@ -26,11 +26,11 @@ fn unicode_json_path_bind_scan_and_filename() -> Result<()> {
         casts: Arc::new(CastFunctionSet::new()),
         evaluator: Arc::new(UnusedEvaluator),
         config: PlannerConfig::default(),
-        prepared_statements: rustdb_common::CaseInsensitiveMap::default(),
+        prepared_statements: roastedduck_common::CaseInsensitiveMap::default(),
         function_client: Arc::new(FunctionClient::default()),
         dependency_recorder: Arc::default(),
         database_state: None,
-        user_variables: rustdb_common::CaseInsensitiveMap::default(),
+        user_variables: roastedduck_common::CaseInsensitiveMap::default(),
         replacement_scans: Vec::new(),
     };
 
@@ -40,7 +40,7 @@ fn unicode_json_path_bind_scan_and_filename() -> Result<()> {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("雪.json");
     std::fs::write(&path, "{\"値\":42}\n{\"値\":7}\n").unwrap();
-    let sets = rustdb_json::json_table_functions();
+    let sets = roastedduck_json::json_table_functions();
     let function = &sets
         .iter()
         .find(|set| set.name.as_ref() == "read_ndjson")
@@ -83,9 +83,9 @@ fn unicode_json_path_bind_scan_and_filename() -> Result<()> {
     assert_eq!(values, vec![42, 7]);
     drop(state);
     drop(bound);
-    let copies = rustdb_json::json_copy_functions();
-    let options = rustdb_common::CaseInsensitiveMap::default();
-    let input = rustdb_function::copy::CopyFromBindInput {
+    let copies = roastedduck_json::json_copy_functions();
+    let options = roastedduck_common::CaseInsensitiveMap::default();
+    let input = roastedduck_function::copy::CopyFromBindInput {
         options: &options,
         file_path: path.as_os_str().as_encoded_bytes(),
         format: b"json",
@@ -94,7 +94,7 @@ fn unicode_json_path_bind_scan_and_filename() -> Result<()> {
     let copy_data = copies[0].copy_from_bind.as_ref().unwrap()(
         &input,
         &["値".into()],
-        &[rustdb_types::LogicalType::INTEGER],
+        &[roastedduck_types::LogicalType::INTEGER],
     )?;
     let reader = copies[0].copy_from_function.as_ref().unwrap();
     let mut state = TableScanState::default();

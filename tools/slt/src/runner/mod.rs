@@ -719,7 +719,7 @@ impl<'a, E: Engine> Runner<'a, E> {
                     .trim_matches(|c: char| c.is_ascii() && text::is_space(c as u8))
                     .parse()
                     .map_err(|_| parser.fail("set seed requires a floating point parameter"))?;
-                let seed = rustdb::Value::double(seed)
+                let seed = roastedduck::Value::double(seed)
                     .to_varchar()
                     .map_err(|error| Failure::new(error.to_string()))?;
                 let engine = self.engine;

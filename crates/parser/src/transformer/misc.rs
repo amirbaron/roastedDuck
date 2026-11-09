@@ -2,7 +2,7 @@
 //! RESET, EXPLAIN, VACUUM, CALL, CHECKPOINT, LOAD / INSTALL, ATTACH / DETACH, USE,
 //! EXPORT / IMPORT, COPY FROM DATABASE and UPDATE EXTENSIONS.
 
-use rustdb_ast::{
+use roastedduck_ast::{
     AttachInfo, CallStatement, CatalogType, CopyDatabaseStatement, CopyDatabaseType, DetachInfo, DropInfo,
     ExecuteStatement, ExplainFormat, ExplainStatement, ExplainType, ExportStatement, ExpressionType,
     LoadInfo, LoadType, OnEntryNotFound, ParsedExpression, ParsedExpressionKind, PragmaInfo,
@@ -10,14 +10,14 @@ use rustdb_ast::{
     TransactionInvalidationPolicy, TransactionModifierType, TransactionType, UpdateExtensionsInfo,
     VacuumInfo, VacuumOptions, keyword::write_optionally_quoted_bytes as write_optionally_quoted,
 };
-use rustdb_common::{CaseInsensitiveMap, Error, OrderedMap, Result};
-use rustdb_pg_parser::nodes::{
+use roastedduck_common::{CaseInsensitiveMap, Error, OrderedMap, Result};
+use roastedduck_pg_parser::nodes::{
     AttachStmt, CallStmt, CheckPointStmt, CopyDatabaseStmt, DeallocateStmt, DefElem, DetachStmt, ExecuteStmt,
     ExplainStmt, ExportStmt, FuncCall, ImportStmt, LoadInstallType, LoadStmt, Node, PragmaKind, PragmaStmt,
     PrepareStmt, TransactionStmt, TransactionStmtKind, TransactionStmtType, UpdateExtensionsStmt, UseStmt,
     VacuumStmt, VariableSetKind, VariableSetScope, VariableSetStmt, vacuum_option,
 };
-use rustdb_types::{LogicalTypeId, Value};
+use roastedduck_types::{LogicalTypeId, Value};
 
 use super::build;
 use super::dml::copy_info;
@@ -59,7 +59,7 @@ fn parse_explain_format(value: &Value) -> Result<ExplainFormat> {
         return Ok(*format);
     }
     let options: Vec<&str> = mapping.iter().map(|(name, _)| name).collect();
-    Err(Error::invalid_input(rustdb_common::byte_format!(
+    Err(Error::invalid_input(roastedduck_common::byte_format!(
         "\"{text}\" is not a valid FORMAT argument, valid options are: {}",
         options.join(", ")
     )))
@@ -82,7 +82,7 @@ impl<'a> Transformer<'a> {
             TransactionStmtKind::Commit => TransactionType::Commit,
             TransactionStmtKind::Rollback => TransactionType::Rollback,
             other => {
-                return Err(Error::not_implemented(rustdb_common::byte_format!(
+                return Err(Error::not_implemented(roastedduck_common::byte_format!(
                     "Transaction type {} not implemented yet",
                     other as i32
                 )));
@@ -128,7 +128,7 @@ impl<'a> Transformer<'a> {
     pub(crate) fn transform_execute(&mut self, stmt: &'a ExecuteStmt) -> Result<SqlStatementKind> {
         let name = stmt.name.clone().unwrap_or_default();
         let values = self.transform_expressions(&stmt.params)?;
-        let mut named_values: CiHashMap<ParsedExpression, rustdb_common::ByteString> =
+        let mut named_values: CiHashMap<ParsedExpression, roastedduck_common::ByteString> =
             CiHashMap::new_with_keys();
         let mut param_idx = 0;
         for (i, mut expr) in values.into_iter().enumerate() {
@@ -182,7 +182,7 @@ impl<'a> Transformer<'a> {
     pub(crate) fn transform_pragma(&mut self, stmt: &'a PragmaStmt) -> Result<SqlStatementKind> {
         let name = stmt.name.clone().unwrap_or_default();
         let mut parameters = Vec::new();
-        let mut named_parameters: CiHashMap<ParsedExpression, rustdb_common::ByteString> =
+        let mut named_parameters: CiHashMap<ParsedExpression, roastedduck_common::ByteString> =
             CiHashMap::new_with_keys();
         for node in &stmt.args {
             let expr = self.transform_expression(node)?;
@@ -303,7 +303,7 @@ impl<'a> Transformer<'a> {
                     explain_format = parse_explain_format(&constant.value)?;
                 }
             } else {
-                return Err(Error::not_implemented(rustdb_common::byte_format!(
+                return Err(Error::not_implemented(roastedduck_common::byte_format!(
                     "Unimplemented explain type: {elem}"
                 )));
             }
@@ -443,7 +443,7 @@ impl<'a> Transformer<'a> {
 
     /// `TransformAttach`.
     pub(crate) fn transform_attach(&mut self, stmt: &'a AttachStmt) -> Result<SqlStatementKind> {
-        let mut parsed_options: CiHashMap<ParsedExpression, rustdb_common::ByteString> =
+        let mut parsed_options: CiHashMap<ParsedExpression, roastedduck_common::ByteString> =
             CiHashMap::new_with_keys();
         for node in &stmt.options {
             let def_elem: &'a DefElem = cast_node(node)?;
@@ -488,7 +488,7 @@ impl<'a> Transformer<'a> {
         let name = if qname.schema.is_empty() {
             write_optionally_quoted(&qname.name)
         } else {
-            rustdb_common::byte_format!(
+            roastedduck_common::byte_format!(
                 "{}.{}",
                 write_optionally_quoted(&qname.schema),
                 write_optionally_quoted(&qname.name)

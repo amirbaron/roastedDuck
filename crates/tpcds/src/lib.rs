@@ -12,13 +12,13 @@ use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use rustdb_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::cast::ValueCast;
-use rustdb_function::{
+use roastedduck_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_function::{
     FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
 };
-use rustdb_planner::ClientContext;
-use rustdb_types::{DataChunk, LogicalType, Value, Vector, implicit_cast_cost};
+use roastedduck_planner::ClientContext;
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector, implicit_cast_cost};
 
 use crate::dsdgen::DsdgenTarget;
 use crate::tpcds_constants::{TPCDS_ANSWERS_SF0_01, TPCDS_ANSWERS_SF1, TPCDS_QUERIES, TPCDS_QUERIES_COUNT};
@@ -32,7 +32,7 @@ struct DsdgenFunctionData {
     finished: AtomicBool,
     sf: f64,
     target: DsdgenTarget,
-    suffix: rustdb_common::ByteString,
+    suffix: roastedduck_common::ByteString,
     overwrite: bool,
     keys: bool,
     /// The number of threads of the connection (`TaskScheduler::NumberOfThreads`).
@@ -44,7 +44,7 @@ impl FunctionData for DsdgenFunctionData {
         self
     }
 
-    fn modified_database(&self) -> Option<rustdb_common::ByteString> {
+    fn modified_database(&self) -> Option<roastedduck_common::ByteString> {
         Some((&*self.target.catalog.name()).into())
     }
 }
@@ -73,9 +73,9 @@ fn dsdgen_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOu
     let context = client_context(input)?;
     // The current catalog and schema.
     let mut catalog = context.default_catalog();
-    let mut schema = rustdb_common::ByteString::from(context.default_schema());
+    let mut schema = roastedduck_common::ByteString::from(context.default_schema());
     let mut sf = 0.0;
-    let mut suffix = rustdb_common::ByteString::new();
+    let mut suffix = roastedduck_common::ByteString::new();
     let mut overwrite = false;
     let mut keys = false;
     for (name, value) in input.named_parameters {
@@ -94,7 +94,7 @@ fn dsdgen_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOu
     }
     // `RegisterDBModify`: the call writes to the catalog (see `modified_database`).
     let catalog = context.catalog(&catalog).cloned().ok_or_else(|| {
-        Error::binder(rustdb_common::byte_format!(
+        Error::binder(roastedduck_common::byte_format!(
             "Catalog \"{catalog}\" does not exist!"
         ))
     })?;

@@ -4,18 +4,18 @@
 
 use std::sync::Arc;
 
-use rustdb_common::Result;
-use rustdb_function::{FunctionState, ScalarKernel};
-use rustdb_planner::{Expression, ExpressionKind};
-use rustdb_storage::statistics::{BaseStatistics, NumericValue, find_child_stats, is_fully_shredded};
-use rustdb_types::kernels::binary;
-use rustdb_types::variant::VariantPathComponent;
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, PhysicalType, Value, Vector};
+use roastedduck_common::Result;
+use roastedduck_function::{FunctionState, ScalarKernel};
+use roastedduck_planner::{Expression, ExpressionKind};
+use roastedduck_storage::statistics::{BaseStatistics, NumericValue, find_child_stats, is_fully_shredded};
+use roastedduck_types::kernels::binary;
+use roastedduck_types::variant::VariantPathComponent;
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, PhysicalType, Value, Vector};
 
 use super::{StatisticsPropagator, greater, has_min_max, numeric_max, numeric_min, set_max, set_min};
 use crate::expression_util::try_evaluate_scalar;
 use crate::optimizer::bind_aggregate_function;
-use rustdb_function::cast::ValueCast;
+use roastedduck_function::cast::ValueCast;
 
 /// The statistics of a scalar function call, possibly simplifying it.
 #[allow(clippy::unnecessary_wraps)] // callbacks may bind replacement functions
@@ -112,10 +112,10 @@ pub(super) fn propagate_scalar_function(
         b"stats" => {
             // DuckDB's `StatsPropagateStats`: record the argument's statistics.
             if let (Some(data), Some(stats)) = (
-                function
-                    .bind_info
-                    .as_ref()
-                    .and_then(|data| data.as_any().downcast_ref::<rustdb_function::StatsBindData>()),
+                function.bind_info.as_ref().and_then(|data| {
+                    data.as_any()
+                        .downcast_ref::<roastedduck_function::StatsBindData>()
+                }),
                 child_stats.first(),
             ) {
                 *data
@@ -371,7 +371,7 @@ fn propagate_date_trunc(
 #[derive(Debug)]
 pub struct WithoutStatistics;
 
-impl rustdb_function::FunctionData for WithoutStatistics {
+impl roastedduck_function::FunctionData for WithoutStatistics {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -379,7 +379,7 @@ impl rustdb_function::FunctionData for WithoutStatistics {
     /// DuckDB has no bind data here (the missing statistics callback is not part of
     /// `AggregateFunction::operator==`), so such aggregates are equal to each other and
     /// `CommonAggregateOptimizer` computes them once.
-    fn equals(&self, other: &dyn rustdb_function::FunctionData) -> bool {
+    fn equals(&self, other: &dyn roastedduck_function::FunctionData) -> bool {
         other.as_any().is::<Self>()
     }
 }
@@ -460,20 +460,20 @@ fn sum_no_overflow_argument(stats: &BaseStatistics, max_cardinality: u64) -> Opt
 fn sum_no_overflow(
     propagator: &StatisticsPropagator<'_>,
     argument: &LogicalType,
-) -> Result<rustdb_function::AggregateFunction> {
+) -> Result<roastedduck_function::AggregateFunction> {
     let entry = propagator
         .optimizer
         .context()
         .get_entry(
             "system",
             "main",
-            rustdb_catalog::CatalogType::AggregateFunction,
+            roastedduck_catalog::CatalogType::AggregateFunction,
             "sum_no_overflow",
             true,
         )?
-        .ok_or_else(|| rustdb_common::Error::internal("aggregate function sum_no_overflow not found"))?;
-    let rustdb_catalog::EntryKind::AggregateFunction(functions) = &entry.entry.kind else {
-        return Err(rustdb_common::Error::internal(
+        .ok_or_else(|| roastedduck_common::Error::internal("aggregate function sum_no_overflow not found"))?;
+    let roastedduck_catalog::EntryKind::AggregateFunction(functions) = &entry.entry.kind else {
+        return Err(roastedduck_common::Error::internal(
             "sum_no_overflow is not an aggregate function",
         ));
     };
@@ -482,7 +482,9 @@ fn sum_no_overflow(
         .iter()
         .find(|function| function.arguments.as_slice() == std::slice::from_ref(argument))
         .cloned()
-        .ok_or_else(|| rustdb_common::Error::internal("Unsupported internal type for sum_no_overflow"))?;
+        .ok_or_else(|| {
+            roastedduck_common::Error::internal("Unsupported internal type for sum_no_overflow")
+        })?;
     // The function object itself, not its catalog entry's.
     function.clear_catalog_entry();
     Ok(function)
@@ -619,12 +621,11 @@ fn propagate_arithmetic(
         // No overflow is possible: the plain operator replaces the overflow-checking one
         // (`SetFunctionCallback(GetScalarIntegerFunction<OP>(...))`).
         function.function.kernel = kernel;
-        if function
-            .bind_info
-            .as_ref()
-            .is_some_and(|data| data.as_any().is::<rustdb_function::DecimalArithmeticBindData>())
-        {
-            function.bind_info = Some(Arc::new(rustdb_function::DecimalArithmeticBindData {
+        if function.bind_info.as_ref().is_some_and(|data| {
+            data.as_any()
+                .is::<roastedduck_function::DecimalArithmeticBindData>()
+        }) {
+            function.bind_info = Some(Arc::new(roastedduck_function::DecimalArithmeticBindData {
                 check_overflow: false,
             }));
         }

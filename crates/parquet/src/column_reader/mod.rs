@@ -8,8 +8,8 @@ pub mod values;
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, Vector};
 
 pub use leaf::LeafReader;
 pub use nested::{ListReader, StructReader};
@@ -72,7 +72,7 @@ impl VariantReader {
         for child in &mut self.children {
             let mut vector = Vector::flat(
                 child.logical_type(),
-                rustdb_common::STANDARD_VECTOR_SIZE.max(num_values),
+                roastedduck_common::STANDARD_VECTOR_SIZE.max(num_values),
             );
             counts.push(child.read(num_values, defines, repeats, &mut vector)?);
             vectors.push(vector);
@@ -120,12 +120,16 @@ impl GeometryReader {
         let mut blobs = self.scratch.take().unwrap_or_else(|| {
             Vector::flat(
                 self.blob.logical_type().clone(),
-                rustdb_common::STANDARD_VECTOR_SIZE,
+                roastedduck_common::STANDARD_VECTOR_SIZE,
             )
         });
         let read = self.blob.read(num_values, defines, repeats, &mut blobs)?;
-        if result.logical_type() != &self.logical_type || result.kind() != rustdb_types::VectorKind::Flat {
-            *result = Vector::flat(self.logical_type.clone(), rustdb_common::STANDARD_VECTOR_SIZE);
+        if result.logical_type() != &self.logical_type || result.kind() != roastedduck_types::VectorKind::Flat
+        {
+            *result = Vector::flat(
+                self.logical_type.clone(),
+                roastedduck_common::STANDARD_VECTOR_SIZE,
+            );
         }
         let capacity = result.capacity();
         for row in 0..read {
@@ -135,9 +139,9 @@ impl GeometryReader {
             }
             result.validity_mut().set_valid(row);
             let converted =
-                rustdb_types::geometry::from_binary(blobs.string_bytes(row), true)?.unwrap_or_default();
+                roastedduck_types::geometry::from_binary(blobs.string_bytes(row), true)?.unwrap_or_default();
             let stored = result.add_string(&converted);
-            result.values_mut::<rustdb_types::StringT>()[row] = stored;
+            result.values_mut::<roastedduck_types::StringT>()[row] = stored;
         }
         self.scratch = Some(blobs);
         Ok(read)
@@ -215,7 +219,7 @@ impl ColumnReader {
                     }
                 }
                 match schema.logical_type.id() {
-                    rustdb_types::LogicalTypeId::List | rustdb_types::LogicalTypeId::Map => {
+                    roastedduck_types::LogicalTypeId::List | roastedduck_types::LogicalTypeId::Map => {
                         let child = children
                             .into_iter()
                             .next()
@@ -223,7 +227,7 @@ impl ColumnReader {
                             .ok_or_else(|| Error::internal("LIST reader without a child"))?;
                         Ok(Self::List(Box::new(ListReader::new(schema, child))))
                     }
-                    rustdb_types::LogicalTypeId::Struct => {
+                    roastedduck_types::LogicalTypeId::Struct => {
                         Ok(Self::Struct(StructReader::new(schema, children)))
                     }
                     _ => Err(Error::internal(

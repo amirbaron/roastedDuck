@@ -7,17 +7,17 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ring::{digest, hmac};
-use rustdb_common::{ByteString, Error, ErrorKind, Result};
-use rustdb_function::ExtensionOption;
-use rustdb_function::registered_files::{FileHandle, FileSystem, GlobResult};
-use rustdb_types::{LogicalType, Timestamp, Value};
+use roastedduck_common::{ByteString, Error, ErrorKind, Result};
+use roastedduck_function::ExtensionOption;
+use roastedduck_function::registered_files::{FileHandle, FileSystem, GlobResult};
+use roastedduck_types::{LogicalType, Timestamp, Value};
 
 use crate::{HttpFile, Parameters, io_error};
 
 mod delete;
 mod write;
 
-pub const SECRET_RESOLVER_KEY: &str = "rustdb.s3_secret_resolver";
+pub const SECRET_RESOLVER_KEY: &str = "roastedduck.s3_secret_resolver";
 
 /// The engine owns secret lookup and persistence; the transport only receives the
 /// selected map. Debug output deliberately excludes credential values.
@@ -283,7 +283,7 @@ impl RequestSigning {
     ) -> Result<bool> {
         // Reloading without an opener would replace connection-scoped secrets
         // and endpoints with defaults. C++ likewise declines refresh without one.
-        let Some(client) = rustdb_function::file_system::opener() else {
+        let Some(client) = roastedduck_function::file_system::opener() else {
             return Ok(false);
         };
         let prepare = || -> Result<HttpFile> {
@@ -444,7 +444,7 @@ impl RequestSigning {
 }
 
 fn setting(name: &str) -> Option<Value> {
-    rustdb_function::file_system::opener()?
+    roastedduck_function::file_system::opener()?
         .settings()?
         .current_setting(name)
         .ok()
@@ -452,7 +452,7 @@ fn setting(name: &str) -> Option<Value> {
 }
 
 fn secret(path: &str) -> Result<Option<BTreeMap<String, Value>>> {
-    rustdb_function::file_system::opener()
+    roastedduck_function::file_system::opener()
         .and_then(|c| c.object_cache())
         .and_then(|c| c.get::<SecretResolver>(SECRET_RESOLVER_KEY))
         .map_or_else(|| Ok(None), |r| r.0.resolve(path))
@@ -461,7 +461,7 @@ fn secret(path: &str) -> Result<Option<BTreeMap<String, Value>>> {
 /// One instance is registered in the database-local registry beside HTTP(S).
 #[derive(Debug)]
 pub struct S3FileSystem {
-    manager: rustdb_buffer::BufferManager,
+    manager: roastedduck_buffer::BufferManager,
 }
 
 struct S3Request {
@@ -541,7 +541,7 @@ pub(super) fn path_matches(key: &[&str], pattern: &[&str], completed: bool) -> b
             return (k..key.len()).any(|start| path_matches(&key[start..], &pattern[p + 1..], completed))
                 || !completed;
         }
-        if !rustdb_common::glob::glob(key[k].as_bytes(), pattern[p].as_bytes()) {
+        if !roastedduck_common::glob::glob(key[k].as_bytes(), pattern[p].as_bytes()) {
             return false;
         }
         k += 1;
@@ -808,7 +808,7 @@ impl GlobResult for S3Glob {
 }
 
 impl S3FileSystem {
-    pub fn new(manager: rustdb_buffer::BufferManager) -> Self {
+    pub fn new(manager: roastedduck_buffer::BufferManager) -> Self {
         Self { manager }
     }
     fn prepare(path: &[u8], for_glob: bool) -> Result<S3Request> {
@@ -824,9 +824,9 @@ impl S3FileSystem {
                 .get(key)
                 .cloned()
                 .or_else(|| {
-                    let settings = rustdb_function::file_system::opener()?.settings()?;
+                    let settings = roastedduck_function::file_system::opener()?.settings()?;
                     let (value, scope) = settings.current_setting_scope(option)?;
-                    (globals || scope != rustdb_function::SettingScope::Global).then_some(value)
+                    (globals || scope != roastedduck_function::SettingScope::Global).then_some(value)
                 })
                 .filter(|v| !v.is_null())
                 .map_or_else(|| Ok(fallback.into()), |v| v.to_varchar())
@@ -1040,7 +1040,7 @@ impl FileSystem for S3FileSystem {
         match Self::open_file(path) {
             Ok(_) => Ok(true),
             Err(error)
-                if error.kind() == rustdb_common::ErrorKind::Http
+                if error.kind() == roastedduck_common::ErrorKind::Http
                     && error.raw_message().contains("HTTP 404") =>
             {
                 Ok(false)
@@ -1075,7 +1075,7 @@ mod refresh_tests {
 
     #[test]
     fn refresh_without_opener_preserves_original_destination() {
-        assert!(rustdb_function::file_system::opener().is_none());
+        assert!(roastedduck_function::file_system::opener().is_none());
         let signing = RequestSigning {
             original_path: "s3://bucket/part-error.csv".into(),
             host: "127.0.0.1:12345".into(),

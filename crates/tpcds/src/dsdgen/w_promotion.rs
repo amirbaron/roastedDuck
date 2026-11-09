@@ -1,7 +1,7 @@
 //! The `promotion`, `reason` and `ship_mode` tables (`w_promotion.c`, `w_reason.c`,
 //! `w_ship_mode.c`).
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use super::Output;
 use super::build_support::{bitmap_to_dist_str, bkey_str, mk_bkey, mk_word};

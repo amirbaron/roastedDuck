@@ -4,8 +4,8 @@
 use std::any::Any;
 use std::fmt;
 
-use rustdb_common::{ByteString, Error, ErrorKind, Result};
-use rustdb_types::LogicalType;
+use roastedduck_common::{ByteString, Error, ErrorKind, Result};
+use roastedduck_types::LogicalType;
 
 /// The severity of a log entry (DuckDB's `LogLevel`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -52,8 +52,8 @@ impl LogLevel {
 /// `StringUtil::StringToEnum`'s error for an unknown enum value.
 pub fn enum_error(value: &str, name: &str, candidates: &[&str]) -> Error {
     let candidates: Vec<String> = candidates.iter().map(|&c| c.to_owned()).collect();
-    let message = rustdb_common::string_util::candidates_message(
-        &rustdb_common::string_util::top_n_jaro_winkler(&candidates, value),
+    let message = roastedduck_common::string_util::candidates_message(
+        &roastedduck_common::string_util::top_n_jaro_winkler(&candidates, value),
         "Candidates",
     );
     Error::new(
@@ -181,7 +181,7 @@ pub fn operator_log_message_bytes(
     event: &str,
     info: &[(&str, ByteString)],
 ) -> Result<ByteString> {
-    use rustdb_types::Value;
+    use roastedduck_types::Value;
     // `StringPairIterableToMap`.
     let map = |entries: Vec<(Value, Value)>| Value::map(LogicalType::VARCHAR, LogicalType::VARCHAR, entries);
     let message = Value::struct_value(vec![
@@ -255,11 +255,11 @@ impl FileSystemLogger {
             return;
         }
         let message = match bytes {
-            Some((bytes, position)) => rustdb_common::byte_format!(
+            Some((bytes, position)) => roastedduck_common::byte_format!(
                 "{{\"fs\":\"LocalFileSystem\",\"path\":\"{}\",\"op\":\"{op}\",\"bytes\":\"{bytes}\",\"pos\":\"{position}\"}}",
                 self.path
             ),
-            None => rustdb_common::byte_format!(
+            None => roastedduck_common::byte_format!(
                 "{{\"fs\":\"LocalFileSystem\",\"path\":\"{}\",\"op\":\"{op}\"}}",
                 self.path
             ),

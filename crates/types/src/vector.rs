@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 mod access;
 

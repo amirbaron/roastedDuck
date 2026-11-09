@@ -2,11 +2,11 @@
 //! session's calendar and time zone, and `ICUDateFunc::TruncationFactory` /
 //! `CurrentMidnight`.
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
-use rustdb_functions::scalar::date::date_part::Part;
-use rustdb_functions::scalar::executor::{Str, binary, str_at, unary};
-use rustdb_types::{DataChunk, LogicalType, Timestamp, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
+use roastedduck_functions::scalar::date::date_part::Part;
+use roastedduck_functions::scalar::executor::{Str, binary, str_at, unary};
+use roastedduck_types::{DataChunk, LogicalType, Timestamp, Vector};
 
 use crate::icu_datefunc::{self, BindData, CalendarPtr, extract_field, get_time, get_time_unsafe, set_time};
 use crate::icu4c::calendar::{Calendar, field};

@@ -1,9 +1,9 @@
-//! The Rust engine (`rustdb`).
+//! The Rust engine (`roastedduck`).
 //!
-//! Where `rustdb` does not expose an equivalent of a DuckDB runner hook yet, this backend does the
+//! Where `roastedduck` does not expose an equivalent of a DuckDB runner hook yet, this backend does the
 //! closest thing it can and the gap is noted on the method.
 
-use rustdb::{
+use roastedduck::{
     AccessMode, ClientSessionSnapshot, Config, ConfigurationSnapshot, Connection, Database, LogicalType,
     LogicalTypeId, MaterializedResult, QueryResultMemoryType, Value,
 };
@@ -14,7 +14,7 @@ use crate::compare::numeric;
 /// Default `default_block_size` (DuckDB's `DEFAULT_BLOCK_ALLOC_SIZE`).
 const DEFAULT_BLOCK_SIZE: u64 = 262_144;
 
-/// The `rustdb` engine.
+/// The `roastedduck` engine.
 #[derive(Debug)]
 pub struct RustEngine {
     build_directory: String,
@@ -23,14 +23,14 @@ pub struct RustEngine {
 impl RustEngine {
     /// `build_directory` is what `__BUILD_DIRECTORY__` expands to in test files.
     pub fn new(build_directory: impl Into<String>) -> Self {
-        rustdb_capi::register_extension_loader();
+        roastedduck_capi::register_extension_loader();
         Self {
             build_directory: build_directory.into(),
         }
     }
 }
 
-/// A `rustdb` query outcome.
+/// A `roastedduck` query outcome.
 #[derive(Debug)]
 pub struct RustResult {
     outcome: Result<MaterializedResult, String>,
@@ -192,7 +192,7 @@ impl Engine for RustEngine {
         &self.build_directory
     }
 
-    /// `GetTestConfig()` expressed as settings. Gap: `rustdb::Config` has no fields yet for the
+    /// `GetTestConfig()` expressed as settings. Gap: `roastedduck::Config` has no fields yet for the
     /// non-setting options `checkpoint_on_shutdown`, `abort_on_wal_failure` and
     /// `debug_initialize`.
     ///
@@ -224,7 +224,7 @@ impl Engine for RustEngine {
         Ok(())
     }
 
-    /// Gap: `use_temporary_directory` has no `rustdb::Config` equivalent yet.
+    /// Gap: `use_temporary_directory` has no `roastedduck::Config` equivalent yet.
     fn set_read_only(&self, config: &mut ConfigurationSnapshot, read_only: bool) {
         config.config_mut().access_mode = if read_only {
             AccessMode::ReadOnly
@@ -271,9 +271,9 @@ impl Engine for RustEngine {
     fn load_extension(&self, database: &Database, name: &str) -> Result<ExtensionLoad, String> {
         Ok(
             match database.load_extension(name).map_err(|error| error.to_string())? {
-                rustdb::ExtensionLoad::Loaded => ExtensionLoad::Loaded,
-                rustdb::ExtensionLoad::NotAvailable => ExtensionLoad::NotLoaded,
-                rustdb::ExtensionLoad::Unknown => ExtensionLoad::Unknown,
+                roastedduck::ExtensionLoad::Loaded => ExtensionLoad::Loaded,
+                roastedduck::ExtensionLoad::NotAvailable => ExtensionLoad::NotLoaded,
+                roastedduck::ExtensionLoad::Unknown => ExtensionLoad::Unknown,
             },
         )
     }
@@ -282,7 +282,7 @@ impl Engine for RustEngine {
         database.connect().map_err(|error| error.to_string())
     }
 
-    /// Gap: `rustdb` has no client configuration (progress bar) yet.
+    /// Gap: `roastedduck` has no client configuration (progress bar) yet.
     fn configure_test_client(&self, _connection: &mut Connection) {}
 
     fn query(&self, connection: &mut Connection, sql: &str) -> RustResult {

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
+use roastedduck_common::{Result, STANDARD_VECTOR_SIZE};
 
 use crate::data_table::DataTable;
 use crate::index::IndexRemovalType;
@@ -59,8 +59,8 @@ pub trait CatalogUndo: Send + Sync + fmt::Debug {
 /// The state of a sequence after a transaction used it (DuckDB's `SequenceValue`).
 #[derive(Debug)]
 pub(crate) struct SequenceValue {
-    pub schema: rustdb_common::ByteString,
-    pub name: rustdb_common::ByteString,
+    pub schema: roastedduck_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     pub usage_count: u64,
     pub counter: i64,
 }
@@ -216,7 +216,7 @@ impl UndoBuffer {
                 }
             }
             if written > count {
-                return Err(rustdb_common::Error::internal(format!(
+                return Err(roastedduck_common::Error::internal(format!(
                     "Optimistically written count cannot exceed actual count (got {written}, but expected count is {count})"
                 )));
             }
@@ -325,8 +325,8 @@ impl UndoBuffer {
                 table
                     .remove_from_indexes(&record.row_ids(), removal)
                     .map_err(|e| {
-                        rustdb_common::Error::new_bytes(
-                            rustdb_common::ErrorKind::Fatal,
+                        roastedduck_common::Error::new_bytes(
+                            roastedduck_common::ErrorKind::Fatal,
                             e.raw_message_bytes().to_vec(),
                         )
                     })?;

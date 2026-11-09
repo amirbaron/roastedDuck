@@ -10,8 +10,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use rustdb_buffer::{BufferManager, TemporaryMemoryContext, TemporaryMemoryState};
-use rustdb_common::{Error, Result};
+use roastedduck_buffer::{BufferManager, TemporaryMemoryContext, TemporaryMemoryState};
+use roastedduck_common::{Error, Result};
 
 use crate::SinkResult;
 use crate::parallel::InterruptState;

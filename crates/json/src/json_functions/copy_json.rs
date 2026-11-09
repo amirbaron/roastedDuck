@@ -4,10 +4,10 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{CaseInsensitiveMap, Error, Result};
-use rustdb_function::copy::{CopyFromBindInput, CopyPlanInput, CopyPlanRewrite};
-use rustdb_function::{CopyFunction, FunctionData};
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_common::{CaseInsensitiveMap, Error, Result};
+use roastedduck_function::copy::{CopyFromBindInput, CopyPlanInput, CopyPlanRewrite};
+use roastedduck_function::{CopyFunction, FunctionData};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::json_enums::{JsonFormat, JsonRecordType, JsonScanType};
 use crate::json_functions::read_json::json_reader_function;
@@ -35,17 +35,17 @@ const SUPPORTED_BASE_OPTIONS: [&str; 16] = [
 
 /// `ThrowJSONCopyParameterException`.
 fn parameter_error(option: &[u8]) -> Error {
-    Error::binder(rustdb_common::byte_format!(
+    Error::binder(roastedduck_common::byte_format!(
         "COPY (FORMAT JSON) parameter {option} expects a single argument."
     ))
 }
 
 /// `CopyToJSONPlan`.
 fn copy_to_json_plan(input: &CopyPlanInput<'_>) -> Result<CopyPlanRewrite> {
-    use rustdb_function::cast::ValueCast;
+    use roastedduck_function::cast::ValueCast;
     let mut date_format = String::new();
     let mut timestamp_format = String::new();
-    let mut csv_options: CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteString> =
+    let mut csv_options: CaseInsensitiveMap<Vec<Value>, roastedduck_common::ByteString> =
         CaseInsensitiveMap::default();
     csv_options.insert("file_extension".to_owned(), vec![Value::varchar("json")]);
     for (key, values) in input.options.iter() {
@@ -95,7 +95,7 @@ fn copy_to_json_plan(input: &CopyPlanInput<'_>) -> Result<CopyPlanRewrite> {
                 csv_options.insert(key.to_owned(), values.clone());
             }
             _ => {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Unknown option for COPY ... TO ... (FORMAT JSON): \"{option}\"."
                 )));
             }
@@ -104,7 +104,7 @@ fn copy_to_json_plan(input: &CopyPlanInput<'_>) -> Result<CopyPlanRewrite> {
     // The same positional/strftime/struct_pack/to_json tree as C++'s generated SQL.
     let mut fields = Vec::with_capacity(input.types.len());
     for (index, (ty, name)) in input.types.iter().zip(input.names).enumerate() {
-        let mut column = rustdb_parser::build::positional_reference((index + 1) as u64);
+        let mut column = roastedduck_parser::build::positional_reference((index + 1) as u64);
         let format = if !date_format.is_empty() && ty.id() == LogicalTypeId::Date {
             Some(&date_format)
         } else if !timestamp_format.is_empty()
@@ -115,20 +115,20 @@ fn copy_to_json_plan(input: &CopyPlanInput<'_>) -> Result<CopyPlanRewrite> {
             None
         };
         if let Some(format) = format {
-            column = rustdb_ast::ParsedExpression::function(
+            column = roastedduck_ast::ParsedExpression::function(
                 "strftime",
                 vec![
                     column,
-                    rustdb_ast::ParsedExpression::constant(Value::varchar(format)),
+                    roastedduck_ast::ParsedExpression::constant(Value::varchar(format)),
                 ],
             );
         }
         column.alias.clone_from(name);
         fields.push(column);
     }
-    let select_list = vec![rustdb_ast::ParsedExpression::function(
+    let select_list = vec![roastedduck_ast::ParsedExpression::function(
         "to_json",
-        vec![rustdb_ast::ParsedExpression::function("struct_pack", fields)],
+        vec![roastedduck_ast::ParsedExpression::function("struct_pack", fields)],
     )];
     csv_options.insert("quote".to_owned(), vec![Value::varchar("")]);
     csv_options.insert("escape".to_owned(), vec![Value::varchar("")]);
@@ -144,12 +144,12 @@ fn copy_to_json_plan(input: &CopyPlanInput<'_>) -> Result<CopyPlanRewrite> {
 /// `MultiFileBindCopy` for `COPY ... FROM ... (FORMAT json)`.
 fn copy_from_json_bind(
     input: &CopyFromBindInput<'_>,
-    names: &[rustdb_common::ByteString],
+    names: &[roastedduck_common::ByteString],
     types: &[LogicalType],
 ) -> Result<Arc<dyn FunctionData>> {
     let context = input
         .binder
-        .and_then(|binder| binder.downcast_ref::<rustdb_planner::ClientContext>())
+        .and_then(|binder| binder.downcast_ref::<roastedduck_planner::ClientContext>())
         .ok_or_else(|| Error::internal("COPY FROM json without a client context"))?;
     Ok(Arc::new(json_copy_from_bind(
         context,

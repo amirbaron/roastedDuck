@@ -9,10 +9,10 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rustdb_buffer::{
+use roastedduck_buffer::{
     BlockHandle, BlockId, BlockManager, BufferHandle, BufferManager, MAXIMUM_BLOCK, MemoryTag,
 };
-use rustdb_common::{Error, ErrorKind, Result};
+use roastedduck_common::{Error, ErrorKind, Result};
 
 use crate::single_file_block_manager::SingleFileBlockManager;
 
@@ -822,13 +822,13 @@ impl<'a> MetadataWriter<'a> {
 mod tests {
     use super::*;
     use crate::single_file_block_manager::BlockManagerOptions;
-    use rustdb_buffer::{BufferManagerConfig, DEFAULT_BLOCK_ALLOC_SIZE};
-    use rustdb_crypto::EncryptionKeyManager;
+    use roastedduck_buffer::{BufferManagerConfig, DEFAULT_BLOCK_ALLOC_SIZE};
+    use roastedduck_crypto::EncryptionKeyManager;
 
     #[test]
     fn flush_preserves_pinned_metadata_readers() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let path = std::env::temp_dir().join(format!(
-            "rustdb-metadata-reader-{}-{}.db",
+            "roastedduck-metadata-reader-{}-{}.db",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?

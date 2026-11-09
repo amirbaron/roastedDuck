@@ -3,7 +3,7 @@
 //! ```text
 //! cargo run -p corpus -- extract                # SQL of every record → target/corpus/statements.jsonl
 //! cargo run -p corpus -- oracle                 # json_serialize_sql via the C++ CLI → target/corpus/serialized.jsonl
-//! cargo run --release -p corpus -- serialization # rustdb must reproduce DuckDB's output exactly
+//! cargo run --release -p corpus -- serialization # roastedduck must reproduce DuckDB's output exactly
 //! ```
 //!
 //! Options: `--tests <dir>` (default: the reference checkout's `test/`), `--duckdb <cli>`,
@@ -113,7 +113,7 @@ fn oracle(options: &Options) -> Result<()> {
     Ok(())
 }
 
-/// `serialization`: rustdb's JSON and binary serialization against DuckDB's output.
+/// `serialization`: roastedduck's JSON and binary serialization against DuckDB's output.
 fn serialization(options: &Options) -> Result<bool> {
     let entries: Vec<Entry> = read_jsonl(&options.dir.join("statements.jsonl"))?;
     let rows: Vec<SerializedSql> = read_jsonl(&options.dir.join("serialized.jsonl"))?;
@@ -126,7 +126,7 @@ fn serialization(options: &Options) -> Result<bool> {
     Ok(report.mismatches.is_empty())
 }
 
-/// `wal`: rustdb's binary format against the catalog entries of DuckDB's WAL.
+/// `wal`: roastedduck's binary format against the catalog entries of DuckDB's WAL.
 fn wal(options: &Options) -> Result<bool> {
     let (statements, _) = slt::extract_dir(&options.tests)?;
     let scripts = walcheck::scripts(&statements);

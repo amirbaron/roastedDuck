@@ -3,12 +3,12 @@
 
 use std::collections::HashMap;
 
-use rustdb_common::Result;
-use rustdb_planner::function_binder::add_cast_to_type;
-use rustdb_planner::{
+use roastedduck_common::Result;
+use roastedduck_planner::function_binder::add_cast_to_type;
+use roastedduck_planner::{
     ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator, LogicalOperatorType,
 };
-use rustdb_types::LogicalTypeId;
+use roastedduck_types::LogicalTypeId;
 
 use crate::optimizer::{Optimizer, bind_aggregate_function};
 
@@ -156,7 +156,7 @@ fn rewrite_aggregate(
         };
         let addition = std::mem::replace(
             &mut sum.children[0],
-            Expression::constant(rustdb_types::Value::integer(0)),
+            Expression::constant(roastedduck_types::Value::integer(0)),
         );
         let ExpressionKind::Function(function) = addition.kind else {
             continue;

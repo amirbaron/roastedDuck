@@ -12,13 +12,13 @@ use std::any::Any;
 use std::ffi::{c_char, c_void};
 use std::sync::{Arc, PoisonError, RwLock};
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{
     BindInput, FunctionClient, FunctionData, FunctionState, NullHandling, ScalarFunction, ScalarFunctionSet,
     Stability,
 };
-use rustdb_planner::{ClientContext as BinderContext, Expression};
-use rustdb_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE, Vector};
+use roastedduck_planner::{ClientContext as BinderContext, Expression};
+use roastedduck_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE, Vector};
 
 use crate::data_chunk::{DuckdbDataChunk, DuckdbVector};
 use crate::expression::{DuckdbExpression, wrap_expression};
@@ -268,7 +268,7 @@ fn c_scalar_function_bind(
         // SAFETY: the client's callback receives the bind info, valid for the call.
         unsafe { bind(std::ptr::from_mut(&mut bind_info).cast()) };
         if let Some(error) = bind_info.error {
-            return Err(Error::new_bytes(rustdb_common::ErrorKind::Binder, error));
+            return Err(Error::new_bytes(roastedduck_common::ErrorKind::Binder, error));
         }
     }
     Ok(Some(Arc::new(bind_data)))
@@ -290,7 +290,10 @@ fn c_scalar_function_init(bind_data: &CScalarFunctionBindData) -> Result<CScalar
         // SAFETY: the client's callback receives the init info, valid for the call.
         unsafe { init(std::ptr::from_mut(&mut init_info).cast()) };
         if let Some(error) = init_info.error {
-            return Err(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, error));
+            return Err(Error::new_bytes(
+                roastedduck_common::ErrorKind::InvalidInput,
+                error,
+            ));
         }
     }
     Ok(local_state)
@@ -348,7 +351,10 @@ fn capi_scalar_function(
         );
     }
     if let Some(error) = function_info.error {
-        return Err(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, error));
+        return Err(Error::new_bytes(
+            roastedduck_common::ErrorKind::InvalidInput,
+            error,
+        ));
     }
     if all_constant && (count == 1 || !volatile) {
         result.make_constant();

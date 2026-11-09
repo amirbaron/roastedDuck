@@ -1,6 +1,6 @@
 //! Input order used when the C++ transports construct response headers.
 
-use rustdb_common::{libcxx::ci_hash, platform_order::UnorderedOrder};
+use roastedduck_common::{libcxx::ci_hash, platform_order::UnorderedOrder};
 
 const STATUS: &str = "__RESPONSE_STATUS__";
 

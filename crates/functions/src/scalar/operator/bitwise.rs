@@ -3,10 +3,10 @@
 
 use std::fmt::Display;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::bit::bit_length;
-use rustdb_types::{DataChunk, LogicalType, NativeType, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::bit::bit_length;
+use roastedduck_types::{DataChunk, LogicalType, NativeType, Vector};
 
 use crate::bitstring::{self, BitwiseOp};
 use crate::scalar::executor::{Str, StrOut, binary, unary};

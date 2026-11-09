@@ -5,9 +5,9 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use rustdb_buffer::{BufferManager, MemoryTag};
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{
+use roastedduck_buffer::{BufferManager, MemoryTag};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::{
     DataChunk, ListEntry, LogicalType, PhysicalType, Sel, SelectionVector, StringT, ValidityMask, Vector,
     VectorKind,
 };
@@ -1143,8 +1143,8 @@ impl ColumnDataCollection {
 
 #[cfg(test)]
 mod tests {
-    use rustdb_buffer::{BufferManagerConfig, MemoryTag};
-    use rustdb_types::Value;
+    use roastedduck_buffer::{BufferManagerConfig, MemoryTag};
+    use roastedduck_types::Value;
 
     use super::*;
 

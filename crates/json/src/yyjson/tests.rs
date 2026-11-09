@@ -172,7 +172,7 @@ fn nested_containers_and_long_strings() {
     assert_eq!(parse("1234567890123456789").unwrap(), "1234567890123456789");
 }
 
-/// Timing probes: `cargo test --release -p rustdb-json speed -- --ignored --nocapture`
+/// Timing probes: `cargo test --release -p roastedduck-json speed -- --ignored --nocapture`
 /// (`PROBE_ITERS` passes over a million documents).
 fn probe_docs() -> (Vec<String>, u32) {
     let iters = std::env::var("PROBE_ITERS")

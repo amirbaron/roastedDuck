@@ -4,14 +4,16 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::{CastFunctionSet, CastParameters, cast_vector};
-use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet, Stability};
-use rustdb_row::hash::hash_columns;
-use rustdb_row::sort::{
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::{CastFunctionSet, CastParameters, cast_vector};
+use roastedduck_function::{
+    BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet, Stability,
+};
+use roastedduck_row::hash::hash_columns;
+use roastedduck_row::sort::{
     NullOrder, OrderModifiers, OrderType, create_sort_keys, decode_sort_key, sort_key_type_for,
 };
-use rustdb_types::{LogicalType, LogicalTypeId, StringT, Value, Vector};
+use roastedduck_types::{LogicalType, LogicalTypeId, StringT, Value, Vector};
 
 use crate::scalar::executor::addressable;
 use crate::scalar::nested::all_constant;
@@ -109,7 +111,7 @@ pub fn alias_functions() -> ScalarFunctionSet {
 
 /// The argument name is retained at bind time; `AliasFunction` constructs VARCHAR at execution.
 #[derive(Debug, Clone, PartialEq)]
-struct AliasName(rustdb_common::ByteString);
+struct AliasName(roastedduck_common::ByteString);
 impl FunctionData for AliasName {
     fn as_any(&self) -> &dyn std::any::Any {
         self
@@ -204,7 +206,7 @@ pub fn error_functions() -> ScalarFunctionSet {
             for row in 0..args.len() {
                 if let Some(message) = strings.get(row) {
                     return Err(Error::new_bytes(
-                        rustdb_common::ErrorKind::InvalidInput,
+                        roastedduck_common::ErrorKind::InvalidInput,
                         input.string_value(&message).to_vec(),
                     ));
                 }
@@ -420,7 +422,7 @@ fn bind_create_sort_key(
     let mut modifiers = Vec::new();
     for index in (1..input.argument_types.len()).step_by(2) {
         let Some(specifier) = &input.constants[index] else {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "sort_specifier must be a constant value - but got {}",
                 input.aliases[index]
             )));
@@ -456,7 +458,7 @@ pub fn create_sort_key_functions() -> ScalarFunctionSet {
                 .collect();
             let refs: Vec<&Vector> = columns.iter().collect();
             let keys = create_sort_keys(&refs, &modifiers.0, count)?;
-            rustdb_row::sort::encode::sort_keys_to_vector(&keys, result)
+            roastedduck_row::sort::encode::sort_keys_to_vector(&keys, result)
         },
     )
     .with_bind(bind_create_sort_key);
@@ -551,10 +553,10 @@ fn vector_type_functions() -> ScalarFunctionSet {
         LogicalType::VARCHAR,
         |args, _, result| {
             let name = match args.column(0).kind() {
-                rustdb_types::VectorKind::Flat => "FLAT_VECTOR",
-                rustdb_types::VectorKind::Constant => "CONSTANT_VECTOR",
-                rustdb_types::VectorKind::Dictionary => "DICTIONARY_VECTOR",
-                rustdb_types::VectorKind::Sequence => "SEQUENCE_VECTOR",
+                roastedduck_types::VectorKind::Flat => "FLAT_VECTOR",
+                roastedduck_types::VectorKind::Constant => "CONSTANT_VECTOR",
+                roastedduck_types::VectorKind::Dictionary => "DICTIONARY_VECTOR",
+                roastedduck_types::VectorKind::Sequence => "SEQUENCE_VECTOR",
             };
             constant(result, &Value::varchar(name))
         },
@@ -598,7 +600,10 @@ pub fn stats_functions() -> ScalarFunctionSet {
             let stats = state
                 .bind_data
                 .as_ref()
-                .and_then(|data| data.as_any().downcast_ref::<rustdb_function::StatsBindData>())
+                .and_then(|data| {
+                    data.as_any()
+                        .downcast_ref::<roastedduck_function::StatsBindData>()
+                })
                 .map(|data| {
                     data.stats
                         .lock()
@@ -615,7 +620,7 @@ pub fn stats_functions() -> ScalarFunctionSet {
             Ok(())
         },
     )
-    .with_bind(|_, _| Ok(Some(Arc::new(rustdb_function::StatsBindData::default()))));
+    .with_bind(|_, _| Ok(Some(Arc::new(roastedduck_function::StatsBindData::default()))));
     function.null_handling = NullHandling::Special;
     function.stability = Stability::Volatile;
     set("stats", vec![function])
@@ -708,12 +713,12 @@ pub fn generic_functions() -> Vec<ScalarFunctionSet> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustdb_function::FunctionState;
+    use roastedduck_function::FunctionState;
 
     #[test]
     fn typeof_names_the_type() {
         let function = &typeof_functions().functions[0];
-        let args = rustdb_types::DataChunk::new(vec![Vector::constant(&Value::bigint(1)).unwrap()], 1);
+        let args = roastedduck_types::DataChunk::new(vec![Vector::constant(&Value::bigint(1)).unwrap()], 1);
         let mut result = Vector::flat(LogicalType::VARCHAR, 0);
         (function.kernel)(&args, &mut FunctionState::default(), &mut result).unwrap();
         assert_eq!(result.get_value(0), Value::varchar("BIGINT"));
@@ -736,7 +741,7 @@ mod tests {
             bind_data: Some(Arc::new(AliasName(b"bad\xff".as_slice().into()))),
             ..FunctionState::default()
         };
-        let args = rustdb_types::DataChunk::new(vec![Vector::constant(&Value::integer(42)).unwrap()], 1);
+        let args = roastedduck_types::DataChunk::new(vec![Vector::constant(&Value::integer(42)).unwrap()], 1);
         let mut result = Vector::flat(LogicalType::VARCHAR, 1);
         let error = (function.kernel)(&args, &mut state, &mut result).unwrap_err();
         assert_eq!(

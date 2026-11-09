@@ -2,7 +2,7 @@
 //! GEOMETRY values are little-endian WKB; casts parse and print WKT, and the `ST_*`
 //! functions read WKB.
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::{GeometryStorageType, LogicalType};
 

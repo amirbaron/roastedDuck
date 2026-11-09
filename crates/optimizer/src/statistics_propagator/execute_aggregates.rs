@@ -5,13 +5,13 @@
 use std::cmp::Ordering;
 use std::sync::Arc;
 
-use rustdb_catalog::EntryKind;
-use rustdb_planner::{
+use roastedduck_catalog::EntryKind;
+use roastedduck_planner::{
     ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator, LogicalOperatorType,
 };
-use rustdb_storage::statistics::{BaseStatistics, FilterPropagateResult, NumericStats};
-use rustdb_storage::table::row_group::RowGroup;
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_storage::statistics::{BaseStatistics, FilterPropagateResult, NumericStats};
+use roastedduck_storage::table::row_group::RowGroup;
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use super::StatisticsPropagator;
 
@@ -32,7 +32,7 @@ enum PartitionSource {
     /// A row group of a table.
     RowGroup(Arc<RowGroup>),
     /// A partition of a table function (`None` without column statistics).
-    Function(Option<Arc<dyn rustdb_function::PartitionRowGroup>>),
+    Function(Option<Arc<dyn roastedduck_function::PartitionRowGroup>>),
 }
 
 impl Partition {
@@ -298,7 +298,7 @@ impl StatisticsPropagator<'_> {
     fn rewrite_with_partitions(
         node: &mut LogicalOperator,
         mut partitions: Vec<Partition>,
-        filters: &[(usize, rustdb_storage::TableFilter)],
+        filters: &[(usize, roastedduck_storage::TableFilter)],
         min_max: &[MinMax],
         min_max_columns: &[usize],
         count_star: &[usize],
@@ -382,7 +382,7 @@ impl StatisticsPropagator<'_> {
     /// (`get_partition_stats`).
     fn try_execute_function_aggregates(
         node: &mut LogicalOperator,
-        get: &rustdb_planner::operator::LogicalGet,
+        get: &roastedduck_planner::operator::LogicalGet,
         count_star: &[usize],
         min_max: &[MinMax],
         group_index: u64,

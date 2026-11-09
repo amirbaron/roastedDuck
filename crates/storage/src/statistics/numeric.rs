@@ -2,8 +2,8 @@
 
 use std::cmp::Ordering;
 
-use rustdb_types::compare::{CompareOp, SqlOrd};
-use rustdb_types::{Date, LogicalType, LogicalTypeId, NativeType, PhysicalType, Value};
+use roastedduck_types::compare::{CompareOp, SqlOrd};
+use roastedduck_types::{Date, LogicalType, LogicalTypeId, NativeType, PhysicalType, Value};
 
 use super::FilterPropagateResult;
 

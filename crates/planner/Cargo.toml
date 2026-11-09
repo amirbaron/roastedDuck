@@ -1,5 +1,5 @@
 [package]
-name = "rustdb-planner"
+name = "roastedduck-planner"
 description = "Binder, bound expressions and logical plans."
 version.workspace = true
 edition.workspace = true
@@ -7,15 +7,15 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-rustdb-common.workspace = true
-rustdb-types.workspace = true
-rustdb-serde.workspace = true
-rustdb-ast.workspace = true
-rustdb-parser.workspace = true
-rustdb-catalog = { path = "../catalog" }
-rustdb-storage = { path = "../storage" }
-rustdb-function = { path = "../function" }
-rustdb-buffer = { path = "../buffer" }
+roastedduck-common.workspace = true
+roastedduck-types.workspace = true
+roastedduck-serde.workspace = true
+roastedduck-ast.workspace = true
+roastedduck-parser.workspace = true
+roastedduck-catalog = { path = "../catalog" }
+roastedduck-storage = { path = "../storage" }
+roastedduck-function = { path = "../function" }
+roastedduck-buffer = { path = "../buffer" }
 regex = "1"
 
 [lints]

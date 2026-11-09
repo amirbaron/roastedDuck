@@ -1,9 +1,9 @@
 //! Casts from BLOB, BIT and UUID (DuckDB's `blob_cast.cpp`, `bit_cast.cpp` and
 //! `uuid_casts.cpp`).
 
-use rustdb_common::Error;
-use rustdb_types::bit::{self, BitNumeric};
-use rustdb_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType, Uuid, blob};
+use roastedduck_common::Error;
+use roastedduck_types::bit::{self, BitNumeric};
+use roastedduck_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType, Uuid, blob};
 
 use super::BoundCastInfo;
 use super::executor::{RowError, try_map_strings, try_map_strings_to_string, values_to_string};

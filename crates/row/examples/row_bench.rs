@@ -1,18 +1,20 @@
 //! Micro-benchmarks of the row layer: scatter/gather, radix partitioning and sorting.
 //!
 //! ```text
-//! cargo run --release -p rustdb-row --example row_bench -- [rows] [threads]
+//! cargo run --release -p roastedduck-row --example row_bench -- [rows] [threads]
 //! ```
 //! Defaults: 10M rows, all cores. Compare with the DuckDB CLI queries printed per case.
 
 use std::sync::Arc;
 use std::time::Instant;
 
-use rustdb_buffer::{BufferManager, BufferManagerConfig, MemoryTag};
-use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
-use rustdb_row::sort::{NullOrder, OrderModifiers, OrderType, Sort, SortColumn, SortConfig};
-use rustdb_row::{PartitionedTupleData, PinProperties, TupleDataCollection, TupleDataLayout, ValidityType};
-use rustdb_types::{DataChunk, LogicalType, StringT, Vector};
+use roastedduck_buffer::{BufferManager, BufferManagerConfig, MemoryTag};
+use roastedduck_common::{Result, STANDARD_VECTOR_SIZE};
+use roastedduck_row::sort::{NullOrder, OrderModifiers, OrderType, Sort, SortColumn, SortConfig};
+use roastedduck_row::{
+    PartitionedTupleData, PinProperties, TupleDataCollection, TupleDataLayout, ValidityType,
+};
+use roastedduck_types::{DataChunk, LogicalType, StringT, Vector};
 
 /// `SplitMix64`, as the reference data generator.
 fn mix(i: u64) -> u64 {
@@ -280,7 +282,7 @@ fn main() -> Result<()> {
         let asc = OrderModifiers::new(OrderType::Ascending, NullOrder::NullsLast);
         let mut total = 0;
         for chunk in &ints {
-            total += rustdb_row::sort::create_sort_keys(&[chunk.column(0)], &[asc], chunk.len())?.len();
+            total += roastedduck_row::sort::create_sort_keys(&[chunk.column(0)], &[asc], chunk.len())?.len();
         }
         timer.report("create_sort_keys BIGINT", total);
     }

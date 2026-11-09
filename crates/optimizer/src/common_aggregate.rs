@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use rustdb_planner::{
+use roastedduck_planner::{
     ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator, LogicalOperatorType,
 };
 

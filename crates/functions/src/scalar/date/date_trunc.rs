@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_function::{BindInput, FunctionData, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, Date, Interval, LogicalType, LogicalTypeId, Time, Timestamp, Vector};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_function::{BindInput, FunctionData, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, Date, Interval, LogicalType, LogicalTypeId, Time, Timestamp, Vector};
 
 use super::calendar;
 use super::date_part::Part;
@@ -160,8 +160,8 @@ fn truncate_interval(mut input: Interval, unit: Unit) -> Interval {
 /// DuckDB's `DateTruncFunction`: a constant unit is parsed once, before any row.
 fn truncate_rows<T, R>(args: &DataChunk, result: &mut Vector, op: fn(T, Unit) -> Result<R>) -> Result<()>
 where
-    T: rustdb_types::NativeType,
-    R: rustdb_types::NativeType,
+    T: roastedduck_types::NativeType,
+    R: roastedduck_types::NativeType,
 {
     let units = args.column(0);
     if units.is_constant() {

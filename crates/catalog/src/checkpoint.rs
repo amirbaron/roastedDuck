@@ -8,30 +8,32 @@
 
 use std::sync::Arc;
 
-use rustdb_ast::{
+use roastedduck_ast::{
     CatalogType as AstCatalogType, ColumnDefinition, ColumnList, Constraint, CreateInfo, CreateInfoKind,
     CreateMacroInfo, CreateSequenceInfo, CreateTableInfo, CreateTypeInfo, CreateViewInfo, ForeignKeyType,
     IndexConstraintType as AstIndexConstraintType, LogicalDependencyList, OnCreateConflict,
     ParsedExpressionKind, TableColumnType,
 };
-use rustdb_common::{CaseInsensitiveMap, Error, OrderedMap, Result};
-use rustdb_serde::binary::BinarySerializer;
-use rustdb_serde::{Deserializer, Serializer};
-use rustdb_storage::checkpoint::pointers::deserialize_index_storage_info;
-use rustdb_storage::checkpoint::pointers::{deserialize_meta_block_pointer, serialize_meta_block_pointer};
-use rustdb_storage::checkpoint::stream::StreamDeserializer;
-use rustdb_storage::checkpoint::table_reader::{load_row_groups, read_table_data};
-use rustdb_storage::checkpoint::table_writer::{
+use roastedduck_common::{CaseInsensitiveMap, Error, OrderedMap, Result};
+use roastedduck_serde::binary::BinarySerializer;
+use roastedduck_serde::{Deserializer, Serializer};
+use roastedduck_storage::checkpoint::pointers::deserialize_index_storage_info;
+use roastedduck_storage::checkpoint::pointers::{
+    deserialize_meta_block_pointer, serialize_meta_block_pointer,
+};
+use roastedduck_storage::checkpoint::stream::StreamDeserializer;
+use roastedduck_storage::checkpoint::table_reader::{load_row_groups, read_table_data};
+use roastedduck_storage::checkpoint::table_writer::{
     BlockWriter, checkpoint_in_memory_table, finish_table_checkpoint, write_table_data,
 };
-use rustdb_storage::checkpoint_lock::ExclusiveCheckpointGuard;
-use rustdb_storage::index::art::ArtStorageInfo;
-use rustdb_storage::index::{IndexConstraintType, IndexSlot, UnboundIndex, UnboundIndexStorage};
-use rustdb_storage::metadata::{MetaBlockPointer, MetadataReader, MetadataWriter};
-use rustdb_storage::storage_info::{DatabaseHeader, STANDARD_VECTOR_SIZE};
-use rustdb_storage::storage_manager::{CheckpointAbort, InMemoryStorageManager, StorageManager};
-use rustdb_storage::{ColumnDefinition as StorageColumn, DataTable};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_storage::checkpoint_lock::ExclusiveCheckpointGuard;
+use roastedduck_storage::index::art::ArtStorageInfo;
+use roastedduck_storage::index::{IndexConstraintType, IndexSlot, UnboundIndex, UnboundIndexStorage};
+use roastedduck_storage::metadata::{MetaBlockPointer, MetadataReader, MetadataWriter};
+use roastedduck_storage::storage_info::{DatabaseHeader, STANDARD_VECTOR_SIZE};
+use roastedduck_storage::storage_manager::{CheckpointAbort, InMemoryStorageManager, StorageManager};
+use roastedduck_storage::{ColumnDefinition as StorageColumn, DataTable};
+use roastedduck_types::{LogicalType, Value};
 
 use crate::{
     Catalog, CatalogEntry, CatalogType, EntryKind, IndexEntry, MacroEntry, SequenceEntry, TableEntry,
@@ -73,7 +75,7 @@ pub(crate) fn base_info(
         temporary,
         internal: false,
         on_conflict: OnCreateConflict::ErrorOnConflict,
-        sql: rustdb_common::ByteString::new(),
+        sql: roastedduck_common::ByteString::new(),
         comment: Value::default(),
         tags: CaseInsensitiveMap::default(),
         dependencies: LogicalDependencyList::default(),
@@ -282,7 +284,7 @@ pub fn entry_from_create_info(catalog: &Catalog, info: &CreateInfo) -> Result<Ca
 /// Writes `info` as a nullable object property (`WriteProperty(field, tag, entry pointer)`).
 pub(crate) fn write_create_info(
     serializer: &mut dyn Serializer,
-    field: rustdb_serde::FieldId,
+    field: roastedduck_serde::FieldId,
     tag: &'static str,
     info: &CreateInfo,
 ) -> Result<()> {
@@ -330,7 +332,7 @@ fn reorder_tables(tables: Vec<Arc<CatalogEntry>>) -> Vec<Arc<CatalogEntry>> {
 
 /// `ReorderTableEntries`: tables referenced by foreign keys first.
 pub fn reorder_table_entries<T>(tables: Vec<(T, Arc<CatalogEntry>)>) -> Vec<(T, Arc<CatalogEntry>)> {
-    let references = |entry: &CatalogEntry| -> Vec<rustdb_common::ByteString> {
+    let references = |entry: &CatalogEntry| -> Vec<roastedduck_common::ByteString> {
         let EntryKind::Table(table) = &entry.kind else {
             return Vec::new();
         };
@@ -546,7 +548,7 @@ pub fn write_checkpoint(
     let mut persisted = Vec::new();
 
     // `GetCatalogEntries`.
-    let mut entries: Vec<(rustdb_common::ByteString, Arc<CatalogEntry>)> = Vec::new();
+    let mut entries: Vec<(roastedduck_common::ByteString, Arc<CatalogEntry>)> = Vec::new();
     for schema in catalog.schemas().scan(transaction) {
         let Some(schema_entry) = schema.as_schema() else {
             continue;
@@ -716,7 +718,7 @@ pub fn write_checkpoint(
                         index_infos.len(),
                         |s, index| {
                             s.on_object_begin();
-                            rustdb_storage::checkpoint::pointers::serialize_index_storage_info(
+                            roastedduck_storage::checkpoint::pointers::serialize_index_storage_info(
                                 s,
                                 &index_infos[index],
                             )?;
@@ -766,7 +768,7 @@ pub fn write_checkpoint(
         meta_block: meta_block.block_pointer,
         free_list: 0,
         block_count: 0,
-        block_alloc_size: rustdb_buffer::BlockManager::block_alloc_size(block_manager.as_ref()) as u64,
+        block_alloc_size: roastedduck_buffer::BlockManager::block_alloc_size(block_manager.as_ref()) as u64,
         vector_size: STANDARD_VECTOR_SIZE,
         serialization_compatibility: block_manager.storage_version(),
     };
@@ -821,11 +823,11 @@ pub fn checkpoint_in_memory(
 /// index fills its own partial blocks.
 fn serialize_indexes(
     table: &DataTable,
-    mut rebuilt: Option<&mut [rustdb_storage::index::art::Art]>,
+    mut rebuilt: Option<&mut [roastedduck_storage::index::art::Art]>,
     storage: &StorageManager,
-    options: &rustdb_serde::SerializationOptions,
+    options: &roastedduck_serde::SerializationOptions,
     blocks: &mut BlockWriter,
-) -> Result<Vec<rustdb_storage::index::art::ArtStorageInfo>> {
+) -> Result<Vec<roastedduck_storage::index::art::ArtStorageInfo>> {
     let mut index_options = CaseInsensitiveMap::default();
     if options.compatibility.serialization_version >= 3 {
         index_options.insert("v1_0_0_storage", Value::boolean(false));
@@ -875,7 +877,7 @@ fn serialize_indexes(
 }
 
 /// The physical key columns of a UNIQUE constraint.
-fn unique_keys(table: &TableEntry, unique: &rustdb_ast::UniqueConstraint) -> Result<Vec<usize>> {
+fn unique_keys(table: &TableEntry, unique: &roastedduck_ast::UniqueConstraint) -> Result<Vec<usize>> {
     if unique.index.0 != u64::MAX {
         return table
             .logical_to_physical(unique.index.0 as usize)
@@ -906,15 +908,15 @@ fn read_create_info(
 /// Reads the `unique_ptr<CreateInfo>` property `field` of an entry of type `expected`.
 pub fn read_create_info_property(
     deserializer: &mut dyn Deserializer,
-    field: rustdb_serde::FieldId,
+    field: roastedduck_serde::FieldId,
     expected: AstCatalogType,
     tag: &'static str,
 ) -> Result<CreateInfo> {
     deserializer.on_property_begin(field, tag)?;
     if !deserializer.on_nullable_begin()? {
         return Err(Error::new_bytes(
-            rustdb_common::ErrorKind::Io,
-            rustdb_common::byte_format!("corrupt database file - {tag} entry without create info"),
+            roastedduck_common::ErrorKind::Io,
+            roastedduck_common::byte_format!("corrupt database file - {tag} entry without create info"),
         ));
     }
     let info: CreateInfo = deserializer.read_object()?;
@@ -922,8 +924,8 @@ pub fn read_create_info_property(
     deserializer.on_property_end()?;
     if info.catalog_type() != expected {
         return Err(Error::new_bytes(
-            rustdb_common::ErrorKind::Io,
-            rustdb_common::byte_format!("corrupt database file - catalog entry type mismatch for {tag}"),
+            roastedduck_common::ErrorKind::Io,
+            roastedduck_common::byte_format!("corrupt database file - catalog entry type mismatch for {tag}"),
         ));
     }
     Ok(info)
@@ -941,8 +943,8 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
     // The stored index data per table, taken by the index entries that follow
     // (`DataTableInfo::ExtractIndexStorageInfo`).
     let mut index_storage: Vec<(
-        rustdb_common::ByteString,
-        rustdb_common::ByteString,
+        roastedduck_common::ByteString,
+        roastedduck_common::ByteString,
         Vec<ArtStorageInfo>,
     )> = Vec::new();
     let mut reader = MetadataReader::new(metadata, meta_block, true)?;
@@ -993,8 +995,10 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
                 let mut index_versions = std::collections::HashMap::new();
                 let mut stored_indexes = legacy_pointers
                     .into_iter()
-                    .filter(rustdb_storage::checkpoint::pointers::BlockPointer::is_valid)
-                    .map(|pointer| rustdb_storage::index::art::read_legacy_index_storage(metadata, pointer))
+                    .filter(roastedduck_storage::checkpoint::pointers::BlockPointer::is_valid)
+                    .map(|pointer| {
+                        roastedduck_storage::index::art::read_legacy_index_storage(metadata, pointer)
+                    })
                     .collect::<Result<Vec<_>>>()?;
                 if d.on_optional_property_begin(104, "index_storage_infos")? {
                     // Modern checkpoints embed the allocator metadata directly.
@@ -1008,7 +1012,7 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
                         let version = info
                             .options
                             .get("storage_version")
-                            .and_then(rustdb_types::Value::as_u64);
+                            .and_then(roastedduck_types::Value::as_u64);
                         index_versions.insert(info.name.clone(), version);
                         stored_indexes.push(info);
                     }
@@ -1108,7 +1112,8 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
                 // block pointer (`ReadIndex`).
                 let root = if d.on_optional_property_begin(101, "root_block_pointer")? {
                     d.on_object_begin()?;
-                    let pointer = rustdb_storage::checkpoint::pointers::BlockPointer::deserialize_fields(d)?;
+                    let pointer =
+                        roastedduck_storage::checkpoint::pointers::BlockPointer::deserialize_fields(d)?;
                     d.on_object_end()?;
                     d.on_optional_property_end(true)?;
                     pointer.is_valid().then_some(pointer)
@@ -1117,7 +1122,7 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
                 };
                 let stored = match root {
                     Some(pointer) => UnboundIndexStorage::Disk(
-                        rustdb_storage::index::art::read_legacy_index_storage(metadata, pointer)?,
+                        roastedduck_storage::index::art::read_legacy_index_storage(metadata, pointer)?,
                     ),
                     None => UnboundIndexStorage::Disk(extract_index_storage(&mut index_storage, &info)),
                 };
@@ -1126,7 +1131,7 @@ pub fn load_checkpoint(catalog: &Catalog, storage: &StorageManager) -> Result<()
             other => {
                 let _ = other;
                 return Err(Error::new_bytes(
-                    rustdb_common::ErrorKind::Io,
+                    roastedduck_common::ErrorKind::Io,
                     b"corrupt database file - unrecognized catalog type in checkpoint".as_slice(),
                 ));
             }
@@ -1144,14 +1149,14 @@ fn read_block_pointer_list(
     deserializer: &mut dyn Deserializer,
     field: u16,
     tag: &'static str,
-) -> Result<Option<Vec<rustdb_storage::checkpoint::pointers::BlockPointer>>> {
+) -> Result<Option<Vec<roastedduck_storage::checkpoint::pointers::BlockPointer>>> {
     if !deserializer.on_optional_property_begin(field, tag)? {
         return Ok(None);
     }
     let mut result = Vec::new();
     deserializer.read_list(|d, _| {
         d.on_object_begin()?;
-        result.push(rustdb_storage::checkpoint::pointers::BlockPointer::deserialize_fields(d)?);
+        result.push(roastedduck_storage::checkpoint::pointers::BlockPointer::deserialize_fields(d)?);
         d.on_object_end()
     })?;
     deserializer.on_optional_property_end(true)?;
@@ -1163,8 +1168,8 @@ fn read_block_pointer_list(
 /// description.
 fn extract_index_storage(
     index_storage: &mut [(
-        rustdb_common::ByteString,
-        rustdb_common::ByteString,
+        roastedduck_common::ByteString,
+        roastedduck_common::ByteString,
         Vec<ArtStorageInfo>,
     )],
     info: &CreateInfo,
@@ -1196,7 +1201,7 @@ fn restore_constraint_index(
     index: usize,
     stored: &mut Vec<ArtStorageInfo>,
 ) -> Result<()> {
-    let name = rustdb_common::byte_format!("{}_{}_{index}", kind.name(), table.name());
+    let name = roastedduck_common::byte_format!("{}_{}_{index}", kind.name(), table.name());
     let position = stored
         .iter()
         .position(|info| info.name.eq_ignore_ascii_case(&name))
@@ -1240,7 +1245,7 @@ fn build_index_entry(
         .get_entry(transaction, CatalogType::Table, &info.schema, &index.table)
         .ok_or_else(|| {
             Error::new_bytes(
-                rustdb_common::ErrorKind::Io,
+                roastedduck_common::ErrorKind::Io,
                 b"corrupt database file - index entry without table entry".as_slice(),
             )
         })?;
@@ -1326,7 +1331,7 @@ pub fn replay_create_index(
     transaction: &Transaction,
     info: &CreateInfo,
     stored: UnboundIndexStorage,
-) -> Result<(Arc<rustdb_storage::DataTableInfo>, IndexSlot)> {
+) -> Result<(Arc<roastedduck_storage::DataTableInfo>, IndexSlot)> {
     let (entry, storage) = build_index_entry(catalog, transaction, info, stored)?;
     let name = entry.name().to_owned();
     let index = storage

@@ -12,8 +12,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_types::{LogicalType, Vector};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_types::{LogicalType, Vector};
 
 use super::bitpacking_primitives::{
     GROUP_SIZE, minimum_bit_width_unsigned, pack_buffer_u64, required_size, round_up_to_group,

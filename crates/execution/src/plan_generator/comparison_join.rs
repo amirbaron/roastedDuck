@@ -4,11 +4,11 @@
 
 use std::sync::Arc;
 
-use rustdb_ast::{ExpressionType, JoinType};
-use rustdb_common::{Error, Result};
-use rustdb_planner::operator::{JoinCondition, LogicalComparisonJoin};
-use rustdb_planner::{BoundLimitNode, Expression, ExpressionKind, LogicalKind, LogicalOperator};
-use rustdb_types::LogicalType;
+use roastedduck_ast::{ExpressionType, JoinType};
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::operator::{JoinCondition, LogicalComparisonJoin};
+use roastedduck_planner::{BoundLimitNode, Expression, ExpressionKind, LogicalKind, LogicalOperator};
+use roastedduck_types::LogicalType;
 
 use super::{PlanGenerator, table_storage};
 use crate::operator::PhysicalRef;

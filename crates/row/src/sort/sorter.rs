@@ -5,9 +5,9 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rustdb_buffer::{BufferManager, TemporaryMemoryContext, TemporaryMemoryState};
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Vector};
+use roastedduck_buffer::{BufferManager, TemporaryMemoryContext, TemporaryMemoryState};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, Vector};
 
 use super::encode::{OrderModifiers, create_sort_keys, sort_key_type_for};
 use super::merger::{DEFAULT_ROW_GROUP_SIZE, MergerLocalState, SortedRunMerger};

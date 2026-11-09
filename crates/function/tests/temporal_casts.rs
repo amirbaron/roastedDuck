@@ -1,8 +1,8 @@
 //! Temporal casts, with expectations taken from DuckDB 1.5.6 (`TimeZone='UTC'`).
 #![allow(clippy::unwrap_used)] // Test helpers unwrap like the tests themselves.
 
-use rustdb_function::cast::{CastFunctionSet, CastParameters, ValueCast};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_function::cast::{CastFunctionSet, CastParameters, ValueCast};
+use roastedduck_types::{LogicalType, Value};
 
 /// `CAST(CAST(text AS source) AS target)` rendered as VARCHAR, or the error message.
 fn cast(text: &str, source: &LogicalType, target: &LogicalType, try_cast: bool) -> String {

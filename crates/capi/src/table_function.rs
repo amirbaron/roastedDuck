@@ -13,13 +13,13 @@ use std::ffi::{CString, c_char, c_void};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 
-use rustdb_common::{CaseInsensitiveMap, Error, Result};
-use rustdb_function::{
+use roastedduck_common::{CaseInsensitiveMap, Error, Result};
+use roastedduck_function::{
     FunctionClient, FunctionData, ParallelScanGlobal, ParallelScanLocal, ParallelTableScan, TableFunction,
     TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
 };
-use rustdb_planner::ClientContext as BinderContext;
-use rustdb_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE, Value};
+use roastedduck_planner::ClientContext as BinderContext;
+use roastedduck_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE, Value};
 
 use crate::data_chunk::DuckdbDataChunk;
 use crate::function::{
@@ -181,7 +181,7 @@ fn c_table_bind_data(bind_data: Option<&dyn FunctionData>) -> Result<&CTableBind
 struct CTableInternalBindInfo<'a> {
     client: Option<&'a Arc<FunctionClient>>,
     parameters: &'a [Value],
-    named_parameters: &'a CaseInsensitiveMap<Value, rustdb_common::ByteString>,
+    named_parameters: &'a CaseInsensitiveMap<Value, roastedduck_common::ByteString>,
     return_types: Vec<LogicalType>,
     names: Vec<CString>,
     bind_data: UserData,
@@ -207,10 +207,10 @@ pub(crate) fn c_table_bind(
     info: &Arc<CTableFunctionInfo>,
     client: Option<&Arc<FunctionClient>>,
     parameters: &[Value],
-    named_parameters: &CaseInsensitiveMap<Value, rustdb_common::ByteString>,
+    named_parameters: &CaseInsensitiveMap<Value, roastedduck_common::ByteString>,
     return_types: Vec<LogicalType>,
-    names: &[rustdb_common::ByteString],
-) -> Result<(CTableBindData, Vec<rustdb_common::ByteString>)> {
+    names: &[roastedduck_common::ByteString],
+) -> Result<(CTableBindData, Vec<roastedduck_common::ByteString>)> {
     let callbacks = info.callbacks();
     let Some(bind) = callbacks.bind else {
         return Err(Error::internal("C API table function without a bind callback"));
@@ -229,12 +229,12 @@ pub(crate) fn c_table_bind(
     // SAFETY: the client's callback receives the bind info, valid for the call.
     unsafe { bind(std::ptr::from_mut(&mut bind_info).cast()) };
     if let Some(error) = bind_info.error {
-        return Err(Error::new_bytes(rustdb_common::ErrorKind::Binder, error));
+        return Err(Error::new_bytes(roastedduck_common::ErrorKind::Binder, error));
     }
     let names = bind_info
         .names
         .iter()
-        .map(|name| rustdb_common::ByteString::from(name.as_bytes()))
+        .map(|name| roastedduck_common::ByteString::from(name.as_bytes()))
         .collect();
     Ok((
         CTableBindData {
@@ -256,7 +256,7 @@ fn c_table_function_bind(
         .binder
         .and_then(|binder| binder.downcast_ref::<BinderContext>())
         .map(|binder| &binder.function_client);
-    let named_parameters: CaseInsensitiveMap<Value, rustdb_common::ByteString> = input
+    let named_parameters: CaseInsensitiveMap<Value, roastedduck_common::ByteString> = input
         .named_parameters
         .iter()
         .map(|(name, value)| (name.clone(), value.clone()))
@@ -348,7 +348,10 @@ fn run_init(
     // SAFETY: the client's callback receives the init info, valid for the call.
     unsafe { init(std::ptr::from_mut(&mut init_info).cast()) };
     if let Some(error) = init_info.error {
-        return Err(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, error));
+        return Err(Error::new_bytes(
+            roastedduck_common::ErrorKind::InvalidInput,
+            error,
+        ));
     }
     Ok((init_info.init_data, init_info.max_threads))
 }
@@ -430,7 +433,10 @@ fn c_table_function_scan(projection_pushdown: bool) -> ParallelTableScan {
                 );
             }
             if let Some(error) = function_info.error {
-                return Err(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, error));
+                return Err(Error::new_bytes(
+                    roastedduck_common::ErrorKind::InvalidInput,
+                    error,
+                ));
             }
             local.batch_index = global.next_batch.fetch_add(1, Ordering::Relaxed);
             Ok(!output.is_empty())

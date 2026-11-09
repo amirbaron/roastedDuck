@@ -1,8 +1,8 @@
 //! 128-bit integer and decimal conversions (DuckDB's `capi/hugeint-c.cpp`).
 
-use rustdb_function::cast::ValueCast;
-use rustdb_function::cast::numeric::{f64_to_i128, f64_to_u128, i128_to_f64, u128_to_f64};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_function::cast::numeric::{f64_to_i128, f64_to_u128, i128_to_f64, u128_to_f64};
+use roastedduck_types::{LogicalType, Value};
 
 use crate::types::{DuckdbDecimal, DuckdbHugeint, DuckdbUhugeint};
 

@@ -5,10 +5,10 @@ use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::{Aggregate, AggregateInput, AggregateOps, States, Typed};
-use rustdb_function::{AggregateFunction, BindInput, FunctionData};
-use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::{Aggregate, AggregateInput, AggregateOps, States, Typed};
+use roastedduck_function::{AggregateFunction, BindInput, FunctionData};
+use roastedduck_types::{LogicalType, LogicalTypeId, PhysicalType, Vector};
 
 use crate::aggregate::nested::list::append_list;
 use crate::aggregate::stored::{Bytes, Fixed, OrdKey, SortKey, StoredKind};

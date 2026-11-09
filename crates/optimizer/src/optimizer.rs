@@ -6,11 +6,11 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rustdb_catalog::EntryKind;
-use rustdb_common::string_util::candidates_error_message;
-use rustdb_common::{Error, Result};
-use rustdb_planner::function_binder::FunctionBinder;
-use rustdb_planner::{ClientContext, Expression, LogicalKind, LogicalOperator, LogicalOperatorType};
+use roastedduck_catalog::EntryKind;
+use roastedduck_common::string_util::candidates_error_message;
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::function_binder::FunctionBinder;
+use roastedduck_planner::{ClientContext, Expression, LogicalKind, LogicalOperator, LogicalOperatorType};
 
 use crate::build_probe_side::optimize_build_probe_side;
 use crate::column_lifetime_analyzer::analyze_column_lifetime;
@@ -145,10 +145,10 @@ impl Default for OptimizerConfig {
 impl OptimizerConfig {
     /// The configuration in a connection's settings, for optimizing outside the
     /// connection's own query processing (`json_serialize_plan`).
-    pub fn from_settings(settings: &dyn rustdb_function::SettingsSource) -> Self {
-        use rustdb_function::cast::ValueCast as _;
+    pub fn from_settings(settings: &dyn roastedduck_function::SettingsSource) -> Self {
+        use roastedduck_function::cast::ValueCast as _;
         let defaults = Self::default();
-        let setting = |name: &str, ty: &rustdb_types::LogicalType| {
+        let setting = |name: &str, ty: &roastedduck_types::LogicalType| {
             settings
                 .current_setting(name)
                 .ok()
@@ -156,13 +156,13 @@ impl OptimizerConfig {
                 .and_then(|value| value.default_cast_as(ty).ok())
         };
         let boolean = |name: &str, default: bool| {
-            setting(name, &rustdb_types::LogicalType::BOOLEAN)
+            setting(name, &roastedduck_types::LogicalType::BOOLEAN)
                 .and_then(|value| value.as_bool())
                 .unwrap_or(default)
         };
         Self {
             enabled: boolean("enable_optimizer", defaults.enabled),
-            disabled: setting("disabled_optimizers", &rustdb_types::LogicalType::VARCHAR)
+            disabled: setting("disabled_optimizers", &roastedduck_types::LogicalType::VARCHAR)
                 .and_then(|value| value.to_varchar().ok())
                 .and_then(|list: String| OptimizerType::parse_list(&list).ok())
                 .unwrap_or_default(),
@@ -171,7 +171,7 @@ impl OptimizerConfig {
             preserve_insertion_order: boolean("preserve_insertion_order", defaults.preserve_insertion_order),
             late_materialization_max_rows: setting(
                 "late_materialization_max_rows",
-                &rustdb_types::LogicalType::UBIGINT,
+                &roastedduck_types::LogicalType::UBIGINT,
             )
             .and_then(|value| value.as_i128())
             .and_then(|value| u64::try_from(value).ok())
@@ -506,7 +506,7 @@ pub(crate) fn bind_scalar_function(
         .get_entry(
             "system",
             "main",
-            rustdb_catalog::CatalogType::ScalarFunction,
+            roastedduck_catalog::CatalogType::ScalarFunction,
             name,
             true,
         )?
@@ -530,7 +530,7 @@ pub(crate) fn bind_aggregate_function(
         .get_entry(
             "system",
             "main",
-            rustdb_catalog::CatalogType::AggregateFunction,
+            roastedduck_catalog::CatalogType::AggregateFunction,
             name,
             true,
         )?
@@ -545,7 +545,7 @@ pub(crate) fn bind_aggregate_function(
         function,
         children,
         None,
-        rustdb_planner::expression::AggregateType::NonDistinct,
+        roastedduck_planner::expression::AggregateType::NonDistinct,
         None,
     )
 }

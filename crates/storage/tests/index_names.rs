@@ -1,15 +1,15 @@
 //! Native index storage metadata and lookup regression coverage.
 #[path = "../examples/support/index_names.rs"]
 mod index_names;
-use rustdb_buffer::{BufferManager, BufferManagerConfig};
-use rustdb_common::{ByteString, Result};
-use rustdb_storage::index::VerifyExistenceType;
-use rustdb_storage::index::art::ArtStorageInfo;
-use rustdb_storage::index::conflict_manager::ConflictManager;
-use rustdb_storage::index::{
+use roastedduck_buffer::{BufferManager, BufferManagerConfig};
+use roastedduck_common::{ByteString, Result};
+use roastedduck_storage::index::VerifyExistenceType;
+use roastedduck_storage::index::art::ArtStorageInfo;
+use roastedduck_storage::index::conflict_manager::ConflictManager;
+use roastedduck_storage::index::{
     Art, IndexConstraintType, IndexKeyExpressions, TableIndexList, UnboundIndex, UnboundIndexStorage,
 };
-use rustdb_types::LogicalType;
+use roastedduck_types::LogicalType;
 use std::sync::Arc;
 
 #[test]

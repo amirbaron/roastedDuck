@@ -27,7 +27,7 @@ pub mod thrift;
 pub mod variant;
 pub mod writer;
 
-use rustdb_function::{ScalarFunctionSet, TableFunctionSet};
+use roastedduck_function::{ScalarFunctionSet, TableFunctionSet};
 
 /// The table functions of the extension.
 pub fn parquet_table_functions() -> Vec<TableFunctionSet> {

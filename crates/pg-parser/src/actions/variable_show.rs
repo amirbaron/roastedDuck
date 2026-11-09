@@ -101,7 +101,7 @@ pub(super) fn variable_show_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
 pub(super) fn var_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemValue<'a>> {
     match alt {
         // var_name '.' ColId
-        1 => Ok(SemValue::Str(Some(rustdb_common::byte_format!(
+        1 => Ok(SemValue::Str(Some(roastedduck_common::byte_format!(
             "{}.{}",
             c_str(rhs.str(1)?.as_deref()),
             c_str(rhs.str(3)?.as_deref())

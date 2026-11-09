@@ -6,9 +6,9 @@
 //! by its default for every row.
 
 use memchr::memchr;
-use rustdb_common::{Error, Result};
-use rustdb_function::{NullHandling, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Value, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{NullHandling, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Value, Vector};
 
 use crate::scalar::executor::{Str, StrOut, addressable, binary, str_at, ternary};
 use crate::scalar::nested::all_constant;

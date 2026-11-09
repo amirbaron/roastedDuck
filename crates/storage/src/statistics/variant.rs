@@ -8,13 +8,13 @@
 //! NULL), 0 a field missing from its OBJECT, and any other value the 1-based index of the
 //! value in the unshredded VARIANT of the row.
 
-use rustdb_common::{ByteString, byte_format as format, byte_write as write};
+use roastedduck_common::{ByteString, byte_format as format, byte_write as write};
 use std::cmp::Ordering;
 use std::fmt;
 
-use rustdb_common::Result;
-use rustdb_types::variant::{VariantPathComponent, unshredded_type};
-use rustdb_types::{LogicalType, LogicalTypeId};
+use roastedduck_common::Result;
+use roastedduck_types::variant::{VariantPathComponent, unshredded_type};
+use roastedduck_types::{LogicalType, LogicalTypeId};
 
 use super::numeric::NumericValue;
 use super::{BaseStatistics, StatsData};
@@ -495,12 +495,12 @@ impl BaseStatistics {
 
 /// `VariantStats::Serialize`.
 pub(super) fn write_variant_stats(
-    serializer: &mut dyn rustdb_serde::Serializer,
+    serializer: &mut dyn roastedduck_serde::Serializer,
     variant: &VariantStats,
 ) -> Result<()> {
     let state = variant.shredding_state;
     serializer.on_property_begin(200, "shredding_state");
-    rustdb_serde::write_enum(serializer, state.name(), |s| s.write_u8(state as u8));
+    roastedduck_serde::write_enum(serializer, state.name(), |s| s.write_u8(state as u8));
     serializer.on_property_end();
     serializer.write_object_property(225, "unshredded_stats", |s| {
         variant.unshredded.serialize_fields(s)
@@ -514,11 +514,11 @@ pub(super) fn write_variant_stats(
 
 /// `VariantStats::Deserialize`.
 pub(super) fn read_variant_stats(
-    deserializer: &mut dyn rustdb_serde::Deserializer,
+    deserializer: &mut dyn roastedduck_serde::Deserializer,
     variant: &mut VariantStats,
 ) -> Result<()> {
     deserializer.on_property_begin(200, "shredding_state")?;
-    variant.shredding_state = rustdb_serde::read_enum(
+    variant.shredding_state = roastedduck_serde::read_enum(
         deserializer,
         "VariantStatsShreddingState",
         VariantShreddingState::from_name,
@@ -546,7 +546,7 @@ impl VariantStats {
         out
     }
 }
-impl rustdb_common::byte_format::NativeByteFormat for VariantStats {
+impl roastedduck_common::byte_format::NativeByteFormat for VariantStats {
     fn append_native_bytes(&self, output: &mut ByteString) {
         let _ = self.write_statistics_bytes(output);
     }

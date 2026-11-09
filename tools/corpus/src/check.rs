@@ -1,14 +1,14 @@
-//! The serialization check: rustdb must reproduce DuckDB's `json_serialize_sql` output
+//! The serialization check: roastedduck must reproduce DuckDB's `json_serialize_sql` output
 //! byte for byte, and its binary format must round-trip the same trees.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-use rustdb_ast::SelectStatement;
-use rustdb_ast::json::{JsonSerializeOptions, deserialize_statements, serialize_statements};
-use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
-use rustdb_serde::json::JsonOptions;
-use rustdb_serde::{SerializationCompatibility, SerializationOptions};
+use roastedduck_ast::SelectStatement;
+use roastedduck_ast::json::{JsonSerializeOptions, deserialize_statements, serialize_statements};
+use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
+use roastedduck_serde::json::JsonOptions;
+use roastedduck_serde::{SerializationCompatibility, SerializationOptions};
 use serde_json::Value as Json;
 
 use corpus::oracle::SerializedSql;
@@ -24,7 +24,7 @@ pub struct Report {
     /// Failures by check and node type, with sample ids.
     pub mismatches: BTreeMap<String, Vec<u64>>,
     /// Statements DuckDB only fails to serialize for the default version (a tree the old
-    /// format cannot express): `(total, rustdb fails too, with the same message)`.
+    /// format cannot express): `(total, roastedduck fails too, with the same message)`.
     pub version_errors: (usize, usize, usize),
 }
 
@@ -59,13 +59,13 @@ impl Report {
         let (total, failed, same_message) = self.version_errors;
         let _ = writeln!(
             out,
-            "version-only DuckDB errors: {total} (rustdb fails too: {failed}, same message: {same_message})"
+            "version-only DuckDB errors: {total} (roastedduck fails too: {failed}, same message: {same_message})"
         );
         out
     }
 }
 
-/// For a statement DuckDB fails to serialize for the default version only: whether rustdb
+/// For a statement DuckDB fails to serialize for the default version only: whether roastedduck
 /// fails too when writing the latest-version tree for the default version, and whether
 /// its message is DuckDB's.
 fn check_version_error(row: &SerializedSql) -> Option<(bool, bool)> {

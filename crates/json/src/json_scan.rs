@@ -7,13 +7,13 @@ use std::any::Any;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::{Error, Result};
-use rustdb_csv::multi_file::{FileList, MultiFileBindData, MultiFileOptions, hive_parse};
-use rustdb_function::cast::CastFunctionSet;
-use rustdb_function::{
+use roastedduck_common::{Error, Result};
+use roastedduck_csv::multi_file::{FileList, MultiFileBindData, MultiFileOptions, hive_parse};
+use roastedduck_function::cast::CastFunctionSet;
+use roastedduck_function::{
     FunctionData, ParallelScanGlobal, ParallelScanLocal, ParallelTableScan, TableScanState,
 };
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::json_enums::{JsonFormat, JsonRecordType, JsonScanType};
 use crate::json_executors::{ColumnBuilder, StrBuilder};
@@ -22,7 +22,7 @@ use crate::json_reader::{ByteRange, JsonReader, ScanBatch};
 use crate::json_reader_options::JsonReaderOptions;
 use crate::yyjson::Doc;
 
-pub use rustdb_csv::multi_file::{COLUMN_IDENTIFIER_FILE_INDEX, COLUMN_IDENTIFIER_FILENAME};
+pub use roastedduck_csv::multi_file::{COLUMN_IDENTIFIER_FILE_INDEX, COLUMN_IDENTIFIER_FILENAME};
 /// The empty column of multi-file readers (`COLUMN_IDENTIFIER_EMPTY`).
 const COLUMN_IDENTIFIER_EMPTY: u64 = u64::MAX - 1;
 
@@ -49,10 +49,10 @@ pub(crate) struct JsonScanData {
     pub(crate) reader_bind: MultiFileBindData,
     pub(crate) options: JsonReaderOptions,
     /// The output columns, including the filename and hive partition columns.
-    pub(crate) names: Vec<rustdb_common::ByteString>,
+    pub(crate) names: Vec<roastedduck_common::ByteString>,
     pub(crate) types: Vec<LogicalType>,
     /// The JSON keys of the first `key_names.len()` columns.
-    pub(crate) key_names: Vec<rustdb_common::ByteString>,
+    pub(crate) key_names: Vec<roastedduck_common::ByteString>,
     pub(crate) date_format_map: Arc<DateFormatMap>,
     pub(crate) transform: TransformFlags,
     pub(crate) casts: Arc<CastFunctionSet>,
@@ -117,7 +117,7 @@ enum ColumnSource {
     Filename,
     FileIndex,
     /// A hive partition key.
-    Hive(rustdb_common::ByteString),
+    Hive(roastedduck_common::ByteString),
     /// A column with no data (the empty column).
     Null(LogicalType),
 }
@@ -127,7 +127,7 @@ enum ColumnSource {
 struct Projection {
     sources: Vec<ColumnSource>,
     /// The keys converted, and their types.
-    names: Vec<rustdb_common::ByteString>,
+    names: Vec<roastedduck_common::ByteString>,
     types: Vec<LogicalType>,
     error_unknown_key: bool,
 }
@@ -221,7 +221,7 @@ impl WorkQueue {
             let size = crate::json_reader::file_size(path);
             let compressed = !matches!(
                 data.options.compression.resolve(path),
-                rustdb_csv::options::FileCompressionType::Uncompressed
+                roastedduck_csv::options::FileCompressionType::Uncompressed
             );
             if size > RANGE_SIZE && !compressed {
                 if format == JsonFormat::AutoDetect {
@@ -278,18 +278,15 @@ fn max_threads(data: &JsonScanData) -> usize {
     if files > 1 {
         return files;
     }
-    let size = data
-        .files
-        .first_file()
-        .map_or(0, crate::json_reader::file_size);
+    let size = data.files.first_file().map_or(0, crate::json_reader::file_size);
     usize::try_from(size / RANGE_SIZE + 1).unwrap_or(1)
 }
 
 fn init_global(
     bind_data: Option<&dyn FunctionData>,
     column_ids: &[u64],
-    _: &[rustdb_types::ColumnIndex],
-    _: Option<&rustdb_function::logging::OperatorLogger>,
+    _: &[roastedduck_types::ColumnIndex],
+    _: Option<&roastedduck_function::logging::OperatorLogger>,
 ) -> Result<ParallelScanGlobal> {
     let data = scan_data(bind_data)?;
     Ok(Arc::new(ScanGlobal {
@@ -518,9 +515,9 @@ pub(crate) fn json_scan(
 /// `MultiFileGetVirtualColumns`.
 pub(crate) fn json_virtual_columns(
     bind_data: Option<&dyn FunctionData>,
-) -> Vec<(u64, rustdb_common::ByteString, LogicalType)> {
+) -> Vec<(u64, roastedduck_common::ByteString, LogicalType)> {
     let filename_option = bind_data
         .and_then(|data| data.as_any().downcast_ref::<JsonScanData>())
         .is_some_and(|data| data.reader_bind.filename_idx.is_some());
-    rustdb_csv::multi_file::multi_file_virtual_columns(filename_option)
+    roastedduck_csv::multi_file::multi_file_virtual_columns(filename_option)
 }

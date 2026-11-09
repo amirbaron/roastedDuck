@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::generated::version_map::SERIALIZATION_VERSIONS;
 
@@ -28,7 +28,7 @@ impl SerializationCompatibility {
         let Some(&(found, version)) = SERIALIZATION_VERSIONS.iter().find(|(n, _)| n.as_bytes() == name)
         else {
             let candidates: Vec<&str> = SERIALIZATION_VERSIONS.iter().map(|(n, _)| *n).collect();
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "The version string '{name}' is not a known DuckDB version, valid options are: {}",
                 candidates.join(", ")
             )));

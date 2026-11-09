@@ -4,8 +4,8 @@
 
 use std::fmt::Display;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{Interval, NativeType};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{Interval, NativeType};
 
 /// An integer type with checked arithmetic.
 pub(crate) trait CheckedInt: NativeType + Display + Ord {

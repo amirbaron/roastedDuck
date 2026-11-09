@@ -4,10 +4,10 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::kernels::scatter;
-use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::kernels::scatter;
+use roastedduck_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Vector};
 
 use crate::scalar::executor::{Str, StrOut, addressable, binary, variadic};
 use crate::scalar::nested::{ListInput, all_constant, list_child_type};
@@ -203,7 +203,8 @@ fn bind_concat(function: &mut ScalarFunction, input: &BindInput<'_>, is_operator
     Ok(None)
 }
 
-fn unbound_concat() -> impl Fn(&DataChunk, &mut rustdb_function::FunctionState, &mut Vector) -> Result<()> {
+fn unbound_concat() -> impl Fn(&DataChunk, &mut roastedduck_function::FunctionState, &mut Vector) -> Result<()>
+{
     |_, _, _| Err(Error::internal("concat used without being bound"))
 }
 

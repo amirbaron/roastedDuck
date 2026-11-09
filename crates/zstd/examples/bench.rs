@@ -1,4 +1,4 @@
-//! Compression and decompression throughput of rustdb-zstd, to compare with
+//! Compression and decompression throughput of roastedduck-zstd, to compare with
 //! `zstd_ref bench` (DuckDB's zstd): `compress` and `decompress` in a loop, a new
 //! compression context per call as `ZSTD_compress` makes one (the decompression context
 //! is reused per thread).
@@ -25,12 +25,12 @@ fn main() {
     let mut frame = Vec::new();
     let start = Instant::now();
     for _ in 0..compress_iterations {
-        frame = rustdb_zstd::compress(&src, level);
+        frame = roastedduck_zstd::compress(&src, level);
     }
     let middle = Instant::now();
     let mut back = vec![0u8; src.len()];
     for _ in 0..decompress_iterations {
-        if let Err(error) = rustdb_zstd::decompress(&mut back, &frame) {
+        if let Err(error) = roastedduck_zstd::decompress(&mut back, &frame) {
             eprintln!("{error}");
             std::process::exit(1);
         }

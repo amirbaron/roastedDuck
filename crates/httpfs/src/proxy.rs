@@ -99,7 +99,7 @@ impl<In: Transport> Connector<In> for ProxyConnector {
                 proxy.password().unwrap_or_default()
             );
             let mut encoded = b"Basic ".to_vec();
-            rustdb_types::blob::write_base64(credentials.as_bytes(), &mut encoded);
+            roastedduck_types::blob::write_base64(credentials.as_bytes(), &mut encoded);
             Some(encoded)
         } else {
             None

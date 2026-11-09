@@ -11,8 +11,8 @@ pub mod regression;
 pub mod sorted;
 pub(crate) mod stored;
 
-use rustdb_common::Result;
-use rustdb_function::AggregateFunctionSet;
+use roastedduck_common::Result;
+use roastedduck_function::AggregateFunctionSet;
 
 use algebraic::{avg, stddev};
 use distributive::{

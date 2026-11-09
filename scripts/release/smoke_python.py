@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Exercise an installed preview wheel, including version identity and persistence."""
 import importlib.metadata
+import argparse
 import json
 from pathlib import Path
 import tempfile
 
 import duckdb
 
-release = json.loads((Path(__file__).resolve().parents[2] / "release.json").read_text())
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--release", type=Path, default=Path(__file__).resolve().parents[2] / "release.json")
+release = json.loads(parser.parse_args().release.read_text())
 assert importlib.metadata.version("roastedduck") == release["version"]
 assert duckdb.__version__ == duckdb.__duckdb_version__ == release["compatibility_version"]
 assert duckdb.version() == f'{release["version"]} (with duckdb {release["compatibility_version"]})'

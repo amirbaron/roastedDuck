@@ -1,16 +1,16 @@
 //! Finding the table scans that a run-time filter on some columns can be pushed into
 //! (DuckDB's `JoinFilterPushdownOptimizer::GetPushdownFilterTargets`).
 
-use rustdb_planner::{
+use roastedduck_planner::{
     ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator, LogicalOperatorType,
 };
-use rustdb_types::{LogicalType, LogicalTypeId};
+use roastedduck_types::{LogicalType, LogicalTypeId};
 
 use std::sync::Arc;
 
-use rustdb_ast::{ExpressionType, JoinType};
-use rustdb_planner::operator::{JoinFilter, JoinFilterTarget};
-use rustdb_storage::table_filter::DynamicTableFilterSet;
+use roastedduck_ast::{ExpressionType, JoinType};
+use roastedduck_planner::operator::{JoinFilter, JoinFilterTarget};
+use roastedduck_storage::table_filter::DynamicTableFilterSet;
 
 use crate::filter_pushdown::supports_filter_pushdown;
 
@@ -47,7 +47,7 @@ pub fn pushdown_expression(expression: &Expression, column: &mut PushdownColumn,
         ExpressionKind::Cast(cast) if allow_casts => {
             let source = &cast.child.return_type;
             let small_integral = |ty: &LogicalType| {
-                is_integral(ty) && ty.physical_type().size() <= rustdb_types::PhysicalType::Int64.size()
+                is_integral(ty) && ty.physical_type().size() <= roastedduck_types::PhysicalType::Int64.size()
             };
             if !small_integral(source) || !small_integral(ty) {
                 return false;

@@ -35,7 +35,7 @@ for n in names:
 head = '''//! `PGNodeTag` numbers and `Transformer::NodetypeToString` names of the parse-tree nodes,
 //! which appear in some of DuckDB's error messages. Generated from `nodes/nodes.hpp`.
 
-use rustdb_pg_parser::nodes::{Node, Value};
+use roastedduck_pg_parser::nodes::{Node, Value};
 
 /// The node's `PGNodeTag` value and its `NodetypeToString` name.
 pub(crate) fn node_tag(node: &Node) -> (i32, &'static str) {

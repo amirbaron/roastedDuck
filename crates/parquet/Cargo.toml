@@ -1,5 +1,5 @@
 [package]
-name = "rustdb-parquet"
+name = "roastedduck-parquet"
 description = "The Parquet extension: read_parquet, the parquet metadata functions and COPY ... (FORMAT parquet) (DuckDB's extension/parquet)."
 version.workspace = true
 edition.workspace = true
@@ -10,17 +10,17 @@ rust-version.workspace = true
 brotli = "9.0.0"
 flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
 lz4_flex = "0.14.0"
-rustdb-buffer = { version = "1.5.6", path = "../buffer" }
-rustdb-common.workspace = true
-rustdb-crypto = { path = "../crypto" }
-rustdb-csv = { version = "1.5.6", path = "../csv" }
-rustdb-function = { version = "1.5.6", path = "../function" }
-rustdb-functions = { version = "1.5.6", path = "../functions" }
-rustdb-planner = { version = "1.5.6", path = "../planner" }
-rustdb-serde.workspace = true
-rustdb-storage = { version = "1.5.6", path = "../storage" }
-rustdb-types.workspace = true
-rustdb-zstd = { path = "../zstd" }
+roastedduck-buffer = { version = "1.5.6", path = "../buffer" }
+roastedduck-common.workspace = true
+roastedduck-crypto = { path = "../crypto" }
+roastedduck-csv = { version = "1.5.6", path = "../csv" }
+roastedduck-function = { version = "1.5.6", path = "../function" }
+roastedduck-functions = { version = "1.5.6", path = "../functions" }
+roastedduck-planner = { version = "1.5.6", path = "../planner" }
+roastedduck-serde.workspace = true
+roastedduck-storage = { version = "1.5.6", path = "../storage" }
+roastedduck-types.workspace = true
+roastedduck-zstd = { path = "../zstd" }
 serde_json = { version = "1", features = ["preserve_order"] }
 twox-hash = { version = "2.1.5", default-features = false, features = ["xxhash64"] }
 

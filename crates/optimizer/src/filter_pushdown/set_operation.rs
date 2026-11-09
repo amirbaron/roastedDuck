@@ -1,8 +1,8 @@
 //! Filter pushdown through set operations (DuckDB's `pushdown_set_operation.cpp`): each
 //! input gets a copy of the filters with references rewritten to its own columns.
 
-use rustdb_common::Result;
-use rustdb_planner::{LogicalKind, LogicalOperator, LogicalOperatorType};
+use roastedduck_common::Result;
+use roastedduck_planner::{LogicalKind, LogicalOperator, LogicalOperatorType};
 
 use super::{Filter, FilterPushdown, empty_result};
 use crate::expression_util::replace_column_refs;
@@ -30,7 +30,7 @@ impl FilterPushdown<'_> {
                 let mut filter = original.filter.clone();
                 replace_column_refs(&mut filter, &mut |column| {
                     let mut column = column.clone();
-                    if let rustdb_planner::ExpressionKind::ColumnRef(reference) = &mut column.kind
+                    if let roastedduck_planner::ExpressionKind::ColumnRef(reference) = &mut column.kind
                         && let Some(binding) = child_bindings.get(reference.binding.column_index as usize)
                     {
                         reference.binding = *binding;

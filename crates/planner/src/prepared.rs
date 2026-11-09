@@ -3,9 +3,9 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::{SqlStatement, StatementType};
-use rustdb_common::{CaseInsensitiveMap, Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_ast::{SqlStatement, StatementType};
+use roastedduck_common::{CaseInsensitiveMap, Error, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::expression::{
     BoundParameterData, BoundParameterExpression, Expression, ExpressionKind, SharedParameterData,
@@ -41,7 +41,7 @@ pub struct StatementProperties {
     pub parameter_count: usize,
     /// The databases that functions in the statement write to, in the order their
     /// calls were bound (`RegisterDBModify` by a function's `get_modified_databases`).
-    pub modified_databases: Vec<rustdb_common::ByteString>,
+    pub modified_databases: Vec<roastedduck_common::ByteString>,
 }
 
 impl Default for StatementProperties {
@@ -64,11 +64,11 @@ pub struct PreparedStatementData {
     pub statement_type: StatementType,
     /// The statement as parsed, bound again for each execution.
     pub unbound_statement: SqlStatement,
-    pub names: Vec<rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
     pub types: Vec<LogicalType>,
     pub properties: StatementProperties,
     /// The parameters and their resolved types.
-    pub value_map: CaseInsensitiveMap<SharedParameterData, rustdb_common::ByteString>,
+    pub value_map: CaseInsensitiveMap<SharedParameterData, roastedduck_common::ByteString>,
     /// Bound plan awaiting physical-preparation metadata checks. Consumed when the
     /// client prepares it; execution still binds against current catalog state.
     pub preparation_plan: Option<crate::LogicalOperator>,
@@ -101,15 +101,17 @@ impl PreparedStatementData {
 #[derive(Debug, Default)]
 pub struct BoundParameterMap {
     /// Values supplied up front (`EXECUTE` with values): bound as constants.
-    pub parameter_data: CaseInsensitiveMap<BoundParameterData, rustdb_common::ByteString>,
+    pub parameter_data: CaseInsensitiveMap<BoundParameterData, roastedduck_common::ByteString>,
     /// The parameters bound so far.
-    pub parameters: CaseInsensitiveMap<SharedParameterData, rustdb_common::ByteString>,
+    pub parameters: CaseInsensitiveMap<SharedParameterData, roastedduck_common::ByteString>,
     /// Whether the statement must be bound again once all types are known.
     pub rebind: bool,
 }
 
 impl BoundParameterMap {
-    pub fn new(parameter_data: CaseInsensitiveMap<BoundParameterData, rustdb_common::ByteString>) -> Self {
+    pub fn new(
+        parameter_data: CaseInsensitiveMap<BoundParameterData, roastedduck_common::ByteString>,
+    ) -> Self {
         Self {
             parameter_data,
             parameters: CaseInsensitiveMap::default(),
@@ -152,7 +154,7 @@ impl BoundParameterMap {
             self.rebind = true;
         }
         let mut expression = Expression::new(
-            rustdb_ast::ExpressionType::ValueParameter,
+            roastedduck_ast::ExpressionType::ValueParameter,
             identifier_type,
             ExpressionKind::Parameter(BoundParameterExpression {
                 identifier: identifier.into(),

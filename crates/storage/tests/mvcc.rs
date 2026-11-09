@@ -4,15 +4,15 @@
 
 use std::sync::Arc;
 
-use rustdb_buffer::{BufferManager, BufferManagerConfig, InMemoryBlockManager};
-use rustdb_storage::table::StorageIndex;
-use rustdb_storage::table_filter::{TableFilter, TableFilterSet};
-use rustdb_storage::{
+use roastedduck_buffer::{BufferManager, BufferManagerConfig, InMemoryBlockManager};
+use roastedduck_storage::table::StorageIndex;
+use roastedduck_storage::table_filter::{TableFilter, TableFilterSet};
+use roastedduck_storage::{
     ColumnDefinition, DataTable, TableConstraints, TableIoManager, TableScanState, Transaction,
     TransactionManager,
 };
-use rustdb_types::compare::CompareOp;
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_types::compare::CompareOp;
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 
 fn io() -> Arc<TableIoManager> {
     let buffer_manager = BufferManager::new(BufferManagerConfig::default()).unwrap();
@@ -101,7 +101,7 @@ fn filtered_scan_keeps_its_row_limit_after_concurrent_append() {
         let manager = TransactionManager::default();
         let table = table();
         let setup = manager.begin();
-        let vector_size = rustdb_common::STANDARD_VECTOR_SIZE;
+        let vector_size = roastedduck_common::STANDARD_VECTOR_SIZE;
         let mut rows: Vec<_> = (0..vector_size).map(|i| ((i % 2) as i32, "initial")).collect();
         rows.push((last_value, "last"));
         insert(&table, &setup, &rows);
@@ -161,7 +161,7 @@ fn inserts_are_isolated_until_commit() {
     assert_eq!(values(&scan(&table, &t1)), [1, 2], "own inserts are visible");
     assert!(scan(&table, &t2).is_empty(), "uncommitted inserts are not");
     // local rows carry transaction-local row ids
-    assert!(scan(&table, &t1)[0].0 >= rustdb_storage::MAX_ROW_ID as i64);
+    assert!(scan(&table, &t1)[0].0 >= roastedduck_storage::MAX_ROW_ID as i64);
     manager.commit(&t1).unwrap();
     assert!(scan(&table, &t2).is_empty(), "t2 started before the commit");
     let t3 = manager.begin();
@@ -502,8 +502,8 @@ fn failed_multi_vector_delete_does_not_leave_unregistered_versions() {
 
 fn check_failed_multi_vector_write(deleting: bool) {
     for vector_size in [
-        rustdb_common::STANDARD_VECTOR_SIZE,
-        rustdb_storage::DEFAULT_ROW_GROUP_SIZE as usize,
+        roastedduck_common::STANDARD_VECTOR_SIZE,
+        roastedduck_storage::DEFAULT_ROW_GROUP_SIZE as usize,
     ] {
         let manager = TransactionManager::default();
         let table = table();

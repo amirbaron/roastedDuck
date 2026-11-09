@@ -5,7 +5,7 @@ use std::ffi::{c_char, c_void};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 
-use rustdb_common::{Error, ErrorKind};
+use roastedduck_common::{Error, ErrorKind};
 
 use crate::error_data::{DuckdbErrorData, ErrorDataWrapper};
 use crate::helper::opt_str;
@@ -105,7 +105,7 @@ impl CFileHandle {
 
 /// `LocalFileSystem::OpenFile`: the file at `path` opened as `options` asks.
 fn open_file(path: &str, options: CFileOpenOptions) -> Result<File, Error> {
-    let path = rustdb_function::file_system::expand_path(path);
+    let path = roastedduck_function::file_system::expand_path(path);
     if !options.read && !options.write {
         return Err(Error::internal(
             "READ, WRITE or both should be specified when opening a file",

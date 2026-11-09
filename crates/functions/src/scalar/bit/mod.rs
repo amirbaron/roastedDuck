@@ -1,10 +1,10 @@
 //! Bit string functions (DuckDB's `core_functions/scalar/bit/bitstring.cpp`):
 //! `bitstring`, `get_bit`, `set_bit` and `bit_position`.
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::LogicalType;
-use rustdb_types::bit::{bit_length, text_stored_len};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::LogicalType;
+use roastedduck_types::bit::{bit_length, text_stored_len};
 
 use crate::bitstring::{finalize, get_bit, set_bit, zeros};
 use crate::scalar::executor::{Str, StrOut, binary, ternary};
@@ -171,13 +171,13 @@ mod tests {
 
     fn parse(text: &str) -> Vec<u8> {
         let mut out = Vec::new();
-        rustdb_types::bit::parse_text(text.as_bytes(), &mut out).unwrap();
+        roastedduck_types::bit::parse_text(text.as_bytes(), &mut out).unwrap();
         out
     }
 
     fn render(bits: &[u8]) -> String {
         let mut out = Vec::new();
-        rustdb_types::bit::write_text(bits, &mut out);
+        roastedduck_types::bit::write_text(bits, &mut out);
         String::from_utf8(out).unwrap()
     }
 

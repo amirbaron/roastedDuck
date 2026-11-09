@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::LogicalType;
+use roastedduck_common::{Error, Result};
+use roastedduck_types::LogicalType;
 
 use crate::ffi::ArrowSchema;
 use crate::schema_metadata::ArrowSchemaMetadata;
@@ -171,7 +171,7 @@ impl ArrowType {
         }
         // Dictionaries can exist in arbitrarily nested schemas: rebuild the type.
         match (&self.type_info, self.ty.id()) {
-            (Some(ArrowTypeInfo::Struct(children)), rustdb_types::LogicalTypeId::Struct) => {
+            (Some(ArrowTypeInfo::Struct(children)), roastedduck_types::LogicalTypeId::Struct) => {
                 let names = self.ty.struct_children().unwrap_or_default();
                 LogicalType::struct_type(
                     children
@@ -181,7 +181,7 @@ impl ArrowType {
                         .collect(),
                 )
             }
-            (Some(ArrowTypeInfo::Struct(children)), rustdb_types::LogicalTypeId::Union) => {
+            (Some(ArrowTypeInfo::Struct(children)), roastedduck_types::LogicalTypeId::Union) => {
                 let names = self.ty.union_members().unwrap_or_default();
                 LogicalType::union_type(
                     children
@@ -191,10 +191,10 @@ impl ArrowType {
                         .collect(),
                 )
             }
-            (Some(ArrowTypeInfo::List { child, .. }), rustdb_types::LogicalTypeId::List) => {
+            (Some(ArrowTypeInfo::List { child, .. }), roastedduck_types::LogicalTypeId::List) => {
                 LogicalType::list(child.duck_type(true))
             }
-            (Some(ArrowTypeInfo::List { child, .. }), rustdb_types::LogicalTypeId::Map) => {
+            (Some(ArrowTypeInfo::List { child, .. }), roastedduck_types::LogicalTypeId::Map) => {
                 let entry = child.duck_type(true);
                 let fields = entry.struct_children().unwrap_or_default();
                 match fields {
@@ -525,7 +525,7 @@ impl ArrowType {
 }
 
 /// The Arrow types of the children of a struct or union, and their names and DuckDB types.
-type MemberTypes = (Vec<ArrowType>, Vec<(rustdb_common::ByteString, LogicalType)>);
+type MemberTypes = (Vec<ArrowType>, Vec<(roastedduck_common::ByteString, LogicalType)>);
 
 /// The error of reading layout details a type does not have (`ArrowTypeInfo::Cast`).
 fn type_info_mismatch(expected: &str) -> Error {
@@ -594,12 +594,12 @@ fn decimal_type(format: &str) -> Result<ArrowType> {
 pub struct ArrowTableSchema {
     columns: Vec<ArrowType>,
     types: Vec<LogicalType>,
-    names: Vec<rustdb_common::ByteString>,
+    names: Vec<roastedduck_common::ByteString>,
 }
 
 impl ArrowTableSchema {
     /// Adds the next column (`AddColumn`); its DuckDB type is that of dictionary values.
-    pub fn add_column(&mut self, arrow_type: ArrowType, name: rustdb_common::ByteString) {
+    pub fn add_column(&mut self, arrow_type: ArrowType, name: roastedduck_common::ByteString) {
         self.types.push(arrow_type.duck_type(true));
         self.names.push(name);
         self.columns.push(arrow_type);
@@ -616,7 +616,7 @@ impl ArrowTableSchema {
     }
 
     /// `GetNames`
-    pub fn names(&self) -> &[rustdb_common::ByteString] {
+    pub fn names(&self) -> &[roastedduck_common::ByteString] {
         &self.names
     }
 }

@@ -10,11 +10,11 @@ use std::any::Any;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::{Aggregate, AggregateInput, States, Typed};
-use rustdb_function::cast::ValueCast;
-use rustdb_function::{AggregateFunction, AggregateFunctionSet, AggregateOps, BindInput, FunctionData};
-use rustdb_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType, Value, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::{Aggregate, AggregateInput, States, Typed};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_function::{AggregateFunction, AggregateFunctionSet, AggregateOps, BindInput, FunctionData};
+use roastedduck_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType, Value, Vector};
 
 use crate::aggregate::nested::list::append_list;
 
@@ -267,7 +267,7 @@ fn bind(function: &mut AggregateFunction, input: &BindInput<'_>) -> Result<Optio
 
 /// `ReservoirQuantileBindData::Serialize`.
 fn serialize_bounds(
-    serializer: &mut dyn rustdb_serde::Serializer,
+    serializer: &mut dyn roastedduck_serde::Serializer,
     bind_data: Option<&dyn FunctionData>,
     _: &AggregateFunction,
 ) -> Result<()> {

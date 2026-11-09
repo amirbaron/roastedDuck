@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn localizes_available_files_and_drops_httpfs() {
-        let dir = std::env::temp_dir().join(format!("rustdb-bench-data-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("roastedduck-bench-data-{}", std::process::id()));
         let url = "https://h.org/a/b.csv.gz";
         let local = local_path(&dir, url);
         std::fs::create_dir_all(local.parent().unwrap()).unwrap();

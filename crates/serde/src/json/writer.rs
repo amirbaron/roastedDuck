@@ -1,7 +1,7 @@
 //! Text output identical to yyjson's writer with DuckDB's flags
 //! (`YYJSON_WRITE_ALLOW_INF_AND_NAN`, optionally `YYJSON_WRITE_PRETTY`).
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 use std::fmt::Write as _;
 
 use super::JsonValue;

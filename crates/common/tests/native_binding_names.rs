@@ -2,7 +2,7 @@
 #[path = "../examples/support/native_binding_names.rs"]
 mod native_binding_names;
 #[test]
-fn native_name_lookup_and_suggestions_match_cpp() -> rustdb_common::Result<()> {
+fn native_name_lookup_and_suggestions_match_cpp() -> roastedduck_common::Result<()> {
     let mut count = 0;
     for line in include_str!("data/native_binding_names_1.5.6.tsv").lines() {
         native_binding_names::compare(line)?;

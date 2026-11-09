@@ -1,6 +1,6 @@
 //! The `customer_address` table (`w_customer_address.c`).
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use super::Output;
 use super::address::Address;

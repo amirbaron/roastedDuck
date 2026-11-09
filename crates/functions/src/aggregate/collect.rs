@@ -6,9 +6,9 @@
 
 use std::sync::Arc;
 
-use rustdb_common::Result;
-use rustdb_types::kernels::scatter;
-use rustdb_types::{SelectionVector, Vector};
+use roastedduck_common::Result;
+use roastedduck_types::kernels::scatter;
+use roastedduck_types::{SelectionVector, Vector};
 
 /// The rows a state collected, in insertion order.
 #[derive(Clone, Debug, Default)]

@@ -2,9 +2,9 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::{Error, Result};
-use rustdb_storage::{DataTable, TableConstraints, Transaction};
-use rustdb_types::{DataChunk, LogicalType, SelectionVector};
+use roastedduck_common::{Error, Result};
+use roastedduck_storage::{DataTable, TableConstraints, Transaction};
+use roastedduck_types::{DataChunk, LogicalType, SelectionVector};
 
 use super::modify::{ModifyResult, all_columns, count_types, row_ids};
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};

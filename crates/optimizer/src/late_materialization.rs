@@ -5,17 +5,17 @@
 
 use std::collections::BTreeSet;
 
-use rustdb_ast::{ExpressionType, JoinType, OrderByNullType, OrderType};
-use rustdb_common::{Error, Result};
-use rustdb_planner::expression::BoundOrderByNode;
-use rustdb_planner::operator::{
+use roastedduck_ast::{ExpressionType, JoinType, OrderByNullType, OrderType};
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::expression::BoundOrderByNode;
+use roastedduck_planner::operator::{
     COLUMN_IDENTIFIER_ROW_ID, ColumnIndex, JoinCondition, LogicalComparisonJoin, LogicalGet,
 };
-use rustdb_planner::{
+use roastedduck_planner::{
     BoundLimitNode, ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator,
     LogicalOperatorType,
 };
-use rustdb_types::LogicalType;
+use roastedduck_types::LogicalType;
 
 use crate::expression_util::visit_column_refs;
 use crate::optimizer::Optimizer;
@@ -127,7 +127,7 @@ pub(crate) fn get_or_insert_row_id(get: &mut LogicalGet) -> u64 {
 #[derive(Clone, Debug)]
 struct RowIdColumn {
     id: u64,
-    name: rustdb_common::ByteString,
+    name: roastedduck_common::ByteString,
     ty: LogicalType,
 }
 
@@ -136,7 +136,7 @@ impl RowIdColumn {
     fn table_row_id() -> Self {
         Self {
             id: COLUMN_IDENTIFIER_ROW_ID,
-            name: rustdb_common::ByteString::from(ROW_ID_NAME),
+            name: roastedduck_common::ByteString::from(ROW_ID_NAME),
             ty: LogicalType::BIGINT,
         }
     }
@@ -199,7 +199,7 @@ fn get_expression(op: &LogicalOperator, column_index: u64) -> Result<Expression>
                 .get(column_index as usize)
                 .ok_or_else(|| Error::internal("late materialization: column out of range"))?;
             let name = if column.is_row_id_column() {
-                rustdb_common::ByteString::from(ROW_ID_NAME)
+                roastedduck_common::ByteString::from(ROW_ID_NAME)
             } else {
                 get.column_name(column)
             };
@@ -387,9 +387,9 @@ fn try_late_materialization(optimizer: &Optimizer, op: &mut LogicalOperator) -> 
     // `CreateLHSGet`): the same columns, without the filters.
     let mut lhs_get = get.clone();
     lhs_get.table_index = optimizer.generate_table_index();
-    lhs_get.table_filters = rustdb_storage::TableFilterSet::default();
+    lhs_get.table_filters = roastedduck_storage::TableFilterSet::default();
     lhs_get.dynamic_filters = None;
-    lhs_get.file_filters = rustdb_planner::operator::FileFilterInfo::default();
+    lhs_get.file_filters = roastedduck_planner::operator::FileFilterInfo::default();
     let lhs_index = lhs_get.table_index;
     let lhs_columns = lhs_get.column_ids.len();
     let lhs_row_ids: Vec<ColumnBinding> = get_or_insert_row_ids(&mut lhs_get, &row_ids)

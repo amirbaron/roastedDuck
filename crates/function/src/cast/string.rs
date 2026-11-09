@@ -1,7 +1,7 @@
 //! Casts from VARCHAR (DuckDB's `string_cast.cpp` in `src/function/cast`).
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType, Uuid, bit, blob};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType, Uuid, bit, blob};
 
 use super::decimal::string_to_decimal_kernel;
 use super::executor::{RowError, try_map_strings, try_map_strings_to_string};

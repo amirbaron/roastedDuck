@@ -1,5 +1,5 @@
 [package]
-name = "rustdb-optimizer"
+name = "roastedduck-optimizer"
 description = "The logical plan optimizer (DuckDB's src/optimizer)."
 version.workspace = true
 edition.workspace = true
@@ -7,14 +7,14 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-rustdb-common.workspace = true
-rustdb-types.workspace = true
-rustdb-ast.workspace = true
-rustdb-planner = { path = "../planner" }
-rustdb-function = { path = "../function" }
-rustdb-catalog = { path = "../catalog" }
-rustdb-row = { path = "../row" }
-rustdb-storage = { path = "../storage" }
+roastedduck-common.workspace = true
+roastedduck-types.workspace = true
+roastedduck-ast.workspace = true
+roastedduck-planner = { path = "../planner" }
+roastedduck-function = { path = "../function" }
+roastedduck-catalog = { path = "../catalog" }
+roastedduck-row = { path = "../row" }
+roastedduck-storage = { path = "../storage" }
 regex-syntax = "0.8"
 
 [lints]

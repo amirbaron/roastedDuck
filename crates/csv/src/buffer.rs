@@ -7,8 +7,8 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_function::logging::FileSystemLogger;
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_function::logging::FileSystemLogger;
 
 use crate::options::{CsvReaderOptions, FileCompressionType};
 
@@ -98,7 +98,7 @@ impl<R: Read> Read for Transcoder<R> {
 
 /// An open CSV file (DuckDB's `CSVFileHandle`).
 pub struct CsvFileHandle {
-    path: rustdb_common::ByteString,
+    path: roastedduck_common::ByteString,
     compression: FileCompressionType,
     encoding: String,
     reader: Box<dyn Read + Send>,
@@ -155,7 +155,7 @@ pub fn open_error(path: &[u8], error: &std::io::Error) -> Error {
     };
     Error::new_bytes(
         ErrorKind::Io,
-        rustdb_common::byte_format!("Cannot open file \"{path}\": {reason}"),
+        roastedduck_common::byte_format!("Cannot open file \"{path}\": {reason}"),
     )
 }
 
@@ -175,7 +175,7 @@ impl CsvFileHandle {
     pub fn open(path: &[u8], options: &CsvReaderOptions) -> Result<Self> {
         let encoding = options.encoding.to_lowercase();
         if !ENCODINGS.contains(&encoding.as_str()) {
-            let mut error = rustdb_common::byte_format!(
+            let mut error = roastedduck_common::byte_format!(
                 "The CSV Reader does not support the encoding: \"{}\"\nIt is possible that the encoding exists in the encodings extension. You can try \"INSTALL encodings; LOAD encodings\"\nThe currently supported encodings are: \n",
                 options.encoding
             );
@@ -186,49 +186,50 @@ impl CsvFileHandle {
             }
             return Err(Error::invalid_input(error));
         }
-        rustdb_function::file_system::verify_can_access_file(path)?;
+        roastedduck_function::file_system::verify_can_access_file(path)?;
         let compression = options.compression.resolve(path);
-        let (file, size, seekable): (Box<dyn Read + Send>, u64, bool) =
-            if let Some(fs) = rustdb_function::registered_files::lookup(path) {
-                let handle = fs.open(path, false)?;
-                let size = handle.size()?;
-                let stream = if fs.is_remote() && compression != FileCompressionType::Uncompressed {
-                    handle.read_stream()?
-                } else {
-                    None
-                };
-                let reader = stream
-                    .unwrap_or_else(|| Box::new(rustdb_function::registered_files::Cursor::new(handle)));
-                (reader, size, true)
-            } else if let Some(file) = rustdb_function::object_store::lookup(path) {
-                let size = file.bytes.len() as u64;
-                (
-                    Box::new(std::io::Cursor::new(Arc::clone(&file.bytes))),
-                    size,
-                    true,
-                )
+        let (file, size, seekable): (Box<dyn Read + Send>, u64, bool) = if let Some(fs) =
+            roastedduck_function::registered_files::lookup(path)
+        {
+            let handle = fs.open(path, false)?;
+            let size = handle.size()?;
+            let stream = if fs.is_remote() && compression != FileCompressionType::Uncompressed {
+                handle.read_stream()?
             } else {
-                let file = File::open(rustdb_function::file_system::native_path(path)?)
-                    .map_err(|error| open_error(path, &error))?;
-                let metadata = file.metadata().map_err(|error| open_error(path, &error))?;
-                if metadata.is_dir() {
-                    return Err(Error::new_bytes(
-                        ErrorKind::Io,
-                        rustdb_common::byte_format!("Could not read from file \"{path}\": Is a directory"),
-                    ));
-                }
-                (
-                    Box::new(LoggedFile {
-                        file,
-                        logger: FileSystemLogger::open(path),
-                        position: 0,
-                    }),
-                    metadata.len(),
-                    metadata.is_file(),
-                )
+                None
             };
+            let reader = stream
+                .unwrap_or_else(|| Box::new(roastedduck_function::registered_files::Cursor::new(handle)));
+            (reader, size, true)
+        } else if let Some(file) = roastedduck_function::object_store::lookup(path) {
+            let size = file.bytes.len() as u64;
+            (
+                Box::new(std::io::Cursor::new(Arc::clone(&file.bytes))),
+                size,
+                true,
+            )
+        } else {
+            let file = File::open(roastedduck_function::file_system::native_path(path)?)
+                .map_err(|error| open_error(path, &error))?;
+            let metadata = file.metadata().map_err(|error| open_error(path, &error))?;
+            if metadata.is_dir() {
+                return Err(Error::new_bytes(
+                    ErrorKind::Io,
+                    roastedduck_common::byte_format!("Could not read from file \"{path}\": Is a directory"),
+                ));
+            }
+            (
+                Box::new(LoggedFile {
+                    file,
+                    logger: FileSystemLogger::open(path),
+                    position: 0,
+                }),
+                metadata.len(),
+                metadata.is_file(),
+            )
+        };
         if compression == FileCompressionType::Zstd {
-            rustdb_function::file_system::verify_zstd_file_system()?;
+            roastedduck_function::file_system::verify_zstd_file_system()?;
         }
         // CSV buffers already batch plain UTF-8 reads. An additional BufReader
         // would read ahead across the original file-size boundary (notably when
@@ -245,7 +246,7 @@ impl CsvFileHandle {
             };
         let decompressed: Box<dyn Read + Send> = match compression {
             FileCompressionType::Gzip => Box::new(flate2::read::MultiGzDecoder::new(raw)),
-            FileCompressionType::Zstd => Box::new(rustdb_zstd::StreamDecoder::new(raw)),
+            FileCompressionType::Zstd => Box::new(roastedduck_zstd::StreamDecoder::new(raw)),
             _ => raw,
         };
         let reader: Box<dyn Read + Send> = match encoding.as_str() {
@@ -425,7 +426,7 @@ struct ManagerState {
 #[derive(Debug)]
 pub struct CsvBufferManager {
     state: Mutex<ManagerState>,
-    path: rustdb_common::ByteString,
+    path: roastedduck_common::ByteString,
     options: CsvReaderOptions,
     buffer_size: u64,
     pub skip_rows: u64,
@@ -614,8 +615,12 @@ pub fn verify_gzip_header(reader: &mut impl std::io::BufRead, path: &[u8]) -> Re
     // ASCII, MULTIPART, COMMENT and ENCRYPT.
     const GZIP_FLAG_UNSUPPORTED: u8 = 0x1 | 0x2 | 0x10 | 0x20;
     let header = reader.fill_buf().map_err(|error| open_error(path, &error))?;
-    let error =
-        |message: &str| Error::new_bytes(ErrorKind::Io, rustdb_common::byte_format!("{message}: {path}"));
+    let error = |message: &str| {
+        Error::new_bytes(
+            ErrorKind::Io,
+            roastedduck_common::byte_format!("{message}: {path}"),
+        )
+    };
     if header.len() < GZIP_HEADER_MINSIZE || header[0] != 0x1F || header[1] != 0x8B {
         return Err(error("Input is not a GZIP stream"));
     }

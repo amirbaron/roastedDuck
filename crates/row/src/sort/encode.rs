@@ -16,8 +16,8 @@
 //! The format is byte-identical to DuckDB's, so keys can be checked against the reference
 //! `create_sort_key()` function.
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{ListEntry, LogicalType, LogicalTypeId, PhysicalType, StringT, TypeInfo, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{ListEntry, LogicalType, LogicalTypeId, PhysicalType, StringT, TypeInfo, Vector};
 
 use crate::format::{FormatKind, VectorFormat};
 use crate::heap::ensure_capacity;
@@ -632,7 +632,7 @@ fn decode_value(
         }
         PhysicalType::Array => {
             let array_size = match target.logical_type().info() {
-                Some(TypeInfo::Array(rustdb_types::ArrayTypeInfo { size, .. })) => *size as usize,
+                Some(TypeInfo::Array(roastedduck_types::ArrayTypeInfo { size, .. })) => *size as usize,
                 _ => return Err(Error::internal("ARRAY type without size")),
             };
             let delimiter = if flip { !LIST_DELIMITER } else { LIST_DELIMITER };
@@ -735,7 +735,7 @@ pub(crate) fn decode_fixed_into(physical: PhysicalType, encoded: &[u8], flip: bo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustdb_types::Value;
+    use roastedduck_types::Value;
 
     fn int_vector(values: &[Option<i32>]) -> Vector {
         let mut vector = Vector::flat(LogicalType::INTEGER, values.len());
@@ -838,7 +838,7 @@ mod tests {
         // create_sort_key({'a': 1, 'b': NULL::VARCHAR}, 'DESC NULLS LAST')
         let ty = LogicalType::with_info(
             LogicalTypeId::Struct,
-            TypeInfo::Struct(rustdb_types::StructTypeInfo {
+            TypeInfo::Struct(roastedduck_types::StructTypeInfo {
                 child_types: vec![
                     ("a".into(), LogicalType::INTEGER),
                     ("b".into(), LogicalType::VARCHAR),

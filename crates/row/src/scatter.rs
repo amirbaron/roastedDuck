@@ -1,8 +1,8 @@
 //! Writing vectors into rows (DuckDB's `TupleDataCollection::Scatter` and
 //! `ComputeHeapSizes`).
 
-use rustdb_common::{Error, Result};
-use rustdb_types::StringT;
+use roastedduck_common::{Error, Result};
+use roastedduck_types::StringT;
 
 use crate::format::{ChunkFormat, FormatKind, SlotMap, VectorFormat};
 use crate::heap::{child_rows, elements_size, write_elements};

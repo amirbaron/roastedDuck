@@ -1,5 +1,5 @@
 [package]
-name = "rustdb-python"
+name = "roastedduck-python"
 description = "Native Python bindings for the Rust DuckDB engine"
 version.workspace = true
 edition.workspace = true
@@ -17,16 +17,16 @@ extension-module = ["pyo3/extension-module"]
 
 [dependencies]
 pyo3 = { version = "=0.30.1" }
-rustdb.workspace = true
-rustdb-common.workspace = true
-rustdb-types.workspace = true
-rustdb-ast.workspace = true
-rustdb-parser.workspace = true
-rustdb-planner.workspace = true
-rustdb-arrow = { path = "../arrow" }
-rustdb-function = { path = "../function" }
-rustdb-shell = { package = "roastedduck-cli", path = "../shell" }
-rustdb_capi = { package = "rustdb-capi", path = "../capi" }
+roastedduck.workspace = true
+roastedduck-common.workspace = true
+roastedduck-types.workspace = true
+roastedduck-ast.workspace = true
+roastedduck-parser.workspace = true
+roastedduck-planner.workspace = true
+roastedduck-arrow = { path = "../arrow" }
+roastedduck-function = { path = "../function" }
+roastedduck-cli = { package = "roastedduck-cli", path = "../shell" }
+roastedduck_capi = { package = "roastedduck-capi", path = "../capi" }
 
 [lints]
 workspace = true

@@ -2,9 +2,9 @@
 //! `array_cosine_similarity`, `array_cosine_distance`, `array_cross_product` (DuckDB's
 //! `array_functions.cpp`) and the `list_*` equivalents (`list_distance.cpp`).
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{BindInput, FunctionData, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{BindInput, FunctionData, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Vector};
 
 use super::kernels::{Float, Fold, cross_product};
 use crate::scalar::executor::addressable;
@@ -13,7 +13,7 @@ use crate::scalar::nested::ListInput;
 type BindResult = Result<Option<std::sync::Arc<dyn FunctionData>>>;
 
 fn null_argument(name: &str, side: &str) -> Error {
-    Error::invalid_input(rustdb_common::byte_format!(
+    Error::invalid_input(roastedduck_common::byte_format!(
         "{name}: {side} argument can not contain NULL values"
     ))
 }
@@ -87,22 +87,22 @@ fn bind_array_binary(function: &mut ScalarFunction, input: &BindInput<'_>) -> Bi
     let (Some((left_child, left_size)), Some((right_child, right_size))) =
         (left.array_child(), right.array_child())
     else {
-        return Err(Error::invalid_input(rustdb_common::byte_format!(
+        return Err(Error::invalid_input(roastedduck_common::byte_format!(
             "{name}: Arguments must be arrays of FLOAT or DOUBLE"
         )));
     };
     if left_size != right_size {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "{name}: Array arguments must be of the same size"
         )));
     }
     let common = LogicalType::try_max_logical_type(left_child, right_child).ok_or_else(|| {
-        Error::binder(rustdb_common::byte_format!(
+        Error::binder(roastedduck_common::byte_format!(
             "{name}: Cannot infer common element type (left = '{left_child}', right = '{right_child}')"
         ))
     })?;
     if !matches!(common.id(), LogicalTypeId::Float | LogicalTypeId::Double) {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "{name}: Arguments must be arrays of FLOAT or DOUBLE"
         )));
     }
@@ -223,7 +223,7 @@ fn list_fold<T: Float>(args: &DataChunk, result: &mut Vector, name: &str, fold: 
             continue;
         };
         if l.length != r.length {
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "{name}: list dimensions must be equal, got left length '{}' and right length '{}'",
                 l.length,
                 r.length

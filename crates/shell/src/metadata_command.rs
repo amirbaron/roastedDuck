@@ -7,12 +7,12 @@
 )]
 
 #[cfg(not(target_os = "linux"))]
-use rustdb_common::libcxx_sort::sort;
+use roastedduck_common::libcxx_sort::sort;
 #[cfg(target_os = "linux")]
-use rustdb_common::libstdcxx_sort::sort;
+use roastedduck_common::libstdcxx_sort::sort;
 use std::fmt::Write as _;
 
-use rustdb::Result;
+use roastedduck::Result;
 
 use crate::highlight::{
     self, COLOR_INFO, ColorInfo, HighlightElementType, HighlightMode, PrintColor, PrintIntensity,
@@ -157,8 +157,8 @@ fn set_large_number_rendering<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> 
 
 /// `.dump`: the schema and contents of the database as SQL.
 fn dump_table<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
-    let args: Vec<rustdb_common::ByteString> = args.iter().map(|arg| arg.as_ref().into()).collect();
-    let mut like = rustdb_common::ByteString::new();
+    let args: Vec<roastedduck_common::ByteString> = args.iter().map(|arg| arg.as_ref().into()).collect();
+    let mut like = roastedduck_common::ByteString::new();
     let saved_show_header = shell.state.show_header;
     let saved_shell_flags = shell.state.shell_flags;
     shell.state.clear_flag(ShellFlag::Newlines);
@@ -169,15 +169,16 @@ fn dump_table<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataR
             if option == b"newlines" {
                 shell.state.set_flag(ShellFlag::Newlines);
             } else {
-                shell.state.print_err(rustdb_common::byte_format!(
+                shell.state.print_err(roastedduck_common::byte_format!(
                     "Unknown option \"{arg}\" on \".dump\"\n"
                 ));
                 return Ok(MetadataResult::Fail);
             }
         } else if like.is_empty() {
-            like = rustdb_common::byte_format!("name LIKE {} ESCAPE '\\'", sql_string_bytes(arg));
+            like = roastedduck_common::byte_format!("name LIKE {} ESCAPE '\\'", sql_string_bytes(arg));
         } else {
-            like = rustdb_common::byte_format!("{like} OR name LIKE {} ESCAPE '\\'", sql_string_bytes(arg));
+            like =
+                roastedduck_common::byte_format!("{like} OR name LIKE {} ESCAPE '\\'", sql_string_bytes(arg));
         }
     }
     shell.state.print("BEGIN TRANSACTION;\n");
@@ -187,7 +188,7 @@ fn dump_table<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataR
         like = "true".into();
     }
     // CREATE SCHEMA for the schemas other than main first.
-    let query = rustdb_common::byte_format!(
+    let query = roastedduck_common::byte_format!(
         "SELECT DISTINCT table_schema FROM information_schema.tables WHERE table_schema != 'main' AND table_schema \
          NOT LIKE 'pg_%' AND table_schema != 'information_schema' AND table_name IN (SELECT name FROM \
          sqlite_schema WHERE ({like}) AND type=='table') ORDER BY table_schema"
@@ -200,11 +201,11 @@ fn dump_table<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataR
             shell.state.print(format!("{create_schema};\n"));
         }
     }
-    shell.run_schema_dump_query(&rustdb_common::byte_format!(
+    shell.run_schema_dump_query(&roastedduck_common::byte_format!(
         "SELECT name, type, sql FROM sqlite_schema WHERE ({like}) AND type=='table'  AND sql NOT NULL ORDER BY \
          tbl_name='sqlite_sequence'"
     ))?;
-    shell.run_table_dump_query(&rustdb_common::byte_format!(
+    shell.run_table_dump_query(&roastedduck_common::byte_format!(
         "SELECT sql FROM sqlite_schema WHERE ({like}) AND sql NOT NULL  AND type IN ('index','trigger','view')"
     ));
     shell.state.print(if shell.state.n_err > 0 {
@@ -280,7 +281,7 @@ fn set_color(state: &mut ShellState, element_type: &[u8], color: &[u8], intensit
         Some(intensity) if intensity.eq_ignore_ascii_case(b"underline") => PrintIntensity::Underline,
         Some(intensity) if intensity.eq_ignore_ascii_case(b"bold_underline") => PrintIntensity::BoldUnderline,
         Some(intensity) => {
-            state.print_err(rustdb_common::byte_format!(
+            state.print_err(roastedduck_common::byte_format!(
                 "Unknown intensity '{intensity}', supported options: standard, bold, underline\n"
             ));
             return false;
@@ -322,7 +323,7 @@ fn toggle_highlight_result<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Res
 
 /// `.help ?-all? ?PATTERN?`, and `.help shortcuts` for the keyboard shortcuts.
 fn show_help<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
-    let args: Vec<rustdb_common::ByteString> = args.iter().map(|arg| arg.as_ref().into()).collect();
+    let args: Vec<roastedduck_common::ByteString> = args.iter().map(|arg| arg.as_ref().into()).collect();
     let state = &shell.state;
     if let Some(pattern) = args.get(1) {
         if pattern.eq_ignore_ascii_case("shortcuts") {
@@ -346,7 +347,7 @@ fn show_help<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataRe
             return Ok(MetadataResult::Success);
         }
         if print_help(state, Some(pattern)) == 0 {
-            state.print(rustdb_common::byte_format!("Nothing matches '{pattern}'\n"));
+            state.print(roastedduck_common::byte_format!("Nothing matches '{pattern}'\n"));
         }
     } else {
         print_help(state, None);
@@ -576,13 +577,13 @@ fn set_startup_text(shell: &mut Shell, args: &[String]) -> Result<MetadataResult
 fn show_version(shell: &mut Shell, _args: &[String]) -> Result<MetadataResult> {
     shell.state.print(format!(
         "DuckDB {} ({}) {}\n",
-        rustdb::Database::library_version(),
-        rustdb::Database::release_codename(),
-        rustdb::Database::source_id()
+        roastedduck::Database::library_version(),
+        roastedduck::Database::release_codename(),
+        roastedduck::Database::source_id()
     ));
     shell
         .state
-        .print(format!("rustc-{}\n", env!("RUSTDB_SHELL_RUSTC_VERSION")));
+        .print(format!("rustc-{}\n", env!("ROASTEDDUCK_SHELL_RUSTC_VERSION")));
     Ok(MetadataResult::Success)
 }
 
@@ -603,7 +604,7 @@ fn show_tables<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<Metadata
 }
 
 fn set_ui_command<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataResult> {
-    let mut command = rustdb_common::ByteString::from("CALL ");
+    let mut command = roastedduck_common::ByteString::from("CALL ");
     for (index, argument) in args.iter().skip(1).enumerate() {
         if index > 0 {
             command.push(b' ');
@@ -667,7 +668,7 @@ fn set_highlighting_color<S: AsRef<[u8]>>(
     let (literal, hint) = match color {
         DeprecatedHighlightColors::Comment => ("comment", "comment"),
         DeprecatedHighlightColors::Constant => {
-            shell.state.print_err(rustdb_common::byte_format!(
+            shell.state.print_err(roastedduck_common::byte_format!(
                 ".constant has been split into numeric_constant and string_constant, use .highlight_colors \
                  numeric_constant {0} and .highlight_colors string_constant {0} instead\n",
                 argument
@@ -679,7 +680,7 @@ fn set_highlighting_color<S: AsRef<[u8]>>(
         DeprecatedHighlightColors::Cont => ("cont", "continuation"),
         DeprecatedHighlightColors::ContSel => ("cont_sel", "continuation_selected"),
     };
-    shell.state.print_err(rustdb_common::byte_format!(
+    shell.state.print_err(roastedduck_common::byte_format!(
         "WARNING: .{literal} [COLOR] will be removed in a future release, use .highlight_colors {hint} {} instead\n",
         argument
     ));
@@ -778,7 +779,7 @@ fn find_color_group(groups: &[&[&str]], name: &str) -> Result<usize> {
     groups
         .iter()
         .rposition(|group| group.iter().any(|word| name.contains(word)))
-        .ok_or_else(|| rustdb::Error::internal(format!("Color {name} does not have a group")))
+        .ok_or_else(|| roastedduck::Error::internal(format!("Color {name} does not have a group")))
 }
 
 /// `.display_colors [bold|underline]`: every color in its own color, by group.
@@ -876,7 +877,7 @@ fn set_pager<S: AsRef<[u8]>>(shell: &mut Shell, args: &[S]) -> Result<MetadataRe
             state.print(page_mode);
         }
         if state.pager_mode != PagerMode::Off || !state.pager_command.is_empty() {
-            state.print(rustdb_common::byte_format!(
+            state.print(roastedduck_common::byte_format!(
                 "Pager command: {}\n",
                 state.pager_command
             ));
@@ -1646,8 +1647,8 @@ pub fn print_help(state: &ShellState, pattern: Option<&[u8]>) -> usize {
     let print_extended = pattern.is_some();
     let glob_pattern = match pattern {
         // `--all` matches every command.
-        Some(b"-a" | b"-all" | b"--all") | None => rustdb_common::ByteString::new(),
-        Some(pattern) => rustdb_common::byte_format!("{pattern}*"),
+        Some(b"-a" | b"-all" | b"--all") | None => roastedduck_common::ByteString::new(),
+        Some(pattern) => roastedduck_common::byte_format!("{pattern}*"),
     };
     let mut print_info_list = Vec::new();
     for command in &METADATA_COMMANDS {
@@ -1765,8 +1766,8 @@ pub fn find_metadata_command_bytes(option: &[u8]) -> std::result::Result<&'stati
         .iter()
         .map(|command| format!(".{}", command.command))
         .collect();
-    let candidates = rustdb_common::string_util::candidates_message(
-        &rustdb_common::string_util::top_n_levenshtein_bytes(&command_names, option),
+    let candidates = roastedduck_common::string_util::candidates_message(
+        &roastedduck_common::string_util::top_n_levenshtein_bytes(&command_names, option),
         "Did you mean",
     );
     let mut message = b"Unknown Command Error: Unrecognized command '".to_vec();

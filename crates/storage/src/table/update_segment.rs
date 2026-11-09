@@ -10,8 +10,8 @@ use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use rustdb_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{
+use roastedduck_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::{
     DataChunk, Interval, LogicalType, LogicalTypeId, NativeType, PhysicalType, SelectionVector, StringHeap,
     StringT, ValidityMask, Vector,
 };
@@ -955,7 +955,7 @@ impl UpdateSegment {
 mod tests {
     use super::*;
     use crate::transaction::TRANSACTION_ID_START;
-    use rustdb_types::Value;
+    use roastedduck_types::Value;
 
     const T1: u64 = TRANSACTION_ID_START + 1;
     const T2: u64 = TRANSACTION_ID_START + 2;

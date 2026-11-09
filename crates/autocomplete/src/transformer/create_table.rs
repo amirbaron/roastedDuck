@@ -2,7 +2,7 @@
 //! `CREATE TABLE`, column definitions and constraints, and the identifier rules shared
 //! by the DDL statements.
 
-use rustdb_common::LogicalIndex;
+use roastedduck_common::LogicalIndex;
 
 use super::common::{simple_type_expression, type_expression_of, unbound_type};
 use super::prelude::*;
@@ -92,7 +92,7 @@ fn verify_column_refs(expr: &ParsedExpression) -> Result<()> {
         ));
     }
     let mut result = Ok(());
-    rustdb_parser::expression_children(expr, &mut |child| {
+    roastedduck_parser::expression_children(expr, &mut |child| {
         if result.is_ok() {
             result = verify_column_refs(child);
         }
@@ -439,7 +439,7 @@ impl PegTransformer {
             let mut expr = generated
                 .expr
                 .ok_or_else(|| Error::internal("Generated column without an expression"))?;
-            if rustdb_parser::has_subquery(&expr) {
+            if roastedduck_parser::has_subquery(&expr) {
                 return Err(Error::parser(byte_format!(
                     "Expression of generated column \"{}\" contains a subquery, which isn't allowed",
                     qualified_name.name
@@ -448,7 +448,7 @@ impl PegTransformer {
             if ty != LogicalType::ANY {
                 expr = ParsedExpression::cast(expr, ty.clone());
             }
-            if rustdb_parser::has_subquery(&expr) {
+            if roastedduck_parser::has_subquery(&expr) {
                 return Err(Error::parser(byte_format!(
                     "Expression of generated column \"{}\" contains a subquery, which isn't allowed",
                     qualified_name.name
@@ -550,7 +550,7 @@ impl PegTransformer {
     pub(super) fn transform_check_constraint(&mut self, parse_result: &ParseResult) -> Result<Constraint> {
         let check_expr: ParsedExpression =
             self.transform(parse_result.list()?.child(1)?.parens_content()?)?;
-        if rustdb_parser::has_subquery(&check_expr) {
+        if roastedduck_parser::has_subquery(&check_expr) {
             return Err(Error::parser("subqueries prohibited in CHECK constraints"));
         }
         Ok(Constraint::Check(CheckConstraint {
@@ -606,7 +606,7 @@ impl PegTransformer {
         let compression_string: String = self.transform_child(parse_result.list()?, 2)?;
         let compression_string = compression_string.to_ascii_lowercase();
         CompressionType::from_name(&compression_string).ok_or_else(|| {
-            rustdb_function::logging::enum_error(
+            roastedduck_function::logging::enum_error(
                 &compression_string,
                 "CompressionType",
                 &CompressionType::ALL.map(CompressionType::name),

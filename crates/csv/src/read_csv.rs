@@ -6,15 +6,15 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::CastFunctionSet;
-use rustdb_function::{
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::CastFunctionSet;
+use roastedduck_function::{
     FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
     TableScanState,
 };
-use rustdb_parser::{ParserOptions, parse_column_definition_bytes};
-use rustdb_planner::{ClientContext, bind_logical_type};
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
+use roastedduck_parser::{ParserOptions, parse_column_definition_bytes};
+use roastedduck_planner::{ClientContext, bind_logical_type};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
 
 use crate::buffer::CsvBufferManager;
 use crate::error::CsvError;
@@ -49,7 +49,7 @@ pub fn transform_bytes_to_logical_type(context: &ClientContext, text: &[u8]) -> 
     }
     // `TypeManager::ParseLogicalType`: text that does not parse as a type is reported
     // with similar type names.
-    let definition = rustdb_common::byte_format!("dummy {text}");
+    let definition = roastedduck_common::byte_format!("dummy {text}");
     let column = parse_column_definition_bytes(&definition, &ParserOptions::default()).map_err(|_| {
         const SUGGESTED_TYPES: [&str; 47] = [
             "BIGINT",
@@ -101,10 +101,10 @@ pub fn transform_bytes_to_logical_type(context: &ClientContext, text: &[u8]) -> 
             "UNION(num INTEGER, text VARCHAR)",
         ];
         let candidates: Vec<String> = SUGGESTED_TYPES.iter().map(|&name| name.to_owned()).collect();
-        let mut message = rustdb_common::byte_format!(
+        let mut message = roastedduck_common::byte_format!(
             "Value \"{text}\" can not be converted to a DuckDB Type.\nPossible examples as suggestions: \n"
         );
-        for suggestion in rustdb_common::string_util::top_n_jaro_winkler(&candidates, text) {
+        for suggestion in roastedduck_common::string_util::top_n_jaro_winkler(&candidates, text) {
             message.push_bytes("* ");
             message.push_bytes(&suggestion);
             message.push(b'\n');
@@ -117,8 +117,8 @@ pub fn transform_bytes_to_logical_type(context: &ClientContext, text: &[u8]) -> 
 /// The cached schema of one file of a `union_by_name` read (DuckDB's `CSVUnionData`).
 #[derive(Clone, Debug)]
 pub struct CsvUnionData {
-    pub file: rustdb_common::ByteString,
-    pub names: Vec<rustdb_common::ByteString>,
+    pub file: roastedduck_common::ByteString,
+    pub names: Vec<roastedduck_common::ByteString>,
     pub types: Vec<LogicalType>,
     pub options: CsvReaderOptions,
 }
@@ -130,7 +130,7 @@ pub struct ReadCsvData {
     pub options: CsvReaderOptions,
     pub file_options: MultiFileOptions,
     /// The output columns, including the generated filename and hive columns.
-    pub names: Vec<rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
     pub types: Vec<LogicalType>,
     pub reader_bind: MultiFileBindData,
     pub csv_schema: CsvSchema,
@@ -141,7 +141,7 @@ pub struct ReadCsvData {
     /// The number of threads (`threads` setting) deciding single-threaded reads.
     pub threads: u64,
     /// The connection reading, whose temporary catalog keeps the rejects tables.
-    pub client: Option<Arc<rustdb_function::FunctionClient>>,
+    pub client: Option<Arc<roastedduck_function::FunctionClient>>,
 }
 
 impl FunctionData for ReadCsvData {
@@ -195,7 +195,7 @@ impl ReadCsvData {
     /// A copy that reads only the files at positions `keep` (`PruneReaders`).
     fn with_files(&self, keep: &[usize]) -> Self {
         let mut result = self.with_types(self.types.clone());
-        let files: Vec<rustdb_common::ByteString> = keep
+        let files: Vec<roastedduck_common::ByteString> = keep
             .iter()
             .filter_map(|&index| self.files.files.get(index).cloned())
             .collect();
@@ -213,8 +213,8 @@ impl ReadCsvData {
 }
 
 /// The file filter pushdown of `read_csv` (`MultiFileComplexFilterPushdown`).
-fn read_csv_file_filter_pushdown() -> rustdb_function::FileFilterPushdown {
-    rustdb_function::FileFilterPushdown {
+fn read_csv_file_filter_pushdown() -> roastedduck_function::FileFilterPushdown {
+    roastedduck_function::FileFilterPushdown {
         files: Arc::new(|bind_data| {
             let data = bind_data.as_any().downcast_ref::<ReadCsvData>()?;
             (data.file_options.hive_partitioning || data.file_options.filename)
@@ -268,7 +268,7 @@ fn schema_discovery(
     options: &mut CsvReaderOptions,
     file_options: &MultiFileOptionsView,
     return_types: &mut Vec<LogicalType>,
-    names: &mut Vec<rustdb_common::ByteString>,
+    names: &mut Vec<roastedduck_common::ByteString>,
     files: &FileList,
 ) -> Result<(CsvSchema, Arc<CsvBufferManager>)> {
     let mut schemas = Vec::new();
@@ -392,7 +392,7 @@ pub fn bind_csv_files(
     files: FileList,
     mut file_options: MultiFileOptions,
     mut options: CsvReaderOptions,
-    expected: Option<(&[rustdb_common::ByteString], &[LogicalType])>,
+    expected: Option<(&[roastedduck_common::ByteString], &[LogicalType])>,
 ) -> Result<ReadCsvData> {
     // InitializeBindData
     if files.expand_result() == FileExpandResult::MultipleFiles {
@@ -430,7 +430,7 @@ pub fn bind_csv_files(
         }
         reader_bind = bind_options(&file_options, &files, &mut types, &mut names)?;
         if !options.sql_types_per_column.is_empty() {
-            let names_in_types: Vec<rustdb_common::ByteString> = options
+            let names_in_types: Vec<roastedduck_common::ByteString> = options
                 .sql_types_per_column
                 .iter()
                 .map(|(name, _)| name.to_owned())
@@ -467,7 +467,7 @@ pub fn bind_csv_files(
     if !options.force_not_null_names.is_empty() {
         for force_name in &options.force_not_null_names {
             if !names.contains(force_name) {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "\"force_not_null\" expected to find {force_name}, but it was not found in the table"
                 )));
             }
@@ -485,7 +485,7 @@ pub fn bind_csv_files(
     options.finalize()?;
     if let Some((expected_names, expected_types)) = expected {
         if expected_types.len() != types.len() {
-            return Err(Error::conversion(rustdb_common::byte_format!(
+            return Err(Error::conversion(roastedduck_common::byte_format!(
                 "Failed to read file(s) \"{}\" - column count mismatch: expected {} columns but found {}",
                 files.first_file().unwrap_or_default(),
                 expected_types.len(),
@@ -507,7 +507,7 @@ pub fn bind_csv_files(
         buffer_manager: Mutex::new(first_buffer_manager),
         casts: Arc::clone(casts),
         threads: std::thread::available_parallelism().map_or(1, |threads| threads.get() as u64),
-        client: rustdb_function::file_system::opener(),
+        client: roastedduck_function::file_system::opener(),
     })
 }
 
@@ -541,17 +541,17 @@ fn read_csv_bind(function_name: &str, input: &TableFunctionBindInput<'_>) -> Res
 /// filename/hive columns remain available to the executing table function.
 #[derive(Debug)]
 pub struct CsvRelationOptions {
-    pub names: Vec<rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
     pub types: Vec<LogicalType>,
-    pub parameters: Vec<(rustdb_common::ByteString, Value)>,
+    pub parameters: Vec<(roastedduck_common::ByteString, Value)>,
 }
 
 /// Captures a relation's sniffed dialect and schema before it is executed
 /// (`ReadCSVRelationBind` followed by `CSVReaderOptions::ToNamedParameters`).
 pub fn relation_options(
     context: &ClientContext,
-    paths: &[rustdb_common::ByteString],
-    parameters: &[(rustdb_common::ByteString, Value)],
+    paths: &[roastedduck_common::ByteString],
+    parameters: &[(roastedduck_common::ByteString, Value)],
 ) -> Result<CsvRelationOptions> {
     let inputs = [Value::list(
         LogicalType::VARCHAR,
@@ -593,7 +593,8 @@ pub fn relation_options(
         options.dialect_options.header.change_set_by_user_true();
         options.dialect_options.skip_rows.change_set_by_user_true();
     }
-    let mut result = rustdb_common::CaseInsensitiveMap::<Value, rustdb_common::ByteString>::default();
+    let mut result =
+        roastedduck_common::CaseInsensitiveMap::<Value, roastedduck_common::ByteString>::default();
     for (key, value) in parameters {
         result.insert(key, value.clone());
     }
@@ -673,12 +674,12 @@ struct CsvScanState {
 
 /// `MultiFileColumnMapper::ThrowColumnNotFoundError`.
 fn column_not_found(data: &ReadCsvData, file: &CsvFileScan, name: &[u8]) -> Error {
-    Error::invalid_input(rustdb_common::byte_format!(
+    Error::invalid_input(roastedduck_common::byte_format!(
         "Failed to read file \"{}\": schema mismatch in glob: column \"{name}\" was read from the original file \"{}\", but could not be found in file \"{}\".\nCandidate names: {}\nIf you are trying to read files with different schemas, try setting union_by_name=True",
         file.file_path,
         data.files.first_file().unwrap_or_default(),
         file.file_path,
-        rustdb_common::ByteString::join(&file.names, b", ")
+        roastedduck_common::ByteString::join(&file.names, b", ")
     ))
 }
 
@@ -849,7 +850,7 @@ fn next_scanner(state: &mut CsvScanState, file: &mut FileState) -> Result<Option
         Some(Arc::clone(file_scan)),
         false,
         file.boundary,
-        rustdb_common::STANDARD_VECTOR_SIZE as u64,
+        roastedduck_common::STANDARD_VECTOR_SIZE as u64,
     )?;
     scanner.buffer_tracker.clone_from(&file.buffer_in_use);
     Ok(Some(scanner))
@@ -1082,7 +1083,7 @@ fn read_csv_function(name: &'static str, argument: LogicalType) -> TableFunction
     function.file_filter_pushdown = Some(read_csv_file_filter_pushdown());
     // `CSVReaderSerialize`: DuckDB cannot serialize CSV scans.
     function.serialize = Some(Arc::new(|_, _, _| {
-        Err(rustdb_common::Error::not_implemented(
+        Err(roastedduck_common::Error::not_implemented(
             "CSVReaderSerialize not implemented",
         ))
     }));

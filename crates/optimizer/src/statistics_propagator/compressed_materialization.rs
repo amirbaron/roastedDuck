@@ -11,15 +11,15 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rustdb_ast::JoinType;
-use rustdb_common::{Error, Result};
-use rustdb_function::ScalarFunction;
-use rustdb_planner::operator::LogicalAggregate;
-use rustdb_planner::{
+use roastedduck_ast::JoinType;
+use roastedduck_common::{Error, Result};
+use roastedduck_function::ScalarFunction;
+use roastedduck_planner::operator::LogicalAggregate;
+use roastedduck_planner::{
     ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator, LogicalOperatorType,
 };
-use rustdb_storage::statistics::{BaseStatistics, NumericValue};
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_storage::statistics::{BaseStatistics, NumericValue};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use super::StatisticsPropagator;
 use crate::column_binding_replacer::{ColumnBindingReplacer, ReplacementBinding};
@@ -692,12 +692,12 @@ impl StatisticsPropagator<'_> {
             .get_entry(
                 "system",
                 "main",
-                rustdb_catalog::CatalogType::ScalarFunction,
+                roastedduck_catalog::CatalogType::ScalarFunction,
                 name,
                 true,
             )?
             .ok_or_else(|| Error::internal(format!("scalar function {name} not found")))?;
-        let rustdb_catalog::EntryKind::ScalarFunction(functions) = &entry.entry.kind else {
+        let roastedduck_catalog::EntryKind::ScalarFunction(functions) = &entry.entry.kind else {
             return Err(Error::internal(format!("{name} is not a scalar function")));
         };
         let mut function = functions

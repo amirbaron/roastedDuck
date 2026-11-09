@@ -1,15 +1,15 @@
 //! Extreme values of types (DuckDB's `Value::MinimumValue`, `Value::MaximumValue`,
 //! `Value::Infinity` and `Value::NegativeInfinity`).
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{Date, LogicalType, LogicalTypeId, Time, TimeNs, TimeTz, Timestamp, Uuid, Value};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{Date, LogicalType, LogicalTypeId, Time, TimeNs, TimeTz, Timestamp, Uuid, Value};
 
 const MICROS_PER_DAY: i64 = 86_400_000_000;
 const NANOS_PER_DAY: i64 = MICROS_PER_DAY * 1000;
 
 fn invalid(type_name: &LogicalType, what: &str) -> Error {
     Error::new(
-        rustdb_common::ErrorKind::InvalidType,
+        roastedduck_common::ErrorKind::InvalidType,
         format!("Invalid type [{type_name}]: {what}"),
     )
 }

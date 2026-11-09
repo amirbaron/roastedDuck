@@ -6,7 +6,7 @@
 //! polygon or multilinestring a LIST of LISTs; a multipolygon three LIST levels. The parts
 //! of multi-geometries carry their own WKB header, which the layout drops.
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use super::{BlobReader, GeometryType, VertexType, legacy, specialized_type, vectorized_type};
 use crate::{GeometryStorageType, ListEntry, StringHeap, StringT, Vector};

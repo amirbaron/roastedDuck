@@ -16,8 +16,8 @@
 //! An empty list has no element block at all. A top-level list column stores a `u64`
 //! length followed by the element block.
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{ListEntry, PhysicalType, StringT, TypeInfo, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{ListEntry, PhysicalType, StringT, TypeInfo, Vector};
 
 use crate::format::{FormatKind, VectorFormat};
 use crate::layout::validity_bytes;
@@ -261,7 +261,7 @@ pub(crate) unsafe fn read_elements(
             PhysicalType::Array => {
                 *heap = heap.add(n * size_of::<u64>());
                 let size = match target.logical_type().info() {
-                    Some(TypeInfo::Array(rustdb_types::ArrayTypeInfo { size, .. })) => *size as usize,
+                    Some(TypeInfo::Array(roastedduck_types::ArrayTypeInfo { size, .. })) => *size as usize,
                     _ => return Err(type_error(target)),
                 };
                 let mut rows = Vec::new();

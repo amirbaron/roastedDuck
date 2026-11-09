@@ -7,20 +7,20 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_csv::multi_file::{
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_csv::multi_file::{
     FileExpandResult, FileList, MultiFileBindData, MultiFileOptions, bind_options, combine_union_types,
     create_file_list, hive_parse, multi_file_parameters, parse_paths,
 };
-use rustdb_function::cast::{CastFunctionSet, CastParameters};
-use rustdb_function::{
+use roastedduck_function::cast::{CastFunctionSet, CastParameters};
+use roastedduck_function::{
     BindInput, FunctionClient, FunctionData, FunctionState, ParallelScanGlobal, ParallelScanLocal,
     ParallelTableScan, ScalarFunction, TableFunction, TableFunctionBindInput, TableFunctionBindOutput,
     TableFunctionSet, TablePartitionInfo, TableScanState,
 };
-use rustdb_planner::ClientContext;
-use rustdb_storage::{TableFilter, TableFilterSet};
-use rustdb_types::{ColumnIndex, DataChunk, LogicalType, LogicalTypeId, Value, Vector};
+use roastedduck_planner::ClientContext;
+use roastedduck_storage::{TableFilter, TableFilterSet};
+use roastedduck_types::{ColumnIndex, DataChunk, LogicalType, LogicalTypeId, Value, Vector};
 
 use crate::column_reader::ChildProjection;
 use crate::reader::{ColumnDefinition, ParquetReader, ReaderScanState, ScanColumn};
@@ -44,8 +44,9 @@ pub(crate) fn set_file_cache_options(context: &ClientContext, options: &mut Parq
     options.prefetch = prefetch_all && !disable_prefetch;
     options.disable_prefetch = disable_prefetch;
     options.file_cache = context.function_client.external_file_cache();
-    options.cache_validation =
-        rustdb_function::external_file_cache::CacheValidationMode::of_client(Some(&context.function_client));
+    options.cache_validation = roastedduck_function::external_file_cache::CacheValidationMode::of_client(
+        Some(&context.function_client),
+    );
     Ok(())
 }
 
@@ -74,7 +75,7 @@ pub(crate) fn setting_bool_checked(context: &ClientContext, name: &str) -> Resul
     Ok(value.as_bool().unwrap_or(false))
 }
 
-pub use rustdb_csv::multi_file::{
+pub use roastedduck_csv::multi_file::{
     COLUMN_IDENTIFIER_FILE_INDEX, COLUMN_IDENTIFIER_FILE_ROW_NUMBER, COLUMN_IDENTIFIER_FILENAME,
 };
 
@@ -127,7 +128,7 @@ struct ParquetPartitionRowGroup {
     casts: Arc<CastFunctionSet>,
 }
 
-impl rustdb_function::PartitionRowGroup for ParquetPartitionRowGroup {
+impl roastedduck_function::PartitionRowGroup for ParquetPartitionRowGroup {
     fn column_statistics(&self, column: u64) -> Option<Box<dyn Any + Send>> {
         let column = usize::try_from(column).ok()?;
         if self.file_row_number_idx == Some(column) {
@@ -178,7 +179,7 @@ impl rustdb_function::PartitionRowGroup for ParquetPartitionRowGroup {
 /// while binding.
 fn read_parquet_partition_stats(
     bind_data: Option<&dyn FunctionData>,
-) -> Vec<rustdb_function::PartitionStatistics> {
+) -> Vec<roastedduck_function::PartitionStatistics> {
     let Some(data) = bind_data.and_then(|data| data.as_any().downcast_ref::<ParquetBindData>()) else {
         return Vec::new();
     };
@@ -199,7 +200,7 @@ fn read_parquet_partition_stats(
                 return Vec::new();
             };
             result.extend(entry.metadata.row_groups.iter().map(|group| {
-                rustdb_function::PartitionStatistics {
+                roastedduck_function::PartitionStatistics {
                     count: group.num_rows.max(0) as u64,
                     exact: true,
                     row_group: None,
@@ -218,7 +219,7 @@ fn read_parquet_partition_stats(
     };
     let row_groups = reader.context.metadata.row_groups.len();
     (0..row_groups)
-        .map(|row_group| rustdb_function::PartitionStatistics {
+        .map(|row_group| roastedduck_function::PartitionStatistics {
             count: reader.context.metadata.row_groups[row_group].num_rows.max(0) as u64,
             exact: true,
             row_group: Some(Arc::new(ParquetPartitionRowGroup {
@@ -235,11 +236,11 @@ fn read_parquet_partition_stats(
 /// column), `file_index` and Parquet's `file_row_number`.
 fn read_parquet_virtual_columns(
     bind_data: Option<&dyn FunctionData>,
-) -> Vec<(u64, rustdb_common::ByteString, LogicalType)> {
+) -> Vec<(u64, roastedduck_common::ByteString, LogicalType)> {
     let filename_option = bind_data
         .and_then(|data| data.as_any().downcast_ref::<ParquetBindData>())
         .is_some_and(|data| data.reader_bind.filename_idx.is_some());
-    let mut result = rustdb_csv::multi_file::multi_file_virtual_columns(filename_option);
+    let mut result = roastedduck_csv::multi_file::multi_file_virtual_columns(filename_option);
     result.push((
         COLUMN_IDENTIFIER_FILE_ROW_NUMBER,
         "file_row_number".into(),
@@ -254,8 +255,8 @@ pub struct ParquetBindData {
     pub files: FileList,
     /// The file list `EXPLAIN ANALYZE` shows: the patterns given, until filters prune
     /// the expanded files (`GetDisplayFileList`).
-    display_paths: Option<Vec<rustdb_common::ByteString>>,
-    pub names: Vec<rustdb_common::ByteString>,
+    display_paths: Option<Vec<roastedduck_common::ByteString>>,
+    pub names: Vec<roastedduck_common::ByteString>,
     pub types: Vec<LogicalType>,
     pub file_options: MultiFileOptions,
     reader_bind: MultiFileBindData,
@@ -270,7 +271,7 @@ pub struct ParquetBindData {
     casts: Arc<CastFunctionSet>,
     client: Arc<FunctionClient>,
     /// The columns of the table a `COPY ... FROM` loads (`table_columns`).
-    pub(crate) table_columns: Vec<rustdb_common::ByteString>,
+    pub(crate) table_columns: Vec<roastedduck_common::ByteString>,
     /// The filters pushed into the scan, keyed by position in the scanned column ids.
     filters: Option<Arc<TableFilterSet>>,
     /// The number of rows of the first file (`initial_file_cardinality`).
@@ -286,7 +287,7 @@ impl FunctionData for ParquetBindData {
 impl ParquetBindData {
     /// A copy that scans only the files at positions `keep` (`PruneReaders`).
     fn with_files(&self, keep: &[usize]) -> Self {
-        let files: Vec<rustdb_common::ByteString> = keep
+        let files: Vec<roastedduck_common::ByteString> = keep
             .iter()
             .filter_map(|&index| self.files.files.get(index).cloned())
             .collect();
@@ -377,14 +378,14 @@ fn parse_options(
     options: &mut ParquetOptions,
     context: &ClientContext,
 ) -> Result<()> {
-    let parse_type = |text: &str| rustdb_csv::read_csv::transform_string_to_logical_type(context, text);
+    let parse_type = |text: &str| roastedduck_csv::read_csv::transform_string_to_logical_type(context, text);
     for (key, value) in input.named_parameters {
         if file_options.parse_option(key, value, &parse_type)? {
             continue;
         }
         let lower = key.to_ascii_lowercase();
         if value.is_null() {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Cannot use NULL as argument to {key}"
             )));
         }
@@ -414,10 +415,10 @@ fn parse_options(
 /// columns of the `schema` parameter, a MAP from field id (or name) to
 /// `{name, type, default_value}`.
 fn parse_schema_parameter(value: &Value, context: &ClientContext) -> Result<Vec<ParquetColumnDefinition>> {
-    use rustdb_function::cast::ValueCast as _;
+    use roastedduck_function::cast::ValueCast as _;
     let map_type = value.logical_type();
     if map_type.id() != LogicalTypeId::Map {
-        return Err(Error::invalid_input(rustdb_common::byte_format!(
+        return Err(Error::invalid_input(roastedduck_common::byte_format!(
             "'schema' expects a value of type MAP, not {}",
             crate::copy::type_id_name(map_type)
         )));
@@ -442,7 +443,7 @@ fn parse_schema_parameter(value: &Value, context: &ClientContext) -> Result<Vec<
         ));
     }
     if children[0].1.id() != LogicalTypeId::Varchar {
-        return Err(Error::invalid_input(rustdb_common::byte_format!(
+        return Err(Error::invalid_input(roastedduck_common::byte_format!(
             "'schema' expects the 'name' field to be of type VARCHAR, not {}",
             crate::copy::type_id_name(&children[0].1)
         )));
@@ -453,7 +454,7 @@ fn parse_schema_parameter(value: &Value, context: &ClientContext) -> Result<Vec<
         ));
     }
     if children[1].1.id() != LogicalTypeId::Varchar {
-        return Err(Error::invalid_input(rustdb_common::byte_format!(
+        return Err(Error::invalid_input(roastedduck_common::byte_format!(
             "'schema' expects the 'type' field to be of type VARCHAR, not {}",
             crate::copy::type_id_name(&children[1].1)
         )));
@@ -464,7 +465,7 @@ fn parse_schema_parameter(value: &Value, context: &ClientContext) -> Result<Vec<
         ));
     }
     if !matches!(key_type.id(), LogicalTypeId::Integer | LogicalTypeId::Varchar) {
-        return Err(Error::invalid_input(rustdb_common::byte_format!(
+        return Err(Error::invalid_input(roastedduck_common::byte_format!(
             "'schema' expects the value type of the map to be either INTEGER or VARCHAR, not {}",
             crate::copy::type_id_name(key_type)
         )));
@@ -492,12 +493,12 @@ fn parse_schema_parameter(value: &Value, context: &ClientContext) -> Result<Vec<
             .map(Value::to_varchar_bytes)
             .transpose()?
             .unwrap_or_default();
-        let logical_type = rustdb_csv::read_csv::transform_string_to_logical_type(context, &text(1))?;
+        let logical_type = roastedduck_csv::read_csv::transform_string_to_logical_type(context, &text(1))?;
         let default = fields.get(2).cloned().unwrap_or_default();
         let default_value = default
             .try_cast_as(&context.casts, &logical_type, false)
             .map_err(|_| {
-                Error::binder(rustdb_common::byte_format!(
+                Error::binder(roastedduck_common::byte_format!(
                     "Unable to cast Parquet schema default_value \"{}\" to {logical_type}",
                     default.to_varchar().unwrap_or_else(|_| "NULL".to_owned())
                 ))
@@ -597,7 +598,7 @@ pub(crate) fn bind_files_with_client(
         let mut union_names_map = HashMap::new();
         for (index, path) in files.files.iter().enumerate() {
             let reader = Arc::new(ParquetReader::open(path, file_options_reader.clone())?);
-            let file_names: Vec<rustdb_common::ByteString> =
+            let file_names: Vec<roastedduck_common::ByteString> =
                 reader.columns.iter().map(|column| column.name.clone()).collect();
             let file_types: Vec<LogicalType> = reader
                 .columns
@@ -681,10 +682,10 @@ enum ColumnSource {
 /// `MultiFileColumnMapper`); casts that do not exist fail when they would run.
 #[derive(Debug)]
 struct ColumnCast {
-    cast: Result<rustdb_function::cast::BoundCastInfo>,
+    cast: Result<roastedduck_function::cast::BoundCastInfo>,
     remap: Option<ColumnRemap>,
     /// The column's name and type in the file.
-    local_name: rustdb_common::ByteString,
+    local_name: roastedduck_common::ByteString,
     local_type: LogicalType,
 }
 
@@ -703,7 +704,7 @@ fn remappable(ty: &LogicalType) -> bool {
     )
 }
 
-fn mapping_fields(ty: &LogicalType) -> Vec<(rustdb_common::ByteString, LogicalType)> {
+fn mapping_fields(ty: &LogicalType) -> Vec<(roastedduck_common::ByteString, LogicalType)> {
     match ty.id() {
         LogicalTypeId::Struct => ty.struct_children().unwrap_or_default().to_vec(),
         LogicalTypeId::List => ty
@@ -796,7 +797,7 @@ impl ColumnRemap {
             Some(constants[1].clone()),
             Some(constants[2].clone()),
         ];
-        let mut function = rustdb_functions::scalar::structs::remap_struct::remap_struct_functions()
+        let mut function = roastedduck_functions::scalar::structs::remap_struct::remap_struct_functions()
             .functions
             .into_iter()
             .next()
@@ -871,25 +872,25 @@ impl ColumnCast {
             }
         })();
         result.map_err(|error| {
-            if error.kind() == rustdb_common::ErrorKind::Internal {
+            if error.kind() == roastedduck_common::ErrorKind::Internal {
                 return error;
             }
             let (local_name, local_type) = (&self.local_name, &self.local_type);
             let extended = if data.table_columns.is_empty() {
-                rustdb_common::byte_format!(
+                roastedduck_common::byte_format!(
                     "In file \"{file_name}\" the column \"{local_name}\" has type {local_type}, but we are trying to read it as type {target}.\nThis can happen when reading multiple Parquet files. The schema information is taken from the first Parquet file by default. Possible solutions:\n* Enable the union_by_name=True option to combine the schema of all Parquet files (https://duckdb.org/docs/stable/data/multiple_files/combining_schemas)\n* Use a COPY statement to automatically derive types from an existing table."
                 )
             } else {
                 let target_column = data
                     .table_columns
                     .get(position)
-                    .map(|name| rustdb_common::byte_format!("\"{name}\" "))
+                    .map(|name| roastedduck_common::byte_format!("\"{name}\" "))
                     .unwrap_or_default();
-                rustdb_common::byte_format!(
+                roastedduck_common::byte_format!(
                     "In file \"{file_name}\" the column \"{local_name}\" has type {local_type}, but we are trying to load it into column {target_column}with type {target}.\nThis means the Parquet schema does not match the schema of the table.\nPossible solutions:\n* Insert by name instead of by position using \"INSERT INTO tbl BY NAME SELECT * FROM read_parquet(...)\"\n* Manually specify which columns to insert using \"INSERT INTO tbl SELECT ... FROM read_parquet(...)\""
                 )
             };
-            Error::conversion(rustdb_common::byte_format!(
+            Error::conversion(roastedduck_common::byte_format!(
                 "Error while reading file \"{file_name}\": failed to cast column \"{local_name}\" from type {local_type} to {target}: : {}\n\n{extended}",
                 error.raw_message_bytes()
             ))
@@ -924,14 +925,14 @@ struct ScanState {
 
 /// `MultiFileColumnMapper::ThrowColumnNotFoundError`.
 fn column_not_found(data: &ParquetBindData, reader: &ParquetReader, name: &[u8]) -> Error {
-    let candidates: Vec<&rustdb_common::ByteString> =
+    let candidates: Vec<&roastedduck_common::ByteString> =
         reader.columns.iter().map(|column| &column.name).collect();
-    Error::invalid_input(rustdb_common::byte_format!(
+    Error::invalid_input(roastedduck_common::byte_format!(
         "Failed to read file \"{}\": schema mismatch in glob: column \"{name}\" was read from the original file \"{}\", but could not be found in file \"{}\".\nCandidate names: {}\nIf you are trying to read files with different schemas, try setting union_by_name=True",
         reader.file_name(),
         data.files.first_file().unwrap_or_default(),
         reader.file_name(),
-        rustdb_common::ByteString::join(&candidates, b", ")
+        roastedduck_common::ByteString::join(&candidates, b", ")
     ))
 }
 
@@ -1318,7 +1319,7 @@ struct Cursor {
     total_row_groups: u64,
     /// Logs the row groups read and skipped, for the scan's operator (`op`), if the
     /// query logs them.
-    logger: Option<rustdb_function::logging::OperatorLogger>,
+    logger: Option<roastedduck_function::logging::OperatorLogger>,
 }
 
 /// A unit of a parallel scan: a file (with its index) and one of its row groups, or
@@ -1433,7 +1434,7 @@ fn read_parquet_init_global(
     bind_data: Option<&dyn FunctionData>,
     column_ids: &[u64],
     column_indexes: &[ColumnIndex],
-    op: Option<&rustdb_function::logging::OperatorLogger>,
+    op: Option<&roastedduck_function::logging::OperatorLogger>,
 ) -> Result<ParallelScanGlobal> {
     let data = parquet_bind_data(bind_data)?;
     let mut cursor = Cursor {
@@ -1570,8 +1571,8 @@ fn read_parquet_row_group_metrics(global: &ParallelScanGlobal, local: &ParallelS
 }
 
 /// The file filter pushdown of `read_parquet` (`MultiFileComplexFilterPushdown`).
-pub(crate) fn read_parquet_file_filter_pushdown() -> rustdb_function::FileFilterPushdown {
-    rustdb_function::FileFilterPushdown {
+pub(crate) fn read_parquet_file_filter_pushdown() -> roastedduck_function::FileFilterPushdown {
+    roastedduck_function::FileFilterPushdown {
         files: Arc::new(|bind_data| {
             let data = bind_data.as_any().downcast_ref::<ParquetBindData>()?;
             (data.file_options.hive_partitioning || data.file_options.filename)
@@ -1581,7 +1582,7 @@ pub(crate) fn read_parquet_file_filter_pushdown() -> rustdb_function::FileFilter
             let Some(data) = bind_data.as_any().downcast_ref::<ParquetBindData>() else {
                 return Ok(None);
             };
-            rustdb_csv::multi_file::known_column_value(&data.file_options, &data.casts, path, name, ty)
+            roastedduck_csv::multi_file::known_column_value(&data.file_options, &data.casts, path, name, ty)
         }),
         with_files: Arc::new(|bind_data, keep| {
             let data = bind_data
@@ -1597,7 +1598,7 @@ pub(crate) fn read_parquet_file_filter_pushdown() -> rustdb_function::FileFilter
 fn read_parquet_dynamic_to_string(
     bind_data: Option<&dyn FunctionData>,
     global: &ParallelScanGlobal,
-) -> Vec<(rustdb_common::ByteString, rustdb_common::ByteString)> {
+) -> Vec<(roastedduck_common::ByteString, roastedduck_common::ByteString)> {
     let (Ok(data), Ok(global)) = (parquet_bind_data(bind_data), parallel_global(global)) else {
         return Vec::new();
     };
@@ -1606,7 +1607,7 @@ fn read_parquet_dynamic_to_string(
         cursor.file_index + usize::from(cursor.file.is_some())
     };
     let display = data.display_paths.as_ref().unwrap_or(&data.files.files);
-    rustdb_csv::multi_file::dynamic_to_string(files_loaded, display)
+    roastedduck_csv::multi_file::dynamic_to_string(files_loaded, display)
 }
 
 /// The values of the scanned columns at `partition_columns` in the thread's current
@@ -1734,7 +1735,7 @@ fn apply_filters(
         return Ok(None);
     }
     let passed = sel.len();
-    let selection = rustdb_types::SelectionVector::new(sel);
+    let selection = roastedduck_types::SelectionVector::new(sel);
     for vector in output.iter_mut() {
         *vector = vector.slice(&selection);
     }
@@ -1781,7 +1782,7 @@ fn read_parquet_parameters() -> Vec<(String, LogicalType)> {
 
 /// `ParquetScanSerialize`: the files, columns and options of the scan.
 fn serialize_parquet_scan(
-    serializer: &mut dyn rustdb_serde::Serializer,
+    serializer: &mut dyn roastedduck_serde::Serializer,
     bind_data: Option<&dyn FunctionData>,
     _: &TableFunction,
 ) -> Result<()> {
@@ -1808,7 +1809,7 @@ fn serialize_parquet_scan(
 
 /// `ParquetOptionsSerialization::Serialize`.
 fn serialize_parquet_options(
-    serializer: &mut dyn rustdb_serde::Serializer,
+    serializer: &mut dyn roastedduck_serde::Serializer,
     options: &ParquetOptions,
     file_row_number: bool,
     file_options: &MultiFileOptions,
@@ -1857,7 +1858,7 @@ fn serialize_parquet_options(
 
 /// `MultiFileOptions::Serialize`.
 fn serialize_multi_file_options(
-    serializer: &mut dyn rustdb_serde::Serializer,
+    serializer: &mut dyn roastedduck_serde::Serializer,
     options: &MultiFileOptions,
 ) -> Result<()> {
     serializer.write_property_with_default(100, "filename", &options.filename)?;

@@ -1,5 +1,5 @@
 //! The performance ratchet (`bench/baseline.json`): for every benchmark that already runs
-//! correctly on rustdb, its median time and peak RSS may not regress beyond noise.
+//! correctly on roastedduck, its median time and peak RSS may not regress beyond noise.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -119,7 +119,7 @@ fn ok_records(results: &Results) -> BTreeMap<String, &BenchmarkRecord> {
         .collect()
 }
 
-/// Compares a rustdb run against the baseline. With `allow_missing`, baseline
+/// Compares a roastedduck run against the baseline. With `allow_missing`, baseline
 /// benchmarks absent from the run (a partial run) are not failures.
 pub fn check(baseline: &Baseline, rust: &Results, allow_missing: bool) -> Check {
     let noise = baseline.noise;
@@ -171,7 +171,7 @@ pub fn check(baseline: &Baseline, rust: &Results, allow_missing: bool) -> Check 
     result
 }
 
-/// Records the current rustdb numbers (with C++ numbers for context). Refuses to drop
+/// Records the current roastedduck numbers (with C++ numbers for context). Refuses to drop
 /// benchmarks that no longer pass unless `force`.
 pub fn update(
     baseline: Option<Baseline>,

@@ -3,13 +3,13 @@
 //! every row of a partition, so the window becomes an inner join (on `k IS NOT DISTINCT
 //! FROM k`) of its input with the aggregate of a copy of the input grouped by `k`.
 
-use rustdb_ast::{ExpressionType, JoinType, WindowBoundary, WindowExcludeMode};
-use rustdb_common::Result;
-use rustdb_planner::expression::{
+use roastedduck_ast::{ExpressionType, JoinType, WindowBoundary, WindowExcludeMode};
+use roastedduck_common::Result;
+use roastedduck_planner::expression::{
     AggregateType, BoundAggregateExpression, BoundOrderModifier, BoundWindowExpression,
 };
-use rustdb_planner::operator::{JoinCondition, LogicalAggregate, LogicalComparisonJoin};
-use rustdb_planner::{
+use roastedduck_planner::operator::{JoinCondition, LogicalAggregate, LogicalComparisonJoin};
+use roastedduck_planner::{
     ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator, LogicalOperatorType,
 };
 
@@ -77,7 +77,7 @@ fn can_optimize_input(op: &LogicalOperator) -> bool {
 /// The window function as a plain aggregate (DuckDB's `TranslateAggregate`).
 fn translate_aggregate(
     window: &BoundWindowExpression,
-    return_type: &rustdb_types::LogicalType,
+    return_type: &roastedduck_types::LogicalType,
 ) -> Option<Expression> {
     let function = window.aggregate.clone()?;
     let order_bys = (!window.arg_orders.is_empty()).then(|| BoundOrderModifier {
@@ -176,7 +176,7 @@ fn optimize_internal(
         grouping_sets: Vec::new(),
         grouping_functions: Vec::new(),
         group_stats: Vec::new(),
-        distinct_validity: rustdb_planner::TupleDataValidityType::default(),
+        distinct_validity: roastedduck_planner::TupleDataValidityType::default(),
     })))
     .with_expressions(aggregates)
     .with_children(vec![copy]);

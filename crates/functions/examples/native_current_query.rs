@@ -1,7 +1,7 @@
 //! Native parser source, connection state and actual `current_query` scalar kernel.
-use rustdb_common::{Error, Result};
-use rustdb_function::{BindInput, FunctionClient, FunctionState};
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{BindInput, FunctionClient, FunctionState};
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 use std::{
     io::{self, BufRead},
     sync::Arc,
@@ -21,7 +21,7 @@ fn decode(h: &str) -> Result<Vec<u8>> {
         .collect()
 }
 fn execute(query: &[u8]) -> Result<Value> {
-    let mut statements = rustdb_parser::parse_bytes(query)
+    let mut statements = roastedduck_parser::parse_bytes(query)
         .map_err(|error| error.with_query_context_bytes(query).rethrown())?;
     let statement = statements
         .pop()
@@ -31,7 +31,7 @@ fn execute(query: &[u8]) -> Result<Value> {
     if client.query() != statement.query {
         return Err(Error::internal("query storage changed bytes"));
     }
-    let mut function = rustdb_functions::scalar::system::system_functions()[0].functions[0].clone();
+    let mut function = roastedduck_functions::scalar::system::system_functions()[0].functions[0].clone();
     let bind = function
         .bind
         .clone()

@@ -18,15 +18,15 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
 
-use rustdb_ast::{
+use roastedduck_ast::{
     ColumnDefinition, ColumnList, CompressionType, Constraint, CreateInfo, CreateInfoKind, CreateTableInfo,
     LogicalDependencyList, NotNullConstraint, OnCreateConflict, TableColumnType,
 };
-use rustdb_catalog::{Catalog, CatalogType, EntryKind, Transaction};
-use rustdb_common::{CaseInsensitiveMap, Error, LogicalIndex, OrderedMap, Result, STANDARD_VECTOR_SIZE};
-use rustdb_execution::operators::{CatalogTableCreator, TableCreator};
-use rustdb_storage::{DataTable, LocalAppendState, TableConstraints};
-use rustdb_types::{DataChunk, LogicalType, StringHeap, StringT, Value, Vector};
+use roastedduck_catalog::{Catalog, CatalogType, EntryKind, Transaction};
+use roastedduck_common::{CaseInsensitiveMap, Error, LogicalIndex, OrderedMap, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_execution::operators::{CatalogTableCreator, TableCreator};
+use roastedduck_storage::{DataTable, LocalAppendState, TableConstraints};
+use roastedduck_types::{DataChunk, LogicalType, StringHeap, StringT, Value, Vector};
 
 use self::bm_utils::asc_dates;
 use self::build::{mk_cust, mk_nation, mk_order, mk_part, mk_region, mk_supp};
@@ -218,7 +218,7 @@ const GENERATED_TABLES: [Table; 6] = [
 #[derive(Debug, Clone)]
 pub(crate) struct DbgenTarget {
     pub(crate) catalog: Arc<Catalog>,
-    pub(crate) schema: rustdb_common::ByteString,
+    pub(crate) schema: roastedduck_common::ByteString,
     pub(crate) transaction: Arc<Transaction>,
 }
 
@@ -252,12 +252,12 @@ pub(crate) fn create_tpch_schema(target: &DbgenTarget, suffix: &[u8]) -> Result<
             temporary: false,
             internal: false,
             on_conflict: OnCreateConflict::IgnoreOnConflict,
-            sql: rustdb_common::ByteString::new(),
+            sql: roastedduck_common::ByteString::new(),
             comment: Value::default(),
             tags: CaseInsensitiveMap::default(),
             dependencies: LogicalDependencyList::default(),
             kind: CreateInfoKind::Table(Box::new(CreateTableInfo {
-                table: rustdb_common::byte_format!("{}{suffix}", table.name),
+                table: roastedduck_common::byte_format!("{}{suffix}", table.name),
                 columns: ColumnList { columns },
                 constraints,
                 query: None,
@@ -451,17 +451,17 @@ impl TableAppends {
             let Some(info) = table_info(table) else {
                 continue;
             };
-            let name = rustdb_common::byte_format!("{}{suffix}", info.name);
+            let name = roastedduck_common::byte_format!("{}{suffix}", info.name);
             let entry = target
                 .catalog
                 .get_entry(&target.transaction, CatalogType::Table, &target.schema, &name)
                 .ok_or_else(|| {
-                    Error::catalog(rustdb_common::byte_format!(
+                    Error::catalog(roastedduck_common::byte_format!(
                         "Table with name {name} does not exist!"
                     ))
                 })?;
             let EntryKind::Table(table_entry) = &entry.kind else {
-                return Err(Error::catalog(rustdb_common::byte_format!(
+                return Err(Error::catalog(roastedduck_common::byte_format!(
                     "{name} is not a table"
                 )));
             };

@@ -1,6 +1,6 @@
 //! The `web_page` table (`w_web_page.c`).
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use super::Output;
 use super::build_support::bkey_str;

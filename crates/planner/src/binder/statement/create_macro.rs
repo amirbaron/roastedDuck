@@ -2,12 +2,12 @@
 //! to constants, parameter types are bound, and each overload's body is bound once with
 //! its parameters as placeholders to report errors early.
 
-use rustdb_ast::visit::{VisitorMut, walk_query_node};
-use rustdb_ast::{
+use roastedduck_ast::visit::{VisitorMut, walk_query_node};
+use roastedduck_ast::{
     CreateInfo, CreateInfoKind, ExpressionType, MacroFunctionKind, ParsedExpression, ParsedExpressionKind,
 };
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_types::{LogicalType, LogicalTypeId};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId};
 
 use super::super::expression::bind_logical_type;
 use super::super::expression::bind_macro::parameter_name;
@@ -101,7 +101,7 @@ pub fn bind_create_function_info(scope: &mut BindScope<'_>, info: &mut CreateInf
 fn verify_macro_functions(
     scope: &mut BindScope<'_>,
     name: impl AsRef<[u8]>,
-    base: &mut rustdb_ast::CreateMacroInfo,
+    base: &mut roastedduck_ast::CreateMacroInfo,
     store_types: bool,
 ) -> Result<()> {
     let name = name.as_ref();
@@ -138,12 +138,12 @@ fn verify_macro_functions(
                 let mut binder = ConstantBinder::new(
                     inner,
                     outer,
-                    rustdb_common::byte_format!("Default value for parameter '{parameter}'"),
+                    roastedduck_common::byte_format!("Default value for parameter '{parameter}'"),
                 );
                 binder.bind(&mut copy, false)?
             };
             if !bound.is_foldable() {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Default value '{default}' for parameter '{parameter}' is not a constant expression."
                 )));
             }
@@ -172,7 +172,7 @@ fn verify_macro_functions(
                     .implicit_cast_cost(constant.value.logical_type(), ty)
                     < 0
             {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Default value '{default}' for parameter '{parameter}' cannot be implicitly cast to '{ty}'. \
                      Please add an explicit type cast."
                 )));
@@ -182,13 +182,13 @@ fn verify_macro_functions(
         let dummy_types: Vec<LogicalType> = (0..function.parameters.len())
             .map(|index| function.types.get(index).cloned().unwrap_or(LogicalType::UNKNOWN))
             .collect();
-        let dummy_names: Vec<rustdb_common::ByteString> = function
+        let dummy_names: Vec<roastedduck_common::ByteString> = function
             .parameters
             .iter()
-            .map(|parameter| rustdb_common::ByteString::from(parameter_name(parameter)))
+            .map(|parameter| roastedduck_common::ByteString::from(parameter_name(parameter)))
             .collect();
         if type_overloads.contains(&dummy_types) {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Ambiguity in macro overloads - macro {name}() has multiple definitions with the same parameters"
             )));
         }

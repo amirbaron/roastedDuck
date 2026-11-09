@@ -3,10 +3,10 @@
 
 use std::io::{self, BufRead};
 
-use rustdb_common::ByteString;
-use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
-use rustdb_serde::json::{JsonDeserializer, JsonOptions, JsonSerializer, try_write_json, write_json};
-use rustdb_serde::{Deserializer, SerializationOptions, Serializer};
+use roastedduck_common::ByteString;
+use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
+use roastedduck_serde::json::{JsonDeserializer, JsonOptions, JsonSerializer, try_write_json, write_json};
+use roastedduck_serde::{Deserializer, SerializationOptions, Serializer};
 
 fn decode(hex: &str) -> Vec<u8> {
     hex.as_bytes()
@@ -55,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if !with_default {
                 let mut reader = BinaryDeserializer::new(&encoded);
                 reader.begin()?;
-                let text: rustdb_serde::Result<String> =
+                let text: roastedduck_serde::Result<String> =
                     (&mut reader as &mut dyn Deserializer).read_property(100, "name");
                 assert_eq!(text.is_ok(), std::str::from_utf8(&bytes).is_ok());
             }

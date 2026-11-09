@@ -81,7 +81,10 @@ const INLINE_HEAP: usize = 2;
 #[derive(Clone, Debug)]
 enum Entries<T> {
     /// The first `len` slots are entries.
-    Inline { len: usize, slots: [T; INLINE_HEAP] },
+    Inline {
+        len: usize,
+        slots: [T; INLINE_HEAP],
+    },
     Allocated(Vec<T>),
 }
 

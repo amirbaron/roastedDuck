@@ -4,7 +4,7 @@
 //! Floats order NaN above every number and treat NaN as equal to NaN; strings compare
 //! byte-wise; booleans order `false < true`.
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::kernels::binary;
 use crate::{
@@ -22,10 +22,10 @@ pub enum CompareOp {
     GreaterThanOrEqual,
 }
 
-impl rustdb_serde::Serialize for CompareOp {
+impl roastedduck_serde::Serialize for CompareOp {
     /// Written as the `ExpressionType` of the comparison (a table filter's
     /// `comparison_type`).
-    fn serialize(&self, serializer: &mut dyn rustdb_serde::Serializer) -> rustdb_serde::Result<()> {
+    fn serialize(&self, serializer: &mut dyn roastedduck_serde::Serializer) -> roastedduck_serde::Result<()> {
         let (name, value) = match self {
             Self::Equal => ("COMPARE_EQUAL", 25),
             Self::NotEqual => ("COMPARE_NOTEQUAL", 26),
@@ -34,7 +34,7 @@ impl rustdb_serde::Serialize for CompareOp {
             Self::LessThanOrEqual => ("COMPARE_LESSTHANOREQUALTO", 29),
             Self::GreaterThanOrEqual => ("COMPARE_GREATERTHANOREQUALTO", 30),
         };
-        rustdb_serde::write_enum(serializer, name, |serializer| serializer.write_u8(value));
+        roastedduck_serde::write_enum(serializer, name, |serializer| serializer.write_u8(value));
         Ok(())
     }
 }

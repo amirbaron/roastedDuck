@@ -3,8 +3,8 @@
 use std::ffi::{CString, c_char};
 use std::sync::OnceLock;
 
-use rustdb::Config;
-use rustdb_types::Value;
+use roastedduck::Config;
+use roastedduck_types::Value;
 
 use crate::helper::{lossy_str, to_cstring};
 use crate::types::DuckdbState;
@@ -29,7 +29,7 @@ pub(crate) fn capi_config() -> Config {
 fn config_flags() -> &'static [(CString, CString)] {
     static FLAGS: OnceLock<Vec<(CString, CString)>> = OnceLock::new();
     FLAGS.get_or_init(|| {
-        rustdb::config_flags()
+        roastedduck::config_flags()
             .into_iter()
             .map(|(name, description)| (to_cstring(name), to_cstring(description)))
             .collect()

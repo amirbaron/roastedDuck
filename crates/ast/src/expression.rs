@@ -5,11 +5,11 @@ use std::any::Any;
 use std::fmt;
 use std::sync::Arc;
 
-use rustdb_common::{ByteString, CaseInsensitiveMap, OrderedMap};
-use rustdb_serde::{DeserializeObject, Deserializer, Result, SerializeObject, Serializer};
-use rustdb_types::Value;
+use roastedduck_common::{ByteString, CaseInsensitiveMap, OrderedMap};
+use roastedduck_serde::{DeserializeObject, Deserializer, Result, SerializeObject, Serializer};
+use roastedduck_types::Value;
 
-use rustdb_types::LogicalType;
+use roastedduck_types::LogicalType;
 
 use crate::{
     CastExpression, ColumnRefExpression, ComparisonExpression, ConjunctionExpression, ConstantExpression,
@@ -22,7 +22,7 @@ impl ParsedExpression {
     pub const fn new(expression_type: ExpressionType, kind: ParsedExpressionKind) -> Self {
         Self {
             expression_type,
-            alias: rustdb_common::ByteString::new(),
+            alias: roastedduck_common::ByteString::new(),
             query_location: None,
             kind,
         }
@@ -37,7 +37,7 @@ impl ParsedExpression {
     }
 
     /// A column reference: `column`, `table.column`, ...
-    pub fn column_ref<S: Into<rustdb_common::ByteString>>(names: impl IntoIterator<Item = S>) -> Self {
+    pub fn column_ref<S: Into<roastedduck_common::ByteString>>(names: impl IntoIterator<Item = S>) -> Self {
         Self::new(
             ExpressionType::ColumnRef,
             ParsedExpressionKind::ColumnRef(ColumnRefExpression {
@@ -110,7 +110,7 @@ impl ParsedExpression {
         Self::new(
             ExpressionType::Star,
             ParsedExpressionKind::Star(Box::new(StarExpression {
-                relation_name: rustdb_common::ByteString::new(),
+                relation_name: roastedduck_common::ByteString::new(),
                 exclude_list: Vec::new(),
                 replace_list: CaseInsensitiveMap::default(),
                 rename_list: OrderedMap::default(),
@@ -122,7 +122,7 @@ impl ParsedExpression {
 
     /// The same expression under an alias (`expr AS alias`).
     #[must_use]
-    pub fn with_alias(mut self, alias: impl Into<rustdb_common::ByteString>) -> Self {
+    pub fn with_alias(mut self, alias: impl Into<roastedduck_common::ByteString>) -> Self {
         self.alias = alias.into();
         self
     }
@@ -140,11 +140,11 @@ pub struct BoundExpression {
     /// The binder's bound expression.
     pub payload: Arc<dyn Any + Send + Sync>,
     /// How the bound expression prints (its `ToString`).
-    pub text: rustdb_common::ByteString,
+    pub text: roastedduck_common::ByteString,
 }
 
 impl BoundExpression {
-    pub fn new(payload: impl Any + Send + Sync, text: impl Into<rustdb_common::ByteString>) -> Self {
+    pub fn new(payload: impl Any + Send + Sync, text: impl Into<roastedduck_common::ByteString>) -> Self {
         Self {
             payload: Arc::new(payload),
             text: text.into(),
@@ -170,13 +170,13 @@ impl PartialEq for BoundExpression {
 #[derive(Clone, Debug, PartialEq)]
 pub struct StarExpression {
     /// The table in `t.*`, or empty.
-    pub relation_name: rustdb_common::ByteString,
+    pub relation_name: roastedduck_common::ByteString,
     /// `EXCLUDE (...)`: plain and qualified column names, in order.
     pub exclude_list: Vec<QualifiedColumnName>,
     /// `REPLACE (expr AS name, ...)`.
-    pub replace_list: CaseInsensitiveMap<ParsedExpression, rustdb_common::ByteString>,
+    pub replace_list: CaseInsensitiveMap<ParsedExpression, roastedduck_common::ByteString>,
     /// `RENAME (old AS new, ...)`.
-    pub rename_list: OrderedMap<QualifiedColumnName, rustdb_common::ByteString>,
+    pub rename_list: OrderedMap<QualifiedColumnName, roastedduck_common::ByteString>,
     /// `COLUMNS(...)` rather than `*`.
     pub columns: bool,
     /// The argument of `COLUMNS(expr)`.
@@ -185,7 +185,7 @@ pub struct StarExpression {
 
 impl QualifiedColumnName {
     /// An unqualified column name.
-    pub fn column(column: impl Into<rustdb_common::ByteString>) -> Self {
+    pub fn column(column: impl Into<roastedduck_common::ByteString>) -> Self {
         Self {
             column: column.into(),
             ..Self::default()
@@ -232,7 +232,7 @@ impl StarExpression {
     /// (`*COLUMNS(...)` before it became an `OPERATOR_UNPACK` around the star).
     fn deserialize_with_unpacked(deserializer: &mut dyn Deserializer) -> Result<(Self, bool)> {
         let relation_name = deserializer.read_property_with_default(200, "relation_name")?;
-        let plain: Vec<rustdb_common::ByteString> = deserializer.read_property(201, "exclude_list")?;
+        let plain: Vec<roastedduck_common::ByteString> = deserializer.read_property(201, "exclude_list")?;
         let replace_list = deserializer.read_property_with_default(202, "replace_list")?;
         let columns = deserializer.read_property_with_default(203, "columns")?;
         let expr = deserializer.read_property_with_default(204, "expr")?;

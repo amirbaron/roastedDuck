@@ -9,9 +9,9 @@ use common::{
     Rng, TestValue, all_types, buffer_manager, build_chunks, build_vector, random_values, read_rows,
     read_vector, spilling_buffer_manager,
 };
-use rustdb_buffer::MemoryTag;
-use rustdb_row::{ChunkIterator, PinProperties, TupleDataCollection, TupleDataLayout, ValidityType};
-use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
+use roastedduck_buffer::MemoryTag;
+use roastedduck_row::{ChunkIterator, PinProperties, TupleDataCollection, TupleDataLayout, ValidityType};
+use roastedduck_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
 
 fn collection(types: &[LogicalType]) -> TupleDataCollection {
     let layout = TupleDataLayout::new(types.to_vec(), ValidityType::CanHaveNull).unwrap();
@@ -131,7 +131,7 @@ fn appends_with_a_selection() {
     let types = vec![LogicalType::BIGINT, LogicalType::VARCHAR];
     let rows = random_rows(&types, 2048, 9, 10);
     let chunk = &build_chunks(&types, &rows, 2048)[0];
-    let formats = rustdb_row::ChunkFormat::new(chunk).unwrap();
+    let formats = roastedduck_row::ChunkFormat::new(chunk).unwrap();
     let selection: Vec<u32> = (0..2048).filter(|row| row % 7 == 3).collect();
     let mut rows_collection = collection(&types);
     let mut state = rows_collection.initialize_append(PinProperties::UnpinAfterDone);

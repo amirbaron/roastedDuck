@@ -9,18 +9,18 @@
 use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
-use rustdb_buffer::{AllocatedData, BufferManager, MemoryTag};
-use rustdb_common::{Error, Result};
-use rustdb_function::AggregateFunction;
-use rustdb_function::FunctionData;
-use rustdb_row::{
+use roastedduck_buffer::{AllocatedData, BufferManager, MemoryTag};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::AggregateFunction;
+use roastedduck_function::FunctionData;
+use roastedduck_row::{
     ChunkFormat, GroupedUpdate, MatchPredicate, PartitionedAppendState, PartitionedTupleData, PinProperties,
     RowAggregate, RowMatcher, RowOperationsState, RowPtr, TupleDataCollection, TupleDataLayout, ValidityType,
     combine_states, destroy_states, finalize_states, initialize_states, supports_update_selection,
     update_states,
 };
-use rustdb_storage::statistics::{HLL_REGISTERS, HyperLogLog};
-use rustdb_types::{
+use roastedduck_storage::statistics::{HLL_REGISTERS, HyperLogLog};
+use roastedduck_types::{
     DataChunk, DictionaryInfo, LogicalType, STANDARD_VECTOR_SIZE, Sel, SelectionVector, Vector,
 };
 
@@ -638,7 +638,7 @@ impl GroupedAggregateHashTable {
                 SelectionVector::new(unique.clone()),
                 Arc::clone(info),
             );
-            let hashes = rustdb_row::hash::hash_columns(&[&values], unique.len())?;
+            let hashes = roastedduck_row::hash::hash_columns(&[&values], unique.len())?;
             let chunk = DataChunk::new(vec![values], unique.len());
             new_groups = match self.find_or_create_groups(&chunk, &hashes) {
                 Ok(new_groups) => new_groups,

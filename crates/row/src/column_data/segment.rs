@@ -8,8 +8,8 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{DataChunk, LogicalType, PhysicalType, StringT, Vector};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::{DataChunk, LogicalType, PhysicalType, StringT, Vector};
 
 use super::allocator::{ChunkManagementState, ColumnDataAllocator};
 use crate::gather::HeapKeepAlive;
@@ -311,7 +311,7 @@ impl ColumnDataCollectionSegment {
     }
 
     /// Copies the values and validity of a vector and its continuations
-    /// (`ReadVectorInternal` without the zero-copy read: rustdb's vectors own their data).
+    /// (`ReadVectorInternal` without the zero-copy read: roastedduck's vectors own their data).
     fn read_vector_internal(
         &self,
         state: &ChunkManagementState,
@@ -373,7 +373,7 @@ impl ColumnDataCollectionSegment {
         vector_index: usize,
         result: &mut Vector,
     ) -> Result<()> {
-        let mut pins: Vec<Arc<rustdb_buffer::BufferHandle>> = Vec::new();
+        let mut pins: Vec<Arc<roastedduck_buffer::BufferHandle>> = Vec::new();
         let validity = result.validity().clone();
         let strings = result.values_mut::<StringT>();
         let mut v_offset = 0;

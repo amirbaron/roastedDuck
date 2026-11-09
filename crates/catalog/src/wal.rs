@@ -4,13 +4,13 @@
 
 use std::sync::Arc;
 
-use rustdb_ast::{AlterInfo, AlterInfoKind, AlterTableInfo, Constraint, CreateInfoKind, ParseInfo};
-use rustdb_common::{ByteString, CaseInsensitiveMap, Result};
-use rustdb_serde::Serializer;
-use rustdb_storage::checkpoint::pointers::serialize_index_storage_info;
-use rustdb_storage::index::art::ArtStorageInfo;
-use rustdb_storage::wal::{WalBatch, WalType};
-use rustdb_types::Value;
+use roastedduck_ast::{AlterInfo, AlterInfoKind, AlterTableInfo, Constraint, CreateInfoKind, ParseInfo};
+use roastedduck_common::{ByteString, CaseInsensitiveMap, Result};
+use roastedduck_serde::Serializer;
+use roastedduck_storage::checkpoint::pointers::serialize_index_storage_info;
+use roastedduck_storage::index::art::ArtStorageInfo;
+use roastedduck_storage::wal::{WalBatch, WalType};
+use roastedduck_types::Value;
 
 use crate::checkpoint::{
     base_info, macro_create_info, sequence_create_info, table_create_info, type_create_info,
@@ -46,7 +46,7 @@ fn index_options(batch: &WalBatch) -> CaseInsensitiveMap<Value> {
 /// description and the bytes of its buffers per allocator.
 fn serialize_index(
     batch: &WalBatch,
-    table: Option<&Arc<rustdb_storage::DataTableInfo>>,
+    table: Option<&Arc<roastedduck_storage::DataTableInfo>>,
     name: impl AsRef<[u8]>,
 ) -> Result<(ArtStorageInfo, Vec<Vec<Vec<u8>>>)> {
     let options = index_options(batch);
@@ -118,7 +118,7 @@ pub(crate) fn write_create(
         }
         EntryKind::Macro(_) | EntryKind::TableMacro(_) => {
             let info = macro_create_info(catalog, schema, entry)
-                .ok_or_else(|| rustdb_common::Error::internal("expected a macro"))?;
+                .ok_or_else(|| roastedduck_common::Error::internal("expected a macro"))?;
             let (wal_type, tag) = if matches!(entry.kind, EntryKind::Macro(_)) {
                 (WalType::CreateMacro, "macro")
             } else {
@@ -181,7 +181,7 @@ fn primary_key_index_name(info: &AlterInfo) -> Option<ByteString> {
     if !unique.is_primary_key {
         return None;
     }
-    let mut name = rustdb_common::byte_format!("PRIMARY_{}", info.name);
+    let mut name = roastedduck_common::byte_format!("PRIMARY_{}", info.name);
     for column in &unique.columns {
         name.push(b'_');
         name.push_bytes(column);

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # REF=<frozen DuckDB 1.5.6 source> scripts/utf8proc-render-data.sh <external build dir>
-# Offline generation only. rustdb links no C++ code.
+# Offline generation only. roastedduck links no C++ code.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 : "${REF:?set REF to the frozen DuckDB 1.5.6 source directory}"

@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 use std::fmt;
 
-use rustdb_common::Error;
+use roastedduck_common::Error;
 
 use crate::date::{push_fraction, push_padded};
 use crate::{Interval, NativeType, PhysicalType, Time};
@@ -620,7 +620,7 @@ impl fmt::Display for Interval {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustdb_common::ErrorKind;
+    use roastedduck_common::ErrorKind;
 
     fn cast(input: &str) -> Result<String, String> {
         Interval::parse(input.as_bytes(), false).map(|i| i.to_string())

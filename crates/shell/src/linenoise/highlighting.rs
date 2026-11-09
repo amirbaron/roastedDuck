@@ -2,7 +2,7 @@
 //! `tools/shell/linenoise/highlighting.cpp`): the tokens of SQL or a dot command, extra
 //! highlighting (search matches, completion characters), and the colored text.
 
-use rustdb_parser::highlight::{HighlightTokenType, tokenize_query};
+use roastedduck_parser::highlight::{HighlightTokenType, tokenize_query};
 
 use crate::highlight::{self, HighlightElementType, PrintIntensity, RESET_TERMINAL_CODE};
 

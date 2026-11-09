@@ -2,11 +2,11 @@
 //! instants, `ICUCalendarSub`) and `date_diff` / `datediff` (part boundaries crossed,
 //! `ICUCalendarDiff`) over TIMESTAMPTZ.
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
-use rustdb_functions::scalar::date::date_part::Part;
-use rustdb_functions::scalar::executor::{Str, binary, str_at, ternary};
-use rustdb_types::{DataChunk, Interval, LogicalType, Timestamp, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
+use roastedduck_functions::scalar::date::date_part::Part;
+use roastedduck_functions::scalar::executor::{Str, binary, str_at, ternary};
+use roastedduck_types::{DataChunk, Interval, LogicalType, Timestamp, Vector};
 
 use crate::icu_datefunc::{self, BindData, CalendarPtr, get_time_unsafe, set_time, subtract_field};
 use crate::icu_datetrunc::{PartTrunc, truncation_factory};

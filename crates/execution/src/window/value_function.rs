@@ -6,10 +6,10 @@
 //! (or that the default / NULL applies), then gathers all values with one vectorised
 //! selection.
 
-use rustdb_common::{Error, Result};
-use rustdb_planner::{Expression, ExpressionType};
-use rustdb_types::kernels::scatter;
-use rustdb_types::{DataChunk, LogicalTypeId, PhysicalType, SelectionVector, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::{Expression, ExpressionType};
+use roastedduck_types::kernels::scatter;
+use roastedduck_types::{DataChunk, LogicalTypeId, PhysicalType, SelectionVector, Vector};
 
 use super::WindowExpression;
 use super::aggregator::{evaluate_subframes, init_subframes};
@@ -874,7 +874,7 @@ fn fill_value_ok(column: &Vector, row: usize) -> bool {
 
 /// A numeric FILL value (DuckDB's `FillSlopeFunc`, `InterpolateOperator` and
 /// `TryExtrapolateOperator` instantiations).
-trait FillValue: rustdb_types::NativeType {
+trait FillValue: roastedduck_types::NativeType {
     /// `LossyFillCast<double>`.
     fn to_f64(self) -> f64;
     /// `InterpolateOperator::Operation`: `lo + (hi - lo) * d`.

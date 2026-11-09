@@ -1,8 +1,8 @@
 //! Casting single values through the vectorised kernels (DuckDB's `Value::TryCastAs`,
 //! `Value::DefaultCastAs` and `VectorOperations::TryCast`).
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, Value, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, Value, Vector};
 
 use super::{CastFunctionSet, CastParameters};
 
@@ -62,11 +62,11 @@ impl ValueCast for Value {
         let value = result.get_value(0);
         // Vector::GetValue materializes VARCHAR through Value(string), unlike
         // native vector/string storage, which can hold unchecked bytes.
-        if value.logical_type().id() == rustdb_types::LogicalTypeId::Varchar
+        if value.logical_type().id() == roastedduck_types::LogicalTypeId::Varchar
             && let Some(bytes) = value.as_bytes()
         {
             std::str::from_utf8(bytes)
-                .map_err(|_| rustdb_common::utf8::invalid_unicode_error(bytes, "value construction"))?;
+                .map_err(|_| roastedduck_common::utf8::invalid_unicode_error(bytes, "value construction"))?;
         }
         Ok(value)
     }
@@ -76,13 +76,16 @@ impl ValueCast for Value {
         params.strict = strict;
         let value = self.cast_with(set, target, &mut params)?;
         match params.take_error_message() {
-            Some(message) => Err(Error::new_bytes(rustdb_common::ErrorKind::Conversion, message)),
+            Some(message) => Err(Error::new_bytes(
+                roastedduck_common::ErrorKind::Conversion,
+                message,
+            )),
             None => Ok(value),
         }
     }
 
     fn default_cast_as(&self, target: &LogicalType) -> Result<Self> {
-        if target.id() == rustdb_types::LogicalTypeId::Any {
+        if target.id() == roastedduck_types::LogicalTypeId::Any {
             return Ok(self.clone());
         }
         let mut params = CastParameters::try_cast();
@@ -91,7 +94,7 @@ impl ValueCast for Value {
         // escape unchanged (e.g. an unnamed STRUCT cast to VARIANT).
         match params.take_error_message() {
             Some(message) => Err(Error::new_bytes(
-                rustdb_common::ErrorKind::InvalidInput,
+                roastedduck_common::ErrorKind::InvalidInput,
                 [b"Failed to cast value: ".as_slice(), message.as_slice()].concat(),
             )),
             None => Ok(value),

@@ -5,7 +5,7 @@ is removed. `prepare.py` checks both counts and records the source/adapted SHA-2
 The two database helper bodies and the private autocommit inspection use native APIs;
 the private error initializer is dispatched to the selected implementation.
 
-The Rust run enables the optional `rustdb-capi/adbc-test-api` feature. Its three bridge
+The Rust run enables the optional `roastedduck-capi/adbc-test-api` feature. Its three bridge
 functions expose borrowed C handles and the private test error initializer. Shipping
 builds must leave this feature disabled. Build the test dylib, copy it to a dedicated
 SSD directory, change its install name to `@rpath/libduckdb.dylib`, and sign it. Restore

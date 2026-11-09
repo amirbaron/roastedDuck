@@ -3,10 +3,10 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use rustdb_common::{CaseInsensitiveMap, Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::cast::ValueCast;
-use rustdb_functions::strtime::StrpTimeFormat;
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_common::{CaseInsensitiveMap, Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_functions::strtime::StrpTimeFormat;
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 /// The newline of a CSV file (DuckDB's `NewLineIdentifier`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
@@ -341,29 +341,29 @@ pub struct CsvReaderOptions {
     pub allow_quoted_nulls: bool,
     pub comment: u8,
     pub thousands_separator: u8,
-    pub sql_types_per_column: CaseInsensitiveMap<usize, rustdb_common::ByteString>,
+    pub sql_types_per_column: CaseInsensitiveMap<usize, roastedduck_common::ByteString>,
     pub sql_type_list: Vec<LogicalType>,
-    pub name_list: Vec<rustdb_common::ByteString>,
+    pub name_list: Vec<roastedduck_common::ByteString>,
     pub columns_set: bool,
     pub auto_type_candidates: Vec<LogicalType>,
-    pub sniffer_user_mismatch_error: rustdb_common::ByteString,
+    pub sniffer_user_mismatch_error: roastedduck_common::ByteString,
     pub was_type_manually_set: Vec<bool>,
     pub maximum_line_size: CsvOption<u64>,
     pub normalize_names: bool,
-    pub force_not_null_names: HashSet<rustdb_common::ByteString>,
+    pub force_not_null_names: HashSet<roastedduck_common::ByteString>,
     pub force_not_null: Vec<bool>,
     /// -1 means all.
     pub files_to_sniff: i64,
     pub sample_size_chunks: u64,
     pub all_varchar: bool,
     pub auto_detect: bool,
-    pub file_path: rustdb_common::ByteString,
+    pub file_path: roastedduck_common::ByteString,
     pub buffer_size_option: CsvOption<u64>,
     pub decimal_separator: String,
     pub null_padding: bool,
     pub parallel: bool,
     pub encoding: String,
-    pub user_defined_parameters: BTreeMap<String, rustdb_common::ByteString>,
+    pub user_defined_parameters: BTreeMap<String, roastedduck_common::ByteString>,
     // Writer options.
     pub force_quote: Vec<bool>,
     pub prefix: String,
@@ -410,7 +410,7 @@ impl Default for CsvReaderOptions {
                 LogicalType::BOOLEAN,
                 LogicalType::SQLNULL,
             ],
-            sniffer_user_mismatch_error: rustdb_common::ByteString::new(),
+            sniffer_user_mismatch_error: roastedduck_common::ByteString::new(),
             was_type_manually_set: Vec::new(),
             maximum_line_size: CsvOption::new(MAX_LINE_SIZE_DEFAULT),
             normalize_names: false,
@@ -420,7 +420,7 @@ impl Default for CsvReaderOptions {
             sample_size_chunks: 20480 / SNIFF_SIZE,
             all_varchar: false,
             auto_detect: true,
-            file_path: rustdb_common::ByteString::new(),
+            file_path: roastedduck_common::ByteString::new(),
             buffer_size_option: CsvOption::new(ROWS_PER_BUFFER * MAX_LINE_SIZE_DEFAULT),
             decimal_separator: ".".to_owned(),
             null_padding: false,
@@ -451,7 +451,7 @@ fn parse_boolean_list(set: &[Value], loption: &[u8]) -> Result<bool> {
     match set {
         [] => Ok(true),
         [value] => parse_boolean(value, loption),
-        _ => Err(Error::binder(rustdb_common::byte_format!(
+        _ => Err(Error::binder(roastedduck_common::byte_format!(
             "\"{loption}\" expects a single argument as a boolean value (e.g. TRUE or 1)"
         ))),
     }
@@ -460,7 +460,7 @@ fn parse_boolean_list(set: &[Value], loption: &[u8]) -> Result<bool> {
 /// `ParseBoolean(Value)`.
 pub(crate) fn parse_boolean(value: &Value, loption: &[u8]) -> Result<bool> {
     if value.is_null() {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "\"{loption}\" expects a non-null boolean value (e.g. TRUE or 1)"
         )));
     }
@@ -471,7 +471,7 @@ pub(crate) fn parse_boolean(value: &Value, loption: &[u8]) -> Result<bool> {
         value.logical_type().id(),
         LogicalTypeId::Float | LogicalTypeId::Double | LogicalTypeId::Decimal
     ) {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "\"{loption}\" expects a boolean value (e.g. TRUE or 1)"
         )));
     }
@@ -479,7 +479,7 @@ pub(crate) fn parse_boolean(value: &Value, loption: &[u8]) -> Result<bool> {
         .default_cast_as(&LogicalType::BOOLEAN)?
         .as_bool()
         .ok_or_else(|| {
-            Error::binder(rustdb_common::byte_format!(
+            Error::binder(roastedduck_common::byte_format!(
                 "\"{loption}\" expects a boolean value (e.g. TRUE or 1)"
             ))
         })
@@ -493,14 +493,14 @@ pub(crate) fn parse_string(value: &Value, loption: &[u8]) -> Result<String> {
     if is_list(value) {
         let children = list_children(value);
         if children.len() != 1 {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "\"{loption}\" expects a single argument as a string value"
             )));
         }
         return parse_string(&children[0], loption);
     }
     if value.logical_type().id() != LogicalTypeId::Varchar {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "\"{loption}\" expects a string argument!"
         )));
     }
@@ -510,14 +510,14 @@ pub(crate) fn parse_string(value: &Value, loption: &[u8]) -> Result<String> {
 /// `ParseInteger`.
 pub(crate) fn parse_integer(value: &Value, loption: &[u8]) -> Result<i64> {
     if value.is_null() {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "\"{loption}\" expects a non-null integer value"
         )));
     }
     if is_list(value) {
         let children = list_children(value);
         if children.len() != 1 {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "\"{loption}\" expects a single argument as an integer value"
             )));
         }
@@ -532,15 +532,15 @@ pub(crate) fn parse_integer(value: &Value, loption: &[u8]) -> Result<i64> {
 /// `ParseColumnList(vector<Value>)`.
 fn parse_column_list_values(
     set: &[Value],
-    names: &[rustdb_common::ByteString],
+    names: &[roastedduck_common::ByteString],
     loption: &[u8],
 ) -> Result<Vec<bool>> {
     if set.is_empty() {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "\"{loption}\" expects a column list or * as parameter"
         )));
     }
-    let mut option_map: Vec<(rustdb_common::ByteString, bool)> = Vec::new();
+    let mut option_map: Vec<(roastedduck_common::ByteString, bool)> = Vec::new();
     for value in set {
         let text = value.to_varchar_bytes()?;
         if !option_map
@@ -561,7 +561,7 @@ fn parse_column_list_values(
         }
     }
     if let Some((missing, _)) = option_map.iter().find(|(_, found)| !found) {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "\"{loption}\" expected to find {missing}, but it was not found in the table"
         )));
     }
@@ -571,19 +571,19 @@ fn parse_column_list_values(
 /// `ParseColumnList(Value)`.
 pub fn parse_column_list(
     value: &Value,
-    names: &[rustdb_common::ByteString],
+    names: &[roastedduck_common::ByteString],
     loption: &[u8],
 ) -> Result<Vec<bool>> {
     if !is_list(value) {
         if value.logical_type().id() == LogicalTypeId::Varchar && value.as_str() == Some("*") {
             return Ok(vec![true; names.len()]);
         }
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "\"{loption}\" expects a column list or * as parameter"
         )));
     }
     if value.is_null() {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "\"{loption}\" expects a column list or * as parameter, it can't be a NULL value"
         )));
     }
@@ -615,7 +615,7 @@ fn candidate_specificity(ty: &LogicalType) -> Result<u8> {
         LogicalTypeId::Boolean => 12,
         LogicalTypeId::SqlNull => 13,
         other => {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Auto Type Candidate of type {} is not accepted as a valid input",
                 other.name()
             )));
@@ -808,7 +808,7 @@ impl CsvReaderOptions {
         &mut self,
         loption: &[u8],
         value: &Value,
-        expected_names: &[rustdb_common::ByteString],
+        expected_names: &[roastedduck_common::ByteString],
     ) -> Result<()> {
         if self.set_base_option(loption, value, false)? {
             return Ok(());
@@ -844,7 +844,7 @@ impl CsvReaderOptions {
                 if self.buffer_size_option.is_set_by_user()
                     && self.maximum_line_size.value() > self.buffer_size_option.value()
                 {
-                    return Err(Error::invalid_input(rustdb_common::byte_format!(
+                    return Err(Error::invalid_input(roastedduck_common::byte_format!(
                         "Buffer Size of {} must be a higher value than the maximum line size {}",
                         self.buffer_size_option.value(),
                         self.maximum_line_size.value()
@@ -869,7 +869,7 @@ impl CsvReaderOptions {
                 if self.maximum_line_size.is_set_by_user()
                     && self.maximum_line_size.value() > self.buffer_size_option.value()
                 {
-                    return Err(Error::invalid_input(rustdb_common::byte_format!(
+                    return Err(Error::invalid_input(roastedduck_common::byte_format!(
                         "Buffer Size of {} must be a higher value than the maximum line size {}",
                         self.buffer_size_option.value(),
                         self.maximum_line_size.value()
@@ -906,12 +906,12 @@ impl CsvReaderOptions {
                 if table_name.is_empty() {
                     return Err(Error::binder("REJECTS_TABLE option cannot be empty"));
                 }
-                if rustdb_ast::keyword::requires_quotes(
+                if roastedduck_ast::keyword::requires_quotes(
                     &table_name,
                     true,
-                    rustdb_ast::keyword::KeywordCategory::None,
+                    roastedduck_ast::keyword::KeywordCategory::None,
                 ) {
-                    return Err(Error::binder(rustdb_common::byte_format!(
+                    return Err(Error::binder(roastedduck_common::byte_format!(
                         "rejects_scan option: {table_name} requires quotes to be used as an identifier"
                     )));
                 }
@@ -922,12 +922,12 @@ impl CsvReaderOptions {
                 if table_name.is_empty() {
                     return Err(Error::binder("rejects_scan option cannot be empty"));
                 }
-                if rustdb_ast::keyword::requires_quotes(
+                if roastedduck_ast::keyword::requires_quotes(
                     &table_name,
                     true,
-                    rustdb_ast::keyword::KeywordCategory::None,
+                    roastedduck_ast::keyword::KeywordCategory::None,
                 ) {
-                    return Err(Error::binder(rustdb_common::byte_format!(
+                    return Err(Error::binder(roastedduck_common::byte_format!(
                         "rejects_scan option: {table_name} requires quotes to be used as an identifier"
                     )));
                 }
@@ -957,7 +957,7 @@ impl CsvReaderOptions {
                 }
             }
             _ => {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Unrecognized option for CSV reader \"{loption}\""
                 )));
             }
@@ -994,7 +994,7 @@ impl CsvReaderOptions {
             b"prefix" => self.prefix = parse_string(value, loption)?,
             b"suffix" => self.suffix = parse_string(value, loption)?,
             _ => {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Unrecognized option CSV writer \"{loption}\""
                 )));
             }
@@ -1020,7 +1020,7 @@ impl CsvReaderOptions {
             self.null_str.clear();
             let ty = value.logical_type();
             if ty.id() != LogicalTypeId::List && ty.id() != LogicalTypeId::Varchar {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "CSV Reader function option {loption} requires a string or a list as input"
                 )));
             }
@@ -1031,19 +1031,19 @@ impl CsvReaderOptions {
                     let grandchild = list_child.child_type().cloned().unwrap_or_default();
                     let outer = list_children(value);
                     if grandchild.id() != LogicalTypeId::Varchar || outer.len() != 1 {
-                        return Err(Error::binder(rustdb_common::byte_format!(
+                        return Err(Error::binder(roastedduck_common::byte_format!(
                             "CSV Reader function option {loption} requires a non-empty list of possible null strings (varchar) as input"
                         )));
                     }
                     children = list_children(&outer[outer.len() - 1]);
                 } else if list_child.id() != LogicalTypeId::Varchar {
-                    return Err(Error::binder(rustdb_common::byte_format!(
+                    return Err(Error::binder(roastedduck_common::byte_format!(
                         "CSV Reader function option {loption} requires a non-empty list of possible null strings (varchar) as input"
                     )));
                 }
                 for child in children {
                     if child.is_null() {
-                        return Err(Error::binder(rustdb_common::byte_format!(
+                        return Err(Error::binder(roastedduck_common::byte_format!(
                             "CSV Reader function option {loption} does not accept NULL values as a valid nullstr option"
                         )));
                     }
@@ -1053,7 +1053,7 @@ impl CsvReaderOptions {
                 self.null_str.push(parse_string(value, loption)?);
             }
             if self.null_str.len() > 1 && write_option {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "CSV Writer function option {loption} only accepts one nullstr value."
                 )));
             }
@@ -1073,12 +1073,12 @@ impl CsvReaderOptions {
     }
 
     /// `ToString`: the options shown in error messages.
-    pub fn to_display_string(&self, current_file_path: &[u8]) -> rustdb_common::ByteString {
+    pub fn to_display_string(&self, current_file_path: &[u8]) -> roastedduck_common::ByteString {
         fn line<T: FormatOption>(name: &str, option: &CsvOption<T>) -> String {
             format!("{name} = {} {}\n  ", option.format_value(), option.format_set())
         }
         let sm = &self.dialect_options.state_machine_options;
-        let mut error = rustdb_common::byte_format!("  file = {current_file_path}\n  ");
+        let mut error = roastedduck_common::byte_format!("  file = {current_file_path}\n  ");
         error.push_bytes(line("delimiter", &sm.delimiter));
         error.push_bytes(line("quote", &sm.quote));
         error.push_bytes(line("escape", &sm.escape));
@@ -1095,15 +1095,18 @@ impl CsvReaderOptions {
             "timestamp_format",
             self.dialect_options.date_format(FormatType::Timestamp),
         ));
-        let _ = rustdb_common::byte_write!(error, "null_padding = {}\n  ", u8::from(self.null_padding));
-        let _ = rustdb_common::byte_write!(
+        let _ = roastedduck_common::byte_write!(error, "null_padding = {}\n  ", u8::from(self.null_padding));
+        let _ = roastedduck_common::byte_write!(
             error,
             "sample_size = {}\n  ",
             self.sample_size_chunks.wrapping_mul(STANDARD_VECTOR_SIZE as u64)
         );
-        let _ =
-            rustdb_common::byte_write!(error, "ignore_errors = {}\n  ", self.ignore_errors.format_value());
-        let _ = rustdb_common::byte_write!(error, "all_varchar = {}\n", u8::from(self.all_varchar));
+        let _ = roastedduck_common::byte_write!(
+            error,
+            "ignore_errors = {}\n  ",
+            self.ignore_errors.format_value()
+        );
+        let _ = roastedduck_common::byte_write!(error, "all_varchar = {}\n", u8::from(self.all_varchar));
         error.push_bytes(&self.sniffer_user_mismatch_error);
         error
     }
@@ -1229,12 +1232,12 @@ impl CsvReaderOptions {
     }
 
     /// `GetUserDefinedParameters`.
-    pub fn user_defined_parameters_string(&self) -> rustdb_common::ByteString {
-        rustdb_common::ByteString::join(
+    pub fn user_defined_parameters_string(&self) -> roastedduck_common::ByteString {
+        roastedduck_common::ByteString::join(
             &self
                 .user_defined_parameters
                 .iter()
-                .map(|(key, value)| rustdb_common::byte_format!("{key}={value}"))
+                .map(|(key, value)| roastedduck_common::byte_format!("{key}={value}"))
                 .collect::<Vec<_>>(),
             b", ",
         )
@@ -1253,7 +1256,7 @@ impl CsvReaderOptions {
             .ok()
             .filter(|key| key.is_ascii())
             .ok_or_else(|| {
-                Error::binder(rustdb_common::byte_format!(
+                Error::binder(roastedduck_common::byte_format!(
                     "Unrecognized option for CSV reader \"{}\"",
                     key.to_ascii_lowercase()
                 ))
@@ -1261,7 +1264,7 @@ impl CsvReaderOptions {
         let loption = key.to_ascii_lowercase();
         if store_user_defined_parameter(&loption) {
             self.user_defined_parameters
-                .insert(loption.clone(), rustdb_ast::value_to_sql_string(value));
+                .insert(loption.clone(), roastedduck_ast::value_to_sql_string(value));
         }
         match loption.as_str() {
             "columns" => {
@@ -1346,7 +1349,7 @@ impl CsvReaderOptions {
                         )));
                     }
                     if !seen.insert(name.clone()) {
-                        return Err(Error::binder(rustdb_common::byte_format!(
+                        return Err(Error::binder(roastedduck_common::byte_format!(
                             "read_csv {key} must have unique values. \"{name}\" is repeated."
                         )));
                     }
@@ -1486,12 +1489,12 @@ impl CsvReaderOptions {
 /// `GetBooleanValue`.
 fn boolean_value(loption: &[u8], value: &Value) -> Result<bool> {
     if value.is_null() {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "read_csv {loption} cannot be NULL"
         )));
     }
     value.as_bool().ok_or_else(|| {
-        Error::binder(rustdb_common::byte_format!(
+        Error::binder(roastedduck_common::byte_format!(
             "read_csv {loption} expects a boolean"
         ))
     })

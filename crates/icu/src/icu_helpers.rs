@@ -2,9 +2,9 @@
 //! `icu-strptime.cpp`): time zone lookup with DuckDB's normalisation and suggestions,
 //! and the decomposition of an instant in a calendar.
 
-use rustdb_common::string_util::{candidates_message, top_n_jaro_winkler};
-use rustdb_common::{Error, Result};
-use rustdb_types::Timestamp;
+use roastedduck_common::string_util::{candidates_message, top_n_jaro_winkler};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::Timestamp;
 
 use crate::icu_datefunc::{MICROS_PER_MSEC, extract_field, set_time};
 use crate::icu4c::calendar::{Calendar, field};
@@ -120,7 +120,8 @@ pub(crate) fn get_time_zone_or_message(tz_str: &mut String) -> std::result::Resu
     if let Some(tz) = get_time_zone_internal(tz_str, &mut candidates) {
         return Ok(tz);
     }
-    let candidate_str = candidates_message(&top_n_jaro_winkler(&candidates, &*tz_str), "Candidate time zones");
+    let candidate_str =
+        candidates_message(&top_n_jaro_winkler(&candidates, &*tz_str), "Candidate time zones");
     Err(format!("Unknown TimeZone '{tz_str}'!\n{candidate_str}"))
 }
 

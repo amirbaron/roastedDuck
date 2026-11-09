@@ -3,10 +3,10 @@
 
 use std::collections::HashMap;
 
-use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
-use rustdb_planner::expression::BoundOrderByNode;
-use rustdb_row::sort::{Sort, SortColumn, SortConfig};
-use rustdb_types::{DataChunk, LogicalType, SelectionVector, Vector};
+use roastedduck_common::{Result, STANDARD_VECTOR_SIZE};
+use roastedduck_planner::expression::BoundOrderByNode;
+use roastedduck_row::sort::{Sort, SortColumn, SortConfig};
+use roastedduck_types::{DataChunk, LogicalType, SelectionVector, Vector};
 
 use super::aggregate_states::ScratchStates;
 use super::aggregator::{FlushBuffer, WindowAggregator, evaluate_subframes, init_subframes};
@@ -190,7 +190,7 @@ impl NaiveLocalState {
 /// Whether two rows have the same arguments (`IS NOT DISTINCT FROM` on every column).
 fn rows_equal(columns: &[Vector], left: usize, right: usize) -> Result<bool> {
     for column in columns {
-        if rustdb_row::values_distinct(column, left, column, right)? {
+        if roastedduck_row::values_distinct(column, left, column, right)? {
             return Ok(false);
         }
     }
@@ -200,6 +200,6 @@ fn rows_equal(columns: &[Vector], left: usize, right: usize) -> Result<bool> {
 /// Hashes the argument rows of a hash group for DISTINCT.
 pub(crate) fn hash_rows(inputs: &[Vector], count: usize) -> Result<Vec<u64>> {
     let columns: Vec<&Vector> = inputs.iter().collect();
-    let hashes = rustdb_row::hash::hash_columns(&columns, count)?;
+    let hashes = roastedduck_row::hash::hash_columns(&columns, count)?;
     Ok(hashes.values::<u64>()[..count].to_vec())
 }

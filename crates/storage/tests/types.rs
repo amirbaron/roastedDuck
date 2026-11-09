@@ -5,13 +5,13 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use rustdb_buffer::{BufferManager, BufferManagerConfig, InMemoryBlockManager};
-use rustdb_storage::table::StorageIndex;
-use rustdb_storage::{
+use roastedduck_buffer::{BufferManager, BufferManagerConfig, InMemoryBlockManager};
+use roastedduck_storage::table::StorageIndex;
+use roastedduck_storage::{
     ColumnDefinition, DataTable, TableConstraints, TableIoManager, TableScanState, Transaction,
     TransactionManager,
 };
-use rustdb_types::{DataChunk, Interval, LogicalType, Value, Vector};
+use roastedduck_types::{DataChunk, Interval, LogicalType, Value, Vector};
 
 fn io_with(config: BufferManagerConfig) -> Arc<TableIoManager> {
     let buffer_manager = BufferManager::new(config).unwrap();
@@ -75,7 +75,7 @@ fn insert_rows(manager: &TransactionManager, table: &Arc<DataTable>, rows: &[Vec
 
 /// One sample value per type, varied by `i`; NULL every 5th row.
 fn sample(ty: &LogicalType, i: i64) -> Value {
-    use rustdb_types::LogicalTypeId as L;
+    use roastedduck_types::LogicalTypeId as L;
     if i % 5 == 3 {
         return Value::null(ty.clone());
     }
@@ -214,7 +214,7 @@ fn every_type_round_trips_with_nulls() {
 
 fn temp_dir(name: &str) -> PathBuf {
     let unique = format!(
-        "rustdb-storage-{name}-{}-{:?}",
+        "roastedduck-storage-{name}-{}-{:?}",
         std::process::id(),
         std::time::SystemTime::now()
     );

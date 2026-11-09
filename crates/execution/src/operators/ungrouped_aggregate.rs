@@ -1,17 +1,17 @@
 use crate::operator::aggregate_names;
-use rustdb_common::tree_renderer::RenderParams;
+use roastedduck_common::tree_renderer::RenderParams;
 use std::alloc::{Layout, alloc_zeroed, dealloc, handle_alloc_error};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::AggregateInput;
-use rustdb_function::{AggregateOps, StatePtr};
-use rustdb_planner::expression::BoundAggregateExpression as BoundAggregate;
-use rustdb_row::hash::hash_columns;
-use rustdb_row::{PartitionedTupleData, TupleDataCollection};
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::AggregateInput;
+use roastedduck_function::{AggregateOps, StatePtr};
+use roastedduck_planner::expression::BoundAggregateExpression as BoundAggregate;
+use roastedduck_row::hash::hash_columns;
+use roastedduck_row::{PartitionedTupleData, TupleDataCollection};
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
@@ -181,7 +181,7 @@ impl UngroupedAggregateExecuteState {
             if passed == 0 {
                 return Ok(None);
             }
-            let sel = rustdb_types::SelectionVector::new(std::mem::take(&mut self.selection));
+            let sel = roastedduck_types::SelectionVector::new(std::mem::take(&mut self.selection));
             input = DataChunk::new(chunk.columns().iter().map(|c| c.slice(&sel)).collect(), passed);
         }
         let mut arguments = DataChunk::default();
@@ -270,7 +270,8 @@ impl PhysicalOperator for PhysicalUngroupedAggregate {
     }
     fn sink_order_dependent(&self) -> bool {
         self.aggregates.iter().any(|aggregate| {
-            aggregate.function.order_dependence == rustdb_function::aggregate::OrderDependence::OrderDependent
+            aggregate.function.order_dependence
+                == roastedduck_function::aggregate::OrderDependence::OrderDependent
         })
     }
 

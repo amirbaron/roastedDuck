@@ -3,9 +3,9 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{FunctionData, InOutResult, TableFunction, TableInOutFunction, TableScanState};
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{FunctionData, InOutResult, TableFunction, TableInOutFunction, TableScanState};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use crate::operator::{ErasedOperator, PhysicalOperator, PhysicalRef};
 use crate::{ExecutionContext, Operator, OperatorResult};

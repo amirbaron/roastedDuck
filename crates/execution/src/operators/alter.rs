@@ -4,14 +4,14 @@
 
 use std::sync::Arc;
 
-use rustdb_catalog::{Catalog, CatalogEntry, EntryKind, StorageHook, TableEntry};
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_planner::Expression;
-use rustdb_planner::operator::AlterAction;
-use rustdb_storage::index::IndexConstraintType;
-use rustdb_storage::index::art::IndexKeyExpressions;
-use rustdb_storage::{ColumnDefinition, DataTable, StorageIndex, Transaction};
-use rustdb_types::{DataChunk, Vector};
+use roastedduck_catalog::{Catalog, CatalogEntry, EntryKind, StorageHook, TableEntry};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_planner::Expression;
+use roastedduck_planner::operator::AlterAction;
+use roastedduck_storage::index::IndexConstraintType;
+use roastedduck_storage::index::art::IndexKeyExpressions;
+use roastedduck_storage::{ColumnDefinition, DataTable, StorageIndex, Transaction};
+use roastedduck_types::{DataChunk, Vector};
 
 use super::ddl::DdlAction;
 use crate::expression_executor::ExpressionExecutor;
@@ -20,12 +20,12 @@ use crate::expression_executor::ExpressionExecutor;
 #[derive(Debug)]
 pub struct AlterEntryAction {
     pub catalog: Arc<Catalog>,
-    pub schema: rustdb_common::ByteString,
+    pub schema: roastedduck_common::ByteString,
     pub entry: Option<Arc<CatalogEntry>>,
     pub action: AlterAction,
     pub dependents_allowed: bool,
     /// The statement the WAL logs.
-    pub info: Option<Box<rustdb_ast::AlterInfo>>,
+    pub info: Option<Box<roastedduck_ast::AlterInfo>>,
 }
 
 /// Evaluates `expression` over `input` into a single vector.
@@ -46,10 +46,10 @@ impl AlterEntryAction {
     pub fn execute_replayed_primary_key(
         &self,
         transaction: &Transaction,
-        stored: &rustdb_storage::index::art::ArtStorageInfo,
+        stored: &roastedduck_storage::index::art::ArtStorageInfo,
     ) -> Result<(
-        Arc<rustdb_storage::DataTableInfo>,
-        rustdb_storage::index::IndexSlot,
+        Arc<roastedduck_storage::DataTableInfo>,
+        roastedduck_storage::index::IndexSlot,
     )> {
         let AlterAction::AddPrimaryKey {
             definition,
@@ -77,7 +77,7 @@ impl AlterEntryAction {
         self.execute_internal(transaction, true)?;
         Ok((
             Arc::clone(storage.info()),
-            rustdb_storage::index::IndexSlot::from_bound(art),
+            roastedduck_storage::index::IndexSlot::from_bound(art),
         ))
     }
 
@@ -102,7 +102,7 @@ impl AlterEntryAction {
         }
         Err(Error::new_bytes(
             ErrorKind::Dependency,
-            rustdb_common::byte_format!(
+            roastedduck_common::byte_format!(
                 "Cannot alter entry \"{}\" because there are entries that depend on it.",
                 entry.name()
             ),
@@ -119,7 +119,7 @@ impl AlterEntryAction {
         hook: StorageHook,
     ) -> Result<()> {
         definition.storage = storage;
-        let dependencies = rustdb_catalog::dependencies::altered_table_dependencies(
+        let dependencies = roastedduck_catalog::dependencies::altered_table_dependencies(
             &definition,
             &entry.dependencies,
             "main",
@@ -173,8 +173,8 @@ fn primary_key_art(
     storage: &Arc<DataTable>,
     definition: &TableEntry,
     keys: &[usize],
-    index_name: &rustdb_common::ByteString,
-) -> Result<rustdb_storage::index::Art> {
+    index_name: &roastedduck_common::ByteString,
+) -> Result<roastedduck_storage::index::Art> {
     let names: Vec<_> = definition
         .physical_columns()
         .map(|(_, _, column)| column.name.clone())
@@ -237,7 +237,7 @@ impl AlterEntryAction {
                         .get_entry(transaction, entry.catalog_type(), &self.schema, new_name)
                         .is_some()
                 {
-                    return Err(Error::catalog(rustdb_common::byte_format!(
+                    return Err(Error::catalog(roastedduck_common::byte_format!(
                         "Could not rename \"{}\" to \"{new_name}\": another entry with this name already exists!",
                         entry.name()
                     )));
@@ -325,7 +325,7 @@ impl AlterEntryAction {
                 let storage = storage.ok_or_else(|| Error::internal("ALTER of a table without storage"))?;
                 self.check_dependents(transaction, entry)?;
                 self.replace_storage(transaction, entry, definition, &storage, || {
-                    let names: Vec<rustdb_common::ByteString> = definition
+                    let names: Vec<roastedduck_common::ByteString> = definition
                         .physical_columns()
                         .map(|(_, _, column)| column.name.clone())
                         .collect();
@@ -348,12 +348,12 @@ impl AlterEntryAction {
                 };
                 storage.check_main_table_for_index_creation()?;
                 if storage.indexes().contains(index_name) {
-                    return Err(Error::catalog(rustdb_common::byte_format!(
+                    return Err(Error::catalog(roastedduck_common::byte_format!(
                         "an index with that name already exists for this table: {index_name}"
                     )));
                 }
                 if let Some(existing) = existing {
-                    return Err(Error::catalog(rustdb_common::byte_format!(
+                    return Err(Error::catalog(roastedduck_common::byte_format!(
                         "table \"{}\" can have only one primary key: {existing}",
                         entry.name()
                     )));

@@ -1,5 +1,5 @@
 //! Native setting diagnostics retain bytes while adding the standard install hint.
-use rustdb_function::extension_entries::{add_install_hint, add_install_hint_bytes};
+use roastedduck_function::extension_entries::{add_install_hint, add_install_hint_bytes};
 #[test]
 fn native_hint_preserves_every_byte_and_text_contract() {
     for extension in ["httpfs", "custom_extension"] {

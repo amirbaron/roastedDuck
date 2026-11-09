@@ -9,8 +9,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use rustdb_ast::{ExpressionType, JoinType};
-use rustdb_planner::{
+use roastedduck_ast::{ExpressionType, JoinType};
+use roastedduck_planner::{
     ColumnBinding, DistinctType, Expression, ExpressionKind, LogicalKind, LogicalOperator,
     LogicalOperatorType,
 };

@@ -1,19 +1,21 @@
 //! Single-object removal and credential-separated `ListObjectsV2` deletion batches.
 use md5::{Digest, Md5};
-use rustdb_common::{ByteString, Error, ErrorKind, Result};
+use roastedduck_common::{ByteString, Error, ErrorKind, Result};
 use std::io::Read as _;
 
 use super::{S3FileSystem, S3Request, SECRET_RESOLVER_KEY, SecretResolver, encode, io_error, tag};
 use crate::HttpFile;
 
 pub(super) fn remove(path: &[u8]) -> Result<()> {
-    rustdb_function::file_system::verify_can_write(path)?;
+    roastedduck_function::file_system::verify_can_write(path)?;
     let file = match S3FileSystem::open_file(path) {
         Ok(file) => file,
         Err(error) if error.kind() == ErrorKind::Http && error.raw_message().contains("HTTP 404") => {
             return Err(Error::new_bytes(
                 ErrorKind::Io,
-                rustdb_common::byte_format!("Could not remove file \"{path}\": No such file or directory"),
+                roastedduck_common::byte_format!(
+                    "Could not remove file \"{path}\": No such file or directory"
+                ),
             )
             .with_extra_info("errno", "404"));
         }
@@ -26,7 +28,7 @@ pub(super) fn remove(path: &[u8]) -> Result<()> {
     }
     Err(Error::new_bytes(
         ErrorKind::Io,
-        rustdb_common::byte_format!(
+        roastedduck_common::byte_format!(
             "Could not remove file \"{path}\": {}",
             status.canonical_reason().unwrap_or_default()
         ),
@@ -74,7 +76,7 @@ fn identity(request: &S3Request, path: &str) -> Result<Vec<Vec<u8>>> {
         key.push(name.into_bytes());
         key.push(value.into_bytes());
     }
-    if let Some(resolver) = rustdb_function::file_system::opener()
+    if let Some(resolver) = roastedduck_function::file_system::opener()
         .and_then(|c| c.object_cache())
         .and_then(|c| c.get::<SecretResolver>(SECRET_RESOLVER_KEY))
     {
@@ -86,7 +88,7 @@ fn identity(request: &S3Request, path: &str) -> Result<Vec<Vec<u8>>> {
 pub(super) fn remove_files(paths: &[ByteString]) -> Result<()> {
     let mut batches: Vec<Batch> = Vec::new();
     for path in paths {
-        rustdb_function::file_system::verify_can_write(path)?;
+        roastedduck_function::file_system::verify_can_write(path)?;
         let request = S3FileSystem::prepare(path, false)?;
         let key = identity(&request, std::str::from_utf8(path).map_err(io_error)?)?;
         if let Some(batch) = batches.iter_mut().find(|batch| batch.identity == key) {
@@ -123,7 +125,7 @@ pub(super) fn remove_files(paths: &[ByteString]) -> Result<()> {
             signing.content_type = "application/xml".into();
             let digest = Md5::digest(body.as_bytes());
             let mut encoded = Vec::new();
-            rustdb_types::blob::write_base64(digest.as_slice(), &mut encoded);
+            roastedduck_types::blob::write_base64(digest.as_slice(), &mut encoded);
             signing.content_md5 = String::from_utf8(encoded).map_err(io_error)?;
             let protocol = batch
                 .request

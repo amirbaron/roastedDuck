@@ -6,16 +6,16 @@ mod common;
 use std::sync::Arc;
 
 use common::{Rng, TestValue, buffer_manager, build_chunks, random_value, struct_type};
-use rustdb_buffer::MemoryTag;
-use rustdb_common::Result;
-use rustdb_function::AggregateFunction;
-use rustdb_function::aggregate::{Unary, UnaryAggregate};
-use rustdb_row::{
+use roastedduck_buffer::MemoryTag;
+use roastedduck_common::Result;
+use roastedduck_function::AggregateFunction;
+use roastedduck_function::aggregate::{Unary, UnaryAggregate};
+use roastedduck_row::{
     ChunkFormat, MatchPredicate, PinProperties, RowAggregate, RowMatcher, RowOperationsState, RowPtr,
     TupleDataCollection, TupleDataLayout, ValidityType, combine_states, destroy_states, finalize_states,
     initialize_states, update_states,
 };
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 
 fn match_types() -> Vec<LogicalType> {
     vec![

@@ -6,16 +6,16 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
-use rustdb_ast::{
+use roastedduck_ast::{
     AggregateHandling, BaseTableRef, CommonTableExpressionMap, ComparisonExpression, ConjunctionExpression,
     DistinctModifier, ExpressionType, InsertColumnOrder, InsertStatement, JoinRefType, JoinType,
     MergeActionCondition, MergeActionType, MergeIntoAction, MergeIntoStatement, OnConflictAction,
     ParsedExpression, ParsedExpressionKind, QueryNode, QueryNodeKind, ResultModifier, SelectNode,
     SelectStatement, StarExpression, SubqueryRef, TableRef, TableRefKind, UpdateSetInfo,
 };
-use rustdb_catalog::{CatalogEntry, TableEntry};
-use rustdb_common::{ByteString, CaseInsensitiveMap, Error, Result};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_catalog::{CatalogEntry, TableEntry};
+use roastedduck_common::{ByteString, CaseInsensitiveMap, Error, Result};
+use roastedduck_types::{LogicalType, Value};
 
 use super::super::query_node::plan_subqueries;
 use super::super::tableref::bind_joinref::{JoinSpec, bind_bound_join};
@@ -152,7 +152,7 @@ fn bind_merge_action(
                             .map(|(_, _, column)| column.name.clone())
                             .collect();
                         if source.len() != info.columns.len() {
-                            return Err(Error::binder(rustdb_common::byte_format!(
+                            return Err(Error::binder(roastedduck_common::byte_format!(
                                 "Data provided for UPDATE did not match column count in table - expected {} \
                                  columns but got {}",
                                 info.columns.len(),
@@ -285,7 +285,7 @@ fn join_operator(root: &mut LogicalOperator) -> Result<&mut LogicalOperator> {
         current = &mut current.children[0];
     }
     if current.children.len() != 2 {
-        return Err(Error::not_implemented(rustdb_common::byte_format!(
+        return Err(Error::not_implemented(roastedduck_common::byte_format!(
             "Expected a join after binding a join operator - but got a {}",
             current.operator_type().name()
         )));
@@ -563,7 +563,7 @@ fn do_update_set_qualify(
                     do_update_set_qualify(child, table_name, lambda_params)?;
                     continue;
                 };
-                let Some(parameters) = rustdb_ast::lambda_parameters(lambda) else {
+                let Some(parameters) = roastedduck_ast::lambda_parameters(lambda) else {
                     // Possibly a JSON function: qualify both sides.
                     for_each_child(&mut lambda.lhs, &mut |child| {
                         do_update_set_qualify(child, table_name, lambda_params)
@@ -672,7 +672,7 @@ fn excluded_subquery(
 
 fn subquery_ref(subquery: SelectStatement, column_name_alias: Vec<ByteString>) -> TableRef {
     TableRef {
-        external_dependency: rustdb_ast::ExternalDependency::default(),
+        external_dependency: roastedduck_ast::ExternalDependency::default(),
         alias: "excluded".into(),
         sample: None,
         query_location: None,
@@ -699,7 +699,7 @@ fn star() -> ParsedExpression {
             relation_name: ByteString::new(),
             exclude_list: Vec::new(),
             replace_list: CaseInsensitiveMap::default(),
-            rename_list: rustdb_common::OrderedMap::default(),
+            rename_list: roastedduck_common::OrderedMap::default(),
             columns: false,
             expr: None,
         })),
@@ -739,7 +739,7 @@ pub fn generate_merge_into(stmt: &mut InsertStatement, entry: &CatalogEntry) -> 
     let target = match stmt.table_ref.take() {
         Some(target) => target,
         None => Box::new(TableRef {
-            external_dependency: rustdb_ast::ExternalDependency::default(),
+            external_dependency: roastedduck_ast::ExternalDependency::default(),
             alias: ByteString::new(),
             sample: None,
             query_location: None,
@@ -851,7 +851,7 @@ pub fn generate_merge_into(stmt: &mut InsertStatement, entry: &CatalogEntry) -> 
     let mut source = match stmt.select_statement.take() {
         Some(select) => subquery_ref(*select, Vec::new()),
         None => TableRef {
-            external_dependency: rustdb_ast::ExternalDependency::default(),
+            external_dependency: roastedduck_ast::ExternalDependency::default(),
             alias: ByteString::new(),
             sample: None,
             query_location: None,

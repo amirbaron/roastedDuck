@@ -2,19 +2,19 @@
 use crate::{conversion, error};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyTuple};
-use rustdb_arrow::{
+use roastedduck_arrow::{
     ClientProperties,
     ffi::{ArrowArrayWrapper, ArrowSchemaWrapper},
 };
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::ValueCast;
-use rustdb_function::{NullHandling, Stability};
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, SelectionVector, Value, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_function::{NullHandling, Stability};
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, SelectionVector, Value, Vector};
 
 #[derive(Debug)]
 struct ArrowProperties(ClientProperties);
-impl rustdb_function::FunctionData for ArrowProperties {
+impl roastedduck_function::FunctionData for ArrowProperties {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -216,14 +216,14 @@ pub(super) fn function(
                     properties.time_zone = zone;
                 }
                 if enabled("arrow_large_buffer_size") {
-                    properties.arrow_offset_size = rustdb_arrow::ArrowOffsetSize::Large;
+                    properties.arrow_offset_size = roastedduck_arrow::ArrowOffsetSize::Large;
                 }
                 properties.arrow_use_list_view = enabled("arrow_output_list_view");
                 properties.produce_arrow_string_view = enabled("produce_arrow_string_view");
                 properties.arrow_lossless_conversion = enabled("arrow_lossless_conversion");
                 if let Some(version) = setting("arrow_output_version")
                     .and_then(|v| v.to_varchar().ok())
-                    .and_then(|v| rustdb_arrow::ArrowFormatVersion::from_setting(&v))
+                    .and_then(|v| roastedduck_arrow::ArrowFormatVersion::from_setting(&v))
                 {
                     properties.arrow_output_version = version;
                 }
@@ -342,7 +342,7 @@ fn execute_native(
             return Err(Error::invalid_input(NULL_ERROR));
         }
         if object.is_instance_of::<PyBool>() && ret.id() != LogicalTypeId::Boolean {
-            return Err(Error::new_bytes(rustdb_common::ErrorKind::MismatchType, rustdb_common::byte_format!("Type BOOLEAN does not match with {}. Python Conversion Failure: Expected a value of type %s, but got a value of type boolean",ret.to_bytes()).into_bytes()));
+            return Err(Error::new_bytes(roastedduck_common::ErrorKind::MismatchType, roastedduck_common::byte_format!("Type BOOLEAN does not match with {}. Python Conversion Failure: Expected a value of type %s, but got a value of type boolean",ret.to_bytes()).into_bytes()));
         }
         let value = return_value(&object, ret).map_err(boundary)?;
         let value = if value.logical_type() == ret {
@@ -386,9 +386,9 @@ fn execute_arrow(
         .map(|i| format!("c{i}").into())
         .collect::<Vec<_>>();
     let mut schema = ArrowSchemaWrapper::default();
-    rustdb_arrow::to_arrow_schema(&mut schema.arrow_schema, &types, &names, properties)?;
+    roastedduck_arrow::to_arrow_schema(&mut schema.arrow_schema, &types, &names, properties)?;
     let mut array = ArrowArrayWrapper {
-        arrow_array: rustdb_arrow::to_arrow_array(&chunk, properties)?,
+        arrow_array: roastedduck_arrow::to_arrow_array(&chunk, properties)?,
     };
     let batch = arrow
         .getattr("RecordBatch")
@@ -479,12 +479,12 @@ fn execute_arrow(
                 ),
             )
             .map_err(boundary)?;
-        let mut imported = rustdb_arrow::ArrowTableSchema::default();
+        let mut imported = roastedduck_arrow::ArrowTableSchema::default();
         // SAFETY: PyArrow exported a live struct array and matching schema. Both wrappers
         // release on errors; data_chunk_from_arrow takes array ownership and pins buffers.
         let chunk = unsafe {
-            rustdb_arrow::populate_arrow_table_schema(&mut imported, &schema.arrow_schema)?;
-            rustdb_arrow::data_chunk_from_arrow(&mut array.arrow_array, &imported)?
+            roastedduck_arrow::populate_arrow_table_schema(&mut imported, &schema.arrow_schema)?;
+            roastedduck_arrow::data_chunk_from_arrow(&mut array.arrow_array, &imported)?
         };
         for index in 0..chunk.len() {
             let value = chunk.column(0).get_value(index).try_cast(ret)?;

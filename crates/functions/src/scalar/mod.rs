@@ -25,14 +25,14 @@ pub mod system;
 pub mod union;
 pub mod variant;
 
-use rustdb_function::ScalarFunctionSet;
+use roastedduck_function::ScalarFunctionSet;
 
 use operator::arithmetic;
 
 /// A copy of `set` under another name, with every overload renamed (DuckDB registers
 /// aliases as separate catalog entries).
 pub(crate) fn alias(set: &ScalarFunctionSet, name: &str) -> ScalarFunctionSet {
-    let name = rustdb_common::ByteString::from(name);
+    let name = roastedduck_common::ByteString::from(name);
     let mut alias = set.clone();
     alias.name = name.clone();
     for function in &mut alias.functions {
@@ -160,7 +160,7 @@ pub fn scalar_functions() -> Vec<ScalarFunctionSet> {
 /// them; e.g. `&&` of GEOMETRY and of lists).
 fn merge_overloads(sets: Vec<ScalarFunctionSet>) -> Vec<ScalarFunctionSet> {
     let mut merged: Vec<ScalarFunctionSet> = Vec::with_capacity(sets.len());
-    let mut positions: std::collections::HashMap<rustdb_common::ByteString, usize> =
+    let mut positions: std::collections::HashMap<roastedduck_common::ByteString, usize> =
         std::collections::HashMap::new();
     for set in sets {
         let name = set.name.to_ascii_lowercase();

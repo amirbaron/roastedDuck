@@ -4,14 +4,14 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use rustdb_ast::{
+use roastedduck_ast::{
     AggregateHandling, CommonTableExpressionMap, Constraint, CopyInfo, ExportStatement, ParsedExpression,
     QueryNode, QueryNodeKind, SelectNode, TableRef, TableRefKind,
 };
-use rustdb_catalog::EntryKind;
-use rustdb_common::{ByteString, CaseInsensitiveMap, Error, ErrorKind, Result};
-use rustdb_function::CopyOptionMode;
-use rustdb_types::{LogicalType, Value};
+use roastedduck_catalog::EntryKind;
+use roastedduck_common::{ByteString, CaseInsensitiveMap, Error, ErrorKind, Result};
+use roastedduck_function::CopyOptionMode;
+use roastedduck_types::{LogicalType, Value};
 
 use super::copy::{bind_copy_as, bind_copy_options, copy_function};
 use crate::binder::{BindScope, BoundStatement, Scope};
@@ -34,9 +34,9 @@ fn sanitize_export_identifier(text: &[u8]) -> String {
 fn create_file_name(id_suffix: &str, schema: &[u8], table: &[u8], extension: &str) -> ByteString {
     let name = sanitize_export_identifier(table);
     if schema == b"main" {
-        return rustdb_common::byte_format!("{name}{id_suffix}.{extension}");
+        return roastedduck_common::byte_format!("{name}{id_suffix}.{extension}");
     }
-    rustdb_common::byte_format!(
+    roastedduck_common::byte_format!(
         "{}_{name}{id_suffix}.{extension}",
         sanitize_export_identifier(schema)
     )
@@ -47,7 +47,7 @@ fn export_select(
     catalog: &[u8],
     schema: &[u8],
     table: &[u8],
-    columns: &[rustdb_common::ByteString],
+    columns: &[roastedduck_common::ByteString],
 ) -> QueryNode {
     QueryNode {
         modifiers: Vec::new(),
@@ -58,11 +58,11 @@ fn export_select(
                 .map(|name| ParsedExpression::column_ref([name.clone()]))
                 .collect(),
             from_table: Box::new(TableRef {
-                external_dependency: rustdb_ast::ExternalDependency::default(),
-                alias: rustdb_common::ByteString::new(),
+                external_dependency: roastedduck_ast::ExternalDependency::default(),
+                alias: roastedduck_common::ByteString::new(),
                 sample: None,
                 query_location: None,
-                kind: TableRefKind::BaseTable(Box::new(rustdb_ast::BaseTableRef {
+                kind: TableRefKind::BaseTable(Box::new(roastedduck_ast::BaseTableRef {
                     catalog_name: catalog.into(),
                     schema_name: schema.into(),
                     table_name: table.into(),
@@ -89,7 +89,7 @@ pub fn bind_export(scope: &mut BindScope<'_>, stmt: &mut ExportStatement) -> Res
     let function = copy_function(scope, &info.format.clone(), false)?
         .ok_or_else(|| Error::internal("copy function lookup returned nothing"))?;
     if function.copy_to_bind.is_none() && function.plan.is_none() {
-        return Err(Error::not_implemented(rustdb_common::byte_format!(
+        return Err(Error::not_implemented(roastedduck_common::byte_format!(
             "COPY TO is not supported for FORMAT \"{}\"",
             info.format
         )));
@@ -103,7 +103,7 @@ pub fn bind_export(scope: &mut BindScope<'_>, stmt: &mut ExportStatement) -> Res
     // catalog means the default catalog; resolving it must not rewrite the plan.
     let requested_catalog = stmt.database.clone();
     let catalog = scope.context.catalog(&catalog_name).cloned().ok_or_else(|| {
-        Error::binder(rustdb_common::byte_format!(
+        Error::binder(roastedduck_common::byte_format!(
             "Catalog \"{catalog_name}\" does not exist!"
         ))
     })?;
@@ -119,7 +119,7 @@ pub fn bind_export(scope: &mut BindScope<'_>, stmt: &mut ExportStatement) -> Res
             }
         }
     }
-    let tables = rustdb_catalog::checkpoint::reorder_table_entries(tables);
+    let tables = roastedduck_catalog::checkpoint::reorder_table_entries(tables);
 
     let mut exported = Vec::new();
     let mut taken_names: HashSet<ByteString> = HashSet::new();
@@ -133,13 +133,13 @@ pub fn bind_export(scope: &mut BindScope<'_>, stmt: &mut ExportStatement) -> Res
             let suffix = if id == 0 { String::new() } else { format!("_{id}") };
             let name = create_file_name(&suffix, schema, entry.name(), &function.extension);
             let separator = if info.file_path.ends_with(b"/") { "" } else { "/" };
-            let full_path = rustdb_common::byte_format!("{}{separator}{name}", info.file_path);
+            let full_path = roastedduck_common::byte_format!("{}{separator}{name}", info.file_path);
             if taken_names.insert(full_path.clone()) {
                 break full_path;
             }
             id += 1;
         };
-        let not_null_columns: Vec<rustdb_common::ByteString> = table
+        let not_null_columns: Vec<roastedduck_common::ByteString> = table
             .constraints
             .iter()
             .filter_map(|constraint| match constraint {
@@ -150,7 +150,7 @@ pub fn bind_export(scope: &mut BindScope<'_>, stmt: &mut ExportStatement) -> Res
                 _ => None,
             })
             .collect();
-        let columns: Vec<rustdb_common::ByteString> = table
+        let columns: Vec<roastedduck_common::ByteString> = table
             .physical_columns()
             .map(|(_, _, column)| column.name.clone())
             .collect();
@@ -189,7 +189,7 @@ pub fn bind_export(scope: &mut BindScope<'_>, stmt: &mut ExportStatement) -> Res
             bind_copy_as(
                 &mut child_scope,
                 &mut copy_info,
-                rustdb_function::copy::CopyToType::ExportDatabase,
+                roastedduck_function::copy::CopyToType::ExportDatabase,
             )?
         };
         export_nodes.push(bound.plan);
@@ -211,18 +211,21 @@ pub fn bind_export(scope: &mut BindScope<'_>, stmt: &mut ExportStatement) -> Res
         ),
     };
     // `FileSystem::CreateDirectory` through the client's opener file system.
-    rustdb_function::file_system::verify_can_access_directory(&info.file_path)?;
-    if let Some(fs) = rustdb_function::registered_files::lookup(&info.file_path) {
+    roastedduck_function::file_system::verify_can_access_directory(&info.file_path)?;
+    if let Some(fs) = roastedduck_function::registered_files::lookup(&info.file_path) {
         if !fs.is_dir(&info.file_path)? {
             fs.mkdir(&info.file_path)?;
         }
     } else {
-        let directory = rustdb_function::file_system::native_path(&info.file_path)?;
+        let directory = roastedduck_function::file_system::native_path(&info.file_path)?;
         if !directory.is_dir() {
             std::fs::create_dir_all(&directory).map_err(|error| {
                 Error::new_bytes(
                     ErrorKind::Io,
-                    rustdb_common::byte_format!("Failed to create directory \"{}\": {error}", info.file_path),
+                    roastedduck_common::byte_format!(
+                        "Failed to create directory \"{}\": {error}",
+                        info.file_path
+                    ),
                 )
             })?;
         }
@@ -247,9 +250,9 @@ pub fn bind_export(scope: &mut BindScope<'_>, stmt: &mut ExportStatement) -> Res
     // BindCopyOptions inserts evaluated values into C++'s case-insensitive
     // unordered map, then EXPORT inserts CSV defaults. Retain that real map's
     // iteration order, including its bucket growth before write-only erasure.
-    let mut option_order = rustdb_common::libcxx::UnorderedOrder::default();
+    let mut option_order = roastedduck_common::libcxx::UnorderedOrder::default();
     for (name, _) in info.options.iter() {
-        option_order.insert(rustdb_common::libcxx::ci_hash(name), name.clone(), |a, b| {
+        option_order.insert(roastedduck_common::libcxx::ci_hash(name), name.clone(), |a, b| {
             a.eq_ignore_ascii_case(b)
         });
     }
@@ -276,7 +279,7 @@ pub fn bind_export(scope: &mut BindScope<'_>, stmt: &mut ExportStatement) -> Res
     for name in erased {
         info.options.remove(&name);
     }
-    let mut ordered_options = rustdb_common::CaseInsensitiveMap::default();
+    let mut ordered_options = roastedduck_common::CaseInsensitiveMap::default();
     for index in option_order.order() {
         let name = &option_order.keys()[index];
         if let Some(values) = info.options.remove(name) {

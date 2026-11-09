@@ -3,20 +3,20 @@
 //! `list_reduce.cpp`).
 //!
 //! The binder binds the lambda body and hands it to the executor, which evaluates it
-//! through [`rustdb_function::LambdaExecutor`]: the kernels lay out the lambda's input
+//! through [`roastedduck_function::LambdaExecutor`]: the kernels lay out the lambda's input
 //! chunk exactly like DuckDB (index parameter first, then the element(s), then the other
 //! arguments: outer lambda parameters and captured columns).
 
 use std::ops::ControlFlow;
 use std::sync::Arc;
 
-use rustdb_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::{
+use roastedduck_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::{
     BindInput, FunctionData, FunctionState, LambdaExecutor, ListLambdaBindData, NullHandling, ScalarFunction,
     ScalarFunctionSet,
 };
-use rustdb_types::kernels::scatter;
-use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, SelectionVector, Value, Vector};
+use roastedduck_types::kernels::scatter;
+use roastedduck_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, SelectionVector, Value, Vector};
 
 use crate::scalar::executor::addressable;
 use crate::scalar::nested::{ListInput, all_constant};
@@ -112,7 +112,7 @@ fn prepare_bind(
     }
 }
 
-fn lambda_input<'a>(input: &'a BindInput<'_>) -> Result<&'a rustdb_function::LambdaInput> {
+fn lambda_input<'a>(input: &'a BindInput<'_>) -> Result<&'a roastedduck_function::LambdaInput> {
     input
         .lambda
         .ok_or_else(|| Error::binder("Invalid lambda expression!"))
@@ -530,7 +530,7 @@ fn lambda_function(
     return_type: LogicalType,
     kernel: fn(&DataChunk, &mut FunctionState, &mut Vector) -> Result<()>,
     bind: fn(&mut ScalarFunction, &BindInput<'_>) -> BindResult,
-    bind_lambda: rustdb_function::BindLambda,
+    bind_lambda: roastedduck_function::BindLambda,
 ) -> ScalarFunction {
     let mut function = ScalarFunction::new(name, arguments, return_type, kernel).with_bind(bind);
     function.null_handling = NullHandling::Special;

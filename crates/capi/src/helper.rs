@@ -3,9 +3,9 @@
 
 use std::ffi::{CStr, CString, c_char, c_void};
 
-use rustdb_ast::StatementType;
-use rustdb_common::{Error, ErrorKind};
-use rustdb_types::{LogicalTypeId, StringT};
+use roastedduck_ast::StatementType;
+use roastedduck_common::{Error, ErrorKind};
+use roastedduck_types::{LogicalTypeId, StringT};
 
 use crate::error_data::{DuckdbErrorData, duckdb_create_error_data};
 use crate::types::*;
@@ -307,7 +307,7 @@ pub(crate) fn c_string(text: impl AsRef<[u8]>) -> *mut c_char {
 
 /// Runs an engine call that may panic, turning a panic into an internal error like the
 /// `catch (...)` blocks of DuckDB's C API.
-pub(crate) fn catch<T>(call: impl FnOnce() -> rustdb::Result<T>) -> rustdb::Result<T> {
+pub(crate) fn catch<T>(call: impl FnOnce() -> roastedduck::Result<T>) -> roastedduck::Result<T> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(call)).unwrap_or_else(|panic| {
         let message = panic
             .downcast_ref::<&str>()
@@ -337,7 +337,7 @@ pub unsafe extern "C" fn duckdb_free(ptr: *mut c_void) {
 /// `idx_t duckdb_vector_size()` (capi/helper-c.cpp)
 #[unsafe(no_mangle)]
 pub extern "C" fn duckdb_vector_size() -> Idx {
-    rustdb_types::STANDARD_VECTOR_SIZE as Idx
+    roastedduck_types::STANDARD_VECTOR_SIZE as Idx
 }
 
 /// `bool duckdb_string_is_inlined(duckdb_string_t string)` (capi/helper-c.cpp)

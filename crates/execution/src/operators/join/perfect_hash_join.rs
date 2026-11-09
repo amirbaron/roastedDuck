@@ -5,14 +5,16 @@
 //! hash table.
 //!
 //! DuckDB decides with the build key range from its statistics (or the min/max its join
-//! filter pushdown aggregates while sinking). rustdb has neither, so the hash join tracks
+//! filter pushdown aggregates while sinking). roastedduck has neither, so the hash join tracks
 //! the exact min/max of the build keys while sinking ([`KeyRange`]) and treats them as the
 //! statistics; duplicate keys still fall back to the hash table, as in DuckDB.
 
-use rustdb_ast::{ExpressionType, JoinType};
-use rustdb_common::{Error, Result};
-use rustdb_row::RowPtr;
-use rustdb_types::{DataChunk, LogicalType, NativeType, PhysicalType, SelectionVector, ValidityMask, Vector};
+use roastedduck_ast::{ExpressionType, JoinType};
+use roastedduck_common::{Error, Result};
+use roastedduck_row::RowPtr;
+use roastedduck_types::{
+    DataChunk, LogicalType, NativeType, PhysicalType, SelectionVector, ValidityMask, Vector,
+};
 
 use crate::join_hashtable::JoinHashTable;
 
@@ -414,12 +416,12 @@ impl PerfectHashJoinExecutor {
             let words = self.bitmap_build_idx.words();
             let data = values.values;
             match (values.sel, all_valid) {
-                (rustdb_types::Sel::Identity, true) => {
+                (roastedduck_types::Sel::Identity, true) => {
                     let data = &data[..count];
                     select_in_range(state, count, min, max, words, |row| data[row]);
                     return;
                 }
-                (rustdb_types::Sel::Indices(indices), true) => {
+                (roastedduck_types::Sel::Indices(indices), true) => {
                     let indices = &indices[..count];
                     select_in_range(state, count, min, max, words, |row| data[indices[row] as usize]);
                     return;

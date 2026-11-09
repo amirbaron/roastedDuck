@@ -1,7 +1,7 @@
 //! The transform functions of DuckDB's `transform_execute.cpp`.
 
-use rustdb_parser::hash_order::CiHashMap;
-use rustdb_parser::is_scalar;
+use roastedduck_parser::hash_order::CiHashMap;
+use roastedduck_parser::is_scalar;
 
 use super::prelude::*;
 

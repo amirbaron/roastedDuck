@@ -1,7 +1,7 @@
 //! Round trips of data chunks through Arrow: exported with the converter and the
 //! appender, read back with the schema import and the conversion.
 
-use rustdb_types::{
+use roastedduck_types::{
     DataChunk, Date, Interval, LogicalType, SelectionVector, Time, TimeNs, TimeTz, Timestamp, Uuid, Value,
     Vector,
 };
@@ -33,7 +33,8 @@ fn chunk(columns: &[(LogicalType, Vec<Value>)]) -> DataChunk {
 /// Exports `input` and reads it back: the types the schema imports as, and the chunk.
 fn round_trip(input: &DataChunk, options: &ClientProperties) -> (Vec<LogicalType>, DataChunk) {
     let types: Vec<LogicalType> = input.columns().iter().map(|c| c.logical_type().clone()).collect();
-    let names: Vec<rustdb_common::ByteString> = (0..types.len()).map(|i| format!("c{i}").into()).collect();
+    let names: Vec<roastedduck_common::ByteString> =
+        (0..types.len()).map(|i| format!("c{i}").into()).collect();
     let mut schema = ArrowSchemaWrapper::default();
     to_arrow_schema(&mut schema.arrow_schema, &types, &names, options).unwrap();
     let mut array = to_arrow_array(input, options).unwrap();
@@ -399,7 +400,7 @@ fn exact_columns() -> Vec<(LogicalType, Vec<Value>)> {
 
 /// Enums read back as their values (Arrow dictionaries of strings).
 fn expected_type(ty: &LogicalType) -> LogicalType {
-    if ty.id() == rustdb_types::LogicalTypeId::Enum {
+    if ty.id() == roastedduck_types::LogicalTypeId::Enum {
         LogicalType::VARCHAR
     } else {
         ty.clone()
@@ -454,7 +455,7 @@ fn every_type_round_trips() {
 fn values_and_types_are_exact() {
     let columns: Vec<_> = exact_columns()
         .into_iter()
-        .filter(|(ty, _)| ty.id() != rustdb_types::LogicalTypeId::Enum)
+        .filter(|(ty, _)| ty.id() != roastedduck_types::LogicalTypeId::Enum)
         .collect();
     assert_round_trips(&chunk(&columns), &ClientProperties::default());
 }
@@ -597,7 +598,7 @@ fn schema_names_formats_and_flags() {
         LogicalType::TIMESTAMP_TZ,
         LogicalType::decimal(4, 1),
     ];
-    let names: [rustdb_common::ByteString; 4] = ["a".into(), "m".into(), "t".into(), "d".into()];
+    let names: [roastedduck_common::ByteString; 4] = ["a".into(), "m".into(), "t".into(), "d".into()];
     let options = ClientProperties {
         time_zone: "Europe/Amsterdam".to_owned(),
         ..ClientProperties::default()
@@ -620,15 +621,15 @@ fn schema_names_formats_and_flags() {
         let entries = children[1].child_schemas().next().unwrap();
         assert_eq!(entries.name_string(), "entries");
         assert_eq!(entries.flags, 0);
-        let key_value: Vec<(rustdb_common::ByteString, i64)> = entries
+        let key_value: Vec<(roastedduck_common::ByteString, i64)> = entries
             .child_schemas()
             .map(|f| (f.name_string(), f.flags))
             .collect();
         assert_eq!(
             key_value,
             [
-                (rustdb_common::ByteString::from("key"), 0),
-                (rustdb_common::ByteString::from("value"), 2)
+                (roastedduck_common::ByteString::from("key"), 0),
+                (roastedduck_common::ByteString::from("value"), 2)
             ]
         );
     }

@@ -112,7 +112,10 @@ pub(super) fn vacuum_option_elem<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) ->
         4 => {
             let ident = rhs.string(1)?;
             if ident != "disable_page_skipping" {
-                return Err(rhs.error_at(rustdb_common::byte_format!("unrecognized VACUUM option \"{ident}\""), rhs.loc(1)));
+                return Err(rhs.error_at(
+                    roastedduck_common::byte_format!("unrecognized VACUUM option \"{ident}\""),
+                    rhs.loc(1),
+                ));
             }
             Ok(SemValue::Int(vacuum_option::DISABLE_PAGE_SKIPPING))
         }

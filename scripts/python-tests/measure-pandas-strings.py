@@ -29,7 +29,7 @@ report = {
     "peak_rss_bytes": peak, "baseline_peak_rss_bytes": before,
     "incremental_peak_rss_bytes": peak - before, "result": result,
     "conditions": f"fresh {sys.platform} process, one engine thread, warmed imports/input; scoped measurement, not final acceptance",
-    "build_provenance": os.environ.get("RUSTDB_MEASUREMENT_BUILD_LABEL", "unspecified"),
+    "build_provenance": os.environ.get("ROASTEDDUCK_MEASUREMENT_BUILD_LABEL", "unspecified"),
 }
 Path(sys.argv[3]).write_text(json.dumps(report, indent=2) + "\n")
 print(json.dumps(report))

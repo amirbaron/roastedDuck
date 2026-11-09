@@ -1,8 +1,8 @@
 //! Filter pushdown through aggregates (DuckDB's `pushdown_aggregate.cpp`): filters on
 //! groups present in every grouping set go below the aggregate.
 
-use rustdb_common::Result;
-use rustdb_planner::{LogicalKind, LogicalOperator};
+use roastedduck_common::Result;
+use roastedduck_planner::{LogicalKind, LogicalOperator};
 
 use super::{FilterPushdown, empty_result};
 use crate::expression_util::{column_bindings, replace_column_refs, visit_column_refs};
@@ -42,7 +42,7 @@ impl FilterPushdown<'_> {
                 if aggregate
                     .groups
                     .get(column.binding.column_index as usize)
-                    .is_some_and(rustdb_planner::Expression::is_volatile)
+                    .is_some_and(roastedduck_planner::Expression::is_volatile)
                 {
                     is_volatile = true;
                 }

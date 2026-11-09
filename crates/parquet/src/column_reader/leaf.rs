@@ -5,9 +5,9 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_storage::TableFilter;
-use rustdb_types::{DictionaryInfo, LogicalType, SelectionVector, StringT, Vector, VectorKind};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_storage::TableFilter;
+use roastedduck_types::{DictionaryInfo, LogicalType, SelectionVector, StringT, Vector, VectorKind};
 
 use super::ReaderContext;
 use super::values::{
@@ -23,7 +23,7 @@ use crate::schema::ColumnSchema;
 use crate::thrift::{
     ColumnChunk, CompactReader, CompressionCodec, Encoding, PageHeader, PageType, RowGroup, ThriftValue, Type,
 };
-use rustdb_types::vector_ops::copy_rows;
+use roastedduck_types::vector_ops::copy_rows;
 
 /// The minimum number of bytes fetched when a page header lies past the loaded chunk.
 const MIN_FETCH: usize = 1 << 16;
@@ -79,7 +79,7 @@ impl ChunkBuffer {
             let available = file.size().saturating_sub(offset);
             let fetch = (len.max(MIN_FETCH) as u64).min(available);
             if (fetch as usize) < len {
-                return Err(runtime_error(rustdb_common::byte_format!(
+                return Err(runtime_error(roastedduck_common::byte_format!(
                     "Could not read enough bytes from file \"{}\": attempted to read {len} bytes from location {offset}",
                     file.path()
                 )));
@@ -267,7 +267,7 @@ impl std::fmt::Debug for LeafReader {
 }
 
 fn read_failure(file_name: &[u8], what: &str) -> Error {
-    Error::invalid_input(rustdb_common::byte_format!(
+    Error::invalid_input(roastedduck_common::byte_format!(
         "Failed to read file \"{file_name}\": {what}"
     ))
 }
@@ -275,7 +275,7 @@ fn read_failure(file_name: &[u8], what: &str) -> Error {
 impl LeafReader {
     pub fn new(context: &ReaderContext, schema: &ColumnSchema) -> Result<Self> {
         let decoder = create_decoder(schema, &context.file_name)?;
-        let strings = (schema.logical_type.physical_type() == rustdb_types::PhysicalType::Varchar)
+        let strings = (schema.logical_type.physical_type() == roastedduck_types::PhysicalType::Varchar)
             .then(|| StringDecoder::new(schema, Arc::clone(&context.file_name)));
         Ok(Self {
             logical_type: schema.logical_type.clone(),
@@ -342,7 +342,7 @@ impl LeafReader {
             .get(self.column_index)
             .ok_or_else(|| Error::internal("column chunk index out of range"))?;
         if chunk.file_path.is_some() {
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "Failed to read file \"{}\": Only inlined data files are supported (no references)",
                 self.file_name()
             )));
@@ -766,7 +766,7 @@ impl LeafReader {
                 PageDecoding::Dictionary(RleBpDecoder::new(cursor, width)?)
             }
             Encoding::RLE => {
-                if self.logical_type.id() != rustdb_types::LogicalTypeId::Boolean {
+                if self.logical_type.id() != roastedduck_types::LogicalTypeId::Boolean {
                     return Err(runtime_error("RLE encoding is only supported for boolean data"));
                 }
                 self.skip_block(4)?;
@@ -817,7 +817,7 @@ impl LeafReader {
 
     /// `DeltaLengthByteArrayDecoder::InitializePage`.
     fn initialize_delta_length_byte_array(&mut self) -> Result<PageDecoding> {
-        if self.logical_type.physical_type() != rustdb_types::PhysicalType::Varchar {
+        if self.logical_type.physical_type() != roastedduck_types::PhysicalType::Varchar {
             return Err(runtime_error(
                 "Delta Length Byte Array encoding is only supported for string/blob data",
             ));
@@ -1255,8 +1255,8 @@ fn resize_uninitialized(buffer: &mut Vec<u8>, len: usize) {
 
 fn dlba_mismatch(attempted: usize, available: usize) -> Error {
     Error::new_bytes(
-        rustdb_common::ErrorKind::Io,
-        rustdb_common::byte_format!(
+        roastedduck_common::ErrorKind::Io,
+        roastedduck_common::byte_format!(
             "DELTA_LENGTH_BYTE_ARRAY - length mismatch between values and byte array lengths (attempted read of {attempted} from {available} entries) - corrupt file?"
         ),
     )

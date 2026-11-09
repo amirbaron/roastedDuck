@@ -1,8 +1,8 @@
 //! `list_extract`/`list_element` and `array_extract` (DuckDB's `list_extract.cpp`).
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Vector};
 
 use crate::scalar::executor::{Str, StrOut, addressable, binary};
 use crate::scalar::nested::ListInput;

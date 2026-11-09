@@ -2,8 +2,8 @@
 use crate::connection::{PyConnection, lock};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyString};
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_function::registered_files::{FileHandle, FileSystem, OpenFlags, Registry};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_function::registered_files::{FileHandle, FileSystem, OpenFlags, Registry};
 use std::sync::{Arc, Mutex};
 #[derive(Debug)]
 struct PythonFs {

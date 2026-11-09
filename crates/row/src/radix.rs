@@ -3,7 +3,7 @@
 //! The partition index is taken from the hash bits just below the top 16 bits, which hash
 //! tables use as salt.
 
-use rustdb_types::Vector;
+use roastedduck_types::Vector;
 
 /// Radix partitioning helpers.
 #[derive(Debug)]

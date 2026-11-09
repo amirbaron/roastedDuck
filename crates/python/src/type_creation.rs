@@ -2,7 +2,7 @@
 use crate::{connection::PyConnection, datatype::PyType, error};
 use pyo3::prelude::*;
 use pyo3::types::{PyByteArray, PyBytes, PyDict, PyList, PyString, PyTuple};
-use rustdb_types::LogicalType;
+use roastedduck_types::LogicalType;
 
 const TYPE: &str = "_duckdb._sqltypes.DuckDBPyType";
 const INT: &str = "typing.SupportsInt | typing.SupportsIndex";
@@ -141,7 +141,7 @@ pub(super) fn call(
             if width > 38 {
                 return Err(error::native(
                     py,
-                    &rustdb_common::Error::internal(rustdb_common::byte_format!(
+                    &roastedduck_common::Error::internal(roastedduck_common::byte_format!(
                         "Decimal has a width of {width} which is bigger than the maximum supported width of 38"
                     )),
                 ));
@@ -193,7 +193,7 @@ pub(super) fn call(
     Ok(PyType { native })
 }
 
-fn fields(object: &Bound<'_, PyAny>) -> PyResult<Vec<(rustdb_common::ByteString, LogicalType)>> {
+fn fields(object: &Bound<'_, PyAny>) -> PyResult<Vec<(roastedduck_common::ByteString, LogicalType)>> {
     let mut result = Vec::new();
     let convert = |value: &Bound<'_, PyAny>| -> PyResult<LogicalType> {
         crate::datatype::from_object(value).map_err(|_| {

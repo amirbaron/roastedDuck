@@ -21,7 +21,7 @@ pub enum JsonValue {
     Str(String),
     /// A string whose original bytes are not UTF-8. yyjson retains these in the
     /// document, but its normal JSON writer rejects them.
-    ByteStr(rustdb_common::ByteString),
+    ByteStr(roastedduck_common::ByteString),
     /// An array.
     Array(Vec<JsonValue>),
     /// An object, with keys in document order.

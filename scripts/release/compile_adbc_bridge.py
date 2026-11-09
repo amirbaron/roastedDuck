@@ -20,7 +20,7 @@ source_commit = subprocess.check_output(
 ).strip()
 args.out.mkdir(parents=True, exist_ok=False)
 library = "libduckdb.dylib" if "apple" in args.target else "libduckdb.so"
-command = ["cargo", "build", "--locked", "--release", "-j", "1", "--target", args.target, "-p", "rustdb-capi"]
+command = ["cargo", "build", "--locked", "--release", "-j", "1", "--target", args.target, "-p", "roastedduck-capi"]
 try:
     subprocess.run([*command, "--features", "adbc-test-api"], cwd=ROOT, check=True)
     destination = args.out / library

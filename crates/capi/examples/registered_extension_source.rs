@@ -1,8 +1,8 @@
 //! Registered-filesystem INSTALL regression; authenticate this driver and fixtures externally.
 use std::sync::Arc;
 
-use rustdb::{Config, Database, Error, ErrorKind, Result, Value};
-use rustdb_function::registered_files::{FileHandle, FileSystem, Registry};
+use roastedduck::{Config, Database, Error, ErrorKind, Result, Value};
+use roastedduck_function::registered_files::{FileHandle, FileSystem, Registry};
 
 #[derive(Debug)]
 struct Source {
@@ -59,7 +59,7 @@ impl FileSystem for Source {
             fail: path.starts_with(b"https://error/"),
         }))
     }
-    fn glob(&self, path: &[u8]) -> Result<Vec<rustdb_common::ByteString>> {
+    fn glob(&self, path: &[u8]) -> Result<Vec<roastedduck_common::ByteString>> {
         Ok(vec![path.into()])
     }
     fn is_file(&self, path: &[u8]) -> Result<bool> {
@@ -136,7 +136,7 @@ fn main() -> Result<()> {
             println!("{kind}|ERROR|{}", error.raw_message());
         } else {
             result?;
-            let platform = rustdb::external_extensions::platform();
+            let platform = roastedduck::external_extensions::platform();
             let installed = directory
                 .join("v1.5.6")
                 .join(platform)

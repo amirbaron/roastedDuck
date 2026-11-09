@@ -1,9 +1,9 @@
 //! `json_merge_patch` (DuckDB's `json_merge_patch.cpp`, MySQL semantics): applies each
 //! following argument to the first as an RFC 7386 merge patch.
 
-use rustdb_common::Result;
-use rustdb_function::{FunctionState, NullHandling, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, Vector};
+use roastedduck_common::Result;
+use roastedduck_function::{FunctionState, NullHandling, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, Vector};
 
 use crate::json_common::read_document;
 use crate::json_executors::{ColumnBuilder, StrBuilder, StrInput, addressable, all_constant, local_arena};

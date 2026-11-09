@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use super::Art;
 use super::key::{ROW_ID_SIZE, decode_row_id};

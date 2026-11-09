@@ -1,6 +1,6 @@
 //! Property structs ([`Content::Properties`](crate::config::Content::Properties)): a
 //! class's members as borrowed fields and the `SerializeObject` impl writing them, which
-//! the hand-written `Serialize` impls of rustdb's own types fill in.
+//! the hand-written `Serialize` impls of roastedduck's own types fill in.
 //!
 //! Field types follow the member types: scalars and enums by value, strings as `&str`,
 //! vectors as slices of what Rust containers hold (the value a C++ pointer points to),
@@ -175,9 +175,12 @@ impl Emitter<'_> {
                 self.element_type(value)?
             ),
             CppType::CaseInsensitiveMap(inner) => {
-                format!("rustdb_common::CaseInsensitiveMap<{}>", self.element_type(inner)?)
+                format!(
+                    "roastedduck_common::CaseInsensitiveMap<{}>",
+                    self.element_type(inner)?
+                )
             }
-            CppType::CaseInsensitiveSet => "rustdb_common::CaseInsensitiveSet".into(),
+            CppType::CaseInsensitiveSet => "roastedduck_common::CaseInsensitiveSet".into(),
             CppType::Pair(a, b) => format!("({}, {})", self.element_type(a)?, self.element_type(b)?),
         })
     }

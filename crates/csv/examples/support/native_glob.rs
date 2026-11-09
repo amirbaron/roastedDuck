@@ -1,7 +1,7 @@
 //! Frozen C++ local glob expansion with native path bytes.
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_csv::multi_file::local_glob;
-use rustdb_serde::{SerializationOptions, Serializer, binary::BinarySerializer};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_csv::multi_file::local_glob;
+use roastedduck_serde::{SerializationOptions, Serializer, binary::BinarySerializer};
 fn unhex(text: &str) -> Result<Vec<u8>> {
     let (pairs, rest) = text.as_bytes().as_chunks::<2>();
     if !rest.is_empty() {

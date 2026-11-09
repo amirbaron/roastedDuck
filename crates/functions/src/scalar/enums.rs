@@ -3,9 +3,9 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, PhysicalType, Value, Vector};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, PhysicalType, Value, Vector};
 
 type BindResult = Result<Option<Arc<dyn FunctionData>>>;
 
@@ -149,7 +149,7 @@ fn bind_enum_range_boundary(_: &mut ScalarFunction, input: &BindInput<'_>) -> Bi
 
 /// The member index stored in row 0 of an ENUM vector, or `None` if it is NULL.
 fn first_code(vector: &Vector) -> Option<u64> {
-    fn get<T: rustdb_types::NativeType + Into<u64>>(vector: &Vector) -> Option<u64> {
+    fn get<T: roastedduck_types::NativeType + Into<u64>>(vector: &Vector) -> Option<u64> {
         vector.unified::<T>().get(0).map(Into::into)
     }
     if vector.is_null(0) {

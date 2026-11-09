@@ -1,7 +1,7 @@
 //! Native JSON COPY projection matches the actual C++ AST construction.
-use rustdb_common::{ByteString, CaseInsensitiveMap, Error, Result, byte_format};
-use rustdb_function::copy::CopyPlanInput;
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::{ByteString, CaseInsensitiveMap, Error, Result, byte_format};
+use roastedduck_function::copy::CopyPlanInput;
+use roastedduck_types::{LogicalType, Value};
 use std::io::{self, BufRead};
 fn decode(hex: &str) -> Result<Vec<u8>> {
     let (pairs, rest) = hex.as_bytes().as_chunks::<2>();
@@ -33,7 +33,7 @@ pub fn compare(line: &str) -> Result<()> {
     let mut options = CaseInsensitiveMap::default();
     options.insert("dateformat", vec![Value::varchar("%Y'%m")]);
     options.insert("timestampformat", vec![Value::varchar("%Y'%m")]);
-    let functions = rustdb_json::json_copy_functions();
+    let functions = roastedduck_json::json_copy_functions();
     let plan = functions[0]
         .plan
         .as_ref()

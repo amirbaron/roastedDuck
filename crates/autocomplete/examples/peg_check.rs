@@ -1,10 +1,10 @@
-//! Compares the PEG parser (`rustdb_autocomplete::parse_query`, DuckDB's parser
-//! override) with the Postgres parser (`rustdb_parser`) on the statement corpus of
+//! Compares the PEG parser (`roastedduck_autocomplete::parse_query`, DuckDB's parser
+//! override) with the Postgres parser (`roastedduck_parser`) on the statement corpus of
 //! `tools/corpus` (`statements.jsonl`). DuckDB runs its whole test suite with the PEG
 //! parser in strict mode, so the two should agree on nearly every statement.
 //!
 //! ```text
-//! cargo run --release -p rustdb-autocomplete --example peg_check -- \
+//! cargo run --release -p roastedduck-autocomplete --example peg_check -- \
 //!     target/corpus/statements.jsonl [report-file]
 //! ```
 //!
@@ -16,17 +16,17 @@ use std::fmt::Write as _;
 use std::io::{BufRead, BufReader};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use rustdb_ast::SqlStatement;
-use rustdb_common::Result;
-use rustdb_parser::ParserOptions;
-use rustdb_serde::json::{JsonValue, parse_json};
+use roastedduck_ast::SqlStatement;
+use roastedduck_common::Result;
+use roastedduck_parser::ParserOptions;
+use roastedduck_serde::json::{JsonValue, parse_json};
 
 /// The PEG parse as `Parser::ParseQuery` runs it: after replacing Unicode spaces.
 fn peg_parse(sql: &str) -> std::result::Result<Result<Vec<SqlStatement>>, String> {
-    let stripped = rustdb_parser::strip_unicode_spaces(sql);
+    let stripped = roastedduck_parser::strip_unicode_spaces(sql);
     let query = stripped.as_deref().unwrap_or(sql).to_owned();
     catch_unwind(AssertUnwindSafe(|| {
-        rustdb_autocomplete::parse_query(&query, ParserOptions::default())
+        roastedduck_autocomplete::parse_query(&query, ParserOptions::default())
     }))
     .map_err(|panic| {
         panic
@@ -171,7 +171,7 @@ fn run() -> std::io::Result<()> {
         if trace {
             eprintln!("{total}: {sql}");
         }
-        let pg = rustdb_parser::parse(sql);
+        let pg = roastedduck_parser::parse(sql);
         let peg = peg_parse(sql);
         let (category, detail) = match (pg, peg) {
             (_, Err(panic)) => (format!("PANIC {}", error_category(&panic)), String::new()),

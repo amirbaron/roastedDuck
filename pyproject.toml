@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "roastedduck"
-version = "1.5.6.post1"
+version = "1.5.6.post2"
 requires-python = ">=3.10,<3.15"
 description = "roastedDuck: an independent Rust SQL engine targeting DuckDB compatibility"
 readme = "python/PYPI_README.md"

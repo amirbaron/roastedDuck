@@ -4,19 +4,19 @@
 
 use std::collections::BTreeMap;
 
-use rustdb_ast::{
+use roastedduck_ast::{
     CommonTableExpressionMap, CopyInfo, DeleteStatement, InsertColumnOrder, InsertStatement,
     MergeActionCondition, MergeActionType, MergeIntoAction, MergeIntoStatement, OnConflictAction,
     OnConflictInfo, ParsedExpression, ParsedExpressionKind, SqlStatementKind, TableRefKind, UpdateSetInfo,
     UpdateStatement,
 };
-use rustdb_common::{CaseInsensitiveMap, Error, Result};
-use rustdb_pg_parser::nodes::{
+use roastedduck_common::{CaseInsensitiveMap, Error, Result};
+use roastedduck_pg_parser::nodes::{
     CopyStmt, DefElem, DeleteStmt, IndexElem, InsertColumnOrder as PgInsertColumnOrder, InsertStmt, List,
     MatchAction, MergeAction, MergeActionType as PgMergeActionType, MergeIntoStmt, Node,
     OnConflictAction as PgOnConflictAction, OnConflictActionAlias, OnConflictClause, ResTarget, UpdateStmt,
 };
-use rustdb_types::LogicalTypeId;
+use roastedduck_types::LogicalTypeId;
 
 use super::helpers::transform_qualified_name;
 use super::{Transformer, cast_node, required, res_target_name, string_list};
@@ -31,7 +31,7 @@ const fn transform_column_order(order: PgInsertColumnOrder) -> InsertColumnOrder
 }
 
 /// `TransformInsertColumns`: the names of the target columns.
-fn transform_insert_columns(columns: &List) -> Result<Vec<rustdb_common::ByteString>> {
+fn transform_insert_columns(columns: &List) -> Result<Vec<roastedduck_common::ByteString>> {
     columns
         .iter()
         .map(|node| Ok(res_target_name(node)?.unwrap_or_default()))
@@ -39,7 +39,7 @@ fn transform_insert_columns(columns: &List) -> Result<Vec<rustdb_common::ByteStr
 }
 
 /// `TransformConflictTarget`: the columns of `ON CONFLICT (...)`.
-fn transform_conflict_target(list: &List) -> Result<Vec<rustdb_common::ByteString>> {
+fn transform_conflict_target(list: &List) -> Result<Vec<roastedduck_common::ByteString>> {
     let mut columns = Vec::with_capacity(list.len());
     for node in list {
         let element: &IndexElem = cast_node(node)?;
@@ -94,8 +94,8 @@ pub(crate) fn copy_info() -> CopyInfo {
         table: String::new().into(),
         select_list: Vec::new(),
         is_from: false,
-        format: rustdb_common::ByteString::new(),
-        file_path: rustdb_common::ByteString::new(),
+        format: roastedduck_common::ByteString::new(),
+        file_path: roastedduck_common::ByteString::new(),
         options: CaseInsensitiveMap::default(),
         select_statement: None,
         is_format_auto_detected: true,
@@ -322,7 +322,7 @@ impl<'a> Transformer<'a> {
             if action.condition.is_none() {
                 if unconditional.contains_key(&condition) {
                     let name = action_condition_to_string(condition);
-                    return Err(Error::parser(rustdb_common::byte_format!(
+                    return Err(Error::parser(roastedduck_common::byte_format!(
                         "Unconditional {name} clause was already defined - only one unconditional {name} clause \
                          is supported"
                     )));
@@ -349,13 +349,13 @@ impl<'a> Transformer<'a> {
 
     /// `TransformCopyOptions`: `(FORMAT csv, HEADER, ...)`.
     pub(crate) fn transform_copy_options(&mut self, info: &mut CopyInfo, options: &'a List) -> Result<()> {
-        let mut parsed: CiHashMap<Option<ParsedExpression>, rustdb_common::ByteString> =
+        let mut parsed: CiHashMap<Option<ParsedExpression>, roastedduck_common::ByteString> =
             CiHashMap::new_with_keys();
         for node in options {
             let def_elem: &'a DefElem = cast_node(node)?;
             let name = def_elem.defname.clone().unwrap_or_default();
             if parsed.contains_key(&name) {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Unexpected duplicate option \"{name}\""
                 )));
             }

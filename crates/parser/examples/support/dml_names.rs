@@ -1,8 +1,8 @@
 //! Frozen C++ INSERT rendering, JOIN USING and COPY-name codecs.
-use rustdb_ast::{ParseInfo, SelectStatement, SqlStatementKind};
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
-use rustdb_serde::{Deserialize, Deserializer, SerializationOptions, Serialize, Serializer};
+use roastedduck_ast::{ParseInfo, SelectStatement, SqlStatementKind};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
+use roastedduck_serde::{Deserialize, Deserializer, SerializationOptions, Serialize, Serializer};
 fn decode(hex: &str) -> Result<Vec<u8>> {
     if !hex.len().is_multiple_of(2) {
         return Err(Error::invalid_input("odd oracle hex length"));
@@ -43,7 +43,7 @@ pub fn compare(line: &str) -> Result<()> {
     match fields[0] {
         "insert" => {
             let mut statements =
-                rustdb_parser::parse("INSERT INTO t (x) VALUES (1) ON CONFLICT(x) DO UPDATE SET x = 2")?;
+                roastedduck_parser::parse("INSERT INTO t (x) VALUES (1) ON CONFLICT(x) DO UPDATE SET x = 2")?;
             let Some(statement) = statements.pop() else {
                 return Err(Error::internal("missing INSERT"));
             };

@@ -9,28 +9,28 @@ use crate::operators::{
     MergeIntoOperator, PhysicalMergeInto, PhysicalPartitionedAggregate, PhysicalPerfectHashAggregate,
     SharedAppend,
 };
-use rustdb_ast::MergeActionType;
-use rustdb_ast::{JoinType, OrderByNullType, OrderType};
-use rustdb_catalog::{Catalog, CatalogEntry, EntryKind, Transaction};
-use rustdb_common::{ByteString, Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::TablePartitionInfo;
-use rustdb_functions::aggregate::distributive::first_last_any::first_function;
-use rustdb_functions::aggregate::sorted::{
+use roastedduck_ast::MergeActionType;
+use roastedduck_ast::{JoinType, OrderByNullType, OrderType};
+use roastedduck_catalog::{Catalog, CatalogEntry, EntryKind, Transaction};
+use roastedduck_common::{ByteString, Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::TablePartitionInfo;
+use roastedduck_functions::aggregate::distributive::first_last_any::first_function;
+use roastedduck_functions::aggregate::sorted::{
     self, NullOrder, OrderModifiers, OrderType as SortOrderType, SortedOrder,
 };
-use rustdb_planner::expression::{
+use roastedduck_planner::expression::{
     AggregateType, BoundAggregateExpression, BoundConjunctionExpression, BoundOrderByNode, BoundOrderModifier,
 };
-use rustdb_planner::operator::{
+use roastedduck_planner::operator::{
     COLUMN_IDENTIFIER_ROW_ID, GroupingSet, JoinCondition, LogicalAggregate, LogicalComparisonJoin,
     LogicalDelete, LogicalGet, LogicalInsert, LogicalMergeInto, LogicalUpdate,
 };
-use rustdb_planner::{
+use roastedduck_planner::{
     BoundLimitNode, Expression, ExpressionKind, ExpressionType, LogicalKind, LogicalOperator,
     LogicalOperatorType,
 };
-use rustdb_storage::{DataTable, StorageIndex, TableConstraints};
-use rustdb_types::{ColumnIndex, DataChunk, LogicalType, LogicalTypeId, PhysicalType, Value};
+use roastedduck_storage::{DataTable, StorageIndex, TableConstraints};
+use roastedduck_types::{ColumnIndex, DataChunk, LogicalType, LogicalTypeId, PhysicalType, Value};
 
 use crate::constraints::table_constraints;
 mod asof_join;
@@ -63,7 +63,7 @@ use crate::operators::{
 use crate::operators::{
     PhysicalExpressionScan, PhysicalPivot, PhysicalReservoirSample, PhysicalStreamingSample, PhysicalUnnest,
 };
-use rustdb_optimizer::rule::{RuleOutcome, apply_ordered_aggregate};
+use roastedduck_optimizer::rule::{RuleOutcome, apply_ordered_aggregate};
 
 /// Resolve aggregate state-size callbacks at physical preparation, after optimization
 /// has removed unused expressions. This also serves prepared statements, which bind
@@ -147,7 +147,7 @@ pub struct PlanContext {
     pub query: ByteString,
     /// The client for the rewrites DuckDB's planner makes when the optimizer is enabled
     /// (the ordered aggregates of DISTINCT ON); `None` with the optimizer disabled.
-    pub optimizer_client: Option<Arc<rustdb_planner::ClientContext>>,
+    pub optimizer_client: Option<Arc<roastedduck_planner::ClientContext>>,
     /// The `threads` setting: whether inserts run in parallel and `UseBatchIndex`.
     pub threads: usize,
     /// The `preserve_insertion_order` setting.
@@ -155,7 +155,7 @@ pub struct PlanContext {
     /// The `index_scan_max_count` and `index_scan_percentage` settings.
     pub index_scan: (u64, f64),
     /// The client, for the collations planning pushes (`ExpressionBinder::PushCollation`).
-    pub client: Arc<rustdb_planner::ClientContext>,
+    pub client: Arc<roastedduck_planner::ClientContext>,
 }
 
 impl PlanContext {
@@ -170,7 +170,7 @@ impl PlanContext {
                 .find(|catalog| catalog.name().eq_ignore_ascii_case(name))
         };
         found.cloned().ok_or_else(|| {
-            Error::catalog(rustdb_common::byte_format!(
+            Error::catalog(roastedduck_common::byte_format!(
                 "Catalog with name {name} does not exist!"
             ))
         })
@@ -179,19 +179,19 @@ impl PlanContext {
 
 /// The scan's filters keyed by position in its column list instead of by table column
 /// (DuckDB's `CreateTableFilterSet`).
-fn table_filter_set(get: &LogicalGet) -> Result<Option<rustdb_storage::TableFilterSet>> {
+fn table_filter_set(get: &LogicalGet) -> Result<Option<roastedduck_storage::TableFilterSet>> {
     scan_filter_set(get, &get.table_filters)
 }
 
 /// `filter_set` (keyed by column index) keyed by position in the scanned columns.
 fn scan_filter_set(
     get: &LogicalGet,
-    filter_set: &rustdb_storage::TableFilterSet,
-) -> Result<Option<rustdb_storage::TableFilterSet>> {
+    filter_set: &roastedduck_storage::TableFilterSet,
+) -> Result<Option<roastedduck_storage::TableFilterSet>> {
     if filter_set.is_empty() {
         return Ok(None);
     }
-    let mut filters = rustdb_storage::TableFilterSet::default();
+    let mut filters = roastedduck_storage::TableFilterSet::default();
     for (&column, filter) in &filter_set.filters {
         let position = get
             .column_ids
@@ -249,7 +249,7 @@ fn add_projection_names(
         };
         add_projection_names(
             child,
-            &rustdb_common::byte_format!("{name}.{}", child.field_name()),
+            &roastedduck_common::byte_format!("{name}.{}", child.field_name()),
             &field_type,
             result,
         )
@@ -264,7 +264,7 @@ fn add_projection_names(
                         .ok_or_else(|| Error::internal("projected struct field out of range"))?;
                     add_projection_names(
                         child,
-                        &rustdb_common::byte_format!("{name}.{field}"),
+                        &roastedduck_common::byte_format!("{name}.{field}"),
                         field_type,
                         result,
                     )?;
@@ -280,7 +280,7 @@ fn add_projection_names(
             }
             Ok(())
         }
-        _ => Err(Error::internal(rustdb_common::byte_format!(
+        _ => Err(Error::internal(roastedduck_common::byte_format!(
             "Unexpected type ({ty}) in AddProjectionNames"
         ))),
     }
@@ -290,12 +290,12 @@ fn add_projection_names(
 fn table_storage(entry: &CatalogEntry) -> Result<Arc<DataTable>> {
     match &entry.kind {
         EntryKind::Table(table) => table.storage.clone().ok_or_else(|| {
-            Error::internal(rustdb_common::byte_format!(
+            Error::internal(roastedduck_common::byte_format!(
                 "table {} has no storage",
                 entry.name()
             ))
         }),
-        _ => Err(Error::internal(rustdb_common::byte_format!(
+        _ => Err(Error::internal(roastedduck_common::byte_format!(
             "{} is not a table",
             entry.name()
         ))),
@@ -426,7 +426,7 @@ impl PlanGenerator {
             table: get
                 .table_schema
                 .as_ref()
-                .map(|(catalog, schema)| rustdb_ast::qualifier_to_string(catalog, schema, entry.name()))
+                .map(|(catalog, schema)| roastedduck_ast::qualifier_to_string(catalog, schema, entry.name()))
                 .unwrap_or_default(),
             column_names: get
                 .column_ids
@@ -1579,16 +1579,16 @@ impl PlanGenerator {
                 let child = next_child("sample")?;
                 if sample_options.seed.is_none() {
                     // Planned without a client: an unseeded sample.
-                    let mut random = rustdb_function::random::RandomEngine::default();
+                    let mut random = roastedduck_function::random::RandomEngine::default();
                     sample_options.seed = Some(u64::from(random.next_random_integer()));
                 }
                 match sample_options.method {
-                    rustdb_ast::SampleMethod::ReservoirSample => {
+                    roastedduck_ast::SampleMethod::ReservoirSample => {
                         Arc::new(PhysicalReservoirSample::new(types, *sample_options, child))
                     }
                     method => {
                         if !sample_options.is_percentage {
-                            let name = if method == rustdb_ast::SampleMethod::SystemSample {
+                            let name = if method == roastedduck_ast::SampleMethod::SystemSample {
                                 "System"
                             } else {
                                 "Bernoulli"
@@ -1623,7 +1623,7 @@ impl PlanGenerator {
 /// `IS NOT DISTINCT FROM` under the columns' collations, then made distinct (DuckDB's
 /// `CreatePlan(LogicalSetOperation&)`).
 fn except_or_intersect(
-    client: Option<&rustdb_planner::ClientContext>,
+    client: Option<&roastedduck_planner::ClientContext>,
     operator_type: LogicalOperatorType,
     setop_all: bool,
     types: Vec<LogicalType>,
@@ -1694,13 +1694,13 @@ fn except_or_intersect(
 /// A reference to column `index` under the collation of `ty` (`PushCollation`); plans
 /// without a client compare binary.
 pub(crate) fn collated_reference(
-    client: Option<&rustdb_planner::ClientContext>,
+    client: Option<&roastedduck_planner::ClientContext>,
     ty: &LogicalType,
     index: usize,
 ) -> Result<Expression> {
     let reference = Expression::reference("", ty.clone(), index as u64);
     match client {
-        Some(client) => rustdb_planner::collation_binding::push_collation(client, reference, ty),
+        Some(client) => roastedduck_planner::collation_binding::push_collation(client, reference, ty),
         None => Ok(reference),
     }
 }
@@ -1784,11 +1784,11 @@ fn partitioned_aggregate_columns(
 /// stay within `threshold`, and no aggregate is DISTINCT.
 fn perfect_hash_groups(
     groups: &[Expression],
-    group_stats: &[Option<rustdb_storage::statistics::BaseStatistics>],
+    group_stats: &[Option<roastedduck_storage::statistics::BaseStatistics>],
     aggregates: &[BoundAggregateExpression],
     threshold: u64,
 ) -> Option<(Vec<Value>, Vec<usize>)> {
-    use rustdb_storage::statistics::BaseStatistics;
+    use roastedduck_storage::statistics::BaseStatistics;
     let mut minima = Vec::with_capacity(groups.len());
     let mut required_bits = Vec::with_capacity(groups.len());
     let mut perfect_hash_bits = 0;
@@ -1820,8 +1820,8 @@ fn perfect_hash_groups(
             }
             let mut stats = BaseStatistics::create_unknown(ty.clone());
             if let Some(numeric) = stats.numeric_mut() {
-                numeric.min = rustdb_storage::statistics::minimum_value(ty);
-                numeric.max = rustdb_storage::statistics::maximum_value(ty);
+                numeric.min = roastedduck_storage::statistics::minimum_value(ty);
+                numeric.max = roastedduck_storage::statistics::maximum_value(ty);
             }
             stats
         };
@@ -1963,7 +1963,7 @@ fn use_batch_limit(child: &dyn PhysicalOperator, limit: &BoundLimitNode, offset:
 
 /// `PhysicalPlanGenerator::CreatePlan(LogicalCopyToFile &)`.
 fn plan_copy_to_file(
-    copy: rustdb_planner::operator::LogicalCopyToFile,
+    copy: roastedduck_planner::operator::LogicalCopyToFile,
     child: PhysicalRef,
     context: Option<&PlanContext>,
 ) -> Result<PhysicalRef> {
@@ -1991,7 +1991,7 @@ fn plan_copy_to_file(
         supports_batch_index = false;
     }
     let mode = copy.function.execution_mode.as_ref().map_or(
-        rustdb_function::copy::CopyFunctionExecutionMode::RegularCopyToFile,
+        roastedduck_function::copy::CopyFunctionExecutionMode::RegularCopyToFile,
         |mode| {
             mode(
                 copy.bind_data.as_ref(),
@@ -2000,7 +2000,7 @@ fn plan_copy_to_file(
             )
         },
     );
-    let batch = mode == rustdb_function::copy::CopyFunctionExecutionMode::BatchCopyToFile;
+    let batch = mode == roastedduck_function::copy::CopyFunctionExecutionMode::BatchCopyToFile;
     if batch && !supports_batch_index {
         return Err(Error::internal(
             "BATCH_COPY_TO_FILE can only be used if batch indexes are supported",
@@ -2009,14 +2009,14 @@ fn plan_copy_to_file(
     let mut file_path = copy.file_path;
     // The writers open the file on worker threads, where the statement's file opener is
     // not set, so the access configuration is checked here (`OpenerFileSystem`).
-    rustdb_function::file_system::verify_can_access_file(&file_path)?;
-    file_path = rustdb_function::file_system::expand_path_bytes(&file_path);
+    roastedduck_function::file_system::verify_can_access_file(&file_path)?;
+    file_path = roastedduck_function::file_system::expand_path_bytes(&file_path);
     if copy.use_tmp_file {
         file_path = match file_path.iter().rposition(|byte| *byte == b'/') {
             Some(slash) => {
-                rustdb_common::byte_format!("{}tmp_{}", &file_path[..=slash], &file_path[slash + 1..])
+                roastedduck_common::byte_format!("{}tmp_{}", &file_path[..=slash], &file_path[slash + 1..])
             }
-            None => rustdb_common::byte_format!("tmp_{file_path}"),
+            None => roastedduck_common::byte_format!("tmp_{file_path}"),
         };
     }
     let options = crate::operators::CopyToFileOptions {
@@ -2037,7 +2037,7 @@ fn plan_copy_to_file(
         names: copy.names,
         expected_types: copy.expected_types,
     };
-    let parallel = mode == rustdb_function::copy::CopyFunctionExecutionMode::ParallelCopyToFile
+    let parallel = mode == roastedduck_function::copy::CopyFunctionExecutionMode::ParallelCopyToFile
         && copy.function.copy_to_sink_local.is_some()
         && copy.function.copy_to_combine.is_some()
         && !options.per_thread_output

@@ -7,7 +7,7 @@
 //! parser does the same for values it discards on error.
 
 use super::{List, Node, NodeStruct, RawStmt, Value};
-use rustdb_common::ByteString;
+use roastedduck_common::ByteString;
 
 /// Moves the child nodes out of a node or field.
 pub(crate) trait TakeChildren {

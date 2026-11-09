@@ -9,9 +9,9 @@
 
 use regex_syntax::ParserBuilder;
 use regex_syntax::hir::{Class, Hir, HirKind, Look};
-use rustdb_common::Result;
-use rustdb_planner::{Expression, ExpressionKind};
-use rustdb_types::Value;
+use roastedduck_common::Result;
+use roastedduck_planner::{Expression, ExpressionKind};
+use roastedduck_types::Value;
 
 use super::RuleOutcome;
 use crate::expression_rewriter::RuleContext;

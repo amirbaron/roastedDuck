@@ -1,9 +1,9 @@
 //! Compare native ENUM dictionaries, values and rendering with frozen C++ outcomes.
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_function::cast::ValueCast;
-use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
-use rustdb_serde::{Deserialize, Deserializer, SerializationOptions, Serialize, Serializer};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
+use roastedduck_serde::{Deserialize, Deserializer, SerializationOptions, Serialize, Serializer};
+use roastedduck_types::{LogicalType, Value};
 use std::io::{self, BufRead};
 fn decode(hex: &str) -> Result<Vec<u8>> {
     fn digit(byte: u8) -> Result<u8> {
@@ -76,7 +76,7 @@ pub fn compare(line: &str) -> Result<()> {
         Err(error) => ("error", error.raw_message_bytes().into()),
     };
     if status != fields[3] || actual.as_bytes() != decode(fields[4])? {
-        return Err(Error::internal(rustdb_common::byte_format!(
+        return Err(Error::internal(roastedduck_common::byte_format!(
             "ENUM {} outcome differs for hex name {}",
             fields[0],
             fields[1]

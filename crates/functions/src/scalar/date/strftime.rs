@@ -3,11 +3,11 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{
     BindInput, FunctionData, FunctionState, NullHandling, ScalarFunction, ScalarFunctionSet,
 };
-use rustdb_types::{DataChunk, Date, Interval, LogicalType, LogicalTypeId, Timestamp, Value, Vector};
+use roastedduck_types::{DataChunk, Date, Interval, LogicalType, LogicalTypeId, Timestamp, Value, Vector};
 
 use super::strftime_format::{Spec, StrTimeFormat};
 use crate::scalar::executor::{Str, StrOut, unary};
@@ -72,7 +72,7 @@ fn date_data(date: Date, micros: i64, nanos: i32) -> [i32; 8] {
 }
 
 /// A temporal value `strftime` formats.
-trait Formattable: rustdb_types::NativeType {
+trait Formattable: roastedduck_types::NativeType {
     /// The date and time parts, or the text of an infinite value.
     fn parts(self) -> std::result::Result<(Date, [i32; 8]), String>;
 }

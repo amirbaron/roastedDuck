@@ -1,13 +1,13 @@
 //! Constructors of parse-tree nodes with the defaults of DuckDB's C++ constructors.
 
-use rustdb_ast::{
+use roastedduck_ast::{
     CaseCheck, CaseExpression, CastExpression, ColumnRefExpression, CommonTableExpressionMap,
     ComparisonExpression, ConjunctionExpression, ExpressionType, FunctionExpression, OperatorExpression,
     OrderModifier, ParsedExpression, ParsedExpressionKind, PositionalReferenceExpression, QueryNode,
     QueryNodeKind, SelectNode, SelectStatement, StarExpression, SubqueryRef, TableRef, TableRefKind,
 };
-use rustdb_common::{CaseInsensitiveMap, OrderedMap};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::{CaseInsensitiveMap, OrderedMap};
+use roastedduck_types::{LogicalType, Value};
 
 /// `SetQueryLocation`: negative (unknown) locations are ignored.
 pub fn set_location(expr: &mut ParsedExpression, location: i32) {
@@ -29,7 +29,7 @@ pub fn constant(value: Value) -> ParsedExpression {
 }
 
 /// `ColumnRefExpression(names)`.
-pub fn column_ref<K: Into<rustdb_common::ByteString>>(names: Vec<K>) -> ParsedExpression {
+pub fn column_ref<K: Into<roastedduck_common::ByteString>>(names: Vec<K>) -> ParsedExpression {
     ParsedExpression::new(
         ExpressionType::ColumnRef,
         ParsedExpressionKind::ColumnRef(ColumnRefExpression {
@@ -40,8 +40,8 @@ pub fn column_ref<K: Into<rustdb_common::ByteString>>(names: Vec<K>) -> ParsedEx
 
 /// `ColumnRefExpression(column_name, table_name)`.
 pub fn qualified_column_ref(
-    column: rustdb_common::ByteString,
-    table: rustdb_common::ByteString,
+    column: roastedduck_common::ByteString,
+    table: roastedduck_common::ByteString,
 ) -> ParsedExpression {
     if table.is_empty() {
         column_ref(vec![column])
@@ -51,7 +51,7 @@ pub fn qualified_column_ref(
 }
 
 /// `StarExpression()` / `StarExpression(relation_name)`.
-pub fn star_expression(relation_name: impl Into<rustdb_common::ByteString>) -> StarExpression {
+pub fn star_expression(relation_name: impl Into<roastedduck_common::ByteString>) -> StarExpression {
     StarExpression {
         relation_name: relation_name.into(),
         exclude_list: Vec::new(),
@@ -74,8 +74,8 @@ pub fn star() -> ParsedExpression {
 /// is_operator, export_state)`; the name is lower-cased like DuckDB does.
 #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
 pub fn function_full(
-    catalog: impl Into<rustdb_common::ByteString>,
-    schema: impl Into<rustdb_common::ByteString>,
+    catalog: impl Into<roastedduck_common::ByteString>,
+    schema: impl Into<roastedduck_common::ByteString>,
     name: impl AsRef<[u8]>,
     children: Vec<ParsedExpression>,
     filter: Option<Box<ParsedExpression>>,
@@ -195,7 +195,7 @@ pub fn positional_reference(index: u64) -> ParsedExpression {
 /// A table ref with no alias, sample or location.
 pub fn table_ref(kind: TableRefKind) -> TableRef {
     TableRef {
-        external_dependency: rustdb_ast::ExternalDependency::default(),
+        external_dependency: roastedduck_ast::ExternalDependency::default(),
         alias: String::new().into(),
         sample: None,
         query_location: None,
@@ -224,7 +224,7 @@ pub fn select_node() -> SelectNode {
         where_clause: None,
         group_expressions: Vec::new(),
         group_sets: Vec::new(),
-        aggregate_handling: rustdb_ast::AggregateHandling::StandardHandling,
+        aggregate_handling: roastedduck_ast::AggregateHandling::StandardHandling,
         having: None,
         sample: None,
         qualify: None,
@@ -254,7 +254,7 @@ pub fn varchar_constant(text: &str) -> ParsedExpression {
 }
 
 /// Native `ConstantExpression(Value(bytes))`; validation matches C++'s Value constructor.
-pub fn try_varchar_constant(bytes: impl AsRef<[u8]>) -> rustdb_common::Result<ParsedExpression> {
+pub fn try_varchar_constant(bytes: impl AsRef<[u8]>) -> roastedduck_common::Result<ParsedExpression> {
     Ok(constant(Value::try_varchar(bytes.as_ref())?))
 }
 
@@ -293,6 +293,6 @@ pub fn random_uuid() -> String {
 }
 
 /// Converts name bytes into a SQL value at DuckDB's checked VARCHAR boundary.
-pub fn varchar_constant_bytes(text: &[u8]) -> rustdb_common::Result<ParsedExpression> {
+pub fn varchar_constant_bytes(text: &[u8]) -> roastedduck_common::Result<ParsedExpression> {
     Ok(constant(Value::try_varchar(text)?))
 }

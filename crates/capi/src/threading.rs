@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use rustdb::Database;
+use roastedduck::Database;
 
 use crate::open::{DuckdbConnection, DuckdbDatabase, connection_ref};
 use crate::types::*;

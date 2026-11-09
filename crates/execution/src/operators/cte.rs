@@ -2,13 +2,13 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
-use rustdb_common::{Error, Result};
-use rustdb_row::hash::hash_columns;
-use rustdb_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE, SelectionVector, Value, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_row::hash::hash_columns;
+use roastedduck_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE, SelectionVector, Value, Vector};
 
 use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
 use crate::window::collection::copy_into;
-use rustdb_common::tree_renderer::RenderParams;
+use roastedduck_common::tree_renderer::RenderParams;
 
 use crate::operator::{
     ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkData, SinkState, set_estimated_cardinality,
@@ -53,13 +53,13 @@ pub struct PhysicalCte {
     types: Vec<LogicalType>,
     data: Arc<CteData>,
     children: [PhysicalRef; 2],
-    ctename: rustdb_common::ByteString,
+    ctename: roastedduck_common::ByteString,
     table_index: u64,
 }
 
 impl PhysicalCte {
     pub fn new(
-        ctename: rustdb_common::ByteString,
+        ctename: roastedduck_common::ByteString,
         table_index: u64,
         data: &Arc<CteData>,
         definition: PhysicalRef,
@@ -320,7 +320,7 @@ pub struct PhysicalRecursiveCte {
     /// The anchor and the recursive part.
     parts: [PhysicalRef; 2],
     external: Vec<Arc<dyn SinkData>>,
-    ctename: rustdb_common::ByteString,
+    ctename: roastedduck_common::ByteString,
     table_index: u64,
     /// The key columns of `USING KEY` (`distinct_idx`), if any.
     key_columns: Option<Vec<usize>>,
@@ -334,7 +334,7 @@ impl PhysicalRecursiveCte {
         reason = "mirrors the fields of DuckDB's operator"
     )]
     pub fn new(
-        (ctename, table_index): (rustdb_common::ByteString, u64),
+        (ctename, table_index): (roastedduck_common::ByteString, u64),
         types: Vec<LogicalType>,
         union_all: bool,
         working_table: Arc<CteData>,

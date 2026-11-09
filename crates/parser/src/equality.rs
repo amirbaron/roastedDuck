@@ -9,12 +9,12 @@
 use std::cmp::Ordering;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use rustdb_ast::visit::{VisitorMut, walk_expression, walk_table_ref};
-use rustdb_ast::{
+use roastedduck_ast::visit::{VisitorMut, walk_expression, walk_table_ref};
+use roastedduck_ast::{
     OrderByNode, OrderModifier, ParsedExpression, ParsedExpressionKind, QualifiedColumnName, SelectStatement,
     StarExpression, TableRef,
 };
-use rustdb_types::{LogicalType, TypeInfo, TypeParameter, TypeParameterValue, UnboundTypeInfo, Value};
+use roastedduck_types::{LogicalType, TypeInfo, TypeParameter, TypeParameterValue, UnboundTypeInfo, Value};
 
 /// Calls `callback` on each direct child of `expr`, in DuckDB's order; subqueries are
 /// not entered (only the child of `x IN (SELECT ...)` is visited).

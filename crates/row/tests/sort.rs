@@ -12,12 +12,12 @@ use std::sync::Arc;
 use common::{
     Rng, TestValue, all_types, buffer_manager, build_chunks, read_rows, spilling_buffer_manager, struct_type,
 };
-use rustdb_buffer::BufferManager;
-use rustdb_row::sort::{
+use roastedduck_buffer::BufferManager;
+use roastedduck_row::sort::{
     NullOrder, OrderModifiers, OrderType, Sort, SortColumn, SortConfig, SortSource, SortStrategy,
     StrategyGlobalState, create_sort_keys,
 };
-use rustdb_types::{DataChunk, LogicalType};
+use roastedduck_types::{DataChunk, LogicalType};
 
 const ALL_MODIFIERS: [OrderModifiers; 4] = [
     OrderModifiers::new(OrderType::Ascending, NullOrder::NullsFirst),
@@ -65,7 +65,7 @@ fn canonical(rows: &mut [Vec<TestValue>]) {
 /// The value a key column holds after the sort-key round trip: like DuckDB, keys are
 /// decoded from their normalized form, which folds -0.0 into 0.0 and every NaN into one.
 fn normalize_key(ty: &LogicalType, value: &mut TestValue) {
-    use rustdb_types::{PhysicalType, TypeInfo};
+    use roastedduck_types::{PhysicalType, TypeInfo};
     match (ty.physical_type(), value) {
         (PhysicalType::Double, TestValue::Fixed(bytes)) => {
             let x = f64::from_ne_bytes(bytes[..8].try_into().unwrap());
@@ -92,8 +92,8 @@ fn normalize_key(ty: &LogicalType, value: &mut TestValue) {
         (_, TestValue::List(values)) => {
             let child = match ty.info() {
                 Some(
-                    TypeInfo::List(rustdb_types::ListTypeInfo { child_type: child })
-                    | TypeInfo::Array(rustdb_types::ArrayTypeInfo {
+                    TypeInfo::List(roastedduck_types::ListTypeInfo { child_type: child })
+                    | TypeInfo::Array(roastedduck_types::ArrayTypeInfo {
                         child_type: child, ..
                     }),
                 ) => child.clone(),
@@ -104,7 +104,7 @@ fn normalize_key(ty: &LogicalType, value: &mut TestValue) {
             }
         }
         (_, TestValue::Struct(values)) => {
-            if let Some(TypeInfo::Struct(rustdb_types::StructTypeInfo {
+            if let Some(TypeInfo::Struct(roastedduck_types::StructTypeInfo {
                 child_types: children,
             })) = ty.info()
             {

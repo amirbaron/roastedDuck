@@ -16,8 +16,8 @@ use crate::helper::{c_string, opt_bytes, to_cstring};
 use crate::*;
 pub use ffi::*;
 pub use init::duckdb_adbc_init;
-use rustdb_arrow::ffi::{ArrowArray, ArrowArrayStream, ArrowSchema};
-use rustdb_common::{ByteString, byte_format};
+use roastedduck_arrow::ffi::{ArrowArray, ArrowArrayStream, ArrowSchema};
+use roastedduck_common::{ByteString, byte_format};
 use std::collections::{BTreeMap, VecDeque};
 use std::ffi::{CString, c_char, c_int};
 use std::sync::atomic::{AtomicPtr, Ordering};
@@ -498,7 +498,7 @@ unsafe extern "C" fn connection_set_option(
                 state,
                 &byte_format!(
                     "{prefix}{}",
-                    rustdb_ast::keyword::write_optionally_quoted_bytes(input)
+                    roastedduck_ast::keyword::write_optionally_quoted_bytes(input)
                 ),
                 error,
             );
@@ -641,7 +641,7 @@ mod tests;
 /// Native handle bridge for the upstream test helpers, which otherwise cast C++ private state.
 #[cfg(feature = "adbc-test-api")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rustdb_adbc_test_connection(value: *mut AdbcConnection) -> DuckdbConnection {
+pub unsafe extern "C" fn roastedduck_adbc_test_connection(value: *mut AdbcConnection) -> DuckdbConnection {
     // SAFETY: test harness passes a live ADBC connection and uses the returned borrow before releasing it.
     unsafe { connection(value).map_or(std::ptr::null_mut(), |state| state.handle()) }
 }
@@ -649,7 +649,7 @@ pub unsafe extern "C" fn rustdb_adbc_test_connection(value: *mut AdbcConnection)
 /// Database handle for creating the independent Arrow-comparison connection in tests.
 #[cfg(feature = "adbc-test-api")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rustdb_adbc_test_database(value: *mut AdbcDatabase) -> DuckdbDatabase {
+pub unsafe extern "C" fn roastedduck_adbc_test_database(value: *mut AdbcDatabase) -> DuckdbDatabase {
     // SAFETY: the test harness keeps the ADBC database alive for the returned borrow.
     unsafe { database(value).map_or(std::ptr::null_mut(), |state| state.database) }
 }
@@ -657,7 +657,7 @@ pub unsafe extern "C" fn rustdb_adbc_test_database(value: *mut AdbcDatabase) -> 
 /// Mirrors the frozen private test initializer, including its empty release callback and legacy vendor code.
 #[cfg(feature = "adbc-test-api")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rustdb_adbc_test_initialize_error(error: *mut AdbcError) {
+pub unsafe extern "C" fn roastedduck_adbc_test_initialize_error(error: *mut AdbcError) {
     // SAFETY: tests supply a complete error; unrecognized callbacks are never invoked.
     unsafe {
         if error.is_null() {

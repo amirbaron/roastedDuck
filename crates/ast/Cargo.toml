@@ -1,5 +1,5 @@
 [package]
-name = "rustdb-ast"
+name = "roastedduck-ast"
 description = "The parse tree: statements, query nodes, table refs, parsed expressions and parse infos."
 version.workspace = true
 edition.workspace = true
@@ -7,9 +7,9 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-rustdb-common.workspace = true
-rustdb-serde.workspace = true
-rustdb-types.workspace = true
+roastedduck-common.workspace = true
+roastedduck-serde.workspace = true
+roastedduck-types.workspace = true
 
 [lints]
 workspace = true

@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
-use rustdb_common::{Error, Result};
-use rustdb_planner::{BoundLimitNode, Expression};
-use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value};
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::{BoundLimitNode, Expression};
+use roastedduck_types::{DataChunk, LogicalType, SelectionVector, Value};
 
 use crate::operator::{
     ErasedOperator, ErasedSink, ErasedSource, OperatorPartitionInfo, OrderPreservationType, PartitionInfo,
@@ -29,17 +29,17 @@ fn delimiter(input: &DataChunk, expression: &Expression) -> Result<Value> {
 
 /// `Value::GetValue<T>`: `value` cast to `target`, failures as Invalid Input errors.
 fn get_value_as(value: &Value, target: &LogicalType) -> Result<Value> {
-    use rustdb_function::cast::ValueCast;
+    use roastedduck_function::cast::ValueCast;
     // `GetValueInternal` reads a DECIMAL as a DOUBLE first.
-    let value = if value.logical_type().id() == rustdb_types::LogicalTypeId::Decimal {
+    let value = if value.logical_type().id() == roastedduck_types::LogicalTypeId::Decimal {
         value.try_cast(&LogicalType::DOUBLE)?
     } else {
         value.clone()
     };
     value.try_cast(target).map_err(|error| {
-        if error.kind() == rustdb_common::ErrorKind::Conversion {
+        if error.kind() == roastedduck_common::ErrorKind::Conversion {
             Error::new_bytes(
-                rustdb_common::ErrorKind::InvalidInput,
+                roastedduck_common::ErrorKind::InvalidInput,
                 error.raw_message_bytes().to_vec(),
             )
         } else {

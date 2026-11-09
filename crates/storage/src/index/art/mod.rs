@@ -22,9 +22,9 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
-use rustdb_buffer::BufferManager;
-use rustdb_common::{ByteString, Error, ErrorKind, Result};
-use rustdb_types::{DataChunk, LogicalType, Value};
+use roastedduck_buffer::BufferManager;
+use roastedduck_common::{ByteString, Error, ErrorKind, Result};
+use roastedduck_types::{DataChunk, LogicalType, Value};
 
 pub use iterator::{ArtIterator, RowIdSetOutput, ScanOutput, ScanResult};
 pub use key::{
@@ -38,7 +38,7 @@ use super::conflict_manager::ConflictManager;
 use super::fixed_size_allocator::{BufferLoader, FixedSizeAllocator, FixedSizeAllocatorInfo};
 use super::{IndexAppendMode, IndexConstraintType, VerifyExistenceType};
 use crate::table_filter::TableFilter;
-use rustdb_types::compare::CompareOp;
+use roastedduck_types::compare::CompareOp;
 
 /// `Prefix::METADATA_SIZE`: the count byte and the child pointer.
 pub const PREFIX_METADATA_SIZE: usize = 9;
@@ -51,7 +51,7 @@ pub trait IndexKeyExecutor: Send + Sync + fmt::Debug {
     /// The key columns of the rows of `table_chunk`, which holds every table column.
     fn execute(&self, table_chunk: &DataChunk) -> Result<DataChunk>;
     /// The display names of the key expressions (`Expression::GetName`).
-    fn names(&self) -> &[rustdb_common::ByteString];
+    fn names(&self) -> &[roastedduck_common::ByteString];
 
     /// The predicates an index scan answers for the pushed-down `filter` on the one column
     /// the key expression reads, if it compares the key expression with a constant
@@ -67,7 +67,7 @@ pub trait IndexKeyExecutor: Send + Sync + fmt::Debug {
 pub enum IndexKeyExpressions {
     /// Plain column references: key column `i` is table column `column_ids[i]`, displayed
     /// as `names[i]`.
-    Columns(Vec<rustdb_common::ByteString>),
+    Columns(Vec<roastedduck_common::ByteString>),
     /// Arbitrary expressions.
     Custom(Arc<dyn IndexKeyExecutor>),
 }
@@ -412,7 +412,7 @@ impl Art {
     }
 
     /// The display names of the key expressions.
-    pub fn expression_names(&self) -> Vec<rustdb_common::ByteString> {
+    pub fn expression_names(&self) -> Vec<roastedduck_common::ByteString> {
         match &self.expressions {
             IndexKeyExpressions::Columns(names) => names.clone(),
             IndexKeyExpressions::Custom(executor) => executor.names().iter().map(Into::into).collect(),
@@ -433,7 +433,7 @@ impl Art {
             && chunk
                 .columns()
                 .iter()
-                .any(|column| column.logical_type().id() == rustdb_types::LogicalTypeId::Geometry)
+                .any(|column| column.logical_type().id() == roastedduck_types::LogicalTypeId::Geometry)
     }
 
     /// The keys of `key_chunk` (`GenerateKeyVectors`), its GEOMETRY columns converted to
@@ -445,19 +445,19 @@ impl Art {
         let count = key_chunk.len();
         let mut columns = Vec::with_capacity(key_chunk.columns().len());
         for column in key_chunk.columns() {
-            if column.logical_type().id() != rustdb_types::LogicalTypeId::Geometry {
+            if column.logical_type().id() != roastedduck_types::LogicalTypeId::Geometry {
                 columns.push(column.clone());
                 continue;
             }
-            let mut converted = rustdb_types::Vector::flat(LogicalType::BLOB, count.max(1));
+            let mut converted = roastedduck_types::Vector::flat(LogicalType::BLOB, count.max(1));
             for row in 0..count {
                 if column.is_null(row) {
                     converted.set_null(row);
                     continue;
                 }
-                let bytes = rustdb_types::geometry::to_spatial(column.string_bytes(row))?;
+                let bytes = roastedduck_types::geometry::to_spatial(column.string_bytes(row))?;
                 let value = converted.add_string(&bytes);
-                converted.values_mut::<rustdb_types::StringT>()[row] = value;
+                converted.values_mut::<roastedduck_types::StringT>()[row] = value;
             }
             columns.push(converted);
         }
@@ -467,11 +467,11 @@ impl Art {
     /// The key of a lookup constant (`ARTKey::CreateKey` with the storage version):
     /// GEOMETRY constants of old indexes in the legacy representation.
     fn create_lookup_key(&self, value: &Value) -> Result<ArtKey> {
-        if value.logical_type().id() == rustdb_types::LogicalTypeId::Geometry
+        if value.logical_type().id() == roastedduck_types::LogicalTypeId::Geometry
             && self.has_legacy_geometry_keys()
             && let Some(bytes) = value.as_bytes()
         {
-            return create_key(&Value::blob(&rustdb_types::geometry::to_spatial(bytes)?));
+            return create_key(&Value::blob(&roastedduck_types::geometry::to_spatial(bytes)?));
         }
         create_key(value)
     }
@@ -727,9 +727,9 @@ impl Art {
     }
 
     /// `"<name>: <value>, ..."` for row `row` of the key chunk (`GenerateErrorKeyName`).
-    fn error_key_name(&self, key_chunk: &DataChunk, row: usize) -> rustdb_common::ByteString {
+    fn error_key_name(&self, key_chunk: &DataChunk, row: usize) -> roastedduck_common::ByteString {
         let names = self.expression_names();
-        let mut out = rustdb_common::ByteString::new();
+        let mut out = roastedduck_common::ByteString::new();
         for (k, column) in key_chunk.columns().iter().enumerate() {
             if k > 0 {
                 out.push_bytes(", ");
@@ -748,7 +748,7 @@ impl Art {
         &self,
         verify_type: VerifyExistenceType,
         key_name: &[u8],
-    ) -> rustdb_common::ByteString {
+    ) -> roastedduck_common::ByteString {
         let (prefix, suffix) = match verify_type {
             VerifyExistenceType::Append => (
                 "Duplicate key \"",
@@ -777,7 +777,7 @@ impl Art {
         verify_type: VerifyExistenceType,
         failed_index: usize,
         table_chunk: &DataChunk,
-    ) -> Result<rustdb_common::ByteString> {
+    ) -> Result<roastedduck_common::ByteString> {
         let key_chunk = self.execute_expressions(table_chunk)?;
         let key_name = self.error_key_name(&key_chunk, failed_index);
         Ok(self.constraint_error_message(verify_type, &key_name))

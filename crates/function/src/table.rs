@@ -8,9 +8,9 @@
 use std::fmt;
 use std::sync::Arc;
 
-use rustdb_common::Result;
-use rustdb_serde::Serializer;
-use rustdb_types::{DataChunk, LogicalType, Value};
+use roastedduck_common::Result;
+use roastedduck_serde::Serializer;
+use roastedduck_types::{DataChunk, LogicalType, Value};
 
 use crate::FunctionData;
 
@@ -20,10 +20,10 @@ pub struct TableFunctionBindInput<'a> {
     /// The positional arguments, cast to the overload's argument types.
     pub inputs: &'a [Value],
     /// `name := value` arguments, cast to the declared parameter types.
-    pub named_parameters: &'a [(rustdb_common::ByteString, Value)],
+    pub named_parameters: &'a [(roastedduck_common::ByteString, Value)],
     /// For table-in/table-out functions: the input table's column types and names.
     pub input_table_types: &'a [LogicalType],
-    pub input_table_names: &'a [rustdb_common::ByteString],
+    pub input_table_names: &'a [roastedduck_common::ByteString],
     /// The binder's client context (the planner's `ClientContext`), for functions that
     /// read the catalog.
     pub binder: Option<&'a dyn std::any::Any>,
@@ -33,7 +33,7 @@ pub struct TableFunctionBindInput<'a> {
 #[derive(Clone, Debug, Default)]
 pub struct TableFunctionBindOutput {
     pub return_types: Vec<LogicalType>,
-    pub names: Vec<rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
     pub bind_data: Option<Arc<dyn FunctionData>>,
 }
 
@@ -75,7 +75,7 @@ pub type TableFunctionScan = Arc<
 pub type TableFunctionTypePushdown =
     Arc<dyn Fn(&dyn FunctionData, &[(usize, LogicalType)]) -> Result<Arc<dyn FunctionData>> + Send + Sync>;
 
-/// Applies pushed-down table filters (`rustdb_storage::TableFilterSet`, keyed by the
+/// Applies pushed-down table filters (`roastedduck_storage::TableFilterSet`, keyed by the
 /// position of the filtered column in the scan's column ids, passed as `Any`) to a table
 /// function's bind data: the scan of the returned bind data only produces rows passing
 /// the filters, so the planner drops the filters themselves.
@@ -91,18 +91,20 @@ pub type TableFunctionFilterSupport =
 /// `(column id, name, type)` for columns such as `filename` that can be selected by name
 /// without being part of the function's columns.
 pub type TableFunctionVirtualColumns = Arc<
-    dyn Fn(Option<&dyn FunctionData>) -> Vec<(u64, rustdb_common::ByteString, LogicalType)> + Send + Sync,
+    dyn Fn(Option<&dyn FunctionData>) -> Vec<(u64, roastedduck_common::ByteString, LogicalType)>
+        + Send
+        + Sync,
 >;
 
 /// The statistics of column `column` of a call (DuckDB's `table_statistics_t`):
-/// `rustdb_storage::statistics::BaseStatistics`, boxed as `Any`.
+/// `roastedduck_storage::statistics::BaseStatistics`, boxed as `Any`.
 pub type TableFunctionStatistics =
     Arc<dyn Fn(Option<&dyn FunctionData>, u64) -> Option<Box<dyn std::any::Any + Send>> + Send + Sync>;
 
 /// The statistics of one partition (row group) of a table function's data, for
 /// statistics-based query answering (DuckDB's `PartitionRowGroup`).
 pub trait PartitionRowGroup: Send + Sync + fmt::Debug {
-    /// The statistics of column `column` (`rustdb_storage::statistics::BaseStatistics`,
+    /// The statistics of column `column` (`roastedduck_storage::statistics::BaseStatistics`,
     /// boxed as `Any`), if known.
     fn column_statistics(&self, column: u64) -> Option<Box<dyn std::any::Any + Send>>;
     /// Whether the min/max of these statistics are values of the column, not bounds.
@@ -146,11 +148,11 @@ pub type TableFunctionPartitionInfo =
 pub struct FileFilterPushdown {
     /// The scanned files, if their paths determine any column (`hive_partitioning` or
     /// `filename` is set).
-    pub files: Arc<dyn Fn(&dyn FunctionData) -> Option<Vec<rustdb_common::ByteString>> + Send + Sync>,
+    pub files: Arc<dyn Fn(&dyn FunctionData) -> Option<Vec<roastedduck_common::ByteString>> + Send + Sync>,
     /// The value of the column named `name` (of type `ty`) in the file at `path`, if the
     /// path determines it (`GetKnownColumnValues` + `HivePartitioning::GetValue`).
     pub known_value: Arc<
-        dyn Fn(&dyn FunctionData, &[u8], &[u8], &LogicalType) -> Result<Option<rustdb_types::Value>>
+        dyn Fn(&dyn FunctionData, &[u8], &[u8], &LogicalType) -> Result<Option<roastedduck_types::Value>>
             + Send
             + Sync,
     >,
@@ -184,7 +186,7 @@ pub struct ParallelTableScan {
         dyn Fn(
                 Option<&dyn FunctionData>,
                 &[u64],
-                &[rustdb_types::ColumnIndex],
+                &[roastedduck_types::ColumnIndex],
                 Option<&crate::logging::OperatorLogger>,
             ) -> Result<ParallelScanGlobal>
             + Send
@@ -221,7 +223,7 @@ pub struct ParallelTableScan {
             dyn Fn(
                     Option<&dyn FunctionData>,
                     &ParallelScanGlobal,
-                ) -> Vec<(rustdb_common::ByteString, rustdb_common::ByteString)>
+                ) -> Vec<(roastedduck_common::ByteString, roastedduck_common::ByteString)>
                 + Send
                 + Sync,
         >,
@@ -275,9 +277,9 @@ pub struct TableScanState {
 pub fn named_parameters_in_map_order<T, K: AsRef<[u8]>>(
     named_parameters: &[(K, T)],
 ) -> impl Iterator<Item = &(K, T)> {
-    let mut map = rustdb_common::platform_order::UnorderedOrder::default();
+    let mut map = roastedduck_common::platform_order::UnorderedOrder::default();
     for (index, (name, _)) in named_parameters.iter().enumerate() {
-        map.insert(rustdb_common::libcxx::ci_hash(name), index, |a, b| {
+        map.insert(roastedduck_common::libcxx::ci_hash(name), index, |a, b| {
             named_parameters[*a]
                 .0
                 .as_ref()

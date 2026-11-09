@@ -8,7 +8,7 @@
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 /// `ARROW_FLAG_NULLABLE`: the field may hold NULLs.
 pub const ARROW_FLAG_NULLABLE: i64 = 2;
@@ -114,9 +114,9 @@ impl ArrowSchema {
     ///
     /// # Safety
     /// `name` must be NULL or a NUL-terminated string.
-    pub unsafe fn name_string(&self) -> rustdb_common::ByteString {
+    pub unsafe fn name_string(&self) -> roastedduck_common::ByteString {
         if self.name.is_null() {
-            return rustdb_common::ByteString::new();
+            return roastedduck_common::ByteString::new();
         }
         // SAFETY: guaranteed by the caller.
         unsafe { CStr::from_ptr(self.name) }.to_bytes().into()

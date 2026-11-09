@@ -1,4 +1,4 @@
-//! The type system and columnar in-memory format of rustdb.
+//! The type system and columnar in-memory format of roastedduck.
 //!
 //! Layouts follow DuckDB exactly (16-byte strings, validity bitmasks, flat/constant
 //! vectors) because the same bytes are written to storage and exposed via the C API.
@@ -60,7 +60,7 @@ pub use interval::IntervalParseError;
 pub use logical_type::LogicalType;
 pub use native::NativeType;
 pub use physical_type::PhysicalType;
-pub use rustdb_common::STANDARD_VECTOR_SIZE;
+pub use roastedduck_common::STANDARD_VECTOR_SIZE;
 pub use selection::{Sel, SelectionVector, append_where, partition_rows};
 pub use string_t::StringT;
 pub use time::{ParsedTime, Time, TimeNs, TimeTz};

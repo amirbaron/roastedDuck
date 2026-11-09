@@ -4,17 +4,17 @@ use crate::{
     CatalogType, ColumnList, Constraint, CreateMacroInfo, CreateViewInfo, DeprecatedIndexType,
     IndexConstraintType, LogicalDependencyList, OnCreateConflict, ParsedExpression, SelectStatement,
 };
-use rustdb_common::CaseInsensitiveMap;
-use rustdb_serde::{DeserializeObject, Deserializer, Error, Result, SerializeObject, Serializer};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::CaseInsensitiveMap;
+use roastedduck_serde::{DeserializeObject, Deserializer, Error, Result, SerializeObject, Serializer};
+use roastedduck_types::{LogicalType, Value};
 
 /// DuckDB's `CreateInfo`: the members shared by all subclasses, with the subclass in `kind`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateInfo {
     /// `catalog` (property 101).
-    pub catalog: rustdb_common::ByteString,
+    pub catalog: roastedduck_common::ByteString,
     /// `schema` (property 102).
-    pub schema: rustdb_common::ByteString,
+    pub schema: roastedduck_common::ByteString,
     /// `temporary` (property 103).
     pub temporary: bool,
     /// `internal` (property 104).
@@ -22,7 +22,7 @@ pub struct CreateInfo {
     /// `on_conflict` (property 105).
     pub on_conflict: OnCreateConflict,
     /// `sql` (property 106).
-    pub sql: rustdb_common::ByteString,
+    pub sql: roastedduck_common::ByteString,
     /// `comment` (property 107).
     pub comment: Value,
     /// `tags` (property 108).
@@ -124,12 +124,14 @@ impl SerializeObject for CreateInfo {
 impl DeserializeObject for CreateInfo {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
         let catalog_type: CatalogType = deserializer.read_property(100, "type")?;
-        let catalog: rustdb_common::ByteString = deserializer.read_property_with_default(101, "catalog")?;
-        let schema: rustdb_common::ByteString = deserializer.read_property_with_default(102, "schema")?;
+        let catalog: roastedduck_common::ByteString =
+            deserializer.read_property_with_default(101, "catalog")?;
+        let schema: roastedduck_common::ByteString =
+            deserializer.read_property_with_default(102, "schema")?;
         let temporary: bool = deserializer.read_property_with_default(103, "temporary")?;
         let internal: bool = deserializer.read_property_with_default(104, "internal")?;
         let on_conflict: OnCreateConflict = deserializer.read_property(105, "on_conflict")?;
-        let sql: rustdb_common::ByteString = deserializer.read_property_with_default(106, "sql")?;
+        let sql: roastedduck_common::ByteString = deserializer.read_property_with_default(106, "sql")?;
         let comment: Value =
             deserializer.read_property_with_explicit_default(107, "comment", Value::default())?;
         let tags: CaseInsensitiveMap<String> =
@@ -196,15 +198,15 @@ impl DeserializeObject for CreateInfo {
     }
 }
 
-rustdb_serde::impl_pointee_serde!(CreateInfo);
+roastedduck_serde::impl_pointee_serde!(CreateInfo);
 
 /// DuckDB's `CreateIndexInfo`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateIndexInfo {
     /// `name` (property 200).
-    pub name: rustdb_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     /// `table` (property 201).
-    pub table: rustdb_common::ByteString,
+    pub table: roastedduck_common::ByteString,
     /// `constraint_type` (property 203).
     pub constraint_type: IndexConstraintType,
     /// `parsed_expressions` (property 204).
@@ -212,13 +214,13 @@ pub struct CreateIndexInfo {
     /// `scan_types` (property 205).
     pub scan_types: Vec<LogicalType>,
     /// `names` (property 206).
-    pub names: Vec<rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
     /// `column_ids` (property 207).
     pub column_ids: Vec<u64>,
     /// `options` (property 208).
-    pub options: rustdb_common::CaseInsensitiveMap<Value, rustdb_common::ByteString>,
+    pub options: roastedduck_common::CaseInsensitiveMap<Value, roastedduck_common::ByteString>,
     /// `index_type_name` (property 209).
-    pub index_type_name: rustdb_common::ByteString,
+    pub index_type_name: roastedduck_common::ByteString,
 }
 
 impl SerializeObject for CreateIndexInfo {
@@ -239,18 +241,19 @@ impl SerializeObject for CreateIndexInfo {
 
 impl DeserializeObject for CreateIndexInfo {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let name: rustdb_common::ByteString = deserializer.read_property_with_default(200, "name")?;
-        let table: rustdb_common::ByteString = deserializer.read_property_with_default(201, "table")?;
+        let name: roastedduck_common::ByteString = deserializer.read_property_with_default(200, "name")?;
+        let table: roastedduck_common::ByteString = deserializer.read_property_with_default(201, "table")?;
         deserializer.read_deleted_property::<DeprecatedIndexType>(202, "index_type")?;
         let constraint_type: IndexConstraintType = deserializer.read_property(203, "constraint_type")?;
         let parsed_expressions: Vec<ParsedExpression> =
             deserializer.read_property_with_default(204, "parsed_expressions")?;
         let scan_types: Vec<LogicalType> = deserializer.read_property_with_default(205, "scan_types")?;
-        let names: Vec<rustdb_common::ByteString> = deserializer.read_property_with_default(206, "names")?;
+        let names: Vec<roastedduck_common::ByteString> =
+            deserializer.read_property_with_default(206, "names")?;
         let column_ids: Vec<u64> = deserializer.read_property_with_default(207, "column_ids")?;
-        let options: rustdb_common::CaseInsensitiveMap<Value, rustdb_common::ByteString> =
+        let options: roastedduck_common::CaseInsensitiveMap<Value, roastedduck_common::ByteString> =
             deserializer.read_property_with_default(208, "options")?;
-        let index_type_name: rustdb_common::ByteString =
+        let index_type_name: roastedduck_common::ByteString =
             deserializer.read_property_with_default(209, "index_type_name")?;
         Ok(Self {
             name,
@@ -270,7 +273,7 @@ impl DeserializeObject for CreateIndexInfo {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateTableInfo {
     /// `table` (property 200).
-    pub table: rustdb_common::ByteString,
+    pub table: roastedduck_common::ByteString,
     /// `columns` (property 201).
     pub columns: ColumnList,
     /// `constraints` (property 202).
@@ -282,7 +285,7 @@ pub struct CreateTableInfo {
     /// `sort_keys` (property 205).
     pub sort_keys: Vec<ParsedExpression>,
     /// `options` (property 206).
-    pub options: rustdb_common::CaseInsensitiveMap<ParsedExpression, rustdb_common::ByteString>,
+    pub options: roastedduck_common::CaseInsensitiveMap<ParsedExpression, roastedduck_common::ByteString>,
 }
 
 impl SerializeObject for CreateTableInfo {
@@ -300,15 +303,17 @@ impl SerializeObject for CreateTableInfo {
 
 impl DeserializeObject for CreateTableInfo {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let table: rustdb_common::ByteString = deserializer.read_property_with_default(200, "table")?;
+        let table: roastedduck_common::ByteString = deserializer.read_property_with_default(200, "table")?;
         let columns: ColumnList = deserializer.read_property(201, "columns")?;
         let constraints: Vec<Constraint> = deserializer.read_property_with_default(202, "constraints")?;
         let query: Option<Box<SelectStatement>> = deserializer.read_property_with_default(203, "query")?;
         let partition_keys: Vec<ParsedExpression> =
             deserializer.read_property_with_default(204, "partition_keys")?;
         let sort_keys: Vec<ParsedExpression> = deserializer.read_property_with_default(205, "sort_keys")?;
-        let options: rustdb_common::CaseInsensitiveMap<ParsedExpression, rustdb_common::ByteString> =
-            deserializer.read_property_with_default(206, "options")?;
+        let options: roastedduck_common::CaseInsensitiveMap<
+            ParsedExpression,
+            roastedduck_common::ByteString,
+        > = deserializer.read_property_with_default(206, "options")?;
         Ok(Self {
             table,
             columns,
@@ -325,7 +330,7 @@ impl DeserializeObject for CreateTableInfo {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateTypeInfo {
     /// `name` (property 200).
-    pub name: rustdb_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     /// `logical_type` (property 201).
     pub logical_type: LogicalType,
     /// `query`: the query of `CREATE TYPE ... AS ENUM (SELECT ...)`.
@@ -342,7 +347,7 @@ impl SerializeObject for CreateTypeInfo {
 
 impl DeserializeObject for CreateTypeInfo {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let name: rustdb_common::ByteString = deserializer.read_property_with_default(200, "name")?;
+        let name: roastedduck_common::ByteString = deserializer.read_property_with_default(200, "name")?;
         let logical_type: LogicalType = deserializer.read_property(201, "logical_type")?;
         Ok(Self {
             name,
@@ -356,7 +361,7 @@ impl DeserializeObject for CreateTypeInfo {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateSequenceInfo {
     /// `name` (property 200).
-    pub name: rustdb_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     /// `usage_count` (property 201).
     pub usage_count: u64,
     /// `increment` (property 202).
@@ -386,7 +391,7 @@ impl SerializeObject for CreateSequenceInfo {
 
 impl DeserializeObject for CreateSequenceInfo {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let name: rustdb_common::ByteString = deserializer.read_property_with_default(200, "name")?;
+        let name: roastedduck_common::ByteString = deserializer.read_property_with_default(200, "name")?;
         let usage_count: u64 = deserializer.read_property_with_default(201, "usage_count")?;
         let increment: i64 = deserializer.read_property_with_default(202, "increment")?;
         let min_value: i64 = deserializer.read_property_with_default(203, "min_value")?;

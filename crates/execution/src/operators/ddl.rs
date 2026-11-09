@@ -6,23 +6,23 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use rustdb_ast::{
+use roastedduck_ast::{
     CatalogType as AstCatalogType, Constraint, CreateIndexInfo, CreateInfo, CreateInfoKind, DropInfo,
     ForeignKeyConstraint, ForeignKeyType, IndexConstraintType as AstIndexConstraintType, OnCreateConflict,
     OnEntryNotFound, TableColumnType,
 };
-use rustdb_catalog::{
+use roastedduck_catalog::{
     Catalog, CatalogEntry, CatalogType, EntryKind, IndexEntry, SequenceEntry, TableEntry, ViewEntry,
 };
-use rustdb_common::{Error, Result};
-use rustdb_planner::{ClientContext, Expression, ExpressionKind};
-use rustdb_storage::TableFilter;
-use rustdb_storage::index::IndexConstraintType;
-use rustdb_storage::index::art::{Art, IndexKeyExecutor, IndexKeyExpressions, IndexScanPredicate};
-use rustdb_storage::storage_info::storage_version_name;
-use rustdb_storage::{ColumnDefinition, DataTable, TableIoManager, Transaction};
-use rustdb_types::compare::CompareOp;
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId};
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::{ClientContext, Expression, ExpressionKind};
+use roastedduck_storage::TableFilter;
+use roastedduck_storage::index::IndexConstraintType;
+use roastedduck_storage::index::art::{Art, IndexKeyExecutor, IndexKeyExpressions, IndexScanPredicate};
+use roastedduck_storage::storage_info::storage_version_name;
+use roastedduck_storage::{ColumnDefinition, DataTable, TableIoManager, Transaction};
+use roastedduck_types::compare::CompareOp;
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId};
 
 use super::ExecutableExpressionFilter;
 use super::insert::TableCreator;
@@ -179,7 +179,7 @@ pub struct CreateEntryAction {
 
 impl DdlAction for CreateEntryAction {
     fn execute(&self, transaction: &Transaction) -> Result<()> {
-        let entry = rustdb_catalog::checkpoint::entry_from_create_info(&self.catalog, &self.info)?;
+        let entry = roastedduck_catalog::checkpoint::entry_from_create_info(&self.catalog, &self.info)?;
         self.catalog
             .create_entry(transaction, &self.info.schema, entry, self.info.on_conflict)?;
         Ok(())
@@ -218,7 +218,7 @@ pub(crate) fn check_type_is_supported(ty: &LogicalType, catalog: &Catalog) -> Re
                 if let Some(version) = catalog.storage_version()
                     && version < VARIANT_VERSION_ADDED
                 {
-                    return Err(Error::invalid_input(rustdb_common::byte_format!(
+                    return Err(Error::invalid_input(roastedduck_common::byte_format!(
                         "VARIANT columns are not supported in storage versions prior to {} (database \"{}\" \
                          is using storage version {})",
                         storage_version_name(VARIANT_VERSION_ADDED, false),
@@ -263,7 +263,7 @@ pub(crate) fn check_struct_columns(ty: &LogicalType) -> Result<()> {
 #[derive(Debug)]
 pub struct CatalogTableCreator {
     pub catalog: Arc<Catalog>,
-    pub schema: rustdb_common::ByteString,
+    pub schema: roastedduck_common::ByteString,
     pub info: CreateInfo,
     pub io: Arc<TableIoManager>,
 }
@@ -284,7 +284,7 @@ impl TableCreator for CatalogTableCreator {
             None
         };
         if let Some(clause) = unsupported {
-            return Err(Error::catalog(rustdb_common::byte_format!(
+            return Err(Error::catalog(roastedduck_common::byte_format!(
                 "{clause} is not supported for tables in a duckdb catalog"
             )));
         }
@@ -305,8 +305,8 @@ impl TableCreator for CatalogTableCreator {
         let columns: Vec<ColumnDefinition> = physical()
             .map(|c| {
                 ColumnDefinition::new(c.name.clone(), c.logical_type.clone()).with_compression(
-                    rustdb_storage::compression::CompressionType::from_u8(c.compression_type as u8)
-                        .unwrap_or(rustdb_storage::compression::CompressionType::Auto),
+                    roastedduck_storage::compression::CompressionType::from_u8(c.compression_type as u8)
+                        .unwrap_or(roastedduck_storage::compression::CompressionType::Auto),
                 )
             })
             .collect();
@@ -376,7 +376,7 @@ impl TableCreator for CatalogTableCreator {
 }
 
 /// The physical key columns of a UNIQUE constraint of a new table.
-fn unique_keys(entry: &TableEntry, unique: &rustdb_ast::UniqueConstraint) -> Result<Vec<usize>> {
+fn unique_keys(entry: &TableEntry, unique: &roastedduck_ast::UniqueConstraint) -> Result<Vec<usize>> {
     if unique.index.0 != u64::MAX {
         return entry
             .logical_to_physical(unique.index.0 as usize)
@@ -437,7 +437,7 @@ impl DdlAction for DropAction {
             AstCatalogType::IndexEntry => CatalogType::Index,
             AstCatalogType::TypeEntry => CatalogType::Type,
             other => {
-                return Err(Error::not_implemented(rustdb_common::byte_format!(
+                return Err(Error::not_implemented(roastedduck_common::byte_format!(
                     "DROP {}",
                     other.name()
                 )));
@@ -455,7 +455,7 @@ impl DdlAction for DropAction {
                     continue;
                 };
                 if fk.fk_type == ForeignKeyType::FkTypePrimaryKeyTable {
-                    return Err(Error::catalog(rustdb_common::byte_format!(
+                    return Err(Error::catalog(roastedduck_common::byte_format!(
                         "Could not drop the table because this table is main key table of the table \"{}\"",
                         fk.table
                     )));
@@ -490,7 +490,7 @@ impl DdlAction for DropAction {
 #[derive(Debug)]
 struct IndexExpressionExecutor {
     executor: std::sync::Mutex<ExpressionExecutor>,
-    names: Vec<rustdb_common::ByteString>,
+    names: Vec<roastedduck_common::ByteString>,
     /// The single key expression with its column read as `BOUND_REF #0`, the form of
     /// a pushed-down expression filter; `None` for compound keys or keys over several
     /// columns.
@@ -540,8 +540,8 @@ fn single_column_key(expression: &Expression) -> Option<Expression> {
 }
 
 /// The comparison of an index scan for a comparison expression type.
-fn scan_compare_op(expression_type: rustdb_planner::ExpressionType) -> Option<CompareOp> {
-    use rustdb_planner::ExpressionType as T;
+fn scan_compare_op(expression_type: roastedduck_planner::ExpressionType) -> Option<CompareOp> {
+    use roastedduck_planner::ExpressionType as T;
     Some(match expression_type {
         T::CompareEqual => CompareOp::Equal,
         T::CompareLessthan => CompareOp::LessThan,
@@ -573,7 +573,7 @@ impl IndexKeyExecutor for IndexExpressionExecutor {
         Ok(keys)
     }
 
-    fn names(&self) -> &[rustdb_common::ByteString] {
+    fn names(&self) -> &[roastedduck_common::ByteString] {
         &self.names
     }
 
@@ -677,8 +677,8 @@ pub fn bind_table_indexes(client: &Arc<ClientContext>, entry: &Arc<CatalogEntry>
         };
         if !unbound.index_type().eq_ignore_ascii_case("ART") {
             return Err(Error::new_bytes(
-                rustdb_common::ErrorKind::MissingExtension,
-                rustdb_common::byte_format!(
+                roastedduck_common::ErrorKind::MissingExtension,
+                roastedduck_common::byte_format!(
                     "Cannot bind index '{}', unknown index type '{}'. You need to load the extension that provides this index type before table '{}' can be modified.",
                     index.table,
                     unbound.index_type(),
@@ -686,7 +686,7 @@ pub fn bind_table_indexes(client: &Arc<ClientContext>, entry: &Arc<CatalogEntry>
                 ),
             ));
         }
-        let expressions = rustdb_planner::bind_index_expressions(Arc::clone(client), entry, index)?;
+        let expressions = roastedduck_planner::bind_index_expressions(Arc::clone(client), entry, index)?;
         let mut art = index_art(storage, index, &expressions)?;
         // The index holds the latest committed rows, like the stored one plus the
         // replayed changes (`ApplyBufferedReplays`).
@@ -711,7 +711,7 @@ impl DdlAction for CreateIndexAction {
             if self.info.on_conflict == OnCreateConflict::IgnoreOnConflict {
                 return Ok(());
             }
-            return Err(Error::catalog(rustdb_common::byte_format!(
+            return Err(Error::catalog(roastedduck_common::byte_format!(
                 "Index with name \"{}\" already exists!",
                 index.name
             )));
@@ -726,7 +726,7 @@ impl DdlAction for CreateIndexAction {
             ));
         }
         if !index.index_type_name.is_empty() && !index.index_type_name.eq_ignore_ascii_case("ART") {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Unknown index type: {}",
                 index.index_type_name
             )));

@@ -3,9 +3,9 @@
 
 use std::cmp::Ordering;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::compare::SqlOrd;
-use rustdb_types::{LogicalType, PhysicalType, StringT, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::compare::SqlOrd;
+use roastedduck_types::{LogicalType, PhysicalType, StringT, Vector};
 
 use crate::compare::{Interval, compare_rows};
 use crate::format::{ChunkFormat, SlotMap, VectorFormat};
@@ -99,7 +99,7 @@ impl MatchFunction {
             PhysicalType::Struct
                 if matches!(predicate, MatchPredicate::Equal | MatchPredicate::NotDistinctFrom) =>
             {
-                let Some(rustdb_types::TypeInfo::Struct(rustdb_types::StructTypeInfo {
+                let Some(roastedduck_types::TypeInfo::Struct(roastedduck_types::StructTypeInfo {
                     child_types: children,
                 })) = ty.info()
                 else {

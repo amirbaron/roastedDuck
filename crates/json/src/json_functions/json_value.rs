@@ -1,9 +1,9 @@
 //! `json_value` (DuckDB's `json_value.cpp`): like `json_extract`, but NULL unless the value
 //! is a scalar.
 
-use rustdb_common::Result;
-use rustdb_function::{FunctionState, ScalarFunctionSet};
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_common::Result;
+use roastedduck_function::{FunctionState, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use super::json_extract::read_overloads;
 use crate::json_executors::{ColumnBuilder, StrBuilder, binary_execute, execute_many};

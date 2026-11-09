@@ -4,12 +4,12 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_function::aggregate::{AggregateFunction, AggregateInput, OwnedStates};
-use rustdb_function::{
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_function::aggregate::{AggregateFunction, AggregateInput, OwnedStates};
+use roastedduck_function::{
     BindInput, FunctionData, FunctionState, NullHandling, ScalarFunction, ScalarFunctionSet,
 };
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, StringT, TypeInfo, Vector};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, StringT, TypeInfo, Vector};
 
 use crate::scalar::executor::addressable;
 
@@ -58,7 +58,7 @@ fn bind_aggregate_state(
     let resolver = input
         .aggregates
         .ok_or_else(|| Error::internal("finalize bound without an aggregate resolver"))?;
-    let arguments: Vec<(LogicalType, Option<rustdb_types::Value>)> = state
+    let arguments: Vec<(LogicalType, Option<roastedduck_types::Value>)> = state
         .bound_argument_types
         .iter()
         .map(|ty| (ty.clone(), None))
@@ -105,7 +105,7 @@ fn bind_data(state: &FunctionState) -> Result<&ExportAggregateBindData> {
 }
 
 /// Copies an exported state into `target`, a state of the aggregate.
-fn load_state(target: rustdb_function::aggregate::StatePtr, bytes: &[u8]) {
+fn load_state(target: roastedduck_function::aggregate::StatePtr, bytes: &[u8]) {
     // SAFETY: `target` is a state of the aggregate, `state_size` bytes long, and the
     // callers checked that `bytes` has that length.
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), target.as_ptr(), bytes.len()) };

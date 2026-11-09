@@ -5,9 +5,9 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use rustdb_common::Result;
-use rustdb_function::{FunctionData, FunctionState};
-use rustdb_types::{
+use roastedduck_common::Result;
+use roastedduck_function::{FunctionData, FunctionState};
+use roastedduck_types::{
     DataChunk, ListEntry, LogicalType, NativeType, StringHeap, StringT, Unified, ValidityMask, Vector,
     VectorKind,
 };

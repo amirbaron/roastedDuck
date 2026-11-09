@@ -1,11 +1,13 @@
 //! Frozen C++ 1.5.6 `IndexStorageInfo` wire comparison, including native name bytes.
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
-use rustdb_serde::{Deserializer, SerializationOptions, Serializer};
-use rustdb_storage::checkpoint::pointers::{deserialize_index_storage_info, serialize_index_storage_info};
-use rustdb_storage::index::art::ArtStorageInfo;
-use rustdb_storage::index::{BufferPointer, FixedSizeAllocatorInfo};
-use rustdb_types::Value;
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
+use roastedduck_serde::{Deserializer, SerializationOptions, Serializer};
+use roastedduck_storage::checkpoint::pointers::{
+    deserialize_index_storage_info, serialize_index_storage_info,
+};
+use roastedduck_storage::index::art::ArtStorageInfo;
+use roastedduck_storage::index::{BufferPointer, FixedSizeAllocatorInfo};
+use roastedduck_types::Value;
 
 fn decode(hex: &str) -> Result<Vec<u8>> {
     if !hex.len().is_multiple_of(2) {

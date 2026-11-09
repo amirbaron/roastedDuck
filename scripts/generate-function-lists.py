@@ -36,7 +36,7 @@ def main():
     parser.add_argument("--source", type=Path,
                         default=workspace / ".context/duckdb-download/duckdb-1.5.6")
     parser.add_argument("--output", type=Path,
-                        default=workspace / "crates/rustdb/src/function_lists.rs")
+                        default=workspace / "crates/roastedduck/src/function_lists.rs")
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
     text = (

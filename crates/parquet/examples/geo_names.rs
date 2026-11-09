@@ -1,6 +1,6 @@
 //! Native `GeoParquet` names against actual C++ JSON construction/error boundaries.
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_parquet::geo::{GeoParquetMetadata, GeoParquetVersion, GeoStats, geometry_type};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_parquet::geo::{GeoParquetMetadata, GeoParquetVersion, GeoStats, geometry_type};
 use std::io::{self, BufRead};
 fn decode(hex: &str) -> Result<Vec<u8>> {
     let (pairs, rest) = hex.as_bytes().as_chunks::<2>();

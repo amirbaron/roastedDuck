@@ -4,7 +4,7 @@
 Writes `target/pg-oracle/pg_oracle.cpp`, a small program that runs DuckDB's own
 `PostgresParser` (linked from a DuckDB build's `libduckdb_pg_query.a`) over a corpus
 and prints, per statement, either the parse tree as JSON (in exactly the format of
-`rustdb_pg_parser::nodes::to_json`) or the error message and position. It also has
+`roastedduck_pg_parser::nodes::to_json`) or the error message and position. It also has
 a `bench` mode used for the throughput comparison.
 
     python3 crates/pg-parser/scripts/gen_cpp_oracle.py [duckdb-root]

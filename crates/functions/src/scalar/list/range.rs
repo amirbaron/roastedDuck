@@ -1,8 +1,10 @@
 //! The scalar `range` and `generate_series` (DuckDB's `core_functions/scalar/list/range.cpp`).
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, Interval, ListEntry, LogicalType, NativeType, Timestamp, Unified, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{
+    DataChunk, Interval, ListEntry, LogicalType, NativeType, Timestamp, Unified, Vector,
+};
 
 use crate::scalar::executor::addressable;
 use crate::scalar::nested::all_constant;

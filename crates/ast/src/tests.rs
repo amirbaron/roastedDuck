@@ -1,10 +1,12 @@
 //! Behaviour of the hand-written serialization code that the DuckDB fixtures do not reach:
 //! version-dependent layouts and legacy forms.
 
-use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
-use rustdb_serde::json::{JsonDeserializer, JsonOptions, JsonSerializer, write_json};
-use rustdb_serde::{DeserializeObject, SerializationCompatibility, SerializationOptions, SerializeObject};
-use rustdb_types::{Value, expression_ids};
+use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
+use roastedduck_serde::json::{JsonDeserializer, JsonOptions, JsonSerializer, write_json};
+use roastedduck_serde::{
+    DeserializeObject, SerializationCompatibility, SerializationOptions, SerializeObject,
+};
+use roastedduck_types::{Value, expression_ids};
 
 use crate::{
     AggregateHandling, CommonTableExpressionMap, ExpressionClass, ExpressionType, MacroFunction,
@@ -25,7 +27,7 @@ fn json<T: SerializeObject>(value: &T, compatibility: SerializationCompatibility
 }
 
 fn from_json<T: DeserializeObject>(text: &str) -> T {
-    let tree = rustdb_serde::json::parse_json(text).unwrap();
+    let tree = roastedduck_serde::json::parse_json(text).unwrap();
     JsonDeserializer::deserialize(&tree).unwrap()
 }
 
@@ -37,7 +39,7 @@ fn select_constant(value: i32) -> QueryNode {
             select_list: vec![ParsedExpression::constant(Value::integer(value))],
             from_table: Box::new(TableRef {
                 external_dependency: crate::ExternalDependency::default(),
-                alias: rustdb_common::ByteString::new(),
+                alias: roastedduck_common::ByteString::new(),
                 sample: None,
                 query_location: None,
                 kind: TableRefKind::Empty,
@@ -90,7 +92,7 @@ fn external_scan_ownership_survives_copies_without_changing_serialization() {
 fn retaining_external_scans_preserves_unbound_expressions_and_sampling() {
     let mut original = crate::SelectStatement {
         node: Box::new(select_constant(42)),
-        named_param_map: rustdb_common::CaseInsensitiveMap::default(),
+        named_param_map: roastedduck_common::CaseInsensitiveMap::default(),
     };
     let sample = Some(Box::new(crate::SampleOptions {
         sample_size: Value::integer(3),
@@ -104,8 +106,8 @@ fn retaining_external_scans_preserves_unbound_expressions_and_sampling() {
     };
     node.from_table.kind = TableRefKind::BaseTable(Box::new(crate::BaseTableRef {
         table_name: "external".into(),
-        schema_name: rustdb_common::ByteString::default(),
-        catalog_name: rustdb_common::ByteString::default(),
+        schema_name: roastedduck_common::ByteString::default(),
+        catalog_name: roastedduck_common::ByteString::default(),
         column_name_alias: Vec::new(),
         at_clause: None,
     }));
@@ -122,7 +124,7 @@ fn retaining_external_scans_preserves_unbound_expressions_and_sampling() {
     node.from_table.kind = TableRefKind::Subquery(crate::SubqueryRef {
         subquery: Box::new(crate::SelectStatement {
             node: Box::new(select_constant(7)),
-            named_param_map: rustdb_common::CaseInsensitiveMap::default(),
+            named_param_map: roastedduck_common::CaseInsensitiveMap::default(),
         }),
         column_name_alias: Vec::new(),
     });

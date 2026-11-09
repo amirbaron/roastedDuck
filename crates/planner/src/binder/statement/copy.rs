@@ -1,18 +1,18 @@
 //! `COPY ... TO` / `COPY ... FROM` (DuckDB's `bind_copy.cpp`).
 
-use rustdb_ast::{
+use roastedduck_ast::{
     AggregateHandling, CommonTableExpressionMap, CopyInfo, ExpressionType, InsertColumnOrder,
     InsertStatement, ParsedExpression, ParsedExpressionKind, QueryNode, QueryNodeKind, SelectNode,
     StarExpression, TableRef, TableRefKind,
 };
-use rustdb_buffer::parse_memory_limit;
-use rustdb_catalog::{CatalogType, EntryKind};
-use rustdb_common::string_util::candidates_message_bytes;
-use rustdb_common::{ByteString, CaseInsensitiveMap, Error, ErrorKind, Result};
-use rustdb_function::cast::{ValueCast, implicit_cast_cost};
-use rustdb_function::copy::{CopyFromBindInput, CopyFunctionBindInput, CopyToSelectInput, CopyToType};
-use rustdb_function::{CopyFunction, CopyOption, CopyOptionMode};
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_buffer::parse_memory_limit;
+use roastedduck_catalog::{CatalogType, EntryKind};
+use roastedduck_common::string_util::candidates_message_bytes;
+use roastedduck_common::{ByteString, CaseInsensitiveMap, Error, ErrorKind, Result};
+use roastedduck_function::cast::{ValueCast, implicit_cast_cost};
+use roastedduck_function::copy::{CopyFromBindInput, CopyFunctionBindInput, CopyToSelectInput, CopyToType};
+use roastedduck_function::{CopyFunction, CopyOption, CopyOptionMode};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use super::modify::bind_insert;
 use crate::binder::BindScope;
@@ -70,7 +70,7 @@ fn bind_copy_option(
     }
     let value = scope.context.evaluator.evaluate_scalar(&bound)?;
     if value.is_null() {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "NULL is not supported as a valid option for COPY option \"{name}\""
         )));
     }
@@ -154,7 +154,7 @@ fn format_extension_error(format: &[u8]) -> Option<Error> {
         ("avro", "avro"),
     ];
     POSTFIXES.iter().find(|(name, _)| name.as_bytes() == format).map(|(name, extension)| {
-        Error::catalog(rustdb_common::byte_format!(
+        Error::catalog(roastedduck_common::byte_format!(
             "Copy Function with name \"{name}\" is not in the catalog, but it exists in the {extension} extension."
         ))
     })
@@ -217,10 +217,10 @@ fn check_copy_options(scope: &BindScope<'_>, function: &CopyFunction, info: &mut
         let Some(copy_option) = copy_options.get(provided_option) else {
             let candidates: Vec<String> = copy_options.iter().map(|(name, _)| name.to_owned()).collect();
             let candidate_str = candidates_message_bytes(
-                &rustdb_common::string_util::top_n_jaro_winkler(&candidates, provided_option),
+                &roastedduck_common::string_util::top_n_jaro_winkler(&candidates, provided_option),
                 b"Candidate options",
             );
-            return Err(Error::not_implemented(rustdb_common::byte_format!(
+            return Err(Error::not_implemented(roastedduck_common::byte_format!(
                 "Unrecognized option \"{provided_option}\" for {}\n{candidate_str}",
                 info.format
             )));
@@ -231,7 +231,7 @@ fn check_copy_options(scope: &BindScope<'_>, function: &CopyFunction, info: &mut
             } else {
                 ("writing", "reading")
             };
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "Option \"{provided_option}\" is not supported for {doing} - only for {only}"
             )));
         }
@@ -242,13 +242,13 @@ fn check_copy_options(scope: &BindScope<'_>, function: &CopyFunction, info: &mut
             if copy_option.ty.id() == LogicalTypeId::Boolean {
                 continue;
             }
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "Copy option \"{provided_option}\" requires an argument of type {}",
                 copy_option.ty
             )));
         }
         if values.len() > 1 {
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "Copy option \"{provided_option}\" did not expect a list as argument"
             )));
         }
@@ -276,7 +276,7 @@ fn check_copy_options(scope: &BindScope<'_>, function: &CopyFunction, info: &mut
             None
         };
         let Some(new_value) = cast else {
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "Copy option \"{provided_option}\" expected an argument of type {} - the argument \"{}\" of type {original_type} could not be cast as this type",
                 copy_option.ty,
                 original.to_varchar().unwrap_or_default()
@@ -294,7 +294,7 @@ fn parse_columns_ordered(values: &[Value], names: &[ByteString], option: &str) -
         return Ok((0..names.len()).collect());
     }
     if values.is_empty() {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "\"{option}\" expects a column list or * as parameter"
         )));
     }
@@ -302,7 +302,7 @@ fn parse_columns_ordered(values: &[Value], names: &[ByteString], option: &str) -
     for value in values {
         let text = value.to_varchar_bytes()?;
         let Some(index) = names.iter().position(|name| name.eq_ignore_ascii_case(&text)) else {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "\"{option}\" expected to find {text}, but it was not found in the table"
             )));
         };
@@ -321,7 +321,7 @@ fn table_select(info: &CopyInfo) -> QueryNode {
                 relation_name: ByteString::new(),
                 exclude_list: Vec::new(),
                 replace_list: CaseInsensitiveMap::default(),
-                rename_list: rustdb_common::OrderedMap::default(),
+                rename_list: roastedduck_common::OrderedMap::default(),
                 columns: false,
                 expr: None,
             })),
@@ -338,11 +338,11 @@ fn table_select(info: &CopyInfo) -> QueryNode {
         kind: QueryNodeKind::Select(Box::new(SelectNode {
             select_list,
             from_table: Box::new(TableRef {
-                external_dependency: rustdb_ast::ExternalDependency::default(),
+                external_dependency: roastedduck_ast::ExternalDependency::default(),
                 alias: ByteString::new(),
                 sample: None,
                 query_location: None,
-                kind: TableRefKind::BaseTable(Box::new(rustdb_ast::BaseTableRef {
+                kind: TableRefKind::BaseTable(Box::new(roastedduck_ast::BaseTableRef {
                     catalog_name: info.catalog.clone(),
                     schema_name: info.schema.clone(),
                     table_name: info.table.clone(),
@@ -408,7 +408,7 @@ pub fn bind_copy_as(
 fn bind_copy_plan(
     scope: &mut BindScope<'_>,
     info: &CopyInfo,
-    plan: &rustdb_function::copy::CopyPlan,
+    plan: &roastedduck_function::copy::CopyPlan,
     copy_to_type: CopyToType,
 ) -> Result<BoundStatement> {
     let original = info
@@ -425,19 +425,19 @@ fn bind_copy_plan(
         };
         bind_node(&mut child_scope, &mut node)?
     };
-    let rewrite = plan(&rustdb_function::copy::CopyPlanInput {
+    let rewrite = plan(&roastedduck_function::copy::CopyPlanInput {
         names: &bound.names,
         types: &bound.types,
         options: &info.options,
     })?;
     let select_list = rewrite.select_list;
     let subquery = TableRef {
-        external_dependency: rustdb_ast::ExternalDependency::default(),
+        external_dependency: roastedduck_ast::ExternalDependency::default(),
         alias: ByteString::new(),
         sample: None,
         query_location: None,
-        kind: TableRefKind::Subquery(rustdb_ast::SubqueryRef {
-            subquery: Box::new(rustdb_ast::SelectStatement {
+        kind: TableRefKind::Subquery(roastedduck_ast::SubqueryRef {
+            subquery: Box::new(roastedduck_ast::SelectStatement {
                 node: original,
                 named_param_map: CaseInsensitiveMap::default(),
             }),
@@ -480,7 +480,7 @@ fn bind_copy_to(
         .ok_or_else(|| Error::internal("COPY TO without a query"))?;
     let mut select_node = bind_node(scope, &mut node)?;
     let Some(copy_to_bind) = function.copy_to_bind.clone() else {
-        return Err(Error::not_implemented(rustdb_common::byte_format!(
+        return Err(Error::not_implemented(roastedduck_common::byte_format!(
             "COPY TO is not supported for FORMAT \"{}\"",
             info.format
         )));
@@ -546,7 +546,7 @@ fn bind_copy_to(
                     return Err(Error::binder("FILE_SIZE_BYTES cannot be empty"));
                 };
                 if function.copy_to_file_size.is_none() {
-                    return Err(Error::not_implemented(rustdb_common::byte_format!(
+                    return Err(Error::not_implemented(roastedduck_common::byte_format!(
                         "FILE_SIZE_BYTES not implemented for FORMAT \"{}\"",
                         info.format
                     )));
@@ -621,17 +621,17 @@ fn bind_copy_to(
             "No column to write as all columns are specified as partition columns. WRITE_PARTITION_COLUMNS option can be used to write partition columns.",
         ));
     }
-    if rustdb_function::file_system::is_remote_file(&info.file_path) {
+    if roastedduck_function::file_system::is_remote_file(&info.file_path) {
         // Remote filesystems do not provide the atomic rename used by local COPY.
         // Like C++, disable temporary output even when explicitly requested.
         use_tmp_file = false;
     } else {
-        let is_file_and_exists = if let Some(fs) = rustdb_function::registered_files::lookup(&info.file_path)
-        {
-            fs.is_file(&info.file_path)?
-        } else {
-            rustdb_function::file_system::native_path(&info.file_path)?.is_file()
-        };
+        let is_file_and_exists =
+            if let Some(fs) = roastedduck_function::registered_files::lookup(&info.file_path) {
+                fs.is_file(&info.file_path)?
+            } else {
+                roastedduck_function::file_system::native_path(&info.file_path)?.is_file()
+            };
         let is_stdout = info.file_path == "/dev/stdout";
         if !user_set_use_tmp_file {
             use_tmp_file =
@@ -719,7 +719,7 @@ fn bind_copy_to(
     if return_type == CopyFunctionReturnType::WrittenFileStatistics
         && function.copy_to_get_written_statistics.is_none()
     {
-        return Err(Error::not_implemented(rustdb_common::byte_format!(
+        return Err(Error::not_implemented(roastedduck_common::byte_format!(
             "RETURN_STATS is not supported for the \"{}\" copy format",
             info.format
         )));
@@ -775,7 +775,7 @@ fn bind_copy_from(
         function.copy_from_bind.clone(),
         function.copy_from_function.clone(),
     ) else {
-        return Err(Error::not_implemented(rustdb_common::byte_format!(
+        return Err(Error::not_implemented(roastedduck_common::byte_format!(
             "COPY FROM is not supported for FORMAT \"{}\"",
             info.format
         )));
@@ -839,7 +839,7 @@ fn bind_copy_from(
         shared_column_ids: None,
         table: None,
         table_schema: None,
-        table_filters: rustdb_storage::TableFilterSet::default(),
+        table_filters: roastedduck_storage::TableFilterSet::default(),
         dynamic_filters: None,
         sample_options: None,
         file_filters: crate::operator::FileFilterInfo::default(),

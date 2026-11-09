@@ -2,7 +2,7 @@
 //! family, `TableCatalogEntry::ColumnsToSQL` and `Constraint::ToString`), as shown by
 //! `duckdb_tables()`, `duckdb_indexes()` and friends.
 
-use rustdb_common::{byte_format as format, byte_write as write};
+use roastedduck_common::{byte_format as format, byte_write as write};
 use std::collections::BTreeSet;
 
 use crate::display::logical_type_to_string;
@@ -15,7 +15,7 @@ use crate::{
     ForeignKeyType, IndexConstraintType, OnCreateConflict, ParsedExpression, ParsedExpressionKind,
     TableColumnType,
 };
-use rustdb_common::ByteString;
+use roastedduck_common::ByteString;
 
 /// The schema new entries go to by default (`DEFAULT_SCHEMA`).
 const DEFAULT_SCHEMA: &str = "main";
@@ -127,7 +127,7 @@ pub fn columns_to_sql(columns: &ColumnList, constraints: &[Constraint]) -> ByteS
         out.push_bytes(write_optionally_quoted_bytes(&column.name));
         out.push(b' ');
         out.push_bytes(logical_type_to_string(&column.logical_type));
-        if let Some(rustdb_types::TypeInfo::String(info)) = column.logical_type.info()
+        if let Some(roastedduck_types::TypeInfo::String(info)) = column.logical_type.info()
             && !info.collation.is_empty()
         {
             let _ = write!(out, " COLLATE {}", info.collation);
@@ -240,7 +240,7 @@ impl CreateInfo {
             let quoted: Vec<ByteString> = values.iter().map(|value| format!("'{value}'")).collect();
             result.push_bytes(ByteString::join(&quoted, ", "));
             result.push_bytes(" );");
-        } else if info.logical_type.id() == rustdb_types::LogicalTypeId::Invalid {
+        } else if info.logical_type.id() == roastedduck_types::LogicalTypeId::Invalid {
             if let Some(query) = &info.query {
                 let _ = write!(result, " AS ENUM ({query})");
             }
@@ -410,7 +410,7 @@ fn macro_to_sql(function: &crate::MacroFunction) -> ByteString {
         };
         let mut text = name.clone();
         if let Some(ty) = function.types.get(index)
-            && ty.id() != rustdb_types::LogicalTypeId::Unknown
+            && ty.id() != roastedduck_types::LogicalTypeId::Unknown
         {
             text.push(b' ');
             text.push_bytes(logical_type_to_string(ty));

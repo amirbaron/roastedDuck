@@ -2,9 +2,9 @@
 
 use std::ffi::c_char;
 
-use rustdb_function::cast::ValueCast;
-use rustdb_function::{ExtensionOption, SettingScope};
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_function::{ExtensionOption, SettingScope};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::helper::{catch, opt_str};
 use crate::logical_types::{DuckdbLogicalType, type_ref};

@@ -15,10 +15,10 @@ parser.add_argument("--out", type=Path, required=True)
 args = parser.parse_args()
 args.out.mkdir(parents=True, exist_ok=False)
 groups = [
-    ("crypto", ["-p", "rustdb-crypto", "--lib"], []),
-    ("extension-signatures", ["-p", "rustdb-capi", "--lib"], ["extension_loader::tests"]),
-    ("parquet-encryption", ["-p", "rustdb", "--test", "parquet_encryption"], []),
-    ("persistence", ["-p", "rustdb", "--test", "persistence"], []),
+    ("crypto", ["-p", "roastedduck-crypto", "--lib"], []),
+    ("extension-signatures", ["-p", "roastedduck-capi", "--lib"], ["extension_loader::tests"]),
+    ("parquet-encryption", ["-p", "roastedduck", "--test", "parquet_encryption"], []),
+    ("persistence", ["-p", "roastedduck", "--test", "persistence"], []),
 ]
 records = []
 for name, selection, filters in groups:

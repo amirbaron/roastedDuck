@@ -4,7 +4,7 @@
 
 use std::fmt::Write as _;
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use super::default_crs::{OGC_CRS83_PROJJSON, OGC_CRS83_WKT2_2019, OGC_CRS84_PROJJSON, OGC_CRS84_WKT2_2019};
 use super::{number_prefix, parse_number};

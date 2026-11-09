@@ -106,7 +106,7 @@ impl ResultSource {
     fn filter(py: Python<'_>, _expression: &Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         Err(crate::error::native(
             py,
-            &rustdb_common::Error::internal("Attempted to dereference shared_ptr that is NULL!"),
+            &roastedduck_common::Error::internal("Attempted to dereference shared_ptr that is NULL!"),
         ))
     }
     #[staticmethod]
@@ -114,7 +114,7 @@ impl ResultSource {
     fn limit(py: Python<'_>, _limit: i64, _offset: i64) -> PyResult<Py<PyAny>> {
         Err(crate::error::native(
             py,
-            &rustdb_common::Error::internal("Attempted to dereference shared_ptr that is NULL!"),
+            &roastedduck_common::Error::internal("Attempted to dereference shared_ptr that is NULL!"),
         ))
     }
     #[pyo3(signature=(_batch_size=1_000_000))]

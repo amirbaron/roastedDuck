@@ -3,16 +3,16 @@
 //! duplicate-insensitive aggregates (DuckDB's `DistinctAggregateOptimizer` and
 //! `DistinctWindowedOptimizer`).
 
-use rustdb_ast::{OrderByNullType, OrderType};
-use rustdb_catalog::CatalogType;
-use rustdb_catalog::EntryKind;
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::{DistinctDependence, OrderDependence};
-use rustdb_planner::expression::{AggregateType, BoundOrderByNode};
-use rustdb_planner::function_binder::FunctionBinder;
-use rustdb_planner::operator::GroupingSet;
-use rustdb_planner::{ClientContext, Expression, ExpressionKind};
-use rustdb_types::Value;
+use roastedduck_ast::{OrderByNullType, OrderType};
+use roastedduck_catalog::CatalogType;
+use roastedduck_catalog::EntryKind;
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::{DistinctDependence, OrderDependence};
+use roastedduck_planner::expression::{AggregateType, BoundOrderByNode};
+use roastedduck_planner::function_binder::FunctionBinder;
+use roastedduck_planner::operator::GroupingSet;
+use roastedduck_planner::{ClientContext, Expression, ExpressionKind};
+use roastedduck_types::Value;
 
 use super::RuleOutcome;
 use crate::expression_rewriter::RuleContext;

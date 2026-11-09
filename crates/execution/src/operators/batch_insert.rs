@@ -4,9 +4,11 @@ use std::collections::VecDeque;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rustdb_common::{Error, Result};
-use rustdb_storage::{DataTable, OptimisticCollection, OptimisticDataWriter, TableConstraints, Transaction};
-use rustdb_types::{DataChunk, LogicalType};
+use roastedduck_common::{Error, Result};
+use roastedduck_storage::{
+    DataTable, OptimisticCollection, OptimisticDataWriter, TableConstraints, Transaction,
+};
+use roastedduck_types::{DataChunk, LogicalType};
 
 use super::batch_memory_manager::BatchMemoryManager;
 use super::insert::{InsertTarget, append_collections};
@@ -355,7 +357,7 @@ impl Sink for PhysicalBatchInsert {
         let table = self.target.table(&self.transaction)?;
         let row_group_size = table
             .as_ref()
-            .map_or(rustdb_storage::DEFAULT_ROW_GROUP_SIZE, |table| {
+            .map_or(roastedduck_storage::DEFAULT_ROW_GROUP_SIZE, |table| {
                 table.row_groups().row_group_size()
             });
         let column_count = table.as_ref().map_or(1, |table| table.types().len()) as u64;

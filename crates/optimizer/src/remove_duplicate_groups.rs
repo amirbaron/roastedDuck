@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use rustdb_planner::{ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator};
+use roastedduck_planner::{ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator};
 
 /// Removes duplicate groups in every aggregate of `plan`.
 pub fn remove_duplicate_groups(plan: &mut LogicalOperator) {
@@ -27,7 +27,7 @@ fn visit(op: &mut LogicalOperator, replacements: &mut HashMap<ColumnBinding, Col
 /// DuckDB's `VisitAggregate`: later copies of a grouped column are dropped and their
 /// references point at the first copy; the other groups shift down.
 fn visit_aggregate(
-    aggregate: &mut rustdb_planner::operator::LogicalAggregate,
+    aggregate: &mut roastedduck_planner::operator::LogicalAggregate,
     replacements: &mut HashMap<ColumnBinding, ColumnBinding>,
 ) {
     // With ROLLUP/CUBE the positions of groups matter.

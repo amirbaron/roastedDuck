@@ -4,8 +4,8 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use rustdb_ast::JoinType;
-use rustdb_common::{Error, Result};
+use roastedduck_ast::JoinType;
+use roastedduck_common::{Error, Result};
 
 use super::cardinality_estimator::CardinalityEstimator;
 use super::query_graph::{NeighborInfo, QueryGraphEdges};

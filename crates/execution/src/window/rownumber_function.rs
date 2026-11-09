@@ -1,8 +1,8 @@
 //! `row_number` and `ntile` (DuckDB's `window_rownumber_function.cpp`).
 
-use rustdb_common::{Error, Result};
-use rustdb_planner::ExpressionType;
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::ExpressionType;
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use super::WindowExpression;
 use super::boundaries_state::{WindowBound, WindowInputExpression};

@@ -113,7 +113,7 @@ impl super::LogicalGet {
             return cardinality(self.bind_data.as_deref());
         };
         match &entry.kind {
-            rustdb_catalog::EntryKind::Table(table) => {
+            roastedduck_catalog::EntryKind::Table(table) => {
                 table.storage.as_ref().map(|storage| storage.total_rows())
             }
             _ => None,

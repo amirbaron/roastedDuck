@@ -1,10 +1,10 @@
 use std::sync::{Mutex, PoisonError};
 
-use rustdb_ast::{SampleMethod, SampleOptions};
-use rustdb_common::tree_renderer::RenderParams;
-use rustdb_common::{Error, Result};
-use rustdb_function::random::RandomEngine;
-use rustdb_types::{DataChunk, LogicalType, SelectionVector};
+use roastedduck_ast::{SampleMethod, SampleOptions};
+use roastedduck_common::tree_renderer::RenderParams;
+use roastedduck_common::{Error, Result};
+use roastedduck_function::random::RandomEngine;
+use roastedduck_types::{DataChunk, LogicalType, SelectionVector};
 
 use crate::operator::{ErasedOperator, ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
 use crate::sample::{ReservoirSample, ReservoirSamplePercentage};

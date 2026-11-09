@@ -5,14 +5,14 @@ use crate::pending::PythonExecution;
 use crate::{conversion, error};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyInt, PyList, PyString, PyTuple};
-use rustdb::{Connection, LogicalType, MaterializedResult, QueryResult};
-use rustdb_ast::{
+use roastedduck::{Connection, LogicalType, MaterializedResult, QueryResult};
+use roastedduck_ast::{
     AggregateHandling, BaseTableRef, ColumnDataRef, CreateInfoKind, JoinRefType, JoinType,
     ParsedExpressionKind, QueryNodeKind, SelectStatement, SetOperationNode, SetOperationType, SqlStatement,
     SqlStatementKind, SubqueryRef, TableRef, TableRefKind,
 };
-use rustdb_common::{ByteString, Error, Result, byte_format};
-use rustdb_types::{ColumnDataCollection, Value};
+use roastedduck_common::{ByteString, Error, Result, byte_format};
+use roastedduck_types::{ColumnDataCollection, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 static ALIASES: AtomicU64 = AtomicU64::new(0);
@@ -37,7 +37,7 @@ fn select(statement: SqlStatement) -> Result<SelectStatement> {
     }
 }
 fn parse(sql: &[u8]) -> Result<SelectStatement> {
-    let mut statements = rustdb_parser::parse_bytes(sql)?;
+    let mut statements = roastedduck_parser::parse_bytes(sql)?;
     if statements.len() != 1 {
         return Err(Error::invalid_input("Expected a single SELECT relation"));
     }
@@ -72,7 +72,7 @@ fn execute_insert(
         .map_err(|error| {
             // The native optimizer can evaluate a constant cast while starting the pending
             // query. C++ reports this conversion failure from InsertRelation::Execute.
-            if error.kind() == rustdb_common::ErrorKind::Conversion {
+            if error.kind() == roastedduck_common::ErrorKind::Conversion {
                 prefix(error)
             } else {
                 error
@@ -96,17 +96,17 @@ fn execute_insert(
         })
 }
 fn materialized_select(result: &MaterializedResult) -> Result<SelectStatement> {
-    let mut node = rustdb_parser::build::select_node();
-    node.select_list.push(rustdb_parser::build::star());
-    *node.from_table = rustdb_parser::build::table_ref(TableRefKind::ColumnData(ColumnDataRef {
+    let mut node = roastedduck_parser::build::select_node();
+    node.select_list.push(roastedduck_parser::build::star());
+    *node.from_table = roastedduck_parser::build::table_ref(TableRefKind::ColumnData(ColumnDataRef {
         expected_names: result.names().to_vec(),
         collection: Some(Box::new(ColumnDataCollection::new(
             result.types().to_vec(),
             result.collect_chunks()?,
         ))),
     }));
-    Ok(rustdb_parser::build::select_statement(
-        rustdb_parser::build::query_node(QueryNodeKind::Select(Box::new(node))),
+    Ok(roastedduck_parser::build::select_statement(
+        roastedduck_parser::build::query_node(QueryNodeKind::Select(Box::new(node))),
     ))
 }
 pub(super) fn qualified_name(py: Python<'_>, name: impl AsRef<[u8]>) -> PyResult<[ByteString; 3]> {
@@ -163,7 +163,7 @@ fn quoted(name: &[u8]) -> ByteString {
 }
 #[derive(Default)]
 struct RenderOutput(Vec<u8>);
-impl rustdb_shell::box_renderer::BaseResultRenderer for RenderOutput {
+impl roastedduck_cli::box_renderer::BaseResultRenderer for RenderOutput {
     fn render_layout(&mut self, t: &[u8]) {
         self.0.extend_from_slice(t);
     }
@@ -208,12 +208,13 @@ impl PyRelation {
         self.owner.bind(py).get().id
     }
     pub(super) fn replacement(&self, object: &Bound<'_, PyAny>, alias: &[u8]) -> TableRef {
-        let mut table = rustdb_parser::build::table_ref(TableRefKind::Subquery(SubqueryRef {
+        let mut table = roastedduck_parser::build::table_ref(TableRefKind::Subquery(SubqueryRef {
             subquery: Box::new(self.source.clone()),
             column_name_alias: Vec::new(),
         }));
         table.alias = alias.into();
-        table.external_dependency = rustdb_ast::ExternalDependency::new(Arc::new(object.clone().unbind()));
+        table.external_dependency =
+            roastedduck_ast::ExternalDependency::new(Arc::new(object.clone().unbind()));
         table
     }
     pub(super) fn from_values(owner: Bound<'_, PyConnection>, args: &Bound<'_, PyTuple>) -> PyResult<Self> {
@@ -229,7 +230,7 @@ impl PyRelation {
         }
         let first = args.get_item(0)?;
         let values_only = args.len() == 1 && first.is_instance_of::<PyList>();
-        let expressions = |row: &Bound<'_, PyTuple>| -> PyResult<Vec<rustdb_ast::ParsedExpression>> {
+        let expressions = |row: &Bound<'_, PyTuple>| -> PyResult<Vec<roastedduck_ast::ParsedExpression>> {
             if row.is_empty() {
                 return Err(error::native(
                     py,
@@ -253,7 +254,7 @@ impl PyRelation {
             vec![
                 first
                     .try_iter()?
-                    .map(|v| conversion::from_python(&v?).map(rustdb_parser::build::constant))
+                    .map(|v| conversion::from_python(&v?).map(roastedduck_parser::build::constant))
                     .collect::<PyResult<Vec<_>>>()?,
             ]
         } else if first.is_instance_of::<PyTuple>() {
@@ -292,22 +293,22 @@ impl PyRelation {
             crate::host::names(
                 &rows[0]
                     .iter()
-                    .map(rustdb_ast::ParsedExpression::name)
+                    .map(roastedduck_ast::ParsedExpression::name)
                     .collect::<Vec<_>>(),
             )
         };
-        let table = rustdb_parser::build::table_ref(TableRefKind::ExpressionList(Box::new(
-            rustdb_ast::ExpressionListRef {
+        let table = roastedduck_parser::build::table_ref(TableRefKind::ExpressionList(Box::new(
+            roastedduck_ast::ExpressionListRef {
                 expected_names: names,
                 expected_types: Vec::new(),
                 values: rows,
             },
         )));
-        let mut source = rustdb_parser::build::select_node();
-        source.select_list.push(rustdb_parser::build::star());
+        let mut source = roastedduck_parser::build::select_node();
+        source.select_list.push(roastedduck_parser::build::star());
         *source.from_table = table;
         source.from_table.alias = "values".into();
-        let source = rustdb_parser::build::select_statement(rustdb_parser::build::query_node(
+        let source = roastedduck_parser::build::select_statement(roastedduck_parser::build::query_node(
             QueryNodeKind::Select(Box::new(source)),
         ));
         let mut relation = Self::bind(
@@ -392,7 +393,7 @@ impl PyRelation {
     fn render(
         &self,
         py: Python<'_>,
-        config: rustdb_shell::box_renderer::BoxRendererConfig,
+        config: roastedduck_cli::box_renderer::BoxRendererConfig,
         invalidate: bool,
     ) -> PyResult<Py<PyAny>> {
         if !invalidate {
@@ -418,7 +419,7 @@ impl PyRelation {
                         QueryResult::Stream(stream) => connection.materialize(&stream)?,
                     };
                     let result = Arc::new(result);
-                    let mut renderer = rustdb_shell::box_renderer::BoxRendererState::prepare(
+                    let mut renderer = roastedduck_cli::box_renderer::BoxRendererState::prepare(
                         config,
                         &*connection,
                         result.names(),
@@ -459,10 +460,10 @@ impl PyRelation {
     pub(super) fn from_table_ref(owner: Bound<'_, PyConnection>, table: TableRef) -> PyResult<Self> {
         let py = owner.py();
         let alias = table.alias.clone();
-        let mut node = rustdb_parser::build::select_node();
-        node.select_list.push(rustdb_parser::build::star());
+        let mut node = roastedduck_parser::build::select_node();
+        node.select_list.push(roastedduck_parser::build::star());
         *node.from_table = table;
-        let source = rustdb_parser::build::select_statement(rustdb_parser::build::query_node(
+        let source = roastedduck_parser::build::select_statement(roastedduck_parser::build::query_node(
             QueryNodeKind::Select(Box::new(node)),
         ));
         let state = Arc::clone(&owner.get().state);
@@ -501,9 +502,9 @@ impl PyRelation {
         py: Python<'_>,
         file_name: &str,
         format: &str,
-        options: rustdb_common::CaseInsensitiveMap<Vec<Value>, ByteString>,
+        options: roastedduck_common::CaseInsensitiveMap<Vec<Value>, ByteString>,
     ) -> PyResult<()> {
-        let statement = SqlStatement::new(SqlStatementKind::Copy(Box::new(rustdb_ast::CopyInfo {
+        let statement = SqlStatement::new(SqlStatementKind::Copy(Box::new(roastedduck_ast::CopyInfo {
             schema: ByteString::new(),
             catalog: ByteString::new(),
             table: ByteString::new(),
@@ -514,7 +515,7 @@ impl PyRelation {
             options,
             select_statement: Some(self.source.node.clone()),
             is_format_auto_detected: false,
-            parsed_options: rustdb_common::CaseInsensitiveMap::default(),
+            parsed_options: roastedduck_common::CaseInsensitiveMap::default(),
             file_path_expression: None,
         })));
         py.detach(|| {
@@ -640,7 +641,7 @@ impl PyRelation {
         // same UTF-8 conversion even though catalog identifiers themselves are bytes.
         let sql = byte_format!(
             "from {}",
-            rustdb_ast::keyword::write_optionally_quoted_bytes(name)
+            roastedduck_ast::keyword::write_optionally_quoted_bytes(name)
         );
         let py = owner.py();
         let query = conversion::text(py, &sql)?;
@@ -675,26 +676,27 @@ impl PyRelation {
             match found {
                 Ok(true) => {}
                 Ok(false) => return Self::replacement_table(owner, name),
-                Err(error) if error.kind() == rustdb_common::ErrorKind::Catalog => {
+                Err(error) if error.kind() == roastedduck_common::ErrorKind::Catalog => {
                     return Self::replacement_table(owner, name);
                 }
                 Err(error) => return Err(crate::error::native(py, &error)),
             }
         }
-        let mut node = rustdb_parser::build::select_node();
-        node.select_list.push(rustdb_parser::build::star());
-        *node.from_table = rustdb_parser::build::table_ref(TableRefKind::BaseTable(Box::new(BaseTableRef {
-            table_name: table_name.clone(),
-            schema_name,
-            catalog_name,
-            column_name_alias: Vec::new(),
-            at_clause: None,
-        })));
+        let mut node = roastedduck_parser::build::select_node();
+        node.select_list.push(roastedduck_parser::build::star());
+        *node.from_table =
+            roastedduck_parser::build::table_ref(TableRefKind::BaseTable(Box::new(BaseTableRef {
+                table_name: table_name.clone(),
+                schema_name,
+                catalog_name,
+                column_name_alias: Vec::new(),
+                at_clause: None,
+            })));
         // A programmatically constructed table has no parser location. Give its
         // sole reference a stable position so relation binding can retain the
         // injected external scan just as it does for parsed SELECT statements.
         node.from_table.query_location = Some(0);
-        let source = rustdb_parser::build::select_statement(rustdb_parser::build::query_node(
+        let source = roastedduck_parser::build::select_statement(roastedduck_parser::build::query_node(
             QueryNodeKind::Select(Box::new(node)),
         ));
         let state = Arc::clone(&owner.get().state);
@@ -799,7 +801,7 @@ impl PyRelation {
                     QueryResult::Materialized(result) => result,
                     QueryResult::Stream(stream) => connection.materialize(&stream)?,
                 };
-                if result.return_type() != rustdb::StatementReturnType::QueryResult {
+                if result.return_type() != roastedduck::StatementReturnType::QueryResult {
                     return Ok(None);
                 }
                 materialized_select(&result).map(Some)
@@ -821,7 +823,7 @@ impl PyRelation {
         {
             return (*node.from_table).clone();
         }
-        let mut table = rustdb_parser::build::table_ref(TableRefKind::Subquery(SubqueryRef {
+        let mut table = roastedduck_parser::build::table_ref(TableRefKind::Subquery(SubqueryRef {
             subquery: Box::new(self.source.clone()),
             column_name_alias: Vec::new(),
         }));
@@ -842,12 +844,12 @@ impl PyRelation {
             ));
         }
         let children = [self, other].map(|relation| {
-            let mut node = rustdb_parser::build::select_node();
-            node.select_list.push(rustdb_parser::build::star());
+            let mut node = roastedduck_parser::build::select_node();
+            node.select_list.push(roastedduck_parser::build::star());
             *node.from_table = relation.table_ref();
-            rustdb_parser::build::query_node(QueryNodeKind::Select(Box::new(node)))
+            roastedduck_parser::build::query_node(QueryNodeKind::Select(Box::new(node)))
         });
-        let source = rustdb_parser::build::select_statement(rustdb_parser::build::query_node(
+        let source = roastedduck_parser::build::select_statement(roastedduck_parser::build::query_node(
             QueryNodeKind::SetOperation(SetOperationNode {
                 setop_type,
                 setop_all: true,
@@ -901,8 +903,8 @@ impl PyRelation {
                 "FILTER_RELATION" => {
                     if let Some(condition) = node.where_clause.take() {
                         child.where_clause = Some(if let Some(previous) = child.where_clause.take() {
-                            Box::new(rustdb_parser::build::conjunction(
-                                rustdb_ast::ExpressionType::ConjunctionAnd,
+                            Box::new(roastedduck_parser::build::conjunction(
+                                roastedduck_ast::ExpressionType::ConjunctionAnd,
                                 *previous,
                                 *condition,
                             ))
@@ -1060,7 +1062,7 @@ impl PyRelation {
     fn __str__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.render(
             py,
-            rustdb_shell::box_renderer::BoxRendererConfig {
+            roastedduck_cli::box_renderer::BoxRendererConfig {
                 limit: 10000,
                 ..Default::default()
             },
@@ -1076,7 +1078,7 @@ impl PyRelation {
         args: &Bound<'_, PyTuple>,
         kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<()> {
-        use rustdb_shell::box_renderer::{BoxRenderMode, BoxRendererConfig};
+        use roastedduck_cli::box_renderer::{BoxRenderMode, BoxRendererConfig};
         let py = slf.py();
         let signature = "(self: _duckdb.DuckDBPyRelation, *, max_width: typing.Optional[int] = None, max_rows: typing.Optional[int] = None, max_col_width: typing.Optional[int] = None, null_value: typing.Optional[str] = None, render_mode: object = None) -> None";
         let bad = || error::arguments(py, "show", signature, Some(slf.as_any()), args, kwargs);
@@ -1166,7 +1168,11 @@ impl PyRelation {
                     if let Some(text) = text {
                         return Err(error::native(
                             py,
-                            &rustdb_function::logging::enum_error(&text, "RenderMode", &["ROWS", "COLUMNS"]),
+                            &roastedduck_function::logging::enum_error(
+                                &text,
+                                "RenderMode",
+                                &["ROWS", "COLUMNS"],
+                            ),
                         ));
                     }
                     if number.is_some() {
@@ -1453,12 +1459,12 @@ impl PyRelation {
     #[pyo3(signature=(*args))]
     fn sort(&self, py: Python<'_>, args: &Bound<'_, PyTuple>) -> PyResult<Self> {
         let mut source = parse(b"SELECT * FROM __relation ORDER BY 1").map_err(|e| error::native(py, &e))?;
-        if let Some(rustdb_ast::ResultModifier::Order(modifier)) = source.node.modifiers.first_mut() {
+        if let Some(roastedduck_ast::ResultModifier::Order(modifier)) = source.node.modifiers.first_mut() {
             modifier.orders = args
                 .iter()
                 .map(|value| {
                     let expression = crate::expression::PyExpression::from_object(&value)?;
-                    Ok(rustdb_ast::OrderByNode {
+                    Ok(roastedduck_ast::OrderByNode {
                         order_type: expression.order,
                         null_order: expression.null_order,
                         expression: Box::new(expression.native),
@@ -1664,7 +1670,7 @@ impl PyRelation {
             byte_format!("{}.{}", quoted(&schema), quoted(&name))
         };
         let sql = byte_format!("CREATE TABLE {target} AS SELECT 42");
-        let mut statement = rustdb_parser::parse_bytes(&sql)
+        let mut statement = roastedduck_parser::parse_bytes(&sql)
             .map_err(|e| error::native(py, &e))?
             .pop()
             .ok_or_else(|| error::InternalException::new_err("Expected create statement"))?;
@@ -1753,19 +1759,20 @@ impl PyRelation {
         let QueryNodeKind::Select(node) = &self.source.node.kind else {
             return Err(error::InternalException::new_err("Expected table relation"));
         };
-        let mut statement =
-            SqlStatement::new(SqlStatementKind::Update(Box::new(rustdb_ast::UpdateStatement {
+        let mut statement = SqlStatement::new(SqlStatementKind::Update(Box::new(
+            roastedduck_ast::UpdateStatement {
                 table: node.from_table.clone(),
                 from_table: None,
-                set_info: Box::new(rustdb_ast::UpdateSetInfo {
+                set_info: Box::new(roastedduck_ast::UpdateSetInfo {
                     condition,
                     columns,
                     expressions,
                 }),
                 returning_list: Vec::new(),
-                cte_map: rustdb_ast::CommonTableExpressionMap::default(),
+                cte_map: roastedduck_ast::CommonTableExpressionMap::default(),
                 prioritize_table_when_binding: false,
-            })));
+            },
+        )));
         py.detach(|| {
             let state = lock(&self.state);
             let mut connection = state.relation_connection()?;
@@ -1795,23 +1802,23 @@ impl PyRelation {
         let _length = values.len()?;
         let row = values
             .try_iter()?
-            .map(|v| conversion::from_python(&v?).map(rustdb_parser::build::constant))
+            .map(|v| conversion::from_python(&v?).map(roastedduck_parser::build::constant))
             .collect::<PyResult<Vec<_>>>()?;
-        let mut source = rustdb_parser::build::select_node();
-        source.select_list.push(rustdb_parser::build::star());
-        *source.from_table = rustdb_parser::build::table_ref(TableRefKind::ExpressionList(Box::new(
-            rustdb_ast::ExpressionListRef {
+        let mut source = roastedduck_parser::build::select_node();
+        source.select_list.push(roastedduck_parser::build::star());
+        *source.from_table = roastedduck_parser::build::table_ref(TableRefKind::ExpressionList(Box::new(
+            roastedduck_ast::ExpressionListRef {
                 expected_names: Vec::new(),
                 expected_types: Vec::new(),
                 values: vec![row],
             },
         )));
         source.from_table.alias = "values".into();
-        let source = rustdb_parser::build::select_statement(rustdb_parser::build::query_node(
+        let source = roastedduck_parser::build::select_statement(roastedduck_parser::build::query_node(
             QueryNodeKind::Select(Box::new(source)),
         ));
         let sql = byte_format!("INSERT INTO {} SELECT 42", quoted(&table.table_name));
-        let mut statement = rustdb_parser::parse_bytes(&sql)
+        let mut statement = roastedduck_parser::parse_bytes(&sql)
             .map_err(|e| error::native(py, &e))?
             .pop()
             .ok_or_else(|| error::InternalException::new_err("Expected insert statement"))?;
@@ -1842,7 +1849,7 @@ impl PyRelation {
             .map_err(|e| error::native(py, &e))?;
         let [catalog, schema, name] = qualified_name(py, table_name)?;
         let sql = byte_format!("INSERT INTO {} SELECT 42", quoted(&name));
-        let mut statement = rustdb_parser::parse_bytes(&sql)
+        let mut statement = roastedduck_parser::parse_bytes(&sql)
             .map_err(|e| error::native(py, &e))?
             .pop()
             .ok_or_else(|| error::InternalException::new_err("Expected insert statement"))?;
@@ -1950,7 +1957,7 @@ impl PyRelation {
             )
         })
         .map_err(|e| error::native(py, &e))?;
-        let statements = rustdb_parser::parse_bytes(sql_query).map_err(|e| error::native(py, &e))?;
+        let statements = roastedduck_parser::parse_bytes(sql_query).map_err(|e| error::native(py, &e))?;
         if statements.len() != 1 {
             return Err(error::native(
                 py,
@@ -2855,11 +2862,11 @@ impl PyRelation {
         window_spec: &str,
         projected_columns: &str,
     ) -> PyResult<Self> {
-        let parameter = rustdb_ast::keyword::write_optionally_quoted_with(
+        let parameter = roastedduck_ast::keyword::write_optionally_quoted_with(
             sep,
             '\'',
             true,
-            rustdb_ast::keyword::KeywordCategory::None,
+            roastedduck_ast::keyword::KeywordCategory::None,
         );
         self.aggregation(
             py,
@@ -3252,7 +3259,7 @@ impl PyRelation {
         } else {
             b"EXPLAIN SELECT 42".as_slice()
         };
-        let mut statement = rustdb_parser::parse_bytes(sql)
+        let mut statement = roastedduck_parser::parse_bytes(sql)
             .map_err(|e| error::native(py, &e))?
             .pop()
             .ok_or_else(|| error::InternalException::new_err("Expected explain statement"))?;
@@ -3414,7 +3421,7 @@ impl PyRelation {
             .iter()
             .zip(&self.types)
             .filter(|(_, kind)| filter.contains(kind))
-            .map(|(name, _)| rustdb_parser::build::column_ref(vec![name.clone()]))
+            .map(|(name, _)| roastedduck_parser::build::column_ref(vec![name.clone()]))
             .collect::<Vec<_>>();
         if expressions.is_empty() {
             return Err(error::native(
@@ -3462,7 +3469,7 @@ impl PyRelation {
         }
         let mut source = parse(b"SELECT * FROM __relation").map_err(|e| error::native(py, &e))?;
         if let QueryNodeKind::Select(node) = &mut source.node.kind {
-            node.select_list = vec![rustdb_parser::build::column_ref(columns)];
+            node.select_list = vec![roastedduck_parser::build::column_ref(columns)];
         }
         self.derive_select(py, source, "PROJECTION_RELATION")
     }

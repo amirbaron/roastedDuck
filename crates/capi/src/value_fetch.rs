@@ -7,8 +7,8 @@
 
 use std::ffi::{CStr, c_char};
 
-use rustdb_function::cast::ValueCast;
-use rustdb_types::{
+use roastedduck_function::cast::ValueCast;
+use roastedduck_types::{
     Date, Interval, LogicalType, LogicalTypeId, PhysicalType, Time, TimeNs, Timestamp, Value,
 };
 

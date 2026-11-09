@@ -13,7 +13,7 @@ import urllib.request
 
 class ReadinessPublicationTest(unittest.TestCase):
     def test_first_visible_address_is_complete(self):
-        server = Path(os.environ.get("RUSTDB_HTTP_FIXTURE_SERVER", str(Path(__file__).with_name("http-fixture-server.py")))).resolve()
+        server = Path(os.environ.get("ROASTEDDUCK_HTTP_FIXTURE_SERVER", str(Path(__file__).with_name("http-fixture-server.py")))).resolve()
         with tempfile.TemporaryDirectory(prefix="http-readiness-") as temporary:
             root = Path(temporary)
             config = root / "input.json"

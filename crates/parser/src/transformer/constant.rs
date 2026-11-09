@@ -1,10 +1,10 @@
 //! Constants (`transform_constant.cpp`).
 
-use rustdb_ast::ParsedExpression;
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::ValueCast;
-use rustdb_pg_parser::nodes::{AConst, Value};
-use rustdb_types::{LogicalType, Value as DuckValue};
+use roastedduck_ast::ParsedExpression;
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_pg_parser::nodes::{AConst, Value};
+use roastedduck_types::{LogicalType, Value as DuckValue};
 
 use super::Transformer;
 use super::build::{self, set_location};
@@ -85,7 +85,7 @@ fn numeric_literal(bytes: &[u8]) -> Result<DuckValue> {
         }
     }
     varchar.try_cast(&LogicalType::DOUBLE).map_err(|_| {
-        Error::conversion(rustdb_common::byte_format!(
+        Error::conversion(roastedduck_common::byte_format!(
             "Could not convert string \"{bytes}\" to DOUBLE"
         ))
     })

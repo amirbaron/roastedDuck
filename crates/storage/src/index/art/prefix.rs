@@ -1,7 +1,7 @@
 //! Prefix nodes: chains of up to `prefix_count` key bytes in front of a child (DuckDB's
 //! `Prefix`).
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use super::Art;
 use super::node::{GateStatus, NType, Node, Slot, read_node, write_node};

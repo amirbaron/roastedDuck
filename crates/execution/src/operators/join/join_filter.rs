@@ -6,19 +6,19 @@ use std::cmp::Ordering;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::Result;
-use rustdb_function::cast::ValueCast;
-use rustdb_planner::operator::{JoinFilter, JoinFilterTarget};
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::Result;
+use roastedduck_function::cast::ValueCast;
+use roastedduck_planner::operator::{JoinFilter, JoinFilterTarget};
 
 use super::bloom_filter::{BloomFilter, BloomTableFilter};
-use rustdb_storage::TableFilter;
-use rustdb_storage::statistics::{NumericStats, NumericValue};
-use rustdb_storage::table_filter::SelectivityOptionalFilter;
+use roastedduck_storage::TableFilter;
+use roastedduck_storage::statistics::{NumericStats, NumericValue};
+use roastedduck_storage::table_filter::SelectivityOptionalFilter;
 
 use crate::join_hashtable::JoinHashTable;
-use rustdb_types::compare::CompareOp;
-use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, StringT, Value, Vector};
+use roastedduck_types::compare::CompareOp;
+use roastedduck_types::{LogicalType, LogicalTypeId, PhysicalType, StringT, Value, Vector};
 
 /// The smallest and largest non-NULL key seen (DuckDB's `min`/`max` aggregates of
 /// `JoinFilterPushdownInfo::min_max_aggregates`).

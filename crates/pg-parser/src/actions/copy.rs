@@ -54,7 +54,7 @@ pub(super) fn copy_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<S
             let n = CopyDatabaseStmt {
                 from_database: rhs.str(4)?,
                 to_database: rhs.str(6)?,
-                copy_database_flag: rhs.const_str(7)?.map(rustdb_common::ByteString::from),
+                copy_database_flag: rhs.const_str(7)?.map(roastedduck_common::ByteString::from),
             };
             Ok(SemValue::node(n))
         }
@@ -308,7 +308,7 @@ pub(super) fn copy_file_name<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Res
         2 => Ok(SemValue::node(make_string_const("/dev/stdout", rhs.loc(1)))),
         // IDENT '.' ColId
         3 => Ok(SemValue::node(make_string_const(
-            rustdb_common::byte_format!(
+            roastedduck_common::byte_format!(
                 "{}.{}",
                 c_str(rhs.str(1)?.as_deref()),
                 c_str(rhs.str(3)?.as_deref())

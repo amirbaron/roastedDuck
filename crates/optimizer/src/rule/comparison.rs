@@ -3,11 +3,11 @@
 //! cast back when the cast is invertible. Also `CAST(x AS T) IN (constants)` (DuckDB's
 //! `InClauseSimplificationRule`).
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::Result;
-use rustdb_function::cast::ValueCast;
-use rustdb_planner::{Expression, ExpressionKind};
-use rustdb_types::{Date, LogicalType, LogicalTypeId, Value};
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::Result;
+use roastedduck_function::cast::ValueCast;
+use roastedduck_planner::{Expression, ExpressionKind};
+use roastedduck_types::{Date, LogicalType, LogicalTypeId, Value};
 
 use super::RuleOutcome;
 use crate::expression_rewriter::RuleContext;

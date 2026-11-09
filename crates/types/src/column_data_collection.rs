@@ -4,7 +4,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use rustdb_serde::{DeserializeObject, Deserializer, Result, SerializeObject, Serializer};
+use roastedduck_serde::{DeserializeObject, Deserializer, Result, SerializeObject, Serializer};
 
 use crate::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE, Value, Vector};
 
@@ -115,7 +115,7 @@ impl DeserializeObject for ColumnDataCollection {
                 for (row, value) in column_values[start..start + count].iter().enumerate() {
                     vector
                         .set_value(row, value)
-                        .map_err(|error| rustdb_serde::Error::internal(error.to_string()))?;
+                        .map_err(|error| roastedduck_serde::Error::internal(error.to_string()))?;
                 }
                 columns.push(vector);
             }
@@ -125,4 +125,4 @@ impl DeserializeObject for ColumnDataCollection {
     }
 }
 
-rustdb_serde::impl_pointee_serde!(ColumnDataCollection);
+roastedduck_serde::impl_pointee_serde!(ColumnDataCollection);

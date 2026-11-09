@@ -6,8 +6,8 @@ use std::alloc::Layout;
 use std::any::TypeId;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, StringT, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, StringT, Vector};
 
 use super::{AggregateCallbackIdentity, AggregateFunction, AggregateInput, AggregateOps, StatePtr};
 use crate::NullHandling;

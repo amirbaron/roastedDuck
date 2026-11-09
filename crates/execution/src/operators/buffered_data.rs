@@ -10,8 +10,8 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use rustdb_common::{Error, Result};
-use rustdb_types::DataChunk;
+use roastedduck_common::{Error, Result};
+use roastedduck_types::DataChunk;
 
 use crate::parallel::InterruptState;
 

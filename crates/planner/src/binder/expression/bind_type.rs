@@ -4,9 +4,9 @@
 //! The transformer leaves every type name UNBOUND. Names resolve through lazy builtin
 //! and user type catalog entries before their modifiers are bound.
 
-use rustdb_catalog::{CatalogType, EntryKind};
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo, UnboundTypeInfo};
+use roastedduck_catalog::{CatalogType, EntryKind};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId, TypeInfo, UnboundTypeInfo};
 
 use crate::context::{ClientContext, position_missing_entry};
 
@@ -88,8 +88,8 @@ impl TypeBinder<'_> {
 
     fn bind_children(
         &self,
-        children: Option<&[(rustdb_common::ByteString, LogicalType)]>,
-    ) -> Result<Vec<(rustdb_common::ByteString, LogicalType)>> {
+        children: Option<&[(roastedduck_common::ByteString, LogicalType)]>,
+    ) -> Result<Vec<(roastedduck_common::ByteString, LogicalType)>> {
         children
             .unwrap_or_default()
             .iter()
@@ -111,14 +111,14 @@ impl TypeBinder<'_> {
         })?;
         let builtin = found.entry.internal
             && found.entry.temporary
-            && rustdb_types::builtin_type_id(found.entry.name()).is_some();
+            && roastedduck_types::builtin_type_id(found.entry.name()).is_some();
         if !builtin {
             return user_type(info, &found.entry);
         }
         if !info.parameters.is_empty()
-            && rustdb_types::builtin_type_has_bind_function(&info.name) == Some(false)
+            && roastedduck_types::builtin_type_has_bind_function(&info.name) == Some(false)
         {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Type '{}' does not take any type parameters",
                 info.name
             ))
@@ -127,24 +127,24 @@ impl TypeBinder<'_> {
         if info.name.eq_ignore_ascii_case("enum") {
             return bind_enum_parameters(info);
         }
-        if rustdb_types::builtin_type_id(&info.name) == Some(LogicalTypeId::Varchar)
+        if roastedduck_types::builtin_type_id(&info.name) == Some(LogicalTypeId::Varchar)
             && let Some(collation) = varchar_collation(info)
         {
             // `BindVarcharType`: a valid collation names a collated VARCHAR.
             let ty = LogicalType::with_info(
                 LogicalTypeId::Varchar,
-                rustdb_types::TypeInfo::String(rustdb_types::StringTypeInfo { collation }),
+                roastedduck_types::TypeInfo::String(roastedduck_types::StringTypeInfo { collation }),
             );
             crate::collation_binding::push_collation(
                 self.context,
-                crate::expression::Expression::constant(rustdb_types::Value::varchar("")),
+                crate::expression::Expression::constant(roastedduck_types::Value::varchar("")),
                 &ty,
             )?;
             return Ok(ty);
         }
-        if rustdb_types::builtin_type_id(&info.name) == Some(LogicalTypeId::Geometry)
+        if roastedduck_types::builtin_type_id(&info.name) == Some(LogicalTypeId::Geometry)
             && let [parameter] = info.parameters.as_slice()
-            && let rustdb_types::TypeParameterValue::Constant(crs) = &parameter.value
+            && let roastedduck_types::TypeParameterValue::Constant(crs) = &parameter.value
             && crs.logical_type().id() == LogicalTypeId::Varchar
             && let Some(crs) = crs.as_str()
         {
@@ -154,10 +154,11 @@ impl TypeBinder<'_> {
         // child entries, even when binding a modifier subsequently fails.
         let mut info = info.clone();
         for parameter in &mut info.parameters {
-            if let rustdb_types::TypeParameterValue::Type(child) = &parameter.value {
+            if let roastedduck_types::TypeParameterValue::Type(child) = &parameter.value {
                 let child = self.bind_unbound(child)?;
-                parameter.value =
-                    rustdb_types::TypeParameterValue::Constant(rustdb_types::Value::type_value(child));
+                parameter.value = roastedduck_types::TypeParameterValue::Constant(
+                    roastedduck_types::Value::type_value(child),
+                );
             }
         }
         let bound = info.bind_with_parameter_aliases()?;
@@ -193,7 +194,7 @@ impl TypeBinder<'_> {
         if let Some(entry) = lookup(b"", b"", true)?.filter(valid) {
             return Ok(entry);
         }
-        lookup(b"system", rustdb_catalog::DEFAULT_SCHEMA.as_bytes(), false)?
+        lookup(b"system", roastedduck_catalog::DEFAULT_SCHEMA.as_bytes(), false)?
             .ok_or_else(|| Error::internal("type lookup returned nothing"))
     }
 }
@@ -201,7 +202,7 @@ impl TypeBinder<'_> {
 /// `BindGeometryType` with a connection: `GEOMETRY('crs')` with the coordinate system in
 /// its most compact known form (`CoordinateReferenceSystem::TryIdentify`).
 fn bind_geometry_crs(crs: &str, ignore_unknown_crs: bool) -> Result<LogicalType> {
-    let Some(identified) = rustdb_types::geometry::try_identify(crs)? else {
+    let Some(identified) = roastedduck_types::geometry::try_identify(crs)? else {
         if ignore_unknown_crs {
             return Ok(LogicalType::GEOMETRY);
         }
@@ -219,14 +220,14 @@ fn bind_geometry_crs(crs: &str, ignore_unknown_crs: bool) -> Result<LogicalType>
 /// `ENUM(...)` through the binder (`BindEnumType` with the modifiers named by their
 /// aliases, as `BindExpression(TypeExpression &)` passes them).
 fn bind_enum_parameters(info: &UnboundTypeInfo) -> Result<LogicalType> {
-    use rustdb_types::TypeParameterValue;
+    use roastedduck_types::TypeParameterValue;
     if info.parameters.is_empty() {
         return Err(Error::binder("ENUM type requires at least one argument"));
     }
     let mut values = Vec::with_capacity(info.parameters.len());
     for (index, parameter) in info.parameters.iter().enumerate() {
         if !parameter.name.is_empty() {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "ENUM type arguments cannot have names (argument {} has name \"{}\")",
                 index + 1,
                 parameter.name
@@ -239,7 +240,7 @@ fn bind_enum_parameters(info: &UnboundTypeInfo) -> Result<LogicalType> {
             return Err(Error::binder("ENUM type requires a set of VARCHAR arguments"));
         }
         let Some(text) = value.as_str() else {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "ENUM type arguments cannot be NULL (argument {} is NULL)",
                 index + 1
             )));
@@ -250,12 +251,12 @@ fn bind_enum_parameters(info: &UnboundTypeInfo) -> Result<LogicalType> {
 }
 
 /// The type of a user type entry; user types take no modifiers.
-fn user_type(info: &UnboundTypeInfo, entry: &rustdb_catalog::CatalogEntry) -> Result<LogicalType> {
+fn user_type(info: &UnboundTypeInfo, entry: &roastedduck_catalog::CatalogEntry) -> Result<LogicalType> {
     let EntryKind::Type(ty) = &entry.kind else {
         return Err(Error::internal("type lookup found another kind of entry"));
     };
     if !info.parameters.is_empty() {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "Type '{}' does not take any type parameters",
             info.name
         ))
@@ -266,14 +267,14 @@ fn user_type(info: &UnboundTypeInfo, entry: &rustdb_catalog::CatalogEntry) -> Re
 
 /// The collation of `VARCHAR COLLATE name`: a named, non-NULL VARCHAR `collation`
 /// modifier among at most two (`BindVarcharType`).
-fn varchar_collation(info: &UnboundTypeInfo) -> Option<rustdb_common::ByteString> {
+fn varchar_collation(info: &UnboundTypeInfo) -> Option<roastedduck_common::ByteString> {
     if info.parameters.is_empty() || info.parameters.len() > 2 {
         return None;
     }
     info.parameters
         .iter()
         .find_map(|parameter| match &parameter.value {
-            rustdb_types::TypeParameterValue::Constant(value)
+            roastedduck_types::TypeParameterValue::Constant(value)
                 if parameter.name.eq_ignore_ascii_case("collation")
                     && value.logical_type().id() == LogicalTypeId::Varchar
                     && !value.is_null() =>

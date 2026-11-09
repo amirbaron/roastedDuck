@@ -8,8 +8,8 @@
 
 use std::ffi::{CStr, c_char, c_void};
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, PhysicalType};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, PhysicalType};
 
 use crate::appender::ArrowAppender;
 use crate::client_properties::{ArrowFormatVersion, ArrowOffsetSize, ClientProperties};
@@ -168,7 +168,7 @@ unsafe extern "C" fn release_duckdb_arrow_schema(schema: *mut ArrowSchema) {
 pub fn to_arrow_schema(
     out_schema: &mut ArrowSchema,
     types: &[LogicalType],
-    names: &[rustdb_common::ByteString],
+    names: &[roastedduck_common::ByteString],
     options: &ClientProperties,
 ) -> Result<()> {
     let mut columns = Vec::with_capacity(types.len());

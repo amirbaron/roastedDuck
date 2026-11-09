@@ -3,7 +3,7 @@
 use std::ffi::c_char;
 use std::sync::Arc;
 
-use rustdb::{PendingExecutionResult, PendingQuery};
+use roastedduck::{PendingExecutionResult, PendingQuery};
 
 use crate::helper::catch;
 use crate::open::SharedConnection;
@@ -45,7 +45,7 @@ unsafe fn pending_prepared(
                 .lock()
                 .pending_prepared(statement, &wrapper.values, allow_streaming)
         }),
-        Err(_) => Err(rustdb::Error::invalid_input(
+        Err(_) => Err(roastedduck::Error::invalid_input(
             "Attempting to execute an unsuccessfully prepared statement!",
         )),
     };
@@ -214,7 +214,7 @@ pub unsafe extern "C" fn duckdb_execute_pending(
                 let mut message =
                     b"Attempting to execute an unsuccessful or closed pending query result\nError: ".to_vec();
                 message.extend_from_slice(&error.error.to_bytes());
-                Err(rustdb::Error::invalid_input(message))
+                Err(roastedduck::Error::invalid_input(message))
             }
         };
         (outcome, connection.client_properties())

@@ -12,8 +12,8 @@ import TestNativeImage
 final class LibraryIdentityTests: XCTestCase {
     func test_selected_native_library_image() throws {
         let environment = ProcessInfo.processInfo.environment
-        let expected = try XCTUnwrap(environment["RUSTDB_SWIFT_EXPECTED_LIBRARY"])
-        let output = try XCTUnwrap(environment["RUSTDB_SWIFT_IDENTITY_REPORT"])
+        let expected = try XCTUnwrap(environment["ROASTEDDUCK_SWIFT_EXPECTED_LIBRARY"])
+        let output = try XCTUnwrap(environment["ROASTEDDUCK_SWIFT_IDENTITY_REPORT"])
         let function: @convention(c) () -> UnsafePointer<CChar>? = duckdb_library_version
         let pointer = unsafeBitCast(function, to: UnsafeRawPointer.self)
         #if canImport(Darwin)
@@ -23,7 +23,7 @@ final class LibraryIdentityTests: XCTestCase {
             String(cString: $0)
         }
         #elseif os(Linux)
-        let actual = String(cString: try XCTUnwrap(rustdb_test_function_image(pointer)))
+        let actual = String(cString: try XCTUnwrap(roastedduck_test_function_image(pointer)))
         #endif
         func canonical(_ path: String) -> String {
             URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
@@ -36,8 +36,8 @@ final class LibraryIdentityTests: XCTestCase {
                 ? canonical(path) : nil
         }
         #elseif os(Linux)
-        let images = (0..<rustdb_test_image_count()).compactMap { index -> String? in
-            guard let name = rustdb_test_image_name(index) else { return nil }
+        let images = (0..<roastedduck_test_image_count()).compactMap { index -> String? in
+            guard let name = roastedduck_test_image_name(index) else { return nil }
             let path = String(cString: name)
             return URL(fileURLWithPath: path).lastPathComponent == "libduckdb.so" ? canonical(path) : nil
         }

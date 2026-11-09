@@ -1,6 +1,6 @@
 //! Redirect policy for signed requests, handled before S3 region retries.
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 use ureq::http::Uri;
 
 use crate::io_error;

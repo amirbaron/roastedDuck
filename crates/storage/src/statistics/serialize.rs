@@ -3,9 +3,9 @@
 //! `ColumnStatistics` / `TableStatistics` wrappers). Deserialization needs the type,
 //! which DuckDB passes through the deserializer context.
 
-use rustdb_common::{Error, Result};
-use rustdb_serde::{Deserializer, Serializer};
-use rustdb_types::{LogicalType, PhysicalType};
+use roastedduck_common::{Error, Result};
+use roastedduck_serde::{Deserializer, Serializer};
+use roastedduck_types::{LogicalType, PhysicalType};
 
 use super::numeric::NumericValue;
 use super::string::MAX_STRING_MINMAX_SIZE;

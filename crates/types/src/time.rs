@@ -3,7 +3,7 @@
 
 use std::fmt;
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::date::{digit_at, parse_one_or_two_digits, push_padded, push_time_of_day, skip_spaces};
 use crate::timestamp::parse_utc_offset;

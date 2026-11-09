@@ -9,9 +9,9 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use rustdb_common::{ByteString, Error, Result, STANDARD_VECTOR_SIZE, byte_write};
-use rustdb_function::cast::CastFunctionSet;
-use rustdb_types::LogicalType;
+use roastedduck_common::{ByteString, Error, Result, STANDARD_VECTOR_SIZE, byte_write};
+use roastedduck_function::cast::CastFunctionSet;
+use roastedduck_types::LogicalType;
 
 pub use dialect::DialectCandidates;
 pub use types::can_you_cast_it;
@@ -31,7 +31,7 @@ use crate::state_machine::CsvStateMachine;
 #[derive(Clone, Debug, Default)]
 pub struct SnifferResult {
     pub return_types: Vec<LogicalType>,
-    pub names: Vec<rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
 }
 
 /// The result of the minimal sniffer (DuckDB's `AdaptiveSnifferResult`).
@@ -45,7 +45,7 @@ pub struct AdaptiveSnifferResult {
 #[derive(Clone, Debug, Default)]
 pub struct SetColumns {
     pub types: Vec<LogicalType>,
-    pub names: Vec<rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
 }
 
 impl SetColumns {
@@ -130,7 +130,7 @@ pub struct CsvSniffer<'a> {
     original_format_candidates: BTreeMap<FormatType, DateTimestampSniffing>,
     detected_types: Vec<LogicalType>,
     default_null_to_varchar: bool,
-    names: Vec<rustdb_common::ByteString>,
+    names: Vec<roastedduck_common::ByteString>,
     single_row_file: bool,
     manually_set: Vec<bool>,
 }

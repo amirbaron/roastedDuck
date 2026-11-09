@@ -25,9 +25,11 @@ mod subquery;
 mod tableref;
 mod typename;
 
-use rustdb_ast::{CommonTableExpressionMap, ParsedExpression, SelectNode, SqlStatement, SqlStatementKind};
-use rustdb_common::{ByteString, CaseInsensitiveMap, Error, Result};
-use rustdb_pg_parser::nodes::{List, Node, RawStmt, Value, WindowDef};
+use roastedduck_ast::{
+    CommonTableExpressionMap, ParsedExpression, SelectNode, SqlStatement, SqlStatementKind,
+};
+use roastedduck_common::{ByteString, CaseInsensitiveMap, Error, Result};
+use roastedduck_pg_parser::nodes::{List, Node, RawStmt, Value, WindowDef};
 
 use crate::ParserOptions;
 use crate::hash_order::CiHashMap;
@@ -55,7 +57,7 @@ pub(crate) struct PivotEntry {
     pub(crate) base: Option<SelectNode>,
     pub(crate) base_cte_map: CommonTableExpressionMap,
     pub(crate) column: ParsedExpression,
-    pub(crate) subquery: Option<rustdb_ast::QueryNode>,
+    pub(crate) subquery: Option<roastedduck_ast::QueryNode>,
     pub(crate) has_parameters: bool,
 }
 
@@ -226,7 +228,7 @@ impl<'a> Transformer<'a> {
     /// `max_expression_depth`.
     pub(crate) fn check_depth(&self, extra: u64) -> Result<()> {
         if self.depth + extra >= self.options.max_expression_depth {
-            return Err(Error::parser(rustdb_common::byte_format!(
+            return Err(Error::parser(roastedduck_common::byte_format!(
                 "Max expression depth limit of {} exceeded. Use \"SET max_expression_depth TO x\" to increase the \
                  maximum expression depth.",
                 self.options.max_expression_depth
@@ -332,7 +334,7 @@ impl<'a> Transformer<'a> {
     /// from the data.
     pub(crate) fn pivot_entry_check(&self, kind: &str) -> Result<()> {
         if let Some(entry) = self.pivot_entries.first() {
-            return Err(Error::parser(rustdb_common::byte_format!(
+            return Err(Error::parser(roastedduck_common::byte_format!(
                 "PIVOT statements with pivot elements extracted from the data cannot be used in {kind}s.\nIn order \
                  to use PIVOT in a {kind} the PIVOT values must be manually specified, e.g.:\nPIVOT ... ON {} IN \
                  (val1, val2, ...)",
@@ -362,7 +364,7 @@ fn contains_ignore_ascii_case(haystack: &[u8], needle: &[u8]) -> bool {
 /// A pointer DuckDB dereferences unconditionally: missing means a malformed tree.
 pub(crate) fn required<'b, T>(value: Option<&'b T>, what: &str) -> Result<&'b T> {
     value.ok_or_else(|| {
-        Error::internal(rustdb_common::byte_format!(
+        Error::internal(roastedduck_common::byte_format!(
             "Unexpected NULL {what} in the parse tree"
         ))
     })
@@ -372,7 +374,7 @@ pub(crate) fn required<'b, T>(value: Option<&'b T>, what: &str) -> Result<&'b T>
 pub(crate) fn node_string(node: &Node) -> Result<&[u8]> {
     match node {
         Node::Value(Value::String(text)) | Node::Str(text) => Ok(text),
-        other => Err(Error::internal(rustdb_common::byte_format!(
+        other => Err(Error::internal(roastedduck_common::byte_format!(
             "Expected a string in the parse tree, found {}",
             node_tag(other).1
         ))),
@@ -393,7 +395,7 @@ pub(crate) fn res_target_name(node: &Node) -> Result<Option<ByteString>> {
     match node {
         Node::ResTarget(target) => Ok(target.name.clone()),
         Node::Value(Value::String(text)) | Node::Str(text) => Ok(Some(text.clone())),
-        other => Err(Error::internal(rustdb_common::byte_format!(
+        other => Err(Error::internal(roastedduck_common::byte_format!(
             "Expected a ResTarget node in the parse tree, found {}",
             node_tag(other).1
         ))),
@@ -401,9 +403,9 @@ pub(crate) fn res_target_name(node: &Node) -> Result<Option<ByteString>> {
 }
 
 /// Borrows `node` as the node struct `T`, failing like a bad `PGCast` would.
-pub(crate) fn cast_node<T: rustdb_pg_parser::nodes::NodeStruct>(node: &Node) -> Result<&T> {
+pub(crate) fn cast_node<T: roastedduck_pg_parser::nodes::NodeStruct>(node: &Node) -> Result<&T> {
     node.downcast_ref::<T>().ok_or_else(|| {
-        Error::internal(rustdb_common::byte_format!(
+        Error::internal(roastedduck_common::byte_format!(
             "Expected a {} node in the parse tree, found {}",
             T::NAME,
             node_tag(node).1

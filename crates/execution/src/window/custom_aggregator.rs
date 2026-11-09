@@ -1,9 +1,9 @@
 //! Aggregates with their own windowed evaluation (DuckDB's
 //! `window_custom_aggregator.cpp`), e.g. holistic aggregates like `quantile`.
 
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::{FrameDelta, WindowFrame, WindowPartitionInput};
-use rustdb_types::{ValidityMask, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::{FrameDelta, WindowFrame, WindowPartitionInput};
+use roastedduck_types::{ValidityMask, Vector};
 
 use super::aggregate_states::WindowAggregateStates;
 use super::aggregator::{WindowAggregator, evaluate_subframes, init_subframes};

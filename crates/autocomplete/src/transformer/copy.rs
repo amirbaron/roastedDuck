@@ -1,7 +1,7 @@
 //! The transform functions of DuckDB's `transform_copy.cpp`: `COPY table FROM / TO`,
 //! `COPY (query) TO` and `COPY FROM DATABASE`.
 
-use rustdb_parser::hash_order::CiHashMap;
+use roastedduck_parser::hash_order::CiHashMap;
 
 use super::create_table::base_table_ref;
 use super::prelude::*;
@@ -55,7 +55,7 @@ fn set_copy_options(info: &mut CopyInfo, options: Vec<GenericCopyOption>) -> Res
                     .iter()
                     .map(|partition| Ok(ParsedExpression::column_ref([partition.to_varchar_bytes()?])))
                     .collect::<Result<Vec<_>>>()?;
-                let row_func = rustdb_parser::build::function_full(
+                let row_func = roastedduck_parser::build::function_full(
                     String::new(),
                     "main".to_owned(),
                     "row",

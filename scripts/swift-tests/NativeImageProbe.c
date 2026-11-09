@@ -4,7 +4,7 @@
 #include <dlfcn.h>
 #include <link.h>
 
-const char *rustdb_test_function_image(const void *address) {
+const char *roastedduck_test_function_image(const void *address) {
     Dl_info info;
     return dladdr(address, &info) ? info.dli_fname : NULL;
 }
@@ -15,12 +15,12 @@ static int image_callback(struct dl_phdr_info *info, size_t size, void *opaque) 
     if (query->count++ == query->wanted) { query->name = info->dlpi_name; return 1; }
     return 0;
 }
-size_t rustdb_test_image_count(void) {
+size_t roastedduck_test_image_count(void) {
     struct ImageQuery query = {(size_t)-1, 0, NULL};
     dl_iterate_phdr(image_callback, &query);
     return query.count;
 }
-const char *rustdb_test_image_name(size_t index) {
+const char *roastedduck_test_image_name(size_t index) {
     struct ImageQuery query = {index, 0, NULL};
     dl_iterate_phdr(image_callback, &query);
     return query.name;

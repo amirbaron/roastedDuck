@@ -9,9 +9,9 @@
 use std::any::Any;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rustdb_buffer::BlockId;
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_buffer::BlockId;
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use super::art::ArtStorageInfo;
 use super::fixed_size_allocator::IndexBufferWriter;
@@ -23,7 +23,7 @@ pub enum UnboundIndexStorage {
     /// Data in blocks of the database file (`IndexStorageInfo` of a checkpoint).
     Disk(ArtStorageInfo),
     /// Data replayed from the WAL: the description and the bytes of each buffer per
-    /// allocator. DuckDB writes them to new blocks at once (`ReplayIndexData`); rustdb
+    /// allocator. DuckDB writes them to new blocks at once (`ReplayIndexData`); roastedduck
     /// does so when a checkpoint writes the still unbound index.
     Wal(ArtStorageInfo, Vec<Vec<Vec<u8>>>),
     /// Data in the layout of DuckDB versions before v0.10, behind a root block pointer.
@@ -275,8 +275,8 @@ impl UnboundIndex {
             }
             UnboundIndexStorage::Wal(..) => Err(Error::internal("unbound index buffers were not written")),
             UnboundIndexStorage::Deprecated => Err(Error::new_bytes(
-                rustdb_common::ErrorKind::NotImplemented,
-                rustdb_common::byte_format!(
+                roastedduck_common::ErrorKind::NotImplemented,
+                roastedduck_common::byte_format!(
                     "checkpointing the unbound index \"{}\" stored by an old DuckDB version",
                     self.name
                 )

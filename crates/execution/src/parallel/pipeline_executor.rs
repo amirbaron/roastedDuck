@@ -7,8 +7,8 @@ use std::any::Any;
 use std::sync::Arc;
 use std::time::Instant;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{DataChunk, STANDARD_VECTOR_SIZE};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{DataChunk, STANDARD_VECTOR_SIZE};
 
 use super::pipeline::{BATCH_INCREMENT, Pipeline, SharedState};
 use crate::operator::{

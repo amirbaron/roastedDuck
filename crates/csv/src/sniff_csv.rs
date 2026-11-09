@@ -4,13 +4,13 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{ByteString, Error, Result, byte_write};
-use rustdb_function::cast::CastFunctionSet;
-use rustdb_function::{
+use roastedduck_common::{ByteString, Error, Result, byte_write};
+use roastedduck_function::cast::CastFunctionSet;
+use roastedduck_function::{
     FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
     TableScanState,
 };
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
 
 use crate::buffer::CsvBufferManager;
 use crate::multi_file::{MultiFileOptions, glob_file_list};
@@ -21,7 +21,7 @@ use crate::sniffer::CsvSniffer;
 /// The bind data of `sniff_csv` (DuckDB's `CSVSniffFunctionData`).
 #[derive(Debug)]
 struct CsvSniffFunctionData {
-    path: rustdb_common::ByteString,
+    path: roastedduck_common::ByteString,
     options: CsvReaderOptions,
     file_options: MultiFileOptions,
     force_match: bool,
@@ -74,7 +74,7 @@ fn sniff_csv_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBin
         match key.to_ascii_lowercase().as_bytes() {
             b"auto_detect" => {
                 if value.is_null() {
-                    return Err(Error::binder(rustdb_common::byte_format!(
+                    return Err(Error::binder(roastedduck_common::byte_format!(
                         "\"{key}\" expects a non-null boolean value (e.g. TRUE or 1)"
                     )));
                 }
@@ -229,7 +229,7 @@ fn sniff_csv_row(data: &CsvSniffFunctionData) -> Result<Vec<Value>> {
         Value::try_varchar(&data.options.user_defined_parameters_string())?
     });
     let mut csv_read =
-        rustdb_common::byte_format!("FROM read_csv('{file}'{separator}auto_detect=false{separator}");
+        roastedduck_common::byte_format!("FROM read_csv('{file}'{separator}auto_detect=false{separator}");
     if !sm.delimiter.is_set_by_user() {
         let _ = byte_write!(
             csv_read,

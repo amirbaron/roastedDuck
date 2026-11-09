@@ -1,12 +1,12 @@
 //! Readers of nested columns (DuckDB's `ListColumnReader` and `StructColumnReader`).
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{ListEntry, LogicalType, LogicalTypeId, Vector, VectorKind};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::{ListEntry, LogicalType, LogicalTypeId, Vector, VectorKind};
 
 use super::{ColumnReader, ReaderContext};
 use crate::schema::ColumnSchema;
 use crate::thrift::RowGroup;
-use rustdb_types::vector_ops::{copy_rows, list_append};
+use roastedduck_types::vector_ops::{copy_rows, list_append};
 
 /// `StructColumnReader`: one reader per projected field.
 #[derive(Debug)]

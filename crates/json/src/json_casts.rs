@@ -5,9 +5,9 @@
 
 use std::sync::Arc;
 
-use rustdb_common::Result;
-use rustdb_function::cast::{BindCastFn, BoundCastInfo, CastFunctionSet, CastParameters};
-use rustdb_types::{ListEntry, LogicalType, LogicalTypeId, Vector};
+use roastedduck_common::Result;
+use roastedduck_function::cast::{BindCastFn, BoundCastInfo, CastFunctionSet, CastParameters};
+use roastedduck_types::{ListEntry, LogicalType, LogicalTypeId, Vector};
 
 use crate::json_common::format_parse_error;
 use crate::json_executors::{ColumnBuilder, ListBuilder, StrBuilder, StrInput, addressable};
@@ -67,7 +67,7 @@ fn json_list_to_varchar(
     let entries = source.unified::<ListEntry>();
     let (child, _) = source
         .list_child()
-        .ok_or_else(|| rustdb_common::Error::internal("JSON[] cast of a vector without a list child"))?;
+        .ok_or_else(|| roastedduck_common::Error::internal("JSON[] cast of a vector without a list child"))?;
     let child_input = StrInput::new(child);
     let mut builder = StrBuilder::default();
     for row in 0..rows {

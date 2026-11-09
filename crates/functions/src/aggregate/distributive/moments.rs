@@ -6,10 +6,10 @@
 //! expression into a fused multiply-add (clang's default `-ffp-contract=on`), so those
 //! spots use `mul_add`; results are then bit-identical.
 
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::{Unary, UnaryAggregate};
-use rustdb_function::{AggregateFunction, AggregateFunctionSet};
-use rustdb_types::LogicalType;
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::{Unary, UnaryAggregate};
+use roastedduck_function::{AggregateFunction, AggregateFunctionSet};
+use roastedduck_types::LogicalType;
 
 /// Count and power sums up to the fourth power.
 #[derive(Clone, Copy, Debug, Default)]

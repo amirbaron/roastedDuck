@@ -1,8 +1,8 @@
 //! Typed access to constant arguments (DuckDB's `Value::GetValue<T>()`, which casts).
 
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::ValueCast;
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_types::{LogicalType, Value};
 
 /// The value cast to DOUBLE (DuckDB's `Value::GetValue<double>()`).
 pub(crate) fn as_double(value: &Value) -> Result<f64> {
@@ -39,7 +39,7 @@ pub(crate) fn as_text(value: &Value) -> Result<String> {
 }
 
 /// Native VARCHAR bytes for metadata paths that do not require a Unicode text view.
-pub(crate) fn as_text_bytes(value: &Value) -> Result<rustdb_common::ByteString> {
+pub(crate) fn as_text_bytes(value: &Value) -> Result<roastedduck_common::ByteString> {
     let value = value.default_cast_as(&LogicalType::VARCHAR)?;
     value
         .as_bytes()
@@ -49,7 +49,10 @@ pub(crate) fn as_text_bytes(value: &Value) -> Result<rustdb_common::ByteString> 
 
 /// DuckDB's `CastExceptionText` for a numeric value that does not fit `target` (raised as
 /// an Invalid Input Error by `Cast::Operation`).
-pub(crate) fn cast_error<T: rustdb_function::cast::numeric::CastNumber>(value: T, target: &str) -> Error {
+pub(crate) fn cast_error<T: roastedduck_function::cast::numeric::CastNumber>(
+    value: T,
+    target: &str,
+) -> Error {
     Error::invalid_input(format!(
         "Type {} with value {} can't be cast because the value is out of range for the destination type {target}",
         T::PHYSICAL.name(),

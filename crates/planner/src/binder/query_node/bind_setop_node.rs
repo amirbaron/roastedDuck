@@ -1,8 +1,8 @@
 //! UNION / EXCEPT / INTERSECT (DuckDB's `bind_setop_node.cpp` and `plan_setop.cpp`).
 
-use rustdb_ast::{DistinctModifier, QueryNode, QueryNodeKind, ResultModifier, SetOperationType};
-use rustdb_common::{ByteString, CaseInsensitiveMap, CaseInsensitiveSet, Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_ast::{DistinctModifier, QueryNode, QueryNodeKind, ResultModifier, SetOperationType};
+use roastedduck_common::{ByteString, CaseInsensitiveMap, CaseInsensitiveSet, Error, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use super::modifiers::{OrderTargets, bind_modifiers, prepare_modifiers, visit_query_node};
 use super::{BoundResultModifier, bind_node};
@@ -98,7 +98,7 @@ fn build_union_by_name_info(
         let mut map = CaseInsensitiveMap::<usize, ByteString>::default();
         for (i, name) in child.names.iter().enumerate() {
             if map.contains_key(name) {
-                return Err(Error::new_bytes(rustdb_common::ErrorKind::Binder, rustdb_common::byte_format!(
+                return Err(Error::new_bytes(roastedduck_common::ErrorKind::Binder, roastedduck_common::byte_format!(
                     "UNION (ALL) BY NAME operation doesn't support duplicate names in the SELECT list - the name \
                      \"{name}\" occurs multiple times"
                 ).into_bytes()));

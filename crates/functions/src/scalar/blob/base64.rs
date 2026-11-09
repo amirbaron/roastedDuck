@@ -1,9 +1,9 @@
 //! `to_base64(blob)`/`base64(blob)` and `from_base64(varchar)` (DuckDB's `base64.cpp`,
 //! with the codec of `Blob::ToBase64`/`Blob::FromBase64`).
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::LogicalType;
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::LogicalType;
 
 use crate::scalar::executor::{Str, StrOut, unary};
 

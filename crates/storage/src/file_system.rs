@@ -5,29 +5,29 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::sync::Arc;
 
-use rustdb_function::registered_files::{self, Cursor, FileSystem, OpenFlags};
+use roastedduck_function::registered_files::{self, Cursor, FileSystem, OpenFlags};
 
 /// Recover callback errors carried through the standard stream interfaces without
 /// replacing their type, subtype, or diagnostic metadata with a generic I/O error.
-pub use rustdb_function::registered_files::callback_error;
+pub use roastedduck_function::registered_files::callback_error;
 
 #[derive(Clone, Debug, Default)]
 pub struct DatabaseFileSystem {
     registered: Option<Arc<dyn FileSystem>>,
-    disabled: Option<Arc<rustdb_function::file_system::DisabledFileSystems>>,
+    disabled: Option<Arc<roastedduck_function::file_system::DisabledFileSystems>>,
 }
 
 impl DatabaseFileSystem {
     pub fn for_path(path: &[u8]) -> Self {
         Self {
             registered: registered_files::lookup(path),
-            disabled: rustdb_function::file_system::opener()
+            disabled: roastedduck_function::file_system::opener()
                 .and_then(|client| client.object_cache())
-                .and_then(|cache| cache.get(rustdb_function::file_system::DISABLED_FILE_SYSTEMS_KEY)),
+                .and_then(|cache| cache.get(roastedduck_function::file_system::DISABLED_FILE_SYSTEMS_KEY)),
         }
     }
 
-    fn verify_enabled(&self) -> rustdb_common::Result<()> {
+    fn verify_enabled(&self) -> roastedduck_common::Result<()> {
         if let Some(disabled) = &self.disabled {
             disabled.verify_enabled(self.registered.as_ref().map_or("LocalFileSystem", |fs| fs.name()))?;
         }
@@ -38,11 +38,11 @@ impl DatabaseFileSystem {
         self.registered.is_some()
     }
 
-    pub fn exists(&self, path: &[u8]) -> rustdb_common::Result<bool> {
+    pub fn exists(&self, path: &[u8]) -> roastedduck_common::Result<bool> {
         self.verify_enabled()?;
         match &self.registered {
             Some(fs) => fs.is_file(path),
-            None => Ok(rustdb_common::native_file_path(path)?.exists()),
+            None => Ok(roastedduck_common::native_file_path(path)?.exists()),
         }
     }
 
@@ -59,7 +59,7 @@ impl DatabaseFileSystem {
             .write(flags.write)
             .create(flags.create)
             .truncate(flags.truncate)
-            .open(rustdb_common::native_file_path(path).map_err(io::Error::other)?)
+            .open(roastedduck_common::native_file_path(path).map_err(io::Error::other)?)
             .map(StorageFile::Local)
     }
 
@@ -67,11 +67,13 @@ impl DatabaseFileSystem {
         self.verify_enabled().map_err(io::Error::other)?;
         match &self.registered {
             Some(fs) => fs.remove(path).map_err(io::Error::other),
-            None => std::fs::remove_file(rustdb_common::native_file_path(path).map_err(io::Error::other)?),
+            None => {
+                std::fs::remove_file(roastedduck_common::native_file_path(path).map_err(io::Error::other)?)
+            }
         }
     }
 
-    pub fn remove_if_exists(&self, path: &[u8]) -> rustdb_common::Result<()> {
+    pub fn remove_if_exists(&self, path: &[u8]) -> roastedduck_common::Result<()> {
         if self.registered.is_some() && !self.exists(path)? {
             return Ok(());
         }
@@ -79,9 +81,9 @@ impl DatabaseFileSystem {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(callback_error(&error).unwrap_or_else(|| {
-                rustdb_common::Error::new_bytes(
-                    rustdb_common::ErrorKind::Io,
-                    rustdb_common::byte_format!("Could not remove file \"{path}\": {error}"),
+                roastedduck_common::Error::new_bytes(
+                    roastedduck_common::ErrorKind::Io,
+                    roastedduck_common::byte_format!("Could not remove file \"{path}\": {error}"),
                 )
             })),
         }
@@ -92,8 +94,8 @@ impl DatabaseFileSystem {
         match &self.registered {
             Some(fs) => fs.rename(source, target).map_err(io::Error::other),
             None => std::fs::rename(
-                rustdb_common::native_file_path(source).map_err(io::Error::other)?,
-                rustdb_common::native_file_path(target).map_err(io::Error::other)?,
+                roastedduck_common::native_file_path(source).map_err(io::Error::other)?,
+                roastedduck_common::native_file_path(target).map_err(io::Error::other)?,
             ),
         }
     }
@@ -189,7 +191,7 @@ mod cpp_sync_parity_tests {
 
     #[test]
     fn local_sync_preserves_data_after_independent_reopen() {
-        let path = std::env::temp_dir().join(format!("rustdb-cpp-sync-{}.bin", std::process::id()));
+        let path = std::env::temp_dir().join(format!("roastedduck-cpp-sync-{}.bin", std::process::id()));
         let mut file = OpenOptions::new()
             .create_new(true)
             .read(true)

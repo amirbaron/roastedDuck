@@ -4,9 +4,9 @@
 
 use std::collections::BTreeMap;
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::Result;
-use rustdb_planner::{Expression, ExpressionKind, LogicalOperatorType};
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::Result;
+use roastedduck_planner::{Expression, ExpressionKind, LogicalOperatorType};
 
 use super::RuleOutcome;
 use crate::expression_rewriter::RuleContext;

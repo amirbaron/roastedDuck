@@ -1,12 +1,12 @@
 //! Native cache keys and Unicode-path Parquet write/read/reopen journeys.
-use rustdb_common::ByteString;
-use rustdb_function::ObjectCache;
-use rustdb_parquet::{
+use roastedduck_common::ByteString;
+use roastedduck_function::ObjectCache;
+use roastedduck_parquet::{
     reader::{CachedMetadata, ParquetReader, ScanColumn},
     schema::ParquetOptions,
     writer::{ParquetWriter, WriterOptions},
 };
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 use std::sync::Arc;
 #[test]
 fn object_cache_distinguishes_every_native_byte_key() {
@@ -75,7 +75,9 @@ fn parquet_unicode_path_preserves_data_and_reuses_metadata() {
 
 #[test]
 fn native_open_errors_match_cpp_bytes_and_errno() {
-    use rustdb_function::{caching_file_system::CachingFileHandle, external_file_cache::CacheValidationMode};
+    use roastedduck_function::{
+        caching_file_system::CachingFileHandle, external_file_cache::CacheValidationMode,
+    };
     fn decode(hex: &str) -> Vec<u8> {
         hex.as_bytes()
             .as_chunks::<2>()
@@ -98,7 +100,9 @@ fn native_open_errors_match_cpp_bytes_and_errno() {
 #[test]
 #[cfg(unix)]
 fn native_open_uses_c_string_os_boundary_and_keeps_cache_key() {
-    use rustdb_function::{caching_file_system::CachingFileHandle, external_file_cache::CacheValidationMode};
+    use roastedduck_function::{
+        caching_file_system::CachingFileHandle, external_file_cache::CacheValidationMode,
+    };
     let root = std::path::PathBuf::from(std::env::var_os("TMPDIR").expect("external test TMPDIR"))
         .join(format!("parquet-native-open-{}", std::process::id()));
     std::fs::create_dir(&root).unwrap();

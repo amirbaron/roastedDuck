@@ -1,13 +1,15 @@
-//! rustdb, linked directly.
+//! roastedduck, linked directly.
 
 use std::path::Path;
 
-use rustdb::{Config, Connection, Database, ErrorKind, ExtensionLoad, LogicalType, LogicalTypeId, Value};
+use roastedduck::{
+    Config, Connection, Database, ErrorKind, ExtensionLoad, LogicalType, LogicalTypeId, Value,
+};
 
 use super::{DbConfig, Engine, EngineError, ExtensionStatus, QueryResult};
 use crate::verify::{ResultColumn, ResultTable, ValueKind};
 
-/// rustdb with one database and connection.
+/// roastedduck with one database and connection.
 #[derive(Debug, Default)]
 pub struct RustEngine {
     state: Option<(Database, Connection)>,
@@ -26,7 +28,7 @@ impl RustEngine {
     }
 }
 
-fn convert_error(error: &rustdb::Error) -> EngineError {
+fn convert_error(error: &roastedduck::Error) -> EngineError {
     if error.kind() == ErrorKind::NotImplemented {
         EngineError::unsupported(error.to_string())
     } else {
@@ -35,10 +37,10 @@ fn convert_error(error: &rustdb::Error) -> EngineError {
 }
 
 impl Engine for RustEngine {
-    type Result = rustdb::MaterializedResult;
+    type Result = roastedduck::MaterializedResult;
 
     fn version(&self) -> String {
-        format!("rustdb {}", env!("CARGO_PKG_VERSION"))
+        format!("roastedduck {}", env!("CARGO_PKG_VERSION"))
     }
 
     fn open(&mut self, path: Option<&Path>, config: &DbConfig) -> Result<(), EngineError> {
@@ -82,13 +84,13 @@ impl Engine for RustEngine {
     }
 }
 
-impl QueryResult for rustdb::MaterializedResult {
+impl QueryResult for roastedduck::MaterializedResult {
     fn row_count(&self) -> usize {
-        rustdb::MaterializedResult::row_count(self)
+        roastedduck::MaterializedResult::row_count(self)
     }
 
     fn column_count(&self) -> usize {
-        rustdb::MaterializedResult::column_count(self)
+        roastedduck::MaterializedResult::column_count(self)
     }
 
     fn to_table(&self) -> Result<ResultTable, EngineError> {

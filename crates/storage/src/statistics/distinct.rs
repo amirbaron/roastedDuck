@@ -3,9 +3,9 @@
 //! extrapolated to the whole column with a Good-Turing estimate. The optimizer's
 //! cardinality estimates use the count.
 
-use rustdb_common::Result;
-use rustdb_row::hash::hash_vector;
-use rustdb_types::{LogicalType, PhysicalType, STANDARD_VECTOR_SIZE, Vector, VectorKind};
+use roastedduck_common::Result;
+use roastedduck_row::hash::hash_vector;
+use roastedduck_types::{LogicalType, PhysicalType, STANDARD_VECTOR_SIZE, Vector, VectorKind};
 
 /// Bits of the hash that select a register (`HyperLogLog::P`).
 const P: u32 = 6;
@@ -457,7 +457,7 @@ mod tests {
         let mut log = HyperLogLog::default();
         assert_eq!(log.count(), 0);
         for value in 0..5u64 {
-            log.insert_element(rustdb_row::hash::murmur_hash64(value));
+            log.insert_element(roastedduck_row::hash::murmur_hash64(value));
         }
         assert!((4..=6).contains(&log.count()));
     }

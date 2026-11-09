@@ -28,7 +28,7 @@ pub fn generated(kind: &str, size: usize) -> Vec<u8> {
 
 fn check(state: &str) {
     let originals: std::collections::BTreeMap<_, _> = common::inputs().into_iter().collect();
-    let mut compressor = rustdb_zstd::Compressor::new(3);
+    let mut compressor = roastedduck_zstd::Compressor::new(3);
     let mut checked = 0;
     for line in include_str!("data/optimal_small_1.5.6.tsv")
         .lines()
@@ -51,7 +51,7 @@ fn check(state: &str) {
             &originals[fields[1]][..size]
         };
         if state == "fresh" {
-            compressor = rustdb_zstd::Compressor::new(level);
+            compressor = roastedduck_zstd::Compressor::new(level);
         }
         compressor.set_level(level);
         let mut frame = Vec::new();
@@ -59,7 +59,7 @@ fn check(state: &str) {
         assert_eq!((frame.len(), common::fnv64(&frame)), (expected, hash), "{line}");
         let mut decoded = vec![0; size];
         assert_eq!(
-            rustdb_zstd::decompress(&mut decoded, &frame).expect("decode"),
+            roastedduck_zstd::decompress(&mut decoded, &frame).expect("decode"),
             size
         );
         assert_eq!(decoded, data, "{line}");

@@ -675,7 +675,7 @@ mod tests {
 
     /// Runs `job` on `engine` with a scratch data directory.
     fn run(engine: &mut FakeEngine, job: &Job) -> Outcome {
-        let data_dir = std::env::temp_dir().join(format!("rustdb-bench-driver-{}", std::process::id()));
+        let data_dir = std::env::temp_dir().join(format!("roastedduck-bench-driver-{}", std::process::id()));
         let progress = Arc::new(Mutex::new(Outcome::default()));
         let watchdog = Watchdog::start(Arc::clone(&progress), data_dir.join("outcome"));
         BenchmarkRun::new(engine, job, &progress, &watchdog, &data_dir).run();

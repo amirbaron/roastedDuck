@@ -3,8 +3,8 @@ use crate::connection::{PyConnection, lock};
 use crate::{conversion, error};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyDict, PyInt, PyList, PyString};
-use rustdb_common::{ByteString, CaseInsensitiveMap, Error};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::{ByteString, CaseInsensitiveMap, Error};
+use roastedduck_types::{LogicalType, Value};
 use std::sync::Arc;
 const READ_OPTIONS: &[&str] = &[
     "filename",
@@ -122,10 +122,10 @@ fn unknown(key: &str, py: Python<'_>) -> PyErr {
         "hive_types_autocast",
         "thousands",
     ];
-    let mut order = rustdb_common::libcxx::UnorderedOrder::default();
+    let mut order = roastedduck_common::libcxx::UnorderedOrder::default();
     for name in valid {
         order.insert(
-            rustdb_common::libcxx::string_hash(name.as_bytes()),
+            roastedduck_common::libcxx::string_hash(name.as_bytes()),
             name.to_owned(),
             |a, b| a == b,
         );
@@ -138,7 +138,7 @@ fn unknown(key: &str, py: Python<'_>) -> PyErr {
     let mut message = format!(
         "The methods read_csv and read_csv_auto do not have the \"{key}\" argument.\nPossible arguments as suggestions: \n"
     );
-    for name in rustdb_common::string_util::top_n_jaro_winkler(&names, key)
+    for name in roastedduck_common::string_util::top_n_jaro_winkler(&names, key)
         .into_iter()
         .take(3)
     {
@@ -473,7 +473,7 @@ pub(super) fn paths(
     name: &Bound<'_, PyAny>,
 ) -> PyResult<(
     Vec<ByteString>,
-    Vec<Arc<rustdb_function::object_store::MemoryFile>>,
+    Vec<Arc<roastedduck_function::object_store::MemoryFile>>,
 )> {
     let cache = py
         .detach(|| {
@@ -498,7 +498,7 @@ pub(super) fn paths(
                 .call_method1("fsdecode", (&object,))?
                 .extract::<String>()?
         } else {
-            rustdb_function::object_store::ObjectStore::initialize(&cache);
+            roastedduck_function::object_store::ObjectStore::initialize(&cache);
             if !object.hasattr("read")? || !object.hasattr("seek")? {
                 return Err(pyo3::exceptions::PyTypeError::new_err(
                     "Can not read from a non file-like object",
@@ -522,7 +522,7 @@ pub(super) fn paths(
                     .getattr("hex")?
                     .extract::<String>()?
             );
-            owners.push(rustdb_function::object_store::ObjectStore::register(
+            owners.push(roastedduck_function::object_store::ObjectStore::register(
                 &cache,
                 path.as_bytes().into(),
                 Arc::from(bytes.as_bytes()),
@@ -572,14 +572,14 @@ pub(super) fn read(
             paths
                 .iter()
                 .map(|p| Value::try_varchar(p))
-                .collect::<rustdb_common::Result<_>>()
+                .collect::<roastedduck_common::Result<_>>()
                 .map_err(|e| error::native(py, &e))?,
         ))
     }
     .map_err(|e| error::native(py, &e))?;
-    let mut children = vec![rustdb_parser::build::constant(input)];
+    let mut children = vec![roastedduck_parser::build::constant(input)];
     for (key, value) in parameters.parameters {
-        let mut child = rustdb_parser::build::constant(value);
+        let mut child = roastedduck_parser::build::constant(value);
         child.alias = key;
         children.push(child);
     }
@@ -588,15 +588,15 @@ pub(super) fn read(
         .find(|part| !part.is_empty())
         .unwrap_or_default()
         .into();
-    let mut table = rustdb_parser::build::table_ref(rustdb_ast::TableRefKind::TableFunction(
-        rustdb_ast::TableFunctionRef {
-            function: Box::new(rustdb_parser::build::function("read_csv_auto", children)),
+    let mut table = roastedduck_parser::build::table_ref(roastedduck_ast::TableRefKind::TableFunction(
+        roastedduck_ast::TableFunctionRef {
+            function: Box::new(roastedduck_parser::build::function("read_csv_auto", children)),
             column_name_alias: Vec::new(),
-            with_ordinality: rustdb_ast::OrdinalityType::WithoutOrdinality,
+            with_ordinality: roastedduck_ast::OrdinalityType::WithoutOrdinality,
         },
     ));
     table.alias = alias;
-    table.external_dependency = rustdb_ast::ExternalDependency::new(Arc::new(owners));
+    table.external_dependency = roastedduck_ast::ExternalDependency::new(Arc::new(owners));
     crate::relation::PyRelation::from_file_table(owner, table, parameters.names, parameters.types)
 }
 
@@ -676,21 +676,21 @@ pub(super) fn write_options(
 
 /// A catalog view stores file names; the frozen CSV relation keeps ephemeral file
 /// ownership on the relation, unlike the Arrow function's captured dependencies.
-pub(super) fn view_source(mut source: rustdb_ast::SelectStatement) -> rustdb_ast::SelectStatement {
-    use rustdb_ast::visit::VisitorMut;
+pub(super) fn view_source(mut source: roastedduck_ast::SelectStatement) -> roastedduck_ast::SelectStatement {
+    use roastedduck_ast::visit::VisitorMut;
     struct Remove;
     impl VisitorMut for Remove {
-        fn visit_table_ref(&mut self, table: &mut rustdb_ast::TableRef) {
-            if let rustdb_ast::TableRefKind::TableFunction(function) = &table.kind
-                && let rustdb_ast::ParsedExpressionKind::Function(function) = &function.function.kind
+        fn visit_table_ref(&mut self, table: &mut roastedduck_ast::TableRef) {
+            if let roastedduck_ast::TableRefKind::TableFunction(function) = &table.kind
+                && let roastedduck_ast::ParsedExpressionKind::Function(function) = &function.function.kind
                 && (function.function_name.eq_ignore_ascii_case(b"read_csv_auto")
                     || function.function_name.eq_ignore_ascii_case(b"parquet_scan")
                     || function.function_name.eq_ignore_ascii_case(b"read_json_auto")
                     || function.function_name.eq_ignore_ascii_case(b"read_json"))
             {
-                table.external_dependency = rustdb_ast::ExternalDependency::default();
+                table.external_dependency = roastedduck_ast::ExternalDependency::default();
             }
-            rustdb_ast::visit::walk_table_ref(self, table);
+            roastedduck_ast::visit::walk_table_ref(self, table);
         }
     }
     Remove.visit_query_node(&mut source.node);
@@ -716,10 +716,10 @@ pub(super) fn read_parquet(
         paths
             .iter()
             .map(|p| Value::try_varchar(p))
-            .collect::<rustdb_common::Result<_>>()
+            .collect::<roastedduck_common::Result<_>>()
             .map_err(|e| error::native(py, &e))?,
     );
-    let mut children = vec![rustdb_parser::build::constant(input)];
+    let mut children = vec![roastedduck_parser::build::constant(input)];
     for (name, value) in [
         ("binary_as_string", binary_as_string),
         ("file_row_number", file_row_number),
@@ -727,7 +727,7 @@ pub(super) fn read_parquet(
         ("hive_partitioning", hive_partitioning),
         ("union_by_name", union_by_name),
     ] {
-        let mut value = rustdb_parser::build::constant(Value::boolean(value));
+        let mut value = roastedduck_parser::build::constant(Value::boolean(value));
         value.alias = name.into();
         children.push(value);
     }
@@ -735,7 +735,7 @@ pub(super) fn read_parquet(
         if !compression.is_instance_of::<PyString>() {
             return Err(invalid(py, "from_parquet only accepts 'compression' as a string"));
         }
-        let mut value = rustdb_parser::build::constant(Value::varchar(compression.extract::<String>()?));
+        let mut value = roastedduck_parser::build::constant(Value::varchar(compression.extract::<String>()?));
         value.alias = "compression".into();
         children.push(value);
     }
@@ -746,15 +746,15 @@ pub(super) fn read_parquet(
             .getattr("hex")?
             .extract::<String>()?
     );
-    let mut table = rustdb_parser::build::table_ref(rustdb_ast::TableRefKind::TableFunction(
-        rustdb_ast::TableFunctionRef {
-            function: Box::new(rustdb_parser::build::function("parquet_scan", children)),
+    let mut table = roastedduck_parser::build::table_ref(roastedduck_ast::TableRefKind::TableFunction(
+        roastedduck_ast::TableFunctionRef {
+            function: Box::new(roastedduck_parser::build::function("parquet_scan", children)),
             column_name_alias: Vec::new(),
-            with_ordinality: rustdb_ast::OrdinalityType::WithoutOrdinality,
+            with_ordinality: roastedduck_ast::OrdinalityType::WithoutOrdinality,
         },
     ));
     table.alias = alias.into();
-    table.external_dependency = rustdb_ast::ExternalDependency::new(Arc::new(owners));
+    table.external_dependency = roastedduck_ast::ExternalDependency::new(Arc::new(owners));
     crate::relation::PyRelation::from_parquet_table(owner, table)
 }
 fn field_ids(object: &Bound<'_, PyAny>) -> PyResult<Value> {

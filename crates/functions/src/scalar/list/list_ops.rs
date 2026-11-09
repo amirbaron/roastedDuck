@@ -5,11 +5,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
-use rustdb_row::sort::{NullOrder, OrderModifiers, OrderType, create_sort_keys};
-use rustdb_types::kernels::scatter;
-use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
+use roastedduck_row::sort::{NullOrder, OrderModifiers, OrderType, create_sort_keys};
+use roastedduck_types::kernels::scatter;
+use roastedduck_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Vector};
 
 use crate::operator::add_overflow;
 use crate::scalar::executor::addressable;
@@ -278,7 +278,7 @@ fn bind_list_zip(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindRe
     let types = input.argument_types;
     let mut size = types.len();
     if size == 0 {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "Provide at least one argument to {}",
             function.name
         )));
@@ -286,7 +286,7 @@ fn bind_list_zip(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindRe
     if types[size - 1].id() == LogicalTypeId::Boolean {
         size -= 1;
         if size == 0 {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Provide at least one list argument to {}",
                 function.name
             )));
@@ -301,9 +301,11 @@ fn bind_list_zip(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindRe
                     // `AddArrayCastToList`.
                     function.cast_argument(index, LogicalType::list(child.clone()));
                 }
-                children.push((rustdb_common::ByteString::new(), child));
+                children.push((roastedduck_common::ByteString::new(), child));
             }
-            LogicalTypeId::SqlNull => children.push((rustdb_common::ByteString::new(), LogicalType::SQLNULL)),
+            LogicalTypeId::SqlNull => {
+                children.push((roastedduck_common::ByteString::new(), LogicalType::SQLNULL))
+            }
             LogicalTypeId::Unknown => return Err(crate::parameter_not_resolved()),
             _ => return Err(Error::binder("Parameter type needs to be List")),
         }

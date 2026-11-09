@@ -13,7 +13,7 @@
 //! | `PGValue` / `makeString` …  | [`Value`]               |
 //! | `char *` stored in a list   | [`Node::Str`]           |
 
-use rustdb_common::ByteString;
+use roastedduck_common::ByteString;
 mod enums;
 mod json;
 mod teardown;

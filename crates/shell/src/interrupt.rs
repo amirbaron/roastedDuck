@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 
-use rustdb::ClientHandle;
+use roastedduck::ClientHandle;
 
 /// `ShellState::seenInterrupt`: the interrupts since the last `ClearInterrupt`.
 static SEEN_INTERRUPT: AtomicU64 = AtomicU64::new(0);

@@ -2,15 +2,15 @@
 //! `UNNEST` of the outer rows' lists is decorrelated into a delim join numbering the outer
 //! rows; the UNNEST can instead run directly on the outer rows, carrying their columns.
 
-use rustdb_ast::JoinType;
-use rustdb_common::{Error, Result};
-use rustdb_planner::expression::BoundUnnestExpression;
-use rustdb_planner::expression_binder::is_unnest_function;
-use rustdb_planner::{
+use roastedduck_ast::JoinType;
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::expression::BoundUnnestExpression;
+use roastedduck_planner::expression_binder::is_unnest_function;
+use roastedduck_planner::{
     ColumnBinding, Expression, ExpressionKind, ExpressionType, LogicalKind, LogicalOperator,
     LogicalOperatorType,
 };
-use rustdb_types::LogicalType;
+use roastedduck_types::LogicalType;
 
 use crate::column_binding_replacer::{ColumnBindingReplacer, ReplacementBinding};
 
@@ -18,7 +18,7 @@ use crate::column_binding_replacer::{ColumnBindingReplacer, ReplacementBinding};
 struct LhsBinding {
     binding: ColumnBinding,
     ty: LogicalType,
-    alias: rustdb_common::ByteString,
+    alias: roastedduck_common::ByteString,
 }
 
 /// Rewrites the bindings of column references, each by the first matching replacement
@@ -345,7 +345,7 @@ impl UnnestRewriter {
                     .map(|expression| expression.alias.clone())
                     .unwrap_or_default()
             } else {
-                rustdb_common::ByteString::new()
+                roastedduck_common::ByteString::new()
             };
             self.lhs_bindings.push(LhsBinding {
                 binding: *binding,

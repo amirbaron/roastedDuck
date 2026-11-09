@@ -1,7 +1,7 @@
 //! Native DuckDB Python API backed by the Rust engine. Coverage is tracked in docs/python-api-inventory.json.
 // Keep the public ADBC initializer in the Python image, sharing the same engine code
 // and process state as the Python API instead of loading a second library.
-pub use rustdb_capi::duckdb_adbc_init;
+pub use roastedduck_capi::duckdb_adbc_init;
 
 mod aggregation;
 mod append;
@@ -30,7 +30,7 @@ mod udf;
 use datatype::PyType;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
-use rustdb_types::LogicalType;
+use roastedduck_types::LogicalType;
 
 #[pyfunction(signature=(*args, **kwargs))]
 fn torch(args: &Bound<'_, pyo3::types::PyTuple>, kwargs: Option<&Bound<'_, PyDict>>) -> PyResult<Py<PyAny>> {
@@ -53,8 +53,8 @@ fn string_kind(collation: &[u8]) -> PyType {
     }
     PyType {
         native: LogicalType::with_info(
-            rustdb_types::LogicalTypeId::Varchar,
-            rustdb_types::TypeInfo::String(rustdb_types::StringTypeInfo {
+            roastedduck_types::LogicalTypeId::Varchar,
+            roastedduck_types::TypeInfo::String(roastedduck_types::StringTypeInfo {
                 collation: collation.into(),
             }),
         ),
@@ -176,7 +176,7 @@ fn _dataframe_arguments_error(
 }
 #[pymodule(gil_used = true)]
 fn _duckdb(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    rustdb_capi::register_extension_loader();
+    roastedduck_capi::register_extension_loader();
     let py = module.py();
     error::register(module)?;
     expression::register(module)?;
@@ -208,7 +208,10 @@ fn _duckdb(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(union_type, module)?)?;
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;
     module.add("__duckdb_version__", env!("CARGO_PKG_VERSION"))?;
-    module.add("__standard_vector_size__", rustdb_types::STANDARD_VECTOR_SIZE)?;
+    module.add(
+        "__standard_vector_size__",
+        roastedduck_types::STANDARD_VECTOR_SIZE,
+    )?;
     let version = py.import("sys")?.getattr("version_info")?;
     module.add(
         "__formatted_python_version__",

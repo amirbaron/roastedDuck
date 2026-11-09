@@ -2,7 +2,7 @@
 //! boilerplate of [`ExpressionBinder`](super::ExpressionBinder),
 //! [`ColumnQualifier`](super::ColumnQualifier) and [`Scope`](crate::binder::Scope).
 
-use rustdb_types::LogicalType;
+use roastedduck_types::LogicalType;
 
 use super::ExpressionBinderState;
 use crate::binder::{Binder, Scope};

@@ -1,4 +1,4 @@
-//! rustdb-zstd writes the frames DuckDB's zstd 1.5.6 writes: the size and hash of each
+//! roastedduck-zstd writes the frames DuckDB's zstd 1.5.6 writes: the size and hash of each
 //! frame of the shared inputs, recorded from the reference encoder with
 //! `cargo run --release --example record_reference -- <zstd_ref> <scratch dir>`
 //! (`tools/zstd-ref/build.sh` builds `zstd_ref`). Every frame also decodes with `ruzstd`.
@@ -152,7 +152,7 @@ fn one_shot_and_streamed_frames_match_zstd() {
                 name,
                 Mode::OneShot,
                 level,
-                &rustdb_zstd::compress(&data, level),
+                &roastedduck_zstd::compress(&data, level),
                 &data,
             );
         }
@@ -166,7 +166,7 @@ fn one_shot_and_streamed_frames_match_zstd() {
             );
         }
         // How the input is split into calls does not change a stream's frame.
-        let whole = rustdb_zstd::compress_streamed(&data, 0);
+        let whole = roastedduck_zstd::compress_streamed(&data, 0);
         check(name, Mode::Stream, 0, &whole, &data);
     }
 }
@@ -186,7 +186,7 @@ fn string_vectors_match_duckdbs_zstd() {
 fn reused_contexts_write_the_same_frames() {
     // A context used before continues its indexes instead of clearing its tables
     // (`ZSTDirp_continue`); the frames do not change.
-    let mut compressor = rustdb_zstd::Compressor::new(0);
+    let mut compressor = roastedduck_zstd::Compressor::new(0);
     for _ in 0..3 {
         for (name, strings) in common::vectors() {
             let original: Vec<u8> = strings.concat();
@@ -195,7 +195,7 @@ fn reused_contexts_write_the_same_frames() {
                 check(name, Mode::Strings, index as i32, &frame, &original);
             }
         }
-        let mut one_shot = rustdb_zstd::Compressor::new(3);
+        let mut one_shot = roastedduck_zstd::Compressor::new(3);
         for (name, data) in common::inputs() {
             for level in common::ONE_SHOT_LEVELS {
                 one_shot.set_level(level);
@@ -214,7 +214,7 @@ fn stronger_levels_round_trip() {
     let data = common::text(&mut rng, 400_000);
     for level in [4, 5, 9, 19, 22] {
         assert_eq!(
-            decode(&rustdb_zstd::compress(&data, level)),
+            decode(&roastedduck_zstd::compress(&data, level)),
             data,
             "level {level}"
         );

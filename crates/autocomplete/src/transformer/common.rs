@@ -2,8 +2,8 @@
 //! type names. Types are built as `TypeExpression`s and wrapped as UNBOUND types, which
 //! hold the expression as an [`UnboundTypeInfo`].
 
-use rustdb_function::cast::ValueCast;
-use rustdb_types::{TypeInfo, TypeParameter, TypeParameterValue, UnboundTypeInfo};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_types::{TypeInfo, TypeParameter, TypeParameterValue, UnboundTypeInfo};
 
 use super::prelude::*;
 

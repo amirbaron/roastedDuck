@@ -6,7 +6,7 @@
 mod definitions;
 
 use definitions::FUNCTION_DEFINITIONS;
-use rustdb_types::{LogicalType, LogicalTypeId};
+use roastedduck_types::{LogicalType, LogicalTypeId};
 
 /// One entry of a function list: the strings of its function struct, with variants
 /// separated by `\u{1}` and examples of a variant by `\u{2}`.
@@ -87,7 +87,7 @@ pub fn parse_logical_type(text: &str) -> Option<LogicalType> {
         let size: u32 = text[open + 1..text.len() - 1].parse().ok()?;
         return Some(LogicalType::array(parse_logical_type(&text[..open])?, size));
     }
-    let members = |inner: &str| -> Option<Vec<(rustdb_common::ByteString, LogicalType)>> {
+    let members = |inner: &str| -> Option<Vec<(roastedduck_common::ByteString, LogicalType)>> {
         split_with_parentheses(inner, ',')
             .iter()
             .map(|member| {
@@ -124,7 +124,7 @@ pub fn parse_logical_type(text: &str) -> Option<LogicalType> {
     if text.eq_ignore_ascii_case("ANY") {
         return Some(LogicalType::ANY);
     }
-    rustdb_types::builtin_type_id(text).map(LogicalType::simple)
+    roastedduck_types::builtin_type_id(text).map(LogicalType::simple)
 }
 
 /// `GetExamplesForFunctionAlias`: the examples that use the function's own name (or

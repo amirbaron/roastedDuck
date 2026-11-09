@@ -1,15 +1,15 @@
 //! Statistics of join relations (DuckDB's `RelationStats` and `RelationStatisticsHelper`):
 //! cardinalities and per-column distinct counts that feed the cardinality estimator.
 
-use rustdb_ast::{ExpressionType, JoinType};
-use rustdb_catalog::EntryKind;
-use rustdb_planner::operator::{COLUMN_IDENTIFIER_ROW_ID, ColumnIndex, LogicalAggregate, LogicalGet};
-use rustdb_planner::{
+use roastedduck_ast::{ExpressionType, JoinType};
+use roastedduck_catalog::EntryKind;
+use roastedduck_planner::operator::{COLUMN_IDENTIFIER_ROW_ID, ColumnIndex, LogicalAggregate, LogicalGet};
+use roastedduck_planner::{
     ClientContext, ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator,
 };
-use rustdb_storage::TableFilter;
-use rustdb_storage::statistics::BaseStatistics;
-use rustdb_types::compare::CompareOp;
+use roastedduck_storage::TableFilter;
+use roastedduck_storage::statistics::BaseStatistics;
+use roastedduck_types::compare::CompareOp;
 
 /// The selectivity assumed for a filter without statistics (DuckDB's
 /// `RelationStatisticsHelper::DEFAULT_SELECTIVITY`).
@@ -30,8 +30,8 @@ pub struct RelationStats {
     pub cardinality: u64,
     pub filter_strength: f64,
     pub stats_initialized: bool,
-    pub column_names: Vec<rustdb_common::ByteString>,
-    pub table_name: rustdb_common::ByteString,
+    pub column_names: Vec<roastedduck_common::ByteString>,
+    pub table_name: roastedduck_common::ByteString,
 }
 
 impl Default for RelationStats {
@@ -42,7 +42,7 @@ impl Default for RelationStats {
             filter_strength: 1.0,
             stats_initialized: false,
             column_names: Vec::new(),
-            table_name: rustdb_common::ByteString::new(),
+            table_name: roastedduck_common::ByteString::new(),
         }
     }
 }
@@ -123,7 +123,7 @@ pub fn extract_get_stats(op: &mut LogicalOperator, context: &ClientContext) -> R
     let mut stats = RelationStats::default();
     let mut cardinality_after_filters = base_table_cardinality;
     let name = get.table.as_ref().map_or_else(
-        || rustdb_common::ByteString::from("some table"),
+        || roastedduck_common::ByteString::from("some table"),
         |table| table.name().to_owned(),
     );
     if get.table.is_some() {
@@ -135,7 +135,7 @@ pub fn extract_get_stats(op: &mut LogicalOperator, context: &ClientContext) -> R
             .names
             .get(column.index as usize)
             .cloned()
-            .unwrap_or_else(|| rustdb_common::ByteString::from("column"));
+            .unwrap_or_else(|| roastedduck_common::ByteString::from("column"));
         if count > 0 {
             stats.column_distinct_count.push(DistinctCount {
                 distinct_count: count,
@@ -143,13 +143,13 @@ pub fn extract_get_stats(op: &mut LogicalOperator, context: &ClientContext) -> R
             });
             stats
                 .column_names
-                .push(rustdb_common::byte_format!("{name}.{column_name}"));
+                .push(roastedduck_common::byte_format!("{name}.{column_name}"));
         } else {
             stats.column_distinct_count.push(DistinctCount {
                 distinct_count: cardinality_after_filters,
                 from_hll: false,
             });
-            stats.column_names.push(rustdb_common::byte_format!(
+            stats.column_names.push(roastedduck_common::byte_format!(
                 "{}.{column_name}",
                 get.function.name.to_ascii_uppercase()
             ));
@@ -419,13 +419,13 @@ pub fn combine_stats_of_non_reorderable_operator(
             setop_all,
             ..
         } => match operator_type {
-            rustdb_planner::LogicalOperatorType::LogicalUnion if *setop_all => {
+            roastedduck_planner::LogicalOperatorType::LogicalUnion if *setop_all => {
                 stats.cardinality = child_cardinalities.iter().sum();
             }
-            rustdb_planner::LogicalOperatorType::LogicalIntersect if child_cardinalities.len() == 2 => {
+            roastedduck_planner::LogicalOperatorType::LogicalIntersect if child_cardinalities.len() == 2 => {
                 stats.cardinality = child_cardinalities[0].min(child_cardinalities[1]);
             }
-            rustdb_planner::LogicalOperatorType::LogicalExcept if child_cardinalities.len() == 2 => {
+            roastedduck_planner::LogicalOperatorType::LogicalExcept if child_cardinalities.len() == 2 => {
                 stats.cardinality = child_cardinalities[0];
             }
             _ => {}
@@ -469,7 +469,7 @@ mod native_name_tests {
         for name in [b"caf\xe9".as_slice(), b"column-\xff", b"a\x80"] {
             let expression = Expression::column_ref(
                 name,
-                rustdb_types::LogicalType::INTEGER,
+                roastedduck_types::LogicalType::INTEGER,
                 ColumnBinding {
                     table_index: 1,
                     column_index: 0,

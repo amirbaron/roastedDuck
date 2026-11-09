@@ -6,8 +6,8 @@ use std::alloc::Layout;
 use std::fmt;
 use std::marker::PhantomData;
 
-use rustdb_common::Result;
-use rustdb_types::Vector;
+use roastedduck_common::Result;
+use roastedduck_types::Vector;
 
 use super::{AggregateInput, AggregateOps, StatePtr, state_mut};
 
@@ -105,7 +105,7 @@ pub trait Aggregate: Send + Sync + 'static {
         sel: &[u32],
     ) -> Result<()> {
         let _ = (inputs, input, state, sel);
-        Err(rustdb_common::Error::internal(
+        Err(roastedduck_common::Error::internal(
             "aggregate without a selection update",
         ))
     }

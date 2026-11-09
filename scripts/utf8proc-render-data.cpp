@@ -1,5 +1,5 @@
 // Offline exporter for DuckDB 1.5.6's utf8proc rendering properties.
-// Only the data is embedded in rustdb; this executable is never shipped.
+// Only the data is embedded in roastedduck; this executable is never shipped.
 #include "utf8proc.hpp"
 #include <cstdint>
 #include <fstream>

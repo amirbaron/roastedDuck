@@ -1,11 +1,11 @@
 //! Moving constants across a comparison: `x + 1 = 10` becomes `x = 9` (DuckDB's
 //! `MoveConstantsRule`).
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::Result;
-use rustdb_function::cast::ValueCast;
-use rustdb_planner::{Expression, ExpressionKind};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::Result;
+use roastedduck_function::cast::ValueCast;
+use roastedduck_planner::{Expression, ExpressionKind};
+use roastedduck_types::{LogicalType, Value};
 
 use super::RuleOutcome;
 use crate::expression_rewriter::RuleContext;
@@ -93,7 +93,8 @@ pub fn move_constants(
         return Ok(RuleOutcome::Unchanged);
     };
     let mut new_comparison = comparison_type;
-    let impossible = |function: &mut rustdb_planner::expression::BoundFunctionExpression, result: bool| {
+    let impossible = |function: &mut roastedduck_planner::expression::BoundFunctionExpression,
+                      result: bool| {
         let child = function.children.swap_remove(arithmetic_child_index);
         constant_or_null(context.client, vec![child], Value::boolean(result)).map(RuleOutcome::Replaced)
     };

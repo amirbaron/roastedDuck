@@ -4,9 +4,9 @@
 
 use std::collections::HashSet;
 
-use rustdb_ast::{JoinRefType, JoinType};
-use rustdb_common::{Error, Result};
-use rustdb_types::Value;
+use roastedduck_ast::{JoinRefType, JoinType};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::Value;
 
 use crate::binder::query_node::{plan_lateral_join, plan_subqueries, recursive_dependent_join_planner};
 use crate::binder::{BindScope, BoundStatement, CorrelatedColumns};

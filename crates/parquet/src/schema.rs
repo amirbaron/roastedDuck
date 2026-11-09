@@ -3,8 +3,8 @@
 //! `SchemaElement` list becomes a tree of columns with DuckDB types and the definition
 //! and repetition levels of every node.
 
-use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
-use rustdb_types::{LogicalType, LogicalTypeId};
+use roastedduck_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId};
 
 use crate::thrift::{ConvertedType, FieldRepetitionType, FileMetaData, SchemaElement, Type};
 
@@ -41,7 +41,7 @@ pub enum ExtraTypeInfo {
 #[allow(clippy::struct_excessive_bools, reason = "DuckDB's ParquetOptions flags")]
 pub struct ParquetOptions {
     /// The database's object cache when footers are cached (`parquet_metadata_cache`).
-    pub metadata_cache: Option<std::sync::Arc<rustdb_function::ObjectCache>>,
+    pub metadata_cache: Option<std::sync::Arc<roastedduck_function::ObjectCache>>,
     /// The footer key of encrypted files (`encryption_config`).
     pub encryption: Option<crate::crypto::FooterKey>,
     pub binary_as_string: bool,
@@ -62,25 +62,25 @@ pub struct ParquetOptions {
     /// The explicit setting also disables the bounded remote-footer prefetch.
     pub disable_prefetch: bool,
     /// The database's external file cache, which files are read through (`CachingFileSystem`).
-    pub file_cache: Option<std::sync::Arc<rustdb_function::external_file_cache::ExternalFileCache>>,
+    pub file_cache: Option<std::sync::Arc<roastedduck_function::external_file_cache::ExternalFileCache>>,
     /// `validate_external_file_cache`.
-    pub cache_validation: rustdb_function::external_file_cache::CacheValidationMode,
+    pub cache_validation: roastedduck_function::external_file_cache::CacheValidationMode,
 }
 
 /// One column of the `schema` parameter (`ParquetColumnDefinition`).
 #[derive(Clone, Debug)]
 pub struct ParquetColumnDefinition {
     /// The field id (INTEGER) or name (VARCHAR) the column is matched by.
-    pub identifier: rustdb_types::Value,
-    pub name: rustdb_common::ByteString,
+    pub identifier: roastedduck_types::Value,
+    pub name: roastedduck_common::ByteString,
     pub logical_type: LogicalType,
-    pub default_value: rustdb_types::Value,
+    pub default_value: roastedduck_types::Value,
 }
 
 /// A node of the column tree (`ParquetColumnSchema`).
 #[derive(Clone, Debug)]
 pub struct ColumnSchema {
-    pub name: rustdb_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     pub max_define: u8,
     pub max_repeat: u8,
     /// The index of the node's `SchemaElement`.
@@ -151,7 +151,7 @@ impl ColumnSchema {
     }
 }
 
-fn io_error(message: impl Into<rustdb_common::ByteString>) -> Error {
+fn io_error(message: impl Into<roastedduck_common::ByteString>) -> Error {
     Error::new_bytes(ErrorKind::Io, message.into())
 }
 
@@ -168,7 +168,7 @@ pub fn derive_logical_type(
     }
     if let Some(length) = element.type_length {
         schema.type_length = u32::try_from(length).map_err(|_| {
-            Error::conversion(rustdb_common::byte_format!(
+            Error::conversion(roastedduck_common::byte_format!(
                 "Type INT32 with value {length} can't be cast because the value is out of range for the destination type UINT32"
             ))
         })?;
@@ -282,7 +282,7 @@ pub fn derive_logical_type(
                     return Err(io_error("DECIMAL requires a length and scale specifier!"));
                 };
                 schema.type_scale = u32::try_from(scale).map_err(|_| {
-                    Error::conversion(rustdb_common::byte_format!(
+                    Error::conversion(roastedduck_common::byte_format!(
                         "Type INT32 with value {scale} can't be cast because the value is out of range for the destination type UINT32"
                     ))
                 })?;
@@ -302,7 +302,7 @@ pub fn derive_logical_type(
                 };
                 // `LogicalType::DECIMAL(width, scale)` validates its arguments.
                 if precision < 1 || scale < 0 || scale > precision {
-                    return Err(Error::invalid_input(rustdb_common::byte_format!(
+                    return Err(Error::invalid_input(roastedduck_common::byte_format!(
                         "Invalid DECIMAL({precision}, {scale}) type in Parquet file"
                     )));
                 }
@@ -332,7 +332,7 @@ pub fn derive_logical_type(
             }
             ConvertedType::INTERVAL => Ok(LogicalType::INTERVAL),
             ConvertedType::JSON => Ok(LogicalType::VARCHAR.with_alias("JSON")),
-            _ => Err(io_error(rustdb_common::byte_format!(
+            _ => Err(io_error(roastedduck_common::byte_format!(
                 "Unsupported converted type ({})",
                 converted.0
             ))),
@@ -367,7 +367,7 @@ fn time_unit(unit: &crate::thrift::TimeUnit, what: &str) -> Result<ExtraTypeInfo
     } else if unit.nanos.is_some() {
         Ok(ExtraTypeInfo::UnitNs)
     } else {
-        Err(Error::not_implemented(rustdb_common::byte_format!(
+        Err(Error::not_implemented(roastedduck_common::byte_format!(
             "Unimplemented {what} encoding - missing UNIT"
         )))
     }
@@ -434,25 +434,25 @@ impl<'a> SchemaParser<'a> {
     pub fn parse(mut self) -> Result<ColumnSchema> {
         let path = self.file_path;
         if self.metadata.schema.is_empty() {
-            return Err(io_error(rustdb_common::byte_format!(
+            return Err(io_error(roastedduck_common::byte_format!(
                 "Failed to read Parquet file \"{path}\": no schema elements found"
             )));
         }
         if self.metadata.schema[0].num_children.unwrap_or(0) == 0 {
-            return Err(io_error(rustdb_common::byte_format!(
+            return Err(io_error(roastedduck_common::byte_format!(
                 "Failed to read Parquet file \"{path}\": root schema element has no children"
             )));
         }
         let mut root = self.parse_recursive(0, 0)?;
         if root.logical_type.id() != LogicalTypeId::Struct {
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "Failed to read Parquet file \"{path}\": Root element of Parquet file must be a struct"
             )));
         }
         if let Some(first) = self.metadata.row_groups.first()
             && self.next_file_index != first.columns.len()
         {
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "Failed to read Parquet file \"{path}\": row group does not have enough columns"
             )));
         }
@@ -462,7 +462,7 @@ impl<'a> SchemaParser<'a> {
                 .iter()
                 .any(|column| column.name.eq_ignore_ascii_case("file_row_number"))
             {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Failed to read Parquet file \"{path}\": Using file_row_number option on file with column named file_row_number is not supported"
                 )));
             }
@@ -476,7 +476,7 @@ impl<'a> SchemaParser<'a> {
         let metadata = self.metadata;
         let this_index = self.next_schema_index;
         let Some(element) = metadata.schema.get(this_index) else {
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "Malformed Parquet schema in file \"{}\": invalid schema index {this_index}",
                 self.file_path
             )));
@@ -525,7 +525,7 @@ impl<'a> SchemaParser<'a> {
         if is_inner {
             let count = match element.num_children {
                 Some(count) => usize::try_from(count).map_err(|_| {
-                    Error::invalid_input(rustdb_common::byte_format!(
+                    Error::invalid_input(roastedduck_common::byte_format!(
                         "Failed to read Parquet file \"{}\": schema element has negative number of children",
                         self.file_path
                     ))
@@ -540,13 +540,13 @@ impl<'a> SchemaParser<'a> {
             }
             self.depth -= 1;
             // Rename case-insensitive duplicates by appending _1, _2, ...
-            let mut collisions: CaseInsensitiveMap<usize, rustdb_common::ByteString> =
+            let mut collisions: CaseInsensitiveMap<usize, roastedduck_common::ByteString> =
                 CaseInsensitiveMap::default();
             for child in &mut children {
                 let mut name = child.name.clone();
                 while let Some(count) = collisions.get_mut(&name) {
                     *count += 1;
-                    name = rustdb_common::byte_format!("{name}_{count}");
+                    name = roastedduck_common::byte_format!("{name}_{count}");
                 }
                 collisions.insert(name.clone(), 0);
                 child.name = name;
@@ -624,7 +624,7 @@ impl<'a> SchemaParser<'a> {
                     kind,
                 )
             } else if children.is_empty() {
-                return Err(Error::invalid_input(rustdb_common::byte_format!(
+                return Err(Error::invalid_input(roastedduck_common::byte_format!(
                     "Failed to read Parquet file \"{}\": schema element has no children",
                     self.file_path
                 )));
@@ -651,7 +651,7 @@ impl<'a> SchemaParser<'a> {
             return Ok(result);
         }
         if element.type_.is_none() {
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "Node '{}' has neither num_children nor type set - this violates the Parquet spec (corrupted file)",
                 element.name
             )));

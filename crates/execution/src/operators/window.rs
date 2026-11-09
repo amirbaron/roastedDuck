@@ -12,19 +12,19 @@
 //! global states runs in the stage's first task (they are built single-threaded); the
 //! other stages run in parallel.
 
-use rustdb_common::tree_renderer::RenderParams;
+use roastedduck_common::tree_renderer::RenderParams;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
-use rustdb_common::{Error, Result};
-use rustdb_planner::{Expression, ExpressionKind};
-use rustdb_row::sort::{
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::{Expression, ExpressionKind};
+use roastedduck_row::sort::{
     GroupData, GroupDataScanner, SortColumn, SortConfig, SortStrategy, StrategyGlobalState,
     StrategyLocalState,
 };
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use crate::operator::{
     ErasedSink, ErasedSource, OperatorPartitionData, OperatorPartitionInfo, OrderPreservationType,
@@ -234,7 +234,7 @@ impl PhysicalOperator for PhysicalWindow {
         let projections: Vec<&[u8]> = self.select_list.iter().map(|w| w.name.as_bytes()).collect();
         result.insert(
             "Projections".to_owned(),
-            rustdb_common::ByteString::join(&projections, b"\n"),
+            roastedduck_common::ByteString::join(&projections, b"\n"),
         );
         result
     }

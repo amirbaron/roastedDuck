@@ -128,7 +128,7 @@ impl EncryptionKeyManager {
     }
 
     /// A random key id (`GenerateRandomKeyID`), as hex.
-    pub fn generate_random_key_id() -> rustdb_common::Result<String> {
+    pub fn generate_random_key_id() -> roastedduck_common::Result<String> {
         let mut id = [0u8; Self::KEY_ID_BYTES];
         generate_random_data(&mut id)?;
         Ok(id.iter().fold(String::new(), |mut text, byte| {
@@ -143,7 +143,7 @@ impl EncryptionKeyManager {
     pub fn add_key_with_random_id(
         &self,
         key: &mut [u8; DEFAULT_ENCRYPTION_KEY_LENGTH],
-    ) -> rustdb_common::Result<String> {
+    ) -> roastedduck_common::Result<String> {
         let id = match Self::generate_random_key_id() {
             Ok(id) => id,
             Err(error) => {
@@ -157,7 +157,7 @@ impl EncryptionKeyManager {
 
     /// The key of encrypted temporary files, created at first use
     /// (`EncryptionEngine::AddTempKeyToCache`).
-    pub fn temp_key(&self) -> rustdb_common::Result<Arc<EncryptionKey>> {
+    pub fn temp_key(&self) -> roastedduck_common::Result<Arc<EncryptionKey>> {
         if let Some(key) = self.get_key(TEMP_KEY_NAME) {
             return Ok(key);
         }
@@ -165,7 +165,7 @@ impl EncryptionKeyManager {
         generate_random_data(&mut key)?;
         self.add_key(TEMP_KEY_NAME, &mut key);
         self.get_key(TEMP_KEY_NAME)
-            .ok_or_else(|| rustdb_common::Error::internal("the temporary key was not added"))
+            .ok_or_else(|| roastedduck_common::Error::internal("the temporary key was not added"))
     }
 }
 

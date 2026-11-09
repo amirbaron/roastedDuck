@@ -1,6 +1,6 @@
 //! The binary check: replay the DDL of each test file through the reference CLI into a
 //! database whose checkpoints are disabled, then require that every catalog entry in
-//! the resulting write-ahead log reads into rustdb's parse tree and writes back to the
+//! the resulting write-ahead log reads into roastedduck's parse tree and writes back to the
 //! very same bytes.
 
 use std::collections::BTreeMap;
@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use corpus::slt::{RecordKind, Statement, has_unsubstituted_variable};
 use corpus::wal;
-use rustdb_serde::SerializationCompatibility;
+use roastedduck_serde::SerializationCompatibility;
 
 /// Statements that would detach the log under test, checkpoint it away, or touch files.
 const SKIPPED_PREFIXES: &[&str] = &[

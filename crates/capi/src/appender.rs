@@ -3,9 +3,9 @@
 use std::ffi::{CString, c_char, c_void};
 use std::sync::{Arc, Weak};
 
-use rustdb::{Appender, Connection};
-use rustdb_common::{Error, ErrorKind};
-use rustdb_types::{DataChunk, Date, Interval, LogicalType, Time, Timestamp, Value};
+use roastedduck::{Appender, Connection};
+use roastedduck_common::{Error, ErrorKind};
+use roastedduck_types::{DataChunk, Date, Interval, LogicalType, Time, Timestamp, Value};
 
 use crate::data_chunk::DuckdbDataChunk;
 use crate::error_data::{DuckdbErrorData, ErrorDataWrapper};
@@ -32,7 +32,7 @@ pub struct AppenderWrapper {
 pub type DuckdbAppender = *mut AppenderWrapper;
 
 impl AppenderWrapper {
-    fn new(context: &Arc<SharedConnection>, appender: rustdb::Result<Appender>) -> Self {
+    fn new(context: &Arc<SharedConnection>, appender: roastedduck::Result<Appender>) -> Self {
         let mut wrapper = Self {
             context: Arc::downgrade(context),
             appender: None,
@@ -54,7 +54,7 @@ impl AppenderWrapper {
     /// Runs `function` on the appender, keeping its error (`duckdb_appender_run_function`).
     fn run(
         &mut self,
-        function: impl FnOnce(&mut Appender, &Weak<SharedConnection>) -> rustdb::Result<()>,
+        function: impl FnOnce(&mut Appender, &Weak<SharedConnection>) -> roastedduck::Result<()>,
     ) -> DuckdbState {
         let Some(appender) = &mut self.appender else {
             self.set_error(Error::new(ErrorKind::Invalid, "not a valid appender"));
@@ -76,8 +76,8 @@ impl AppenderWrapper {
 fn with_connection(
     appender: &mut Appender,
     context: &Weak<SharedConnection>,
-    function: impl FnOnce(&mut Appender, &mut Connection) -> rustdb::Result<()>,
-) -> rustdb::Result<()> {
+    function: impl FnOnce(&mut Appender, &mut Connection) -> roastedduck::Result<()>,
+) -> roastedduck::Result<()> {
     let Some(context) = context.upgrade() else {
         let message = if appender.is_query_appender() {
             "Attempting to flush query appender data on a closed connection"
@@ -104,7 +104,7 @@ unsafe fn appender_ref<'a>(appender: DuckdbAppender) -> Option<&'a mut AppenderW
 /// `out_appender` must be writable.
 unsafe fn store_appender(
     context: &Arc<SharedConnection>,
-    appender: rustdb::Result<Appender>,
+    appender: roastedduck::Result<Appender>,
     out_appender: *mut DuckdbAppender,
 ) -> DuckdbState {
     let state = DuckdbState::from_ok(appender.is_ok());
@@ -472,7 +472,7 @@ fn append_chunk(
     appender: &mut Appender,
     context: &Weak<SharedConnection>,
     chunk: &DataChunk,
-) -> rustdb::Result<()> {
+) -> roastedduck::Result<()> {
     with_connection(appender, context, |appender, connection| {
         appender.append_data_chunk(connection, chunk)
     })

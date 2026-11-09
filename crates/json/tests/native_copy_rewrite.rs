@@ -1,11 +1,11 @@
 //! JSON COPY carries the native projection tree and leaves JSON validation to binding.
-use rustdb_ast::ParsedExpressionKind;
-use rustdb_common::{ByteString, CaseInsensitiveMap, Result};
-use rustdb_function::copy::CopyPlanInput;
-use rustdb_types::{LogicalType, Value};
+use roastedduck_ast::ParsedExpressionKind;
+use roastedduck_common::{ByteString, CaseInsensitiveMap, Result};
+use roastedduck_function::copy::CopyPlanInput;
+use roastedduck_types::{LogicalType, Value};
 #[test]
 fn copy_projection_retains_raw_alias_and_date_format() -> Result<()> {
-    let functions = rustdb_json::json_copy_functions();
+    let functions = roastedduck_json::json_copy_functions();
     let plan = functions[0].plan.as_ref().unwrap();
     let names = [ByteString::from(b"caf\xe9"), ByteString::from("日付")];
     let types = [LogicalType::INTEGER, LogicalType::DATE];

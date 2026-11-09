@@ -4,11 +4,11 @@
 use std::collections::HashMap;
 use std::sync::{Arc, PoisonError};
 
-use rustdb_ast::{BaseTableRef, ColumnDataRef, ExpressionListRef, SubqueryRef, TableRef, TableRefKind};
-use rustdb_catalog::{CatalogType, EntryKind};
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_function::TableFunction;
-use rustdb_types::LogicalType;
+use roastedduck_ast::{BaseTableRef, ColumnDataRef, ExpressionListRef, SubqueryRef, TableRef, TableRefKind};
+use roastedduck_catalog::{CatalogType, EntryKind};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_function::TableFunction;
+use roastedduck_types::LogicalType;
 
 pub(crate) mod bind_joinref;
 mod bind_pivot;
@@ -89,7 +89,7 @@ fn bind_column_data(
     let types = collection.types().to_vec();
     let mut names = column_data.expected_names.clone();
     for i in names.len()..types.len() {
-        names.push(rustdb_common::byte_format!("col{}", i + 1));
+        names.push(roastedduck_common::byte_format!("col{}", i + 1));
     }
     let table_index = scope.binder.generate_table_index();
     scope
@@ -117,7 +117,7 @@ fn bind_expression_list(
     for row in &mut list.values {
         if names.is_empty() {
             names = (0..row.len())
-                .map(|i| rustdb_common::byte_format!("col{i}"))
+                .map(|i| roastedduck_common::byte_format!("col{i}"))
                 .collect();
         }
         scope.binder.can_contain_nulls = true;
@@ -148,7 +148,7 @@ fn bind_expression_list(
             for (i, value) in row.iter_mut().enumerate() {
                 let expression = std::mem::replace(
                     value,
-                    crate::expression::Expression::constant(rustdb_types::Value::default()),
+                    crate::expression::Expression::constant(roastedduck_types::Value::default()),
                 );
                 *value = add_cast_to_type(&context, expression, &types[i], false)?;
             }
@@ -226,11 +226,11 @@ pub fn deduplicate_columns(names: &mut [ByteString]) {
             continue;
         };
         let mut count = count;
-        let mut candidate = rustdb_common::byte_format!("{name}_{count}");
+        let mut candidate = roastedduck_common::byte_format!("{name}_{count}");
         while counts.contains_key(&candidate.to_ascii_lowercase()) {
             count += 1;
             counts.insert(lower.clone(), count);
-            candidate = rustdb_common::byte_format!("{name}_{count}");
+            candidate = roastedduck_common::byte_format!("{name}_{count}");
         }
         *counts.entry(candidate.to_ascii_lowercase()).or_insert(0) += 1;
         *name = candidate;
@@ -415,14 +415,14 @@ fn csv_replacement_scan(base: &BaseTableRef, alias: &[u8]) -> Result<Option<Tabl
     } else {
         return Ok(None);
     };
-    let function = rustdb_ast::FunctionExpression {
+    let function = roastedduck_ast::FunctionExpression {
         function_name: function_name.to_owned().into(),
         schema: String::new().into(),
-        children: vec![rustdb_ast::ParsedExpression::constant(
-            rustdb_types::Value::try_varchar(full_path.as_bytes())?,
+        children: vec![roastedduck_ast::ParsedExpression::constant(
+            roastedduck_types::Value::try_varchar(full_path.as_bytes())?,
         )],
         filter: None,
-        order_bys: rustdb_ast::OrderModifier { orders: Vec::new() },
+        order_bys: roastedduck_ast::OrderModifier { orders: Vec::new() },
         distinct: false,
         is_operator: false,
         export_state: false,
@@ -437,17 +437,17 @@ fn csv_replacement_scan(base: &BaseTableRef, alias: &[u8]) -> Result<Option<Tabl
         base.table_name.clone()
     };
     Ok(Some(TableRef {
-        external_dependency: rustdb_ast::ExternalDependency::default(),
+        external_dependency: roastedduck_ast::ExternalDependency::default(),
         alias,
         sample: None,
         query_location: None,
-        kind: TableRefKind::TableFunction(rustdb_ast::TableFunctionRef {
-            function: Box::new(rustdb_ast::ParsedExpression::new(
-                rustdb_ast::ExpressionType::Function,
-                rustdb_ast::ParsedExpressionKind::Function(Box::new(function)),
+        kind: TableRefKind::TableFunction(roastedduck_ast::TableFunctionRef {
+            function: Box::new(roastedduck_ast::ParsedExpression::new(
+                roastedduck_ast::ExpressionType::Function,
+                roastedduck_ast::ParsedExpressionKind::Function(Box::new(function)),
             )),
             column_name_alias: base.column_name_alias.clone(),
-            with_ordinality: rustdb_ast::OrdinalityType::WithoutOrdinality,
+            with_ordinality: roastedduck_ast::OrdinalityType::WithoutOrdinality,
         }),
     }))
 }
@@ -500,7 +500,7 @@ fn bind_extracted_table_name(
 ) -> Result<BoundStatement> {
     let name = if mode == BindingMode::ExtractQualifiedNames {
         TableRef {
-            external_dependency: rustdb_ast::ExternalDependency::default(),
+            external_dependency: roastedduck_ast::ExternalDependency::default(),
             alias: ByteString::from(alias),
             sample: None,
             query_location: None,
@@ -514,7 +514,7 @@ fn bind_extracted_table_name(
     let table_index = scope.generate_table_index();
     let binding_alias = if alias.is_empty() { &base.table_name } else { alias };
     let types = vec![LogicalType::INTEGER];
-    let names = vec![rustdb_common::byte_format!("__dummy_col{table_index}")];
+    let names = vec![roastedduck_common::byte_format!("__dummy_col{table_index}")];
     scope
         .bind_context
         .add_generic_binding(table_index, binding_alias, names.clone(), types.clone())?;
@@ -606,12 +606,12 @@ fn bind_base_table(
         if full_path.iter().any(|byte| matches!(byte, b'.' | b'/' | b'\\'))
             && replacement_path_is_file(&full_path)
         {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "No extension found that is capable of reading the file \"{full_path}\"\n* If this file is a supported file format you can explicitly use the reader functions, such as read_csv, read_json or read_parquet"
             )));
         }
         if matches!(lookup, CteLookup::Circular) {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Circular reference to CTE \"{}\", use WITH RECURSIVE to use recursive CTEs.",
                 base.table_name
             ))
@@ -628,7 +628,7 @@ fn bind_base_table(
             .err()
             .unwrap_or_else(|| Error::internal("table lookup"));
         // Missing entries point at the table name; a missing catalog has no position.
-        return Err(if error.kind() == rustdb_common::ErrorKind::Catalog {
+        return Err(if error.kind() == roastedduck_common::ErrorKind::Catalog {
             error.with_position(location)
         } else {
             error
@@ -686,7 +686,7 @@ fn bind_base_table(
                 shared_column_ids: Some(shared_column_ids),
                 table: Some(Arc::clone(&found.entry)),
                 table_schema: Some((found.catalog.clone(), found.schema.clone())),
-                table_filters: rustdb_storage::TableFilterSet::default(),
+                table_filters: roastedduck_storage::TableFilterSet::default(),
                 dynamic_filters: None,
                 sample_options: None,
                 file_filters: crate::operator::FileFilterInfo::default(),

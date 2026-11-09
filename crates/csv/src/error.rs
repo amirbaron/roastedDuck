@@ -6,8 +6,8 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_types::LogicalTypeId;
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_types::LogicalTypeId;
 
 use crate::options::CsvReaderOptions;
 
@@ -76,9 +76,9 @@ impl CsvErrorType {
 /// One CSV error (DuckDB's `CSVError`).
 #[derive(Clone, Debug, Default)]
 pub struct CsvError {
-    pub error_message: rustdb_common::ByteString,
+    pub error_message: roastedduck_common::ByteString,
     /// The message with fixes and options, used when throwing.
-    pub full_error_message: rustdb_common::ByteString,
+    pub full_error_message: roastedduck_common::ByteString,
     pub error_type: CsvErrorType,
     pub column_idx: u64,
     pub csv_row: String,
@@ -90,7 +90,7 @@ pub struct CsvError {
 impl CsvError {
     /// `CSVError(error_message, type, error_info)`.
     pub fn simple(
-        error_message: impl Into<rustdb_common::ByteString>,
+        error_message: impl Into<roastedduck_common::ByteString>,
         error_type: CsvErrorType,
         error_info: LinesPerBoundary,
     ) -> Self {
@@ -105,7 +105,7 @@ impl CsvError {
     /// The full constructor: the message, the fixes and the options.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        error_message: impl Into<rustdb_common::ByteString>,
+        error_message: impl Into<roastedduck_common::ByteString>,
         error_type: CsvErrorType,
         column_idx: u64,
         mut csv_row: String,
@@ -128,7 +128,7 @@ impl CsvError {
             }
             csv_row.truncate(end);
         }
-        let full_error_message = rustdb_common::byte_format!(
+        let full_error_message = roastedduck_common::byte_format!(
             "{error_message}\n{fixes}\n{}\n",
             reader_options.to_display_string(current_path)
         );
@@ -150,8 +150,8 @@ impl CsvError {
 
     /// `ColumnTypesError`.
     pub fn column_types_error(
-        mut sql_types_per_column: Vec<rustdb_common::ByteString>,
-        names: &[rustdb_common::ByteString],
+        mut sql_types_per_column: Vec<roastedduck_common::ByteString>,
+        names: &[roastedduck_common::ByteString],
     ) -> Self {
         sql_types_per_column.retain(|name| !names.iter().any(|n| n.eq_ignore_ascii_case(name)));
         if sql_types_per_column.is_empty() {
@@ -161,14 +161,14 @@ impl CsvError {
                 LinesPerBoundary::default(),
             );
         }
-        let quoted: Vec<rustdb_common::ByteString> = sql_types_per_column
+        let quoted: Vec<roastedduck_common::ByteString> = sql_types_per_column
             .iter()
-            .map(|name| rustdb_common::byte_format!("\"{name}\""))
+            .map(|name| roastedduck_common::byte_format!("\"{name}\""))
             .collect();
         Self::simple(
-            rustdb_common::byte_format!(
+            roastedduck_common::byte_format!(
                 "COLUMN_TYPES error: Columns with names: {} do not exist in the CSV File",
-                rustdb_common::ByteString::join(&quoted, b",")
+                roastedduck_common::ByteString::join(&quoted, b",")
             ),
             CsvErrorType::ColumnNameTypeMismatch,
             LinesPerBoundary::default(),
@@ -189,9 +189,10 @@ impl CsvError {
         type_id: LogicalTypeId,
         current_path: &[u8],
     ) -> Self {
-        let error =
-            rustdb_common::byte_format!("Error when converting column \"{column_name}\". {cast_error}\n");
-        let mut fix = rustdb_common::byte_format!(
+        let error = roastedduck_common::byte_format!(
+            "Error when converting column \"{column_name}\". {cast_error}\n"
+        );
+        let mut fix = roastedduck_common::byte_format!(
             "Column {column_name} is being converted as type {}\n",
             type_id.name()
         );
@@ -200,7 +201,7 @@ impl CsvError {
         } else {
             fix.push_bytes("This type was auto-detected from the CSV file.\n");
             fix.push_bytes("Possible solutions:\n");
-            let _ = rustdb_common::byte_write!(
+            let _ = roastedduck_common::byte_write!(
                 fix,
                 "* Override the type for this column manually by setting the type explicitly, e.g., types={{'{column_name}': 'VARCHAR'}}\n"
             );
@@ -230,12 +231,12 @@ impl CsvError {
         byte_position: u64,
         current_path: &[u8],
     ) -> Self {
-        let error = rustdb_common::byte_format!(
+        let error = roastedduck_common::byte_format!(
             "Maximum line size of {} bytes exceeded. Actual Size:{} bytes.\n",
             options.maximum_line_size.value(),
             csv_row.len()
         );
-        let fix = rustdb_common::byte_format!(
+        let fix = roastedduck_common::byte_format!(
             "Possible Solution: Change the maximum length size, e.g., max_line_size={}\n",
             csv_row.len() + 2
         );
@@ -290,7 +291,8 @@ impl CsvError {
         column_count: u64,
         delimiter: &str,
     ) -> Self {
-        let mut error = rustdb_common::byte_format!("Error when sniffing file \"{}\".\n", options.file_path);
+        let mut error =
+            roastedduck_common::byte_format!("Error when sniffing file \"{}\".\n", options.file_path);
         error += "It was not possible to detect the CSV Header, due to the header having less columns than expected\n";
         let _ = writeln!(
             error,
@@ -347,26 +349,27 @@ impl CsvError {
         type_detection: bool,
     ) -> Self {
         let sm = &options.dialect_options.state_machine_options;
-        let mut error = rustdb_common::byte_format!("Error when sniffing file \"{}\".\n", options.file_path);
+        let mut error =
+            roastedduck_common::byte_format!("Error when sniffing file \"{}\".\n", options.file_path);
         error.push_bytes("It was not possible to automatically detect the CSV parsing ");
         error.push_bytes(if type_detection { "types\n" } else { "dialect\n" });
         error.push_bytes("The search space used was:\n");
         error.push_bytes(search_space);
-        let _ = rustdb_common::byte_write!(error, "Encoding: {}\n", options.encoding);
+        let _ = roastedduck_common::byte_write!(error, "Encoding: {}\n", options.encoding);
         error.push_bytes("Possible fixes:\n");
         if sm.strict_mode.value() {
             error.push_bytes("* Disable the parser's strict mode (strict_mode=false) to allow reading rows that do not comply with the CSV standard.\n");
         }
         if options.columns_set {
             let (text, size) = set_columns.unwrap_or((b"", 0));
-            let _ = rustdb_common::byte_write!(
+            let _ = roastedduck_common::byte_write!(
                 error,
                 "* Columns are set as: \"{text}\", and they contain: {size} columns. It does not match the number of columns found by the sniffer: {max_columns_found}. Verify the columns parameter is correctly set.\n"
             );
         }
         error.push_bytes("* Make sure you are using the correct file encoding. If not, set it (e.g., encoding = 'utf-16').\n");
         if sm.delimiter.is_set_by_user() {
-            let _ = rustdb_common::byte_write!(
+            let _ = roastedduck_common::byte_write!(
                 error,
                 "* Delimiter is set to '{}'. Consider unsetting it.\n",
                 sm.delimiter.get()
@@ -375,7 +378,7 @@ impl CsvError {
             error.push_bytes("* Set delimiter (e.g., delim=',')\n");
         }
         if sm.quote.is_set_by_user() {
-            let _ = rustdb_common::byte_write!(
+            let _ = roastedduck_common::byte_write!(
                 error,
                 "* Quote is set to '{}'. Consider unsetting it.\n",
                 crate::options::byte_string(sm.quote.value())
@@ -384,7 +387,7 @@ impl CsvError {
             error.push_bytes("* Set quote (e.g., quote='\"')\n");
         }
         if sm.escape.is_set_by_user() {
-            let _ = rustdb_common::byte_write!(
+            let _ = roastedduck_common::byte_write!(
                 error,
                 "* Escape is set to '{}'. Consider unsetting it.\n",
                 crate::options::byte_string(sm.escape.value())
@@ -393,7 +396,7 @@ impl CsvError {
             error.push_bytes("* Set escape (e.g., escape='\"')\n");
         }
         if sm.comment.is_set_by_user() {
-            let _ = rustdb_common::byte_write!(
+            let _ = roastedduck_common::byte_write!(
                 error,
                 "* Comment is set to '{}'. Consider unsetting it.\n",
                 crate::options::byte_string(sm.comment.value())
@@ -423,7 +426,7 @@ impl CsvError {
         error_info: LinesPerBoundary,
         current_path: &[u8],
     ) -> Self {
-        let error = rustdb_common::byte_format!(
+        let error = roastedduck_common::byte_format!(
             " The parallel scanner does not support null_padding in conjunction with quoted new lines. Please disable the parallel csv reader with parallel=false\n{}",
             options.to_display_string(current_path)
         );
@@ -481,7 +484,7 @@ impl CsvError {
         if !options.ignore_errors.value() {
             fix += "* Enable ignore errors (ignore_errors=true) to skip this row\n";
         }
-        let error = rustdb_common::byte_format!(
+        let error = roastedduck_common::byte_format!(
             "Expected Number of Columns: {} Found: {}",
             options.dialect_options.num_cols,
             actual_columns.wrapping_add(1)
@@ -517,7 +520,7 @@ impl CsvError {
         byte_position: Option<u64>,
         current_path: &[u8],
     ) -> Self {
-        let error = rustdb_common::byte_format!(
+        let error = roastedduck_common::byte_format!(
             "Invalid unicode (byte sequence mismatch) detected. This file is not {} encoded.\n",
             options.encoding
         );
@@ -538,7 +541,7 @@ impl CsvError {
 }
 
 /// `RemoveNewLine`: the first line of a message.
-fn remove_new_line(error: &mut rustdb_common::ByteString) {
+fn remove_new_line(error: &mut roastedduck_common::ByteString) {
     if let Some(position) = error.iter().position(|&byte| byte == b'\n') {
         *error = error[..position].into();
     }
@@ -627,11 +630,12 @@ impl CsvErrorHandler {
                 }
             }
         }
-        let mut message = rustdb_common::ByteString::new();
+        let mut message = roastedduck_common::ByteString::new();
         if Self::print_line_number(state, error_to_throw) {
-            let _ = rustdb_common::byte_write!(message, "CSV Error on Line: {error_to_throw_row}\n");
+            let _ = roastedduck_common::byte_write!(message, "CSV Error on Line: {error_to_throw_row}\n");
             if !error_to_throw.csv_row.is_empty() {
-                let _ = rustdb_common::byte_write!(message, "Original Line: {}\n", error_to_throw.csv_row);
+                let _ =
+                    roastedduck_common::byte_write!(message, "Original Line: {}\n", error_to_throw.csv_row);
             }
         }
         if error_to_throw.full_error_message.is_empty() {

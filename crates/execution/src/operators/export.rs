@@ -2,17 +2,17 @@
 //! writes `schema.sql` (the catalog's `CREATE` statements) and `load.sql` (a
 //! `COPY ... FROM` per table).
 
-use rustdb_common::{ByteString, byte_write};
+use roastedduck_common::{ByteString, byte_write};
 use std::io::Write as _;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use rustdb_ast::keyword::write_optionally_quoted_bytes as write_optionally_quoted;
+use roastedduck_ast::keyword::write_optionally_quoted_bytes as write_optionally_quoted;
 
-use rustdb_catalog::{Catalog, Transaction};
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_planner::operator::LogicalExport;
-use rustdb_types::{DataChunk, LogicalType, Value};
+use roastedduck_catalog::{Catalog, Transaction};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_planner::operator::LogicalExport;
+use roastedduck_types::{DataChunk, LogicalType, Value};
 
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
 use crate::{ExecutionContext, Sink, SinkResult, Source, SourceResult};
@@ -46,7 +46,7 @@ impl PhysicalExport {
     /// `WriteCatalogEntries`.
     fn schema_sql(&self) -> ByteString {
         let mut result = ByteString::new();
-        for info in rustdb_catalog::checkpoint::export_create_infos(&self.catalog, &self.transaction) {
+        for info in roastedduck_catalog::checkpoint::export_create_infos(&self.catalog, &self.transaction) {
             if let Some(sql) = info.to_sql() {
                 result.push_bytes(&sql);
                 result.push_bytes(";\n");
@@ -71,7 +71,7 @@ impl PhysicalExport {
                 result,
                 "{} FROM {} (FORMAT '{}'",
                 write_optionally_quoted(&table.table_name),
-                rustdb_ast::keyword::sql_string_bytes(&file_path),
+                roastedduck_ast::keyword::sql_string_bytes(&file_path),
                 export.format
             );
             let mut options = export.options.clone();
@@ -112,16 +112,18 @@ impl PhysicalExport {
 }
 
 fn write_file(path: &[u8], contents: &[u8]) -> Result<()> {
-    rustdb_function::file_system::verify_can_write(path)?;
-    if rustdb_function::registered_files::lookup(path).is_none() {
-        return std::fs::write(rustdb_function::file_system::native_path(path)?, contents).map_err(|error| {
-            Error::new_bytes(
-                ErrorKind::Io,
-                rustdb_common::byte_format!("Cannot open file \"{path}\": {error}"),
-            )
-        });
+    roastedduck_function::file_system::verify_can_write(path)?;
+    if roastedduck_function::registered_files::lookup(path).is_none() {
+        return std::fs::write(roastedduck_function::file_system::native_path(path)?, contents).map_err(
+            |error| {
+                Error::new_bytes(
+                    ErrorKind::Io,
+                    roastedduck_common::byte_format!("Cannot open file \"{path}\": {error}"),
+                )
+            },
+        );
     }
-    let mut output = rustdb_function::registered_files::Output::create(path)?;
+    let mut output = roastedduck_function::registered_files::Output::create(path)?;
     output
         .write_all(contents)
         .and_then(|()| output.flush())
@@ -131,7 +133,7 @@ fn write_file(path: &[u8], contents: &[u8]) -> Result<()> {
             }
             Error::new_bytes(
                 ErrorKind::Io,
-                rustdb_common::byte_format!("Cannot open file \"{path}\": {error}"),
+                roastedduck_common::byte_format!("Cannot open file \"{path}\": {error}"),
             )
         })
 }
@@ -203,11 +205,11 @@ impl Source for PhysicalExport {
             let end = bytes.iter().rposition(|byte| *byte != b'/').map_or(0, |i| i + 1);
             let directory = &bytes[..end];
             write_file(
-                &rustdb_common::byte_format!("{directory}/schema.sql"),
+                &roastedduck_common::byte_format!("{directory}/schema.sql"),
                 &self.schema_sql(),
             )?;
             write_file(
-                &rustdb_common::byte_format!("{directory}/load.sql"),
+                &roastedduck_common::byte_format!("{directory}/load.sql"),
                 &self.load_sql()?,
             )?;
         }

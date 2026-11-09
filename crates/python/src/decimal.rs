@@ -2,9 +2,9 @@
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyByteArray, PyBytes, PyFloat, PyInt, PyString};
-use rustdb_common::Error;
-use rustdb_function::cast::ValueCast;
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::Error;
+use roastedduck_function::cast::ValueCast;
+use roastedduck_types::{LogicalType, Value};
 
 #[derive(Debug)]
 enum Exponent {

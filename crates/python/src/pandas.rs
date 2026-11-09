@@ -4,15 +4,15 @@ use crate::{conversion, input};
 use pyo3::buffer::{Element, PyBuffer};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyCapsule, PyDict, PyFloat, PyList, PySlice, PyString};
-use rustdb_arrow::ffi::{ArrowArray, ArrowArrayWrapper, ArrowSchema};
-use rustdb_arrow::{ArrowTableSchema, data_chunk_from_arrow, populate_arrow_table_schema};
-use rustdb_ast::{ExternalDependency, OrdinalityType, TableFunctionRef, TableRef, TableRefKind};
-use rustdb_common::{ByteString, Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::cast::ValueCast;
-use rustdb_function::{
+use roastedduck_arrow::ffi::{ArrowArray, ArrowArrayWrapper, ArrowSchema};
+use roastedduck_arrow::{ArrowTableSchema, data_chunk_from_arrow, populate_arrow_table_schema};
+use roastedduck_ast::{ExternalDependency, OrdinalityType, TableFunctionRef, TableRef, TableRefKind};
+use roastedduck_common::{ByteString, Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_function::{
     FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
 };
-use rustdb_types::{DataChunk, Interval, LogicalType, LogicalTypeId as L, StringT, Value, Vector};
+use roastedduck_types::{DataChunk, Interval, LogicalType, LogicalTypeId as L, StringT, Value, Vector};
 use std::any::Any;
 use std::collections::HashMap;
 use std::ffi::CStr;
@@ -159,10 +159,10 @@ pub(super) fn table(object: &Bound<'_, PyAny>) -> PyResult<TableRef> {
         dict.into_any()
     };
     let owner = retain(object, frame, pandas);
-    let mut table = rustdb_parser::build::table_ref(TableRefKind::TableFunction(TableFunctionRef {
-        function: Box::new(rustdb_parser::build::function(
+    let mut table = roastedduck_parser::build::table_ref(TableRefKind::TableFunction(TableFunctionRef {
+        function: Box::new(roastedduck_parser::build::function(
             "pandas_scan",
-            vec![rustdb_parser::build::constant(
+            vec![roastedduck_parser::build::constant(
                 Value::ubigint(owner.id).reinterpret(LogicalType::POINTER),
             )],
         )),
@@ -432,11 +432,11 @@ fn typed_object(object: &Bound<'_, PyAny>, kind: &LogicalType) -> PyResult<Value
 pub(super) fn python_error(error: &PyErr) -> Error {
     let converted = Python::attach(|py| {
         let kind = if error.is_instance_of::<crate::error::InvalidInputException>(py) {
-            Some(rustdb_common::ErrorKind::InvalidInput)
+            Some(roastedduck_common::ErrorKind::InvalidInput)
         } else if error.is_instance_of::<crate::error::ConversionException>(py) {
-            Some(rustdb_common::ErrorKind::Conversion)
+            Some(roastedduck_common::ErrorKind::Conversion)
         } else if error.is_instance_of::<crate::error::NotImplementedException>(py) {
-            Some(rustdb_common::ErrorKind::NotImplemented)
+            Some(roastedduck_common::ErrorKind::NotImplemented)
         } else {
             None
         }?;
@@ -715,7 +715,7 @@ fn binding(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOutput
         .ok_or_else(|| Error::invalid_input("Dataframe input is no longer available"))?;
     let sample = input
         .binder
-        .and_then(|b| b.downcast_ref::<rustdb_planner::ClientContext>())
+        .and_then(|b| b.downcast_ref::<roastedduck_planner::ClientContext>())
         .and_then(|c| c.function_client.settings())
         .and_then(|s| s.current_setting("pandas_analyze_sample").ok())
         .and_then(|v| v.as_u64())
@@ -771,7 +771,7 @@ fn bind_owner(owner: Arc<Input>, sample: usize) -> Result<TableFunctionBindOutpu
         .is_some_and(|data| data.columns.iter().any(|column| column.negative_stride))
     {
         // The frozen client extracts an unsigned stride and raises this cast error.
-        return Err(Error::new(rustdb_common::ErrorKind::Invalid,
+        return Err(Error::new(roastedduck_common::ErrorKind::Invalid,
             "Unable to cast Python instance of type <class 'int'> to C++ type '?' (#define PYBIND11_DETAILED_ERROR_MESSAGES or compile in debug mode for details)")
             .with_subtype("python_callback"));
     }
@@ -845,7 +845,7 @@ fn numeric(column: &Column, data: &[u8]) -> Result<Value> {
 pub(super) fn scan(
     data: Option<&dyn FunctionData>,
     ids: &[u64],
-    state: &mut rustdb_function::TableScanState,
+    state: &mut roastedduck_function::TableScanState,
     output: &mut DataChunk,
 ) -> Result<bool> {
     let data = data

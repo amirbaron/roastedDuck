@@ -5,10 +5,10 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
-use rustdb_buffer::{BlockManager, BufferManager, InMemoryBlockManager};
-use rustdb_common::Result;
-use rustdb_crypto::EncryptionVersion;
-use rustdb_serde::{SerializationCompatibility, SerializationOptions};
+use roastedduck_buffer::{BlockManager, BufferManager, InMemoryBlockManager};
+use roastedduck_common::Result;
+use roastedduck_crypto::EncryptionVersion;
+use roastedduck_serde::{SerializationCompatibility, SerializationOptions};
 
 use crate::compression::CompressionConfig;
 use crate::data_table::TableIoManager;
@@ -54,10 +54,12 @@ impl StorageOptions {
         if self.storage_version.is_none_or(|version| version < v1_4_0)
             && let Some(given) = storage_version_given
         {
-            return Err(rustdb_common::Error::invalid_input(rustdb_common::byte_format!(
-                "Explicit provided STORAGE_VERSION (\"{given}\") and ENCRYPTION_KEY (storage >= v1.4.0) are not \
+            return Err(roastedduck_common::Error::invalid_input(
+                roastedduck_common::byte_format!(
+                    "Explicit provided STORAGE_VERSION (\"{given}\") and ENCRYPTION_KEY (storage >= v1.4.0) are not \
                  compatible"
-            )));
+                ),
+            ));
         }
         let Some(encryption) = &mut self.encryption else {
             return Ok(());
@@ -72,10 +74,12 @@ impl StorageOptions {
             (None, None) => self.storage_version = Some(v1_5_0),
             (Some(version), given) if target == EncryptionVersion::V0_1 && version < v1_5_0 => match given {
                 Some(given) if requested == target => {
-                    return Err(rustdb_common::Error::invalid_input(rustdb_common::byte_format!(
-                        "Explicit provided STORAGE_VERSION (\"{given}\") is not compatible with \
+                    return Err(roastedduck_common::Error::invalid_input(
+                        roastedduck_common::byte_format!(
+                            "Explicit provided STORAGE_VERSION (\"{given}\") is not compatible with \
                          'debug_encryption_version = v1' (storage >= v1.5.0)"
-                    )));
+                        ),
+                    ));
                 }
                 Some(_) => {}
                 None => target = EncryptionVersion::V0_0,
@@ -129,8 +133,8 @@ impl CheckpointAbort {
     }
 
     /// The error a checkpoint aborted at `self` fails with.
-    pub fn error(self) -> rustdb_common::Error {
-        use rustdb_common::{Error, ErrorKind};
+    pub fn error(self) -> roastedduck_common::Error {
+        use roastedduck_common::{Error, ErrorKind};
         let fatal = |message: &str| Error::new(ErrorKind::Fatal, message.to_owned());
         match self {
             Self::BeforeHeader => {
@@ -162,7 +166,7 @@ impl CheckpointAbort {
     }
 
     /// Fails with [`CheckpointAbort::error`] when the checkpoint aborts at `point`.
-    pub fn check(self, point: Self) -> rustdb_common::Result<()> {
+    pub fn check(self, point: Self) -> roastedduck_common::Result<()> {
         if self == point { Err(self.error()) } else { Ok(()) }
     }
 }
@@ -204,7 +208,7 @@ impl Default for CheckpointConfig {
 /// The storage of one database file.
 #[derive(Debug)]
 pub struct StorageManager {
-    path: rustdb_common::ByteString,
+    path: roastedduck_common::ByteString,
     block_manager: Arc<SingleFileBlockManager>,
     metadata: Arc<MetadataManager>,
     io: Arc<TableIoManager>,
@@ -278,19 +282,19 @@ impl StorageManager {
     }
 
     /// The path of the WAL (`GetWALPath`).
-    pub fn wal_path(&self) -> rustdb_common::ByteString {
+    pub fn wal_path(&self) -> roastedduck_common::ByteString {
         wal_path(&self.path)
     }
 
     /// The path of the WAL commits are written to while a checkpoint runs
     /// (`GetCheckpointWALPath`).
-    pub fn checkpoint_wal_path(&self) -> rustdb_common::ByteString {
+    pub fn checkpoint_wal_path(&self) -> roastedduck_common::ByteString {
         checkpoint_wal_path(&self.path)
     }
 
     /// The path the WAL and the checkpoint WAL are merged into when a checkpoint that
     /// ran concurrently with commits failed (`GetRecoveryWALPath`).
-    pub fn recovery_wal_path(&self) -> rustdb_common::ByteString {
+    pub fn recovery_wal_path(&self) -> roastedduck_common::ByteString {
         recovery_wal_path(&self.path)
     }
 
@@ -307,7 +311,7 @@ impl StorageManager {
         ));
         self.wal
             .set(Arc::clone(&wal))
-            .map_err(|_| rustdb_common::Error::internal("the WAL is set up once"))?;
+            .map_err(|_| roastedduck_common::Error::internal("the WAL is set up once"))?;
         Ok(wal)
     }
 
@@ -509,7 +513,7 @@ impl InMemoryStorageManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustdb_crypto::{CipherType, UserKey};
+    use roastedduck_crypto::{CipherType, UserKey};
 
     fn encrypted(storage_version: Option<u64>, version: EncryptionVersion) -> StorageOptions {
         StorageOptions {

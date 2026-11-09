@@ -2,10 +2,10 @@
 #[cfg(unix)]
 #[test]
 fn fifo_is_not_seekable_and_all_buffers_are_read() {
-    use rustdb_csv::buffer::{CsvBufferManager, CsvFileHandle};
-    use rustdb_csv::options::CsvReaderOptions;
+    use roastedduck_csv::buffer::{CsvBufferManager, CsvFileHandle};
+    use roastedduck_csv::options::CsvReaderOptions;
     use std::io::Write as _;
-    let directory = std::env::temp_dir().join(format!("rustdb-csv-fifo-{}", std::process::id()));
+    let directory = std::env::temp_dir().join(format!("roastedduck-csv-fifo-{}", std::process::id()));
     std::fs::create_dir(&directory).expect("unique test directory");
     let path = directory.join("input.csv");
     assert!(

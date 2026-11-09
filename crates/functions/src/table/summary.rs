@@ -1,12 +1,12 @@
 //! `summary(TABLE)` (DuckDB's `function/table/summary.cpp`): a demo of table parameters;
 //! each input row with a text rendering of its values in front.
 
-use rustdb_common::{ByteString, Result};
-use rustdb_function::{
+use roastedduck_common::{ByteString, Result};
+use roastedduck_function::{
     FunctionData, InOutResult, TableFunction, TableFunctionBindInput, TableFunctionBindOutput,
     TableFunctionSet, TableScanState,
 };
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
 
 /// `SummaryFunctionBind`: a `summary` VARCHAR column, then the input columns.
 #[allow(
@@ -50,7 +50,7 @@ fn summary_in_out(
             .collect::<Result<Vec<_>>>()?;
         summary.set_value(
             row,
-            &Value::try_varchar(&rustdb_common::byte_format!(
+            &Value::try_varchar(&roastedduck_common::byte_format!(
                 "[{}]",
                 ByteString::join(&values, b", ")
             ))?,

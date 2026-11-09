@@ -1,5 +1,5 @@
 [package]
-name = "rustdb-common"
+name = "roastedduck-common"
 description = "Shared foundations: errors, string utilities, index types."
 version.workspace = true
 edition.workspace = true
@@ -7,7 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-rustdb-byte-format = { path = "../byte-format" }
+roastedduck-byte-format = { path = "../byte-format" }
 unicode-segmentation = "1"
 unicode-width = "0.2"
 

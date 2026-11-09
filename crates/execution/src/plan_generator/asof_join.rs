@@ -4,17 +4,19 @@
 
 use std::sync::Arc;
 
-use rustdb_ast::{ExpressionType, JoinType, WindowBoundary, WindowExcludeMode};
-use rustdb_common::{Error, Result};
-use rustdb_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionClient, FunctionData};
-use rustdb_functions::aggregate::distributive::arg_min_max::{
+use roastedduck_ast::{ExpressionType, JoinType, WindowBoundary, WindowExcludeMode};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{
+    AggregateFunction, AggregateFunctionSet, BindInput, FunctionClient, FunctionData,
+};
+use roastedduck_functions::aggregate::distributive::arg_min_max::{
     arg_max_null_functions, arg_min_null_functions,
 };
-use rustdb_functions::aggregate::distributive::first_last_any::first_function;
-use rustdb_planner::expression::{AggregateType, BoundAggregateExpression, BoundWindowExpression};
-use rustdb_planner::operator::{JoinCondition, LogicalComparisonJoin};
-use rustdb_planner::{Expression, ExpressionKind, LogicalOperator};
-use rustdb_types::{LogicalType, LogicalTypeId};
+use roastedduck_functions::aggregate::distributive::first_last_any::first_function;
+use roastedduck_planner::expression::{AggregateType, BoundAggregateExpression, BoundWindowExpression};
+use roastedduck_planner::operator::{JoinCondition, LogicalComparisonJoin};
+use roastedduck_planner::{Expression, ExpressionKind, LogicalOperator};
+use roastedduck_types::{LogicalType, LogicalTypeId};
 
 use super::PlanGenerator;
 use super::comparison_join::estimate_cardinality;
@@ -97,7 +99,7 @@ fn bind_arg_min_max(
     if let Some(bind) = function.bind.clone() {
         let client = Arc::new(FunctionClient::default());
         let constants = vec![None; arguments.len()];
-        let names = vec![rustdb_common::ByteString::new(); arguments.len()];
+        let names = vec![roastedduck_common::ByteString::new(); arguments.len()];
         bind_info = bind(
             &mut function,
             &BindInput {

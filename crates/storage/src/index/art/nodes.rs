@@ -2,7 +2,7 @@
 //! deletion with shrinking, and freeing subtrees (DuckDB's `Node`, `BaseNode`, `Node48`,
 //! `Node256`, `BaseLeaf` and `Node256Leaf`).
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use super::Art;
 use super::key::ROW_ID_SIZE;

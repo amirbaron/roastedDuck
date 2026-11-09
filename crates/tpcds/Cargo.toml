@@ -1,5 +1,5 @@
 [package]
-name = "rustdb-tpcds"
+name = "roastedduck-tpcds"
 description = "The TPC-DS extension: dsdgen, tpcds_queries, tpcds_answers and PRAGMA tpcds (DuckDB's extension/tpcds), on a port of the TPC's dsdgen."
 version.workspace = true
 edition.workspace = true
@@ -8,17 +8,17 @@ license-file = "LICENSE"
 rust-version.workspace = true
 
 [dependencies]
-rustdb-common.workspace = true
-rustdb-types.workspace = true
-rustdb-ast.workspace = true
-rustdb-planner.workspace = true
-rustdb-execution.workspace = true
-rustdb-catalog = { path = "../catalog" }
-rustdb-function = { path = "../function" }
-rustdb-storage = { path = "../storage" }
+roastedduck-common.workspace = true
+roastedduck-types.workspace = true
+roastedduck-ast.workspace = true
+roastedduck-planner.workspace = true
+roastedduck-execution.workspace = true
+roastedduck-catalog = { path = "../catalog" }
+roastedduck-function = { path = "../function" }
+roastedduck-storage = { path = "../storage" }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-rustdb-buffer = { path = "../buffer" }
+roastedduck-buffer = { path = "../buffer" }

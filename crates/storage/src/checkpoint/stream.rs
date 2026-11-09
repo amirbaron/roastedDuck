@@ -1,8 +1,8 @@
 //! DuckDB's binary serialization format over a byte stream (DuckDB's `BinaryDeserializer`
 //! reading a `ReadStream`, used for metadata chains whose length is not known up front).
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_serde::{Deserializer, FieldId, MESSAGE_TERMINATOR_FIELD_ID};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_serde::{Deserializer, FieldId, MESSAGE_TERMINATOR_FIELD_ID};
 
 use crate::metadata::MetadataReader;
 

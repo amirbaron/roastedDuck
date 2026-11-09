@@ -7,9 +7,9 @@
 
 use std::borrow::Cow;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::format::{NestedQuoting, write_nested_string};
-use rustdb_types::{ListEntry, LogicalType, LogicalTypeId, ValidityMask, Vector, VectorKind};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::format::{NestedQuoting, write_nested_string};
+use roastedduck_types::{ListEntry, LogicalType, LogicalTypeId, ValidityMask, Vector, VectorKind};
 
 use super::executor::cast_rows_to_string;
 use super::{BoundCastInfo, CastFunctionSet, CastParameters};
@@ -55,8 +55,8 @@ impl<'a> NestedInput<'a> {
 
 pub(super) fn missing_child(ty: &LogicalType) -> Error {
     Error::new_bytes(
-        rustdb_common::ErrorKind::Internal,
-        rustdb_common::byte_format!("vector of type {ty} has no child vector").into_bytes(),
+        roastedduck_common::ErrorKind::Internal,
+        roastedduck_common::byte_format!("vector of type {ty} has no child vector").into_bytes(),
     )
 }
 

@@ -1,7 +1,7 @@
 //! The transform functions of DuckDB's `transform_create_index.cpp`: `CREATE INDEX` and
 //! the `WITH (name = value, ...)` option lists.
 
-use rustdb_parser::hash_order::CiHashMap;
+use roastedduck_parser::hash_order::CiHashMap;
 
 use super::create_table::{base_table_ref, create_info, on_create_conflict};
 use super::prelude::*;

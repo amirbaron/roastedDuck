@@ -1,6 +1,6 @@
 //! Error construction shared by the buffer manager.
 
-use rustdb_common::{Error, ErrorKind};
+use roastedduck_common::{Error, ErrorKind};
 
 const TUNING_LINK: &str = "https://duckdb.org/docs/stable/guides/performance/how_to_tune_workloads";
 

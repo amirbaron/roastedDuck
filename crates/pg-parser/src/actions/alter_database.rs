@@ -18,7 +18,7 @@ pub(super) fn alter_database_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
                 .eq_ignore_ascii_case(b"alias")
             {
                 return Err(rhs.error_at(
-                    rustdb_common::byte_format!(
+                    roastedduck_common::byte_format!(
                         "expected SET ALIAS TO, got SET {} TO",
                         c_str(ident.as_deref())
                     ),
@@ -42,7 +42,7 @@ pub(super) fn alter_database_stmt<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -
                 .eq_ignore_ascii_case(b"alias")
             {
                 return Err(rhs.error_at(
-                    rustdb_common::byte_format!(
+                    roastedduck_common::byte_format!(
                         "expected SET ALIAS TO, got SET {} TO",
                         c_str(ident.as_deref())
                     ),

@@ -5,8 +5,8 @@
 
 use std::cmp::Ordering;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use super::{CastFunctionSet, ValueCast};
 
@@ -44,7 +44,7 @@ fn same_type_order(left: &Value, right: &Value) -> Option<Ordering> {
     match left.logical_type().id() {
         LogicalTypeId::Variant => {
             let decode = |value: &Value| -> Option<Value> {
-                rustdb_types::variant::VariantData::from_value(value)
+                roastedduck_types::variant::VariantData::from_value(value)
                     .ok()?
                     .map_or(Some(Value::null(LogicalType::SQLNULL)), |data| {
                         data.to_sql_value(0).ok()
@@ -81,7 +81,7 @@ fn null_last_order(left: &Value, right: &Value) -> Option<Ordering> {
 /// cast to it (they then compare neither equal nor ordered).
 pub fn variant_order(left: &Value, right: &Value) -> Result<Option<Ordering>> {
     let decode = |value: &Value| -> Result<Value> {
-        match rustdb_types::variant::VariantData::from_value(value)? {
+        match roastedduck_types::variant::VariantData::from_value(value)? {
             Some(data) => data.to_sql_value(0),
             None => Ok(Value::null(LogicalType::SQLNULL)),
         }

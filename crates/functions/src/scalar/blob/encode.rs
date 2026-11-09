@@ -1,9 +1,9 @@
 //! `encode(VARCHAR) -> BLOB` and `decode(BLOB[, error_behavior]) -> VARCHAR` (DuckDB's
 //! `encode.cpp`).
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::LogicalType;
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::LogicalType;
 
 use crate::scalar::executor::{Str, StrOut, binary, unary};
 

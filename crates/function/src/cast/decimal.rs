@@ -5,8 +5,8 @@
 //! arithmetic here works on the unscaled value `to_i128ed` to `i128`, which gives the same
 //! results as DuckDB's per-width templates since no intermediate can overflow.
 
-use rustdb_types::format;
-use rustdb_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType};
+use roastedduck_types::format;
+use roastedduck_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType};
 
 use super::BoundCastInfo;
 use super::executor::{RowError, RowResult, addressable, cast_rows, try_map_strings, values_to_string};

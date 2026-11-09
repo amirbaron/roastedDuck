@@ -3,13 +3,13 @@
 # identifier per binary, so macOS keeps the permissions granted to them (e.g. access to an
 # external volume) across rebuilds. The linker's ad-hoc signature changes with every build.
 #
-# Usage: scripts/sign.sh [binary...]   (default: every rustdb binary in target/release)
+# Usage: scripts/sign.sh [binary...]   (default: every roastedduck binary in target/release)
 # Without the identity (see ~/.config/rustdb-codesign) it warns and does nothing.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RELEASE="${CARGO_TARGET_DIR:-$ROOT/target}/release"
-IDENTITY="${RUSTDB_CODESIGN_IDENTITY:-rustdb-dev}"
+IDENTITY="${ROASTEDDUCK_CODESIGN_IDENTITY:-${RUSTDB_CODESIGN_IDENTITY:-rustdb-dev}}"
 
 if [[ "$(uname)" != "Darwin" ]]; then
   exit 0
@@ -23,7 +23,7 @@ if [[ $# -gt 0 ]]; then
   BINARIES=("$@")
 else
   BINARIES=()
-  for name in slt rustdb bench bench-driver libduckdb.dylib; do
+  for name in slt roastedDuck bench bench-driver libduckdb.dylib; do
     [[ -f "$RELEASE/$name" ]] && BINARIES+=("$RELEASE/$name")
   done
 fi

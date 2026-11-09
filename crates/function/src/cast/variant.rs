@@ -1,15 +1,17 @@
 //! Casts to and from VARIANT (DuckDB's `to_variant.cpp` and `from_variant.cpp`).
 //!
-//! Any type converts to VARIANT ([`rustdb_types::variant::encode`]). VARIANT converts to
+//! Any type converts to VARIANT ([`roastedduck_types::variant::encode`]). VARIANT converts to
 //! a type by reading values of the matching variant type directly, and otherwise by
 //! converting the stored value back to a SQL value and casting that (strictly). Nested
 //! targets walk OBJECTs and ARRAYs, falling back to the value cast when the shape does
 //! not match.
 
-use rustdb_common::{ByteString, Error, ErrorKind, Result, byte_format as format};
-use rustdb_types::variant::{self, VariantData, VariantLogicalType, VariantNested, VariantPathComponent};
-use rustdb_types::variant_vector::VariantVectorView;
-use rustdb_types::{LogicalType, LogicalTypeId, Value, Vector};
+use roastedduck_common::{ByteString, Error, ErrorKind, Result, byte_format as format};
+use roastedduck_types::variant::{
+    self, VariantData, VariantLogicalType, VariantNested, VariantPathComponent,
+};
+use roastedduck_types::variant_vector::VariantVectorView;
+use roastedduck_types::{LogicalType, LogicalTypeId, Value, Vector};
 
 use super::{BoundCastInfo, CastFunctionSet, CastParameters, ValueCast};
 
@@ -192,7 +194,7 @@ fn fixed<const N: usize>(payload: &[u8]) -> Result<[u8; N]> {
     payload
         .get(..N)
         .and_then(|bytes| bytes.try_into().ok())
-        .ok_or_else(|| rustdb_common::Error::internal("VARIANT data too short"))
+        .ok_or_else(|| roastedduck_common::Error::internal("VARIANT data too short"))
 }
 
 /// Writes the payload of a primitive VARIANT value of type `type_id` into row `row` of
@@ -225,9 +227,9 @@ fn write_payload(vector: &mut Vector, row: usize, type_id: VariantLogicalType, p
             let length = variant::varint_decode(payload, &mut pos)? as usize;
             let bytes = payload
                 .get(pos..pos + length)
-                .ok_or_else(|| rustdb_common::Error::internal("VARIANT string exceeds its data"))?;
+                .ok_or_else(|| roastedduck_common::Error::internal("VARIANT string exceeds its data"))?;
             let string = vector.add_string(bytes);
-            vector.values_mut::<rustdb_types::StringT>()[row] = string;
+            vector.values_mut::<roastedduck_types::StringT>()[row] = string;
         }
         V::Decimal => {
             let mut pos = 0;
@@ -235,7 +237,7 @@ fn write_payload(vector: &mut Vector, row: usize, type_id: VariantLogicalType, p
             variant::varint_decode(payload, &mut pos)?;
             let data = payload
                 .get(pos..)
-                .ok_or_else(|| rustdb_common::Error::internal("VARIANT decimal exceeds its data"))?;
+                .ok_or_else(|| roastedduck_common::Error::internal("VARIANT decimal exceeds its data"))?;
             match width {
                 0..=4 => vector.values_mut::<i16>()[row] = i16::from_le_bytes(fixed(data)?),
                 5..=9 => vector.values_mut::<i32>()[row] = i32::from_le_bytes(fixed(data)?),
@@ -256,7 +258,7 @@ fn write_payload(vector: &mut Vector, row: usize, type_id: VariantLogicalType, p
 /// Copies row `from_row` of the flat vector `from` into row `to_row` of `to`, of the same
 /// non-nested type.
 fn copy_row(from: &Vector, from_row: usize, to: &mut Vector, to_row: usize) -> Result<()> {
-    use rustdb_types::PhysicalType as P;
+    use roastedduck_types::PhysicalType as P;
     if from.is_null(from_row) {
         to.set_null(to_row);
         return Ok(());
@@ -278,7 +280,7 @@ fn copy_row(from: &Vector, from_row: usize, to: &mut Vector, to_row: usize) -> R
         P::Double => to.values_mut::<f64>()[to_row] = from.values::<f64>()[slot],
         P::Varchar => {
             let string = to.add_string(from.string_bytes(from_row));
-            to.values_mut::<rustdb_types::StringT>()[to_row] = string;
+            to.values_mut::<roastedduck_types::StringT>()[to_row] = string;
         }
         _ => to.set_value(to_row, &from.get_value(from_row))?,
     }

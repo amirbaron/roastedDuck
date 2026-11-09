@@ -9,9 +9,9 @@
 
 use std::sync::Arc;
 
-use rustdb_buffer::{BlockId, INVALID_BLOCK};
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, Vector};
+use roastedduck_buffer::{BlockId, INVALID_BLOCK};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, Vector};
 
 use super::primitive::{corrupt, load, unified_strings, update_string_stats, write_string_ranges};
 use super::{Analyzer, CompressionInfo, CompressionType, Compressor, SegmentScan};
@@ -67,7 +67,7 @@ pub(crate) struct ZstdScanState {
     offsets: [usize; 4],
     current: Option<DecodedVector>,
     /// `decompression_context`, created at the first vector.
-    decompressor: Option<Box<rustdb_zstd::Decompressor>>,
+    decompressor: Option<Box<roastedduck_zstd::Decompressor>>,
 }
 
 impl ZstdScanState {
@@ -333,7 +333,7 @@ struct ExtraPage {
 
 /// `ZSTDCompressionState`: strings are compressed per vector of 2048 into one zstd frame,
 /// string by string into the space left on the current page (`ZSTD_compressStream2` at the
-/// default level, with `rustdb-zstd` writing zstd's frames), continued on extra pages
+/// default level, with `roastedduck-zstd` writing zstd's frames), continued on extra pages
 /// exactly like DuckDB lays out its streaming output.
 #[derive(Debug)]
 struct ZstdCompressor {
@@ -354,7 +354,7 @@ struct ZstdCompressor {
     lengths: Vec<u32>,
     has_null: Vec<bool>,
     /// The compression context, reset per vector (`ZSTDAnalyzeState::context`).
-    context: Option<Box<rustdb_zstd::Compressor>>,
+    context: Option<Box<roastedduck_zstd::Compressor>>,
 }
 
 impl ZstdCompressor {
@@ -481,9 +481,9 @@ impl ZstdCompressor {
         let mut context = self
             .context
             .take()
-            .unwrap_or_else(|| Box::new(rustdb_zstd::Compressor::new(rustdb_zstd::DEFAULT_LEVEL)));
+            .unwrap_or_else(|| Box::new(roastedduck_zstd::Compressor::new(roastedduck_zstd::DEFAULT_LEVEL)));
         context.reset_session();
-        context.set_level(rustdb_zstd::DEFAULT_LEVEL);
+        context.set_level(roastedduck_zstd::DEFAULT_LEVEL);
         let mut compressed_size = 0;
         let mut position = 0;
         for (row, &length) in lengths.iter().enumerate() {
@@ -494,9 +494,9 @@ impl ZstdCompressor {
                 continue;
             }
             let directive = if end {
-                rustdb_zstd::EndDirective::End
+                roastedduck_zstd::EndDirective::End
             } else {
-                rustdb_zstd::EndDirective::Continue
+                roastedduck_zstd::EndDirective::Continue
             };
             let mut in_pos = 0;
             loop {

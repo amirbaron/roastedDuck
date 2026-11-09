@@ -4,8 +4,8 @@
 
 use std::fmt::Write as _;
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{DataChunk, LogicalType, StringHeap, StringT, ValidityMask, Vector};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::{DataChunk, LogicalType, StringHeap, StringT, ValidityMask, Vector};
 
 use super::date::Date;
 use super::decimal::Decimal;
@@ -286,7 +286,7 @@ impl RowAppender {
             return Ok(self);
         }
         let date = Date::from_julian(value as i32);
-        let days = rustdb_types::Date::from_ymd(date.year, date.month, date.day)
+        let days = roastedduck_types::Date::from_ymd(date.year, date.month, date.day)
             .ok_or_else(|| {
                 Error::conversion(format!(
                     "Date out of range: {}-{}-{}",

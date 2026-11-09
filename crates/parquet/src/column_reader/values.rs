@@ -10,8 +10,8 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId, NativeType, StringT, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId, NativeType, StringT, Vector};
 
 use crate::decode::{ByteBuffer, PageBlock, out_of_buffer};
 use crate::schema::{ColumnSchema, ExtraTypeInfo};
@@ -197,7 +197,7 @@ fn conversion_error(message: &'static str) -> Error {
 callback_conversion!(
     /// `ParquetTimestampMsToTimestamp`.
     TimestampMsToUs, i64 => i64, |raw| {
-        if rustdb_types::Timestamp::is_finite_raw(raw) {
+        if roastedduck_types::Timestamp::is_finite_raw(raw) {
             raw.checked_mul(1000)
                 .ok_or_else(|| conversion_error("Could not convert Timestamp(MS) to Timestamp(US)"))
         } else {
@@ -208,13 +208,13 @@ callback_conversion!(
 callback_conversion!(
     /// `ParquetTimestampNsToTimestamp`.
     TimestampNsToUs, i64 => i64, |raw| {
-        Ok(if rustdb_types::Timestamp::is_finite_raw(raw) { raw / 1000 } else { raw })
+        Ok(if roastedduck_types::Timestamp::is_finite_raw(raw) { raw / 1000 } else { raw })
     }
 );
 callback_conversion!(
     /// `ParquetTimestampMsToTimestampNs` (DuckDB scales milliseconds by 1000 here).
     TimestampMsToNs, i64 => i64, |raw| {
-        if rustdb_types::Timestamp::is_finite_raw(raw) {
+        if roastedduck_types::Timestamp::is_finite_raw(raw) {
             raw.checked_mul(1000)
                 .ok_or_else(|| conversion_error("Could not convert Timestamp(US) to Timestamp(NS)"))
         } else {
@@ -225,7 +225,7 @@ callback_conversion!(
 callback_conversion!(
     /// `ParquetTimestampUsToTimestampNs` (DuckDB scales microseconds by 10^6 here).
     TimestampUsToNs, i64 => i64, |raw| {
-        if rustdb_types::Timestamp::is_finite_raw(raw) {
+        if roastedduck_types::Timestamp::is_finite_raw(raw) {
             raw.checked_mul(1_000_000)
                 .ok_or_else(|| conversion_error("Could not convert Timestamp(MS) to Timestamp(NS)"))
         } else {
@@ -253,21 +253,21 @@ callback_conversion!(
     /// `ParquetIntToTimeMsTZ`.
     TimeTzFromMs, i32 => i64, |raw| {
         let millis = wrap_time(raw, MILLIS_PER_DAY);
-        Ok(rustdb_types::TimeTz::new(rustdb_types::Time(i64::from(millis) * 1000), 0).0 as i64)
+        Ok(roastedduck_types::TimeTz::new(roastedduck_types::Time(i64::from(millis) * 1000), 0).0 as i64)
     }
 );
 callback_conversion!(
     /// `ParquetIntToTimeTZ`.
     TimeTzFromUs, i64 => i64, |raw| {
         let micros = wrap_time(raw, MICROS_PER_DAY);
-        Ok(rustdb_types::TimeTz::new(rustdb_types::Time(micros), 0).0 as i64)
+        Ok(roastedduck_types::TimeTz::new(roastedduck_types::Time(micros), 0).0 as i64)
     }
 );
 callback_conversion!(
     /// `ParquetIntToTimeNsTZ`.
     TimeTzFromNs, i64 => i64, |raw| {
         let nanos = wrap_time(raw, NANOS_PER_DAY);
-        Ok(rustdb_types::TimeTz::new(rustdb_types::Time(nanos / 1000), 0).0 as i64)
+        Ok(roastedduck_types::TimeTz::new(roastedduck_types::Time(nanos / 1000), 0).0 as i64)
     }
 );
 callback_conversion!(
@@ -590,7 +590,7 @@ pub fn verify_utf8(bytes: &[u8], file_name: &[u8]) -> Result<()> {
     if std::str::from_utf8(bytes).is_ok() {
         return Ok(());
     }
-    Err(Error::invalid_input(rustdb_common::byte_format!(
+    Err(Error::invalid_input(roastedduck_common::byte_format!(
         "Invalid string encoding found in Parquet file \"{file_name}\": value \"{}\" is not valid UTF8!",
         blob_text(bytes)
     )))
@@ -599,7 +599,7 @@ pub fn verify_utf8(bytes: &[u8], file_name: &[u8]) -> Result<()> {
 /// `Blob::ToString`: printable ASCII as-is, other bytes as `\xNN`.
 pub fn blob_text(bytes: &[u8]) -> String {
     let mut out = Vec::with_capacity(bytes.len());
-    rustdb_types::blob::write_text(bytes, &mut out);
+    roastedduck_types::blob::write_text(bytes, &mut out);
     String::from_utf8_lossy(&out).into_owned()
 }
 
@@ -899,7 +899,7 @@ fn fixed<C: FixedConversion>() -> Box<dyn PlainDecoder> {
 }
 
 fn decimal_bytes(schema: &ColumnSchema) -> Result<Box<dyn PlainDecoder>> {
-    use rustdb_types::PhysicalType as P;
+    use roastedduck_types::PhysicalType as P;
     Ok(match schema.logical_type.physical_type() {
         P::Int16 => boxed(DecimalBytesDecoder::<i16>::new(schema)),
         P::Int32 => boxed(DecimalBytesDecoder::<i32>::new(schema)),
@@ -911,7 +911,7 @@ fn decimal_bytes(schema: &ColumnSchema) -> Result<Box<dyn PlainDecoder>> {
 }
 
 fn type_info_error(what: &str) -> Error {
-    Error::internal(rustdb_common::byte_format!("{what} requires type info"))
+    Error::internal(roastedduck_common::byte_format!("{what} requires type info"))
 }
 
 /// The plain decoder of a leaf (`ColumnReader::CreateReader`).
@@ -967,7 +967,7 @@ pub fn create_decoder(schema: &ColumnSchema, file_name: &Arc<[u8]>) -> Result<Bo
         },
         L::Blob | L::Varchar => boxed(StringDecoder::new(schema, Arc::clone(file_name))),
         L::Decimal => {
-            use rustdb_types::PhysicalType as P;
+            use roastedduck_types::PhysicalType as P;
             let physical = ty.physical_type();
             match info {
                 ExtraTypeInfo::DecimalInt32 => match physical {

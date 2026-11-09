@@ -1,5 +1,5 @@
 [package]
-name = "rustdb-capi"
+name = "roastedduck-capi"
 description = "DuckDB's C API (duckdb.h), ABI-compatible, as a drop-in libduckdb."
 version.workspace = true
 edition.workspace = true
@@ -19,14 +19,14 @@ libloading = "0.8"
 rsa = { version = "=0.10.0", features = ["pkcs1v15"] }
 sha2 = { version = "0.11", default-features = false }
 libc = "0.2"
-rustdb.workspace = true
-rustdb-arrow = { path = "../arrow" }
-rustdb-ast.workspace = true
-rustdb-catalog = { path = "../catalog" }
-rustdb-common.workspace = true
-rustdb-function = { path = "../function" }
-rustdb-planner.workspace = true
-rustdb-types.workspace = true
+roastedduck.workspace = true
+roastedduck-arrow = { path = "../arrow" }
+roastedduck-ast.workspace = true
+roastedduck-catalog = { path = "../catalog" }
+roastedduck-common.workspace = true
+roastedduck-function = { path = "../function" }
+roastedduck-planner.workspace = true
+roastedduck-types.workspace = true
 
 [lints]
 workspace = true

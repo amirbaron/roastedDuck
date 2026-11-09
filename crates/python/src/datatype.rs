@@ -1,7 +1,7 @@
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString, PyTuple};
-use rustdb_types::LogicalType;
+use roastedduck_types::LogicalType;
 
 #[pyclass(module = "_duckdb._sqltypes", name = "DuckDBPyType", frozen)]
 #[derive(Clone, Debug)]
@@ -67,7 +67,7 @@ pub(super) fn from_object(object: &Bound<'_, PyAny>) -> PyResult<LogicalType> {
         if dict.is_empty() {
             return Err(crate::error::native(
                 py,
-                &rustdb_common::Error::invalid_input(
+                &roastedduck_common::Error::invalid_input(
                     "Could not convert empty dictionary to a duckdb STRUCT type",
                 ),
             ));
@@ -87,7 +87,7 @@ pub(super) fn from_object(object: &Bound<'_, PyAny>) -> PyResult<LogicalType> {
             if args.len()? != 1 {
                 return Err(crate::error::native(
                     py,
-                    &rustdb_common::Error::not_implemented("Can only create a LIST from a single type"),
+                    &roastedduck_common::Error::not_implemented("Can only create a LIST from a single type"),
                 ));
             }
             return Ok(LogicalType::list(from_object(&args.get_item(0)?)?));
@@ -96,7 +96,7 @@ pub(super) fn from_object(object: &Bound<'_, PyAny>) -> PyResult<LogicalType> {
             if args.len()? != 2 {
                 return Err(crate::error::native(
                     py,
-                    &rustdb_common::Error::not_implemented(
+                    &roastedduck_common::Error::not_implemented(
                         "Can only create a MAP from a dict if args is formed correctly",
                     ),
                 ));
@@ -108,7 +108,7 @@ pub(super) fn from_object(object: &Bound<'_, PyAny>) -> PyResult<LogicalType> {
         }
         return Err(crate::error::native(
             py,
-            &rustdb_common::Error::invalid_input(format!(
+            &roastedduck_common::Error::invalid_input(format!(
                 "Could not convert from '{}' to DuckDBPyType",
                 origin.str()?
             )),
@@ -142,7 +142,7 @@ pub(super) fn from_object(object: &Bound<'_, PyAny>) -> PyResult<LogicalType> {
     }
     Err(crate::error::native(
         py,
-        &rustdb_common::Error::not_implemented(format!(
+        &roastedduck_common::Error::not_implemented(format!(
             "Could not convert from object of type '{}' to DuckDBPyType",
             object.get_type().repr()?
         )),
@@ -163,7 +163,8 @@ impl PyType {
                 .iter()
                 .find(|(field, _)| field.eq_ignore_ascii_case(name.as_bytes()))
                 .map(|(_, kind)| kind)
-        } else if self.native.id() == rustdb_types::LogicalTypeId::List && name.eq_ignore_ascii_case("child")
+        } else if self.native.id() == roastedduck_types::LogicalTypeId::List
+            && name.eq_ignore_ascii_case("child")
         {
             self.native.child_type()
         } else if let Some((key, value)) = self.native.map_key_value() {
@@ -217,7 +218,7 @@ impl PyType {
     }
     #[getter]
     fn children(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        if self.native.id() == rustdb_types::LogicalTypeId::Variant {
+        if self.native.id() == roastedduck_types::LogicalTypeId::Variant {
             return Err(crate::error::InvalidInputException::new_err(
                 "Invalid Input Error: This type is not nested so it doesn't have children",
             ));

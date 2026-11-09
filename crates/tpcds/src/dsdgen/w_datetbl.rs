@@ -2,7 +2,7 @@
 
 use std::fmt::Write as _;
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use super::Output;
 use super::build_support::{bkey_str, mk_bkey};

@@ -1,10 +1,10 @@
 //! The transform functions of DuckDB's `transform_expression.cpp`.
 
-use rustdb_function::cast::ValueCast;
-use rustdb_parser::build;
+use roastedduck_function::cast::ValueCast;
+use roastedduck_parser::build;
 
-use rustdb_parser::QualifiedColumnMap;
-use rustdb_parser::hash_order::CiHashMap;
+use roastedduck_parser::QualifiedColumnMap;
+use roastedduck_parser::hash_order::CiHashMap;
 
 use super::common::{convert_number_to_value, simple_type_expression, try_negate_value, unbound_type};
 use super::parse_result::string_literal_expression;
@@ -27,7 +27,7 @@ fn remove_order_qualification_recursive(expression: &mut ParsedExpression) {
     {
         column_ref.column_names = vec![last];
     }
-    rustdb_parser::equality::for_each_child_mut(expression, &mut remove_order_qualification_recursive);
+    roastedduck_parser::equality::for_each_child_mut(expression, &mut remove_order_qualification_recursive);
 }
 
 /// `FunctionExpression(catalog, schema, name, children)`.
@@ -307,7 +307,7 @@ impl PegTransformer {
                     return Err(Error::parser("Wrong number of arguments to LIST."));
                 }
                 let order_by = &order_modifier.orders[0];
-                if rustdb_parser::equality::expressions_equal(&children[0], &order_by.expression) {
+                if roastedduck_parser::equality::expressions_equal(&children[0], &order_by.expression) {
                     let sense = build::varchar_constant(order_by.order_type.name());
                     let nulls = build::varchar_constant(order_by.null_order.name());
                     let unordered = build::function_full(
@@ -404,13 +404,13 @@ impl PegTransformer {
                 "window functions are not allowed in window definitions",
             ));
         }
-        let window_type = rustdb_parser::window_to_expression_type(&lowercase_name);
+        let window_type = roastedduck_parser::window_to_expression_type(&lowercase_name);
         if window_type != ExpressionType::WindowAggregate && arguments.distinct {
             return Err(Error::parser(
                 "DISTINCT is not implemented for non-aggregate window functions!",
             ));
         }
-        if !arguments.orders.is_empty() && !rustdb_parser::is_orderable_window_function(window_type)? {
+        if !arguments.orders.is_empty() && !roastedduck_parser::is_orderable_window_function(window_type)? {
             return Err(Error::parser(byte_format!(
                 "ORDER BY is not supported for the window function \"{lowercase_name}\""
             )));
@@ -478,7 +478,7 @@ impl PegTransformer {
         window.distinct = arguments.distinct;
         if window.exclude_clause != WindowExcludeMode::NoOther
             && !window.arg_orders.is_empty()
-            && !rustdb_parser::is_excludable_window_function(window_type)?
+            && !roastedduck_parser::is_excludable_window_function(window_type)?
         {
             return Err(Error::parser(byte_format!(
                 "EXCLUDE is not supported for the window function \"{}\"",
@@ -1356,7 +1356,7 @@ impl PegTransformer {
             }
             let (op_string, is_any): (String, bool) = self.transform(operator_choice)?;
             // The comparison the operator stands for (INVALID for other operators).
-            let expression_type = rustdb_parser::operator_to_expression_type(&op_string);
+            let expression_type = roastedduck_parser::operator_to_expression_type(&op_string);
             let mut subquery = if let ParsedExpressionKind::Subquery(right_subquery) = right.kind {
                 if expression_type == ExpressionType::Invalid {
                     return Err(Error::parser(
@@ -1392,7 +1392,7 @@ impl PegTransformer {
                 // An ALL sublink is NOT(ANY) with the comparison inverted: `= ALL()` is
                 // `NOT(<> ANY())`.
                 if let ParsedExpressionKind::Subquery(inner) = &mut subquery.kind {
-                    inner.comparison_type = rustdb_parser::negate_comparison(inner.comparison_type)?;
+                    inner.comparison_type = roastedduck_parser::negate_comparison(inner.comparison_type)?;
                 }
                 return Ok(unary_operator(ExpressionType::OperatorNot, subquery));
             }
@@ -1768,7 +1768,9 @@ impl PegTransformer {
     pub(super) fn transform_operator(&mut self, parse_result: &ParseResult) -> Result<ExpressionType> {
         let choice = parse_result.list()?.choice(0)?;
         if choice.result_type() == ParseResultType::Operator {
-            return Ok(rustdb_parser::operator_to_expression_type(choice.operator()?));
+            return Ok(roastedduck_parser::operator_to_expression_type(
+                choice.operator()?,
+            ));
         }
         self.transform(choice)
     }
@@ -2039,7 +2041,7 @@ impl PegTransformer {
                 .map(|(column, name)| (column, name.into()))
                 .collect();
         }
-        result.exclude_list = rustdb_parser::serialized_exclude_list(exclude_set);
+        result.exclude_list = roastedduck_parser::serialized_exclude_list(exclude_set);
         result.replace_list = replace_map.into_ordered().into_iter().collect();
         Ok(ParsedExpression::new(
             ExpressionType::Star,
@@ -2745,7 +2747,7 @@ impl PegTransformer {
     pub(super) fn transform_type_literal(&mut self, parse_result: &ParseResult) -> Result<ParsedExpression> {
         let list = parse_result.list()?;
         let name: String = self.transform_child(list, 0)?;
-        let ty = match rustdb_types::builtin_type_id(&name) {
+        let ty = match roastedduck_types::builtin_type_id(&name) {
             Some(id) => LogicalType::simple(id),
             // A user type, which the binder resolves.
             None => unbound_type(simple_type_expression(&name, Vec::new()))?,

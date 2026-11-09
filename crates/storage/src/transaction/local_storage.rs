@@ -10,8 +10,8 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rustdb_common::Result;
-use rustdb_types::DataChunk;
+use roastedduck_common::Result;
+use roastedduck_types::DataChunk;
 
 use super::{Transaction, TransactionData};
 use crate::MAX_ROW_ID;
@@ -380,7 +380,7 @@ impl LocalTableStorage {
         let mut filters = ScanFilterInfo::default();
         let mut state = CollectionScanState::default();
         collection.initialize_scan(&mut state, &column_ids, &mut filters)?;
-        let mut chunk = DataChunk::with_types(&types, rustdb_common::STANDARD_VECTOR_SIZE);
+        let mut chunk = DataChunk::with_types(&types, roastedduck_common::STANDARD_VECTOR_SIZE);
         while RowGroupCollection::scan(
             ScanOptions::new(transaction),
             &mut state,

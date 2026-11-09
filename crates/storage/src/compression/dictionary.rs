@@ -9,8 +9,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{DictionaryInfo, LogicalType, SelectionVector, StringT, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{DictionaryInfo, LogicalType, SelectionVector, StringT, Vector};
 
 use super::bitpacking_primitives::{
     GROUP_SIZE, minimum_bit_width_unsigned, pack_buffer_u64, required_size, round_up_to_group,

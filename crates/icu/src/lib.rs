@@ -23,9 +23,9 @@ mod icu_table_range;
 mod icu_timebucket;
 mod icu_timezone;
 
-use rustdb_common::Result;
-use rustdb_function::cast::CastFunctionSet;
-use rustdb_function::{ExtensionOption, ScalarFunctionSet, TableFunctionSet};
+use roastedduck_common::Result;
+use roastedduck_function::cast::CastFunctionSet;
+use roastedduck_function::{ExtensionOption, ScalarFunctionSet, TableFunctionSet};
 
 /// The extension's name (`IcuExtension::Name`).
 pub const EXTENSION_NAME: &str = "icu";
@@ -80,7 +80,7 @@ impl IcuExtension {
 
     /// The collations, by name, with the function computing a string's collation key
     /// (`RegisterCollation`).
-    pub fn collations() -> Vec<(String, rustdb_function::ScalarFunction)> {
+    pub fn collations() -> Vec<(String, roastedduck_function::ScalarFunction)> {
         icu_collation::collations()
     }
 

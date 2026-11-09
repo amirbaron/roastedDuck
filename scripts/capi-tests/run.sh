@@ -3,14 +3,14 @@
 # one executable per test file, printing the Catch totals of each.
 #
 # Usage: scripts/capi-tests/run.sh [--lib rust|cpp] [--no-build] [test_file.cpp...]
-#   --lib rust   link rustdb's target/release/libduckdb.dylib (default; built first)
+#   --lib rust   link roastedduck's target/release/libduckdb.dylib (default; built first)
 #   --lib cpp    link the reference C++ library, to check the harness itself
 #   --no-build   skip `cargo build` (rust only)
 # Extra Catch arguments go after `--` (e.g. `-- "Test pending statements in C API"`).
 # Env: REF (DuckDB 1.5.6 source root), CXX.
-# RUSTDB_CAPI_LIBRARY_DIR selects an already-signed immutable library directory
-# (requires --no-build); RUSTDB_CAPI_TEST_BIN_DIR preserves a separate run's binaries/logs.
-# RUSTDB_CAPI_TEST_OUTPUT_DIR relocates all harness objects/sources to external storage.
+# ROASTEDDUCK_CAPI_LIBRARY_DIR selects an already-signed immutable library directory
+# (requires --no-build); ROASTEDDUCK_CAPI_TEST_BIN_DIR preserves a separate run's binaries/logs.
+# ROASTEDDUCK_CAPI_TEST_OUTPUT_DIR relocates all harness objects/sources to external storage.
 #
 # The tests may only reach the engine through duckdb.h. The C++ helpers they include
 # (test_helpers.hpp, exception.hpp, arrow.hpp) are replaced by the header-only stand-ins in
@@ -84,10 +84,10 @@ EXCLUDED=(
   "SECTION:test scan"
 )
 
-SELECTED_LIBRARY_DIR="${RUSTDB_CAPI_LIBRARY_DIR:-}"
+SELECTED_LIBRARY_DIR="${ROASTEDDUCK_CAPI_LIBRARY_DIR:-}"
 if [[ -n "$SELECTED_LIBRARY_DIR" ]]; then
   if [[ $BUILD -ne 0 ]]; then
-    echo "RUSTDB_CAPI_LIBRARY_DIR requires --no-build" >&2
+    echo "ROASTEDDUCK_CAPI_LIBRARY_DIR requires --no-build" >&2
     exit 2
   fi
   LIBDIR="$(cd "$SELECTED_LIBRARY_DIR" && pwd -P)"
@@ -98,16 +98,16 @@ if [[ -n "$SELECTED_LIBRARY_DIR" ]]; then
 elif [[ "$LIB" == rust ]]; then
   LIBDIR="$ROOT/target/release"
   if [[ $BUILD -eq 1 ]]; then
-    cargo build --release -p rustdb-capi --manifest-path "$ROOT/Cargo.toml"
+    cargo build --release -p roastedduck-capi --manifest-path "$ROOT/Cargo.toml"
   fi
   "$ROOT/scripts/sign.sh" "$LIBDIR/$LIBRARY_NAME"
 else
   LIBDIR="$REF/build/release/src"
 fi
 
-OUT="${RUSTDB_CAPI_TEST_OUTPUT_DIR:-$ROOT/target/capi-tests}"
+OUT="${ROASTEDDUCK_CAPI_TEST_OUTPUT_DIR:-$ROOT/target/capi-tests}"
 OBJ="$OUT/obj"
-BIN="${RUSTDB_CAPI_TEST_BIN_DIR:-$OUT/$LIB}"
+BIN="${ROASTEDDUCK_CAPI_TEST_BIN_DIR:-$OUT/$LIB}"
 INC="$OUT/include"
 mkdir -p "$OBJ" "$BIN" "$INC"
 # capi_tester.hpp includes "test_helpers.hpp"; a copy outside test/include makes that
@@ -158,7 +158,7 @@ for file in "${FILES[@]}"; do
     install_name_tool -change "$install_name" "$LIBDIR/libduckdb.dylib" "$BIN/$name"
   fi
   "$ROOT/scripts/sign.sh" "$BIN/$name"
-  if [[ "$SYSTEM" == Darwin && "${RUSTDB_TEST_ADHOC_SIGNING:-0}" == 1 ]]; then
+  if [[ "$SYSTEM" == Darwin && "${ROASTEDDUCK_TEST_ADHOC_SIGNING:-0}" == 1 ]]; then
     codesign --force --sign - --timestamp=none "$BIN/$name"
     codesign --verify --strict "$BIN/$name"
   fi

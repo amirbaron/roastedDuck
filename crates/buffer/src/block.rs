@@ -15,7 +15,7 @@ use std::sync::atomic::{
 };
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use crate::MAXIMUM_BLOCK;
 use crate::block_manager::BlockManager;

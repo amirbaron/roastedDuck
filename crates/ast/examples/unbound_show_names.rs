@@ -1,9 +1,9 @@
 //! Unbound-type and SHOW metadata against the frozen C++ serializer and SQL renderer.
-use rustdb_ast::{ShowRef, ShowType, TableRef, TableRefKind, logical_type_to_string};
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_serde::binary::BinarySerializer;
-use rustdb_serde::{SerializationCompatibility, SerializationOptions, Serialize, Serializer};
-use rustdb_types::{
+use roastedduck_ast::{ShowRef, ShowType, TableRef, TableRefKind, logical_type_to_string};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_serde::binary::BinarySerializer;
+use roastedduck_serde::{SerializationCompatibility, SerializationOptions, Serialize, Serializer};
+use roastedduck_types::{
     LogicalType, LogicalTypeId, TypeInfo, TypeParameter, TypeParameterValue, UnboundTypeInfo, Value,
 };
 use std::io::{self, BufRead};
@@ -53,13 +53,13 @@ fn outcome(mode: &str, name: ByteString, latest: bool) -> Result<(Vec<u8>, ByteS
             _ => return Err(Error::invalid_input("unknown SHOW mode")),
         }
         let table = Box::new(TableRef {
-            external_dependency: rustdb_ast::ExternalDependency::default(),
+            external_dependency: roastedduck_ast::ExternalDependency::default(),
             alias: ByteString::new(),
             sample: None,
             query_location: None,
             kind: TableRefKind::Show(Box::new(show)),
         });
-        return Ok((wire(&table, latest)?, rustdb_common::byte_format!("{table}")));
+        return Ok((wire(&table, latest)?, roastedduck_common::byte_format!("{table}")));
     }
     let mut info = UnboundTypeInfo {
         catalog: ByteString::new(),

@@ -4,10 +4,10 @@
 
 use std::sync::Arc;
 
-use rustdb_ast::{QueryNode, ShowRef, ShowType, SqlStatementKind, SubqueryRef};
-use rustdb_catalog::EntryKind;
-use rustdb_common::{ByteString, Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{DataChunk, LogicalType, Value};
+use roastedduck_ast::{QueryNode, ShowRef, ShowType, SqlStatementKind, SubqueryRef};
+use roastedduck_catalog::EntryKind;
+use roastedduck_common::{ByteString, Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::{DataChunk, LogicalType, Value};
 
 use super::bind_subquery_ref;
 use crate::ColumnBinding;
@@ -20,7 +20,7 @@ use crate::operator::{LogicalKind, LogicalOperator};
 fn find_base_table_column(
     op: &LogicalOperator,
     binding: ColumnBinding,
-) -> Option<(Arc<rustdb_catalog::CatalogEntry>, usize)> {
+) -> Option<(Arc<roastedduck_catalog::CatalogEntry>, usize)> {
     match &op.kind {
         LogicalKind::Projection { table_index } => {
             if binding.table_index != *table_index {
@@ -61,7 +61,7 @@ fn find_base_table_column(
 
 /// `PragmaTableInfo::GetColumnInfo` in the form of `pragma_show`: name, type, nullability,
 /// key (`PRI` / `UNI`), default and extra of a table column.
-fn table_column_info(table: &rustdb_catalog::TableEntry, column: usize) -> Result<[Value; 6]> {
+fn table_column_info(table: &roastedduck_catalog::TableEntry, column: usize) -> Result<[Value; 6]> {
     let definition = table
         .columns
         .get(column)
@@ -69,7 +69,7 @@ fn table_column_info(table: &rustdb_catalog::TableEntry, column: usize) -> Resul
     // `ColumnConstraintInfo`: the UNIQUE / PRIMARY KEY constraints on the column.
     let (mut pk, mut unique) = (false, false);
     for constraint in &table.constraints {
-        let rustdb_ast::Constraint::Unique(constraint) = constraint else {
+        let roastedduck_ast::Constraint::Unique(constraint) = constraint else {
             continue;
         };
         let covers = if constraint.index.0 == u64::MAX {
@@ -280,7 +280,7 @@ fn bind_show_table(scope: &mut BindScope<'_>, show: &ShowRef) -> Result<BoundSta
                     .and_then(|entry| entry.schema(&scope.context.transaction, &schema))
                     .is_some();
                 if !exists {
-                    return Err(Error::catalog(rustdb_common::byte_format!(
+                    return Err(Error::catalog(roastedduck_common::byte_format!(
                         "SHOW TABLES FROM: No catalog + schema named \"{catalog}.{schema}\" found."
                     )));
                 }
@@ -291,7 +291,7 @@ fn bind_show_table(scope: &mut BindScope<'_>, show: &ShowRef) -> Result<BoundSta
         b"__show_tables_expanded" => SHOW_TABLES_EXPANDED.to_owned(),
         _ => format!("SELECT * FROM pragma_show({});", show_filter_literal(&show.table_name)?),
     };
-    let mut statements = rustdb_parser::parse(&sql)?;
+    let mut statements = roastedduck_parser::parse(&sql)?;
     let Some(statement) = statements.pop() else {
         return Err(Error::internal("SHOW query parsed to nothing"));
     };
@@ -307,18 +307,21 @@ fn bind_show_table(scope: &mut BindScope<'_>, show: &ShowRef) -> Result<BoundSta
 
 /// `SummarizeWrapUnnest`: `unnest(list_value(children...)) AS alias`.
 fn summarize_unnest(
-    children: Vec<rustdb_ast::ParsedExpression>,
+    children: Vec<roastedduck_ast::ParsedExpression>,
     alias: &str,
-) -> rustdb_ast::ParsedExpression {
+) -> roastedduck_ast::ParsedExpression {
     use crate::expression_binder::function_call;
     let list = function_call("list_value", children);
     function_call("unnest", vec![list]).with_alias(alias)
 }
 
-fn summarize_cast(child: rustdb_ast::ParsedExpression, ty: LogicalType) -> rustdb_ast::ParsedExpression {
-    rustdb_ast::ParsedExpression::new(
-        rustdb_ast::ExpressionType::OperatorCast,
-        rustdb_ast::ParsedExpressionKind::Cast(rustdb_ast::CastExpression {
+fn summarize_cast(
+    child: roastedduck_ast::ParsedExpression,
+    ty: LogicalType,
+) -> roastedduck_ast::ParsedExpression {
+    roastedduck_ast::ParsedExpression::new(
+        roastedduck_ast::ExpressionType::OperatorCast,
+        roastedduck_ast::ParsedExpressionKind::Cast(roastedduck_ast::CastExpression {
             child: Box::new(child),
             cast_type: ty,
             try_cast: false,
@@ -331,10 +334,10 @@ fn summarize_aggregate(
     aggregate: &str,
     column: &[u8],
     modifier: Option<Value>,
-) -> rustdb_ast::ParsedExpression {
-    let mut children = vec![rustdb_ast::ParsedExpression::column_ref([column])];
+) -> roastedduck_ast::ParsedExpression {
+    let mut children = vec![roastedduck_ast::ParsedExpression::column_ref([column])];
     if let Some(modifier) = modifier {
-        children.push(rustdb_ast::ParsedExpression::constant(modifier));
+        children.push(roastedduck_ast::ParsedExpression::constant(modifier));
     }
     summarize_cast(
         crate::expression_binder::function_call(aggregate, children),
@@ -342,15 +345,15 @@ fn summarize_aggregate(
     )
 }
 
-fn summarize_count_star() -> rustdb_ast::ParsedExpression {
+fn summarize_count_star() -> roastedduck_ast::ParsedExpression {
     crate::expression_binder::function_call("count_star", Vec::new())
 }
 
 /// `SummarizeCreateNullPercentage`: `CAST(CASE WHEN count_star() > 0 THEN (1 - count(x) /
 /// count_star()) * 100 ELSE NULL END AS DECIMAL(9, 2))` on DOUBLEs.
-fn summarize_null_percentage(column: &[u8]) -> rustdb_ast::ParsedExpression {
+fn summarize_null_percentage(column: &[u8]) -> roastedduck_ast::ParsedExpression {
     use crate::expression_binder::function_call;
-    use rustdb_ast::{ExpressionType, ParsedExpression, ParsedExpressionKind};
+    use roastedduck_ast::{ExpressionType, ParsedExpression, ParsedExpressionKind};
     let count_star = summarize_cast(summarize_count_star(), LogicalType::DOUBLE);
     let count = summarize_cast(summarize_aggregate("count", column, None), LogicalType::DOUBLE);
     let ratio = function_call("/", vec![count, count_star]);
@@ -361,15 +364,15 @@ fn summarize_null_percentage(column: &[u8]) -> rustdb_ast::ParsedExpression {
     );
     let comparison = ParsedExpression::new(
         ExpressionType::CompareGreaterthan,
-        ParsedExpressionKind::Comparison(rustdb_ast::ComparisonExpression {
+        ParsedExpressionKind::Comparison(roastedduck_ast::ComparisonExpression {
             left: Box::new(summarize_count_star()),
             right: Box::new(ParsedExpression::constant(Value::bigint(0))),
         }),
     );
     let case = ParsedExpression::new(
         ExpressionType::CaseExpr,
-        ParsedExpressionKind::Case(rustdb_ast::CaseExpression {
-            case_checks: vec![rustdb_ast::CaseCheck {
+        ParsedExpressionKind::Case(roastedduck_ast::CaseExpression {
+            case_checks: vec![roastedduck_ast::CaseCheck {
                 when_expr: Box::new(comparison),
                 then_expr: Box::new(percentage),
             }],
@@ -381,7 +384,7 @@ fn summarize_null_percentage(column: &[u8]) -> rustdb_ast::ParsedExpression {
 
 /// `LogicalType::IsTemporal`.
 fn is_temporal(ty: &LogicalType) -> bool {
-    use rustdb_types::LogicalTypeId as L;
+    use roastedduck_types::LogicalTypeId as L;
     matches!(
         ty.id(),
         L::Date
@@ -400,7 +403,7 @@ fn is_temporal(ty: &LogicalType) -> bool {
 /// columns, then summarized by one aggregate query whose lists are unnested into a row
 /// per column.
 fn bind_summarize(scope: &mut BindScope<'_>, show: &ShowRef) -> Result<BoundStatement> {
-    use rustdb_ast::{ParsedExpression, TableRef, TableRefKind};
+    use roastedduck_ast::{ParsedExpression, TableRef, TableRefKind};
     let query = show
         .query
         .as_deref()
@@ -470,37 +473,37 @@ fn bind_summarize(scope: &mut BindScope<'_>, show: &ShowRef) -> Result<BoundStat
         .map(|(children, alias)| summarize_unnest(children, alias))
         .collect();
     let from_table = TableRef {
-        external_dependency: rustdb_ast::ExternalDependency::default(),
+        external_dependency: roastedduck_ast::ExternalDependency::default(),
         alias: "summarize_tbl".into(),
         sample: None,
         query_location: None,
         kind: TableRefKind::Subquery(SubqueryRef {
-            subquery: Box::new(rustdb_ast::SelectStatement {
+            subquery: Box::new(roastedduck_ast::SelectStatement {
                 node: Box::new(query),
-                named_param_map: rustdb_common::CaseInsensitiveMap::default(),
+                named_param_map: roastedduck_common::CaseInsensitiveMap::default(),
             }),
             column_name_alias: names,
         }),
     };
     let node = QueryNode {
         modifiers: Vec::new(),
-        cte_map: rustdb_ast::CommonTableExpressionMap::default(),
-        kind: rustdb_ast::QueryNodeKind::Select(Box::new(rustdb_ast::SelectNode {
+        cte_map: roastedduck_ast::CommonTableExpressionMap::default(),
+        kind: roastedduck_ast::QueryNodeKind::Select(Box::new(roastedduck_ast::SelectNode {
             select_list,
             from_table: Box::new(from_table),
             where_clause: None,
             group_expressions: Vec::new(),
             group_sets: Vec::new(),
-            aggregate_handling: rustdb_ast::AggregateHandling::StandardHandling,
+            aggregate_handling: roastedduck_ast::AggregateHandling::StandardHandling,
             having: None,
             sample: None,
             qualify: None,
         })),
     };
     let mut subquery = SubqueryRef {
-        subquery: Box::new(rustdb_ast::SelectStatement {
+        subquery: Box::new(roastedduck_ast::SelectStatement {
             node: Box::new(node),
-            named_param_map: rustdb_common::CaseInsensitiveMap::default(),
+            named_param_map: roastedduck_common::CaseInsensitiveMap::default(),
         }),
         column_name_alias: Vec::new(),
     };

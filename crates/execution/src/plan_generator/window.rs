@@ -8,9 +8,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_planner::{Expression, ExpressionKind};
-use rustdb_types::LogicalType;
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::{Expression, ExpressionKind};
+use roastedduck_types::LogicalType;
 
 use crate::operator::PhysicalRef;
 use crate::operators::{PhysicalProjection, PhysicalStreamingWindow, PhysicalWindow};
@@ -40,7 +40,7 @@ pub(crate) fn source_count(op: &PhysicalRef) -> usize {
 }
 
 /// The window definition of a window expression.
-fn window_of(expression: &Expression) -> Result<&rustdb_planner::expression::BoundWindowExpression> {
+fn window_of(expression: &Expression) -> Result<&roastedduck_planner::expression::BoundWindowExpression> {
     match &expression.kind {
         ExpressionKind::Window(window) => Ok(window),
         _ => Err(Error::internal(format!("{expression} is not a window function"))),
@@ -134,7 +134,7 @@ pub(crate) fn plan_window(
     // Build the window operators.
     let mut plan = child;
     let mut operator_types: Vec<LogicalType> = types[..input_width].to_vec();
-    let placeholder = || Expression::constant(rustdb_types::Value::default());
+    let placeholder = || Expression::constant(roastedduck_types::Value::default());
     for (index, matching) in window_expressions.iter().enumerate() {
         let mut select_list = Vec::with_capacity(matching.len());
         for &expr_idx in matching {
@@ -175,7 +175,7 @@ pub(crate) fn plan_window(
 /// numbers duplicate rows (DuckDB's `CreatePartitionedRowNumExpression`, used by
 /// `EXCEPT ALL` / `INTERSECT ALL`).
 pub(crate) fn partitioned_row_number(
-    client: Option<&rustdb_planner::ClientContext>,
+    client: Option<&roastedduck_planner::ClientContext>,
     child: PhysicalRef,
 ) -> Result<PhysicalRef> {
     let input_types = child.types().to_vec();
@@ -185,9 +185,9 @@ pub(crate) fn partitioned_row_number(
         .map(|(index, ty)| super::collated_reference(client, ty, index))
         .collect::<Result<_>>()?;
     let row_number = Expression::new(
-        rustdb_planner::ExpressionType::WindowRowNumber,
+        roastedduck_planner::ExpressionType::WindowRowNumber,
         LogicalType::BIGINT,
-        ExpressionKind::Window(Box::new(rustdb_planner::expression::BoundWindowExpression {
+        ExpressionKind::Window(Box::new(roastedduck_planner::expression::BoundWindowExpression {
             aggregate: None,
             bind_info: None,
             children: Vec::new(),
@@ -196,9 +196,9 @@ pub(crate) fn partitioned_row_number(
             filter_expr: None,
             ignore_nulls: false,
             distinct: false,
-            start: rustdb_ast::WindowBoundary::UnboundedPreceding,
-            end: rustdb_ast::WindowBoundary::UnboundedFollowing,
-            exclude_clause: rustdb_ast::WindowExcludeMode::NoOther,
+            start: roastedduck_ast::WindowBoundary::UnboundedPreceding,
+            end: roastedduck_ast::WindowBoundary::UnboundedFollowing,
+            exclude_clause: roastedduck_ast::WindowExcludeMode::NoOther,
             start_expr: None,
             end_expr: None,
             offset_expr: None,

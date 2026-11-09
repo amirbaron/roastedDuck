@@ -28,8 +28,8 @@ mod predicate_factoring;
 mod regex;
 mod timestamp_comparison;
 
-use rustdb_common::Result;
-use rustdb_planner::Expression;
+use roastedduck_common::Result;
+use roastedduck_planner::Expression;
 
 use crate::expression_rewriter::RuleContext;
 

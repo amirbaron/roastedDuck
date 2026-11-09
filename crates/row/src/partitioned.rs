@@ -7,9 +7,9 @@
 
 use std::sync::Arc;
 
-use rustdb_buffer::{BufferManager, MemoryTag};
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{DataChunk, PhysicalType};
+use roastedduck_buffer::{BufferManager, MemoryTag};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::{DataChunk, PhysicalType};
 
 use crate::collection::{ChunkIterator, TupleDataCollection};
 use crate::format::ChunkFormat;
@@ -81,7 +81,7 @@ impl PartitionedTupleData {
         if layout
             .types()
             .get(hash_column)
-            .map(rustdb_types::LogicalType::physical_type)
+            .map(roastedduck_types::LogicalType::physical_type)
             != Some(PhysicalType::UInt64)
         {
             return Err(Error::internal(

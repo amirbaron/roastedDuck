@@ -6,13 +6,15 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::ValueCast;
-use rustdb_function::{
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_function::{
     FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
     TableScanState,
 };
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, PhysicalType, SelectionVector, Value, Vector};
+use roastedduck_types::{
+    DataChunk, LogicalType, LogicalTypeId, PhysicalType, SelectionVector, Value, Vector,
+};
 
 use super::test_all_types::test_type_limits;
 
@@ -220,9 +222,9 @@ fn bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOutput> {
     let names = (0..types.len())
         .map(|index| {
             if index == 0 {
-                rustdb_common::ByteString::from("test_vector")
+                roastedduck_common::ByteString::from("test_vector")
             } else {
-                rustdb_common::byte_format!("test_vector{}", index + 1)
+                roastedduck_common::byte_format!("test_vector{}", index + 1)
             }
         })
         .collect();

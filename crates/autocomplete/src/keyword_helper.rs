@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::peg_parser::{PegParser, PegTokenType};
 

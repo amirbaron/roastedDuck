@@ -6,7 +6,7 @@
 //! differs there (aggregates in `SELECT`, aliases in `WHERE`, groups in `HAVING`, ...).
 //!
 //! Binding works in place like DuckDB's: each successfully bound sub-tree of the parse
-//! tree is replaced by a [`rustdb_ast::BoundExpression`] node. When a sub-tree fails to
+//! tree is replaced by a [`roastedduck_ast::BoundExpression`] node. When a sub-tree fails to
 //! bind, the error is returned *softly* ([`BindResult::Unbound`]) so that the binders of
 //! enclosing queries can retry it as a correlated reference, keeping what already bound.
 //! Hard errors (DuckDB's thrown exceptions) are `Err`.
@@ -21,13 +21,13 @@ mod order_binder;
 mod qualify;
 mod simple_binders;
 
-use rustdb_ast::{
+use roastedduck_ast::{
     BoundExpression, ExpressionClass, ExpressionType, FunctionExpression, OperatorExpression,
     ParsedExpression, ParsedExpressionKind,
 };
-use rustdb_common::string_util::top_n_strings;
-use rustdb_common::{ByteString, Error, ErrorKind, Result, byte_format};
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_common::string_util::top_n_strings;
+use roastedduck_common::{ByteString, Error, ErrorKind, Result, byte_format};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::binder::{Binder, Binding, Scope};
 use crate::expression::Expression;
@@ -135,7 +135,7 @@ impl BindError {
             if seen.contains(candidate) {
                 continue;
             }
-            let score = rustdb_common::string_util::similarity_rating(column, &name);
+            let score = roastedduck_common::string_util::similarity_rating(column, &name);
             seen.push(candidate.clone());
             scores.push((candidate.clone(), score));
         }
@@ -275,7 +275,9 @@ pub fn expression_return_type(expression: &Expression) -> LogicalType {
 /// The collation of a VARCHAR type, if any.
 pub fn collation(ty: &LogicalType) -> Option<&[u8]> {
     match ty.info() {
-        Some(rustdb_types::TypeInfo::String(info)) if !info.collation.is_empty() => Some(&info.collation),
+        Some(roastedduck_types::TypeInfo::String(info)) if !info.collation.is_empty() => {
+            Some(&info.collation)
+        }
         _ => None,
     }
 }
@@ -388,7 +390,7 @@ pub fn function_call(name: &str, children: Vec<ParsedExpression>) -> ParsedExpre
             schema: String::new().into(),
             children,
             filter: None,
-            order_bys: rustdb_ast::OrderModifier { orders: Vec::new() },
+            order_bys: roastedduck_ast::OrderModifier { orders: Vec::new() },
             distinct: false,
             is_operator: false,
             export_state: false,
@@ -450,7 +452,7 @@ pub trait ExpressionBinder: ColumnQualifier {
     fn bind_aggregate(
         &mut self,
         expr: &mut ParsedExpression,
-        _functions: &rustdb_function::AggregateFunctionSet,
+        _functions: &roastedduck_function::AggregateFunctionSet,
         depth: u64,
     ) -> Result<BindResult> {
         let message = self.unsupported_aggregate_message();
@@ -479,7 +481,7 @@ pub trait ExpressionBinder: ColumnQualifier {
         ))
     }
 
-    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+    fn unsupported_aggregate_message(&self) -> roastedduck_common::ByteString {
         "Aggregate functions are not supported here".into()
     }
 

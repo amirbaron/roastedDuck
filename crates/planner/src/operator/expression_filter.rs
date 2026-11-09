@@ -2,11 +2,11 @@
 //! `ExpressionFilter`). The planner stores the predicate; the physical planner swaps in
 //! an implementation that evaluates it.
 
-use rustdb_common::{Error, Result};
-use rustdb_storage::statistics::{BaseStatistics, FilterPropagateResult, GeometryStats};
-use rustdb_storage::table_filter::ExpressionFilter;
-use rustdb_types::geometry::{self, GeometryExtent};
-use rustdb_types::{LogicalType, LogicalTypeId, Value, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_storage::statistics::{BaseStatistics, FilterPropagateResult, GeometryStats};
+use roastedduck_storage::table_filter::ExpressionFilter;
+use roastedduck_types::geometry::{self, GeometryExtent};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value, Vector};
 
 use crate::expression::{Expression, ExpressionKind};
 
@@ -143,16 +143,16 @@ impl ExpressionFilter for ExpressionTableFilter {
         FilterPropagateResult::NoPruningPossible
     }
 
-    fn to_sql(&self, column_name: &[u8]) -> rustdb_common::ByteString {
+    fn to_sql(&self, column_name: &[u8]) -> roastedduck_common::ByteString {
         self.to_expression(column_name).to_bytes()
     }
 
     /// `ExpressionFilter::Serialize`.
-    fn serialize(&self, serializer: &mut dyn rustdb_serde::Serializer) -> Result<()> {
+    fn serialize(&self, serializer: &mut dyn roastedduck_serde::Serializer) -> Result<()> {
         serializer.write_property(
             100,
             "filter_type",
-            &rustdb_storage::TableFilterType::ExpressionFilter,
+            &roastedduck_storage::TableFilterType::ExpressionFilter,
         )?;
         serializer.write_property_with_default(200, "expr", &Some(&self.expression))
     }

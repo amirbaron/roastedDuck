@@ -1,6 +1,6 @@
 //! C++ byte-name lookup and candidate-suggestion comparisons.
-use rustdb_common::string_util::{candidates_message_bytes, similarity_rating, top_n_jaro_winkler};
-use rustdb_common::{ByteString, CaseInsensitiveSet, Error, Result};
+use roastedduck_common::string_util::{candidates_message_bytes, similarity_rating, top_n_jaro_winkler};
+use roastedduck_common::{ByteString, CaseInsensitiveSet, Error, Result};
 
 fn decode(hex: &str) -> Result<Vec<u8>> {
     if !hex.len().is_multiple_of(2) {

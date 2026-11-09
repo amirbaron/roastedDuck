@@ -1,7 +1,7 @@
 //! What rendering needs of the connection (the parts of DuckDB's `ClientContext` the
 //! renderers use): casting result vectors to text and noticing interrupts.
 
-use rustdb::{Connection, LogicalType, Result, Vector};
+use roastedduck::{Connection, LogicalType, Result, Vector};
 
 /// The connection a result renders with.
 pub trait RenderContext {

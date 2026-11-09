@@ -2,7 +2,7 @@
 use aes::{Aes128, Aes192, Aes256};
 use aes_gcm::aead::consts::U12;
 use aes_gcm::{AeadInOut, AesGcm, KeyInit};
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 /// Encrypt in place, authenticating `aad`, and return the detached 16-byte tag.
 pub fn encrypt_gcm(key: &[u8], nonce: &[u8; 12], aad: &[u8], data: &mut [u8]) -> Result<[u8; 16]> {

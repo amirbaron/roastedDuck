@@ -4,9 +4,9 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Vector};
 
 use crate::scalar::executor::{Str, addressable, binary, unary};
 use crate::scalar::string::utf8::{char_count, grapheme_count};
@@ -28,7 +28,7 @@ fn string_length_function(name: &str, argument: LogicalType, length: fn(&[u8]) -
 }
 
 fn bit_string_length(bits: &[u8]) -> i64 {
-    rustdb_types::bit::bit_length(bits) as i64
+    roastedduck_types::bit::bit_length(bits) as i64
 }
 
 /// `length(list)`: the number of elements.
@@ -222,7 +222,7 @@ pub fn octet_length_functions() -> ScalarFunctionSet {
         |input| input.len() as i64,
     ));
     set.add(string_length_function("octet_length", LogicalType::BIT, |bits| {
-        rustdb_types::bit::octet_length(bits) as i64
+        roastedduck_types::bit::octet_length(bits) as i64
     }));
     set
 }

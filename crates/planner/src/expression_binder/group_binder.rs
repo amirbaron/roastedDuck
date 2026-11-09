@@ -3,9 +3,9 @@
 
 use std::collections::HashSet;
 
-use rustdb_ast::{ParsedExpression, ParsedExpressionKind};
-use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
-use rustdb_types::Value;
+use roastedduck_ast::{ParsedExpression, ParsedExpressionKind};
+use roastedduck_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
+use roastedduck_types::Value;
 
 use super::base::{BinderBase, expression_binder_accessors, expression_binder_base};
 use super::base_select_binder::SelectBindState;
@@ -23,7 +23,7 @@ pub struct GroupBinder<'a> {
     select_list: &'a mut Vec<ParsedExpression>,
     bind_state: &'a SelectBindState,
     /// Select-list aliases used as groups, and their group indexes.
-    group_alias_map: &'a mut CaseInsensitiveMap<usize, rustdb_common::ByteString>,
+    group_alias_map: &'a mut CaseInsensitiveMap<usize, roastedduck_common::ByteString>,
     /// The index of the group being bound.
     pub bind_index: usize,
     /// The group before binding, for matching it in other clauses.
@@ -37,7 +37,7 @@ impl<'a> GroupBinder<'a> {
         outer: Option<&'a mut dyn Scope>,
         select_list: &'a mut Vec<ParsedExpression>,
         bind_state: &'a SelectBindState,
-        group_alias_map: &'a mut CaseInsensitiveMap<usize, rustdb_common::ByteString>,
+        group_alias_map: &'a mut CaseInsensitiveMap<usize, roastedduck_common::ByteString>,
     ) -> Self {
         Self {
             base: BinderBase::new(binder, outer),
@@ -57,7 +57,7 @@ impl<'a> GroupBinder<'a> {
             return Ok(Expression::constant(Value::integer(42)).into());
         }
         if entry >= self.select_list.len() {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "GROUP BY term out of range - should be between 1 and {}",
                 self.select_list.len()
             )));
@@ -121,7 +121,7 @@ impl ExpressionBinder for GroupBinder<'_> {
         }
     }
 
-    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+    fn unsupported_aggregate_message(&self) -> roastedduck_common::ByteString {
         "GROUP BY clause cannot contain aggregates!".into()
     }
 
@@ -142,7 +142,7 @@ impl ExpressionBinder for GroupBinder<'_> {
         };
         if !root_expression {
             return Ok(Some(BindResult::Unbound(
-                Error::binder(rustdb_common::byte_format!(
+                Error::binder(roastedduck_common::byte_format!(
                     "Alias with name \"{alias_name}\" exists, but aliases cannot be used as part of an expression in \
                      the GROUP BY"
                 ))

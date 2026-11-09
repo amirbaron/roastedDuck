@@ -3,17 +3,17 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use rustdb_ast::{
+use roastedduck_ast::{
     AggregateHandling, ExpressionType, OnCreateConflict, OnEntryNotFound, OrderByNode, OrderByNullType,
     OrderType, ParsedExpression, ParsedExpressionKind, SampleMethod, SampleOptions, SelectNode,
 };
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_function::cast::ValueCast;
-use rustdb_pg_parser::nodes::{
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_pg_parser::nodes::{
     Alias, GroupingSet, GroupingSetKind, List, Node, OnCreateConflict as PgOnCreateConflict, RangeVar,
     SampleOptions as PgSampleOptions, SampleSize, SortBy, SortByDir, SortByNulls,
 };
-use rustdb_types::{LogicalType, Value};
+use roastedduck_types::{LogicalType, Value};
 
 use super::star::is_empty_star;
 use super::{Transformer, cast_node, parser_error_at, required, string_list};
@@ -75,7 +75,7 @@ pub(crate) const fn transform_on_entry_not_found(missing_ok: bool) -> OnEntryNot
 
 fn check_grouping_set_max(count: usize) -> Result<()> {
     if count > MAX_GROUPING_SETS {
-        return Err(Error::parser(rustdb_common::byte_format!(
+        return Err(Error::parser(roastedduck_common::byte_format!(
             "Maximum grouping set count of {MAX_GROUPING_SETS} exceeded"
         )));
     }
@@ -174,7 +174,7 @@ impl<'a> Transformer<'a> {
     ) -> Result<()> {
         for node in order {
             let Node::SortBy(sort) = node else {
-                return Err(Error::not_implemented(rustdb_common::byte_format!(
+                return Err(Error::not_implemented(roastedduck_common::byte_format!(
                     "ORDER BY list member type {}\n",
                     super::node_tag(node).0
                 )));
@@ -239,7 +239,7 @@ impl<'a> Transformer<'a> {
         } else {
             let rows = get_value_i64(value)?;
             if rows < 0 || rows as u64 > MAX_SAMPLE_ROWS {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Sample rows {rows} out of range, must be between 0 and {MAX_SAMPLE_ROWS}"
                 )));
             }
@@ -252,7 +252,7 @@ impl<'a> Transformer<'a> {
                 b"bernoulli" => SampleMethod::BernoulliSample,
                 b"reservoir" => SampleMethod::ReservoirSample,
                 _ => {
-                    return Err(Error::parser(rustdb_common::byte_format!(
+                    return Err(Error::parser(roastedduck_common::byte_format!(
                         "Unrecognized sampling method {method}, expected system, bernoulli or reservoir"
                     )));
                 }
@@ -359,7 +359,7 @@ impl<'a> Transformer<'a> {
                 add_cube_sets(&GroupingSetT::new(), &cube_sets, result_sets, 0)?;
             }
             GroupingSetKind::Simple => {
-                return Err(Error::internal(rustdb_common::byte_format!(
+                return Err(Error::internal(roastedduck_common::byte_format!(
                     "Unsupported GROUPING SET type {}",
                     grouping_set.kind as i32
                 )));

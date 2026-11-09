@@ -1,8 +1,8 @@
 //! `date_part('year', x)` as `year(x)` (DuckDB's `DatePartSimplificationRule`).
 
-use rustdb_common::{Error, Result};
-use rustdb_planner::{Expression, ExpressionKind};
-use rustdb_types::Value;
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::{Expression, ExpressionKind};
+use roastedduck_types::Value;
 
 use super::RuleOutcome;
 use crate::expression_rewriter::RuleContext;

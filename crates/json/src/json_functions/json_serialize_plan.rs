@@ -4,15 +4,15 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_function::{
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_function::{
     BindInput, FunctionClient, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet,
 };
-use rustdb_optimizer::{Optimizer, OptimizerConfig};
-use rustdb_planner::{ClientContext, ColumnBindingResolver, Planner};
-use rustdb_serde::SerializationOptions;
-use rustdb_serde::json::{JsonOptions, JsonSerializer, JsonValue, write_json};
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Vector};
+use roastedduck_optimizer::{Optimizer, OptimizerConfig};
+use roastedduck_planner::{ClientContext, ColumnBindingResolver, Planner};
+use roastedduck_serde::SerializationOptions;
+use roastedduck_serde::json::{JsonOptions, JsonSerializer, JsonValue, write_json};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, Vector};
 
 use crate::json_executors::{ColumnBuilder, StrBuilder, StrInput, addressable, all_constant};
 use crate::json_type;
@@ -52,7 +52,7 @@ fn serialize_plan_bind(
     let mut optimize = false;
     for i in 1..input.argument_types.len() {
         if input.argument_types[i].id() == LogicalTypeId::Unknown {
-            return Err(rustdb_planner::expression_binder::parameter_not_resolved());
+            return Err(roastedduck_planner::expression_binder::parameter_not_resolved());
         }
         let Some(Some(value)) = input.constants.get(i) else {
             return Err(Error::binder("json_serialize_plan: arguments must be constant"));
@@ -60,10 +60,10 @@ fn serialize_plan_bind(
         let alias = input
             .aliases
             .get(i)
-            .map_or(b"".as_slice(), rustdb_common::ByteString::as_bytes);
+            .map_or(b"".as_slice(), roastedduck_common::ByteString::as_bytes);
         let flag = |name: &[u8]| -> Result<bool> {
             if input.argument_types[i].id() != LogicalTypeId::Boolean {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "json_serialize_plan: '{name}' argument must be a boolean"
                 )));
             }
@@ -76,7 +76,7 @@ fn serialize_plan_bind(
             b"format" => format = flag(alias)?,
             b"optimize" => optimize = flag(alias)?,
             _ => {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "json_serialize_plan: Unknown argument '{alias}'"
                 )));
             }
@@ -92,7 +92,7 @@ fn serialize_plan_bind(
 
 /// The plan of each statement of `sql` (the body of `JsonSerializePlanFunction`).
 fn serialize_plans(sql: &str, data: &SerializePlanBindData) -> Result<Vec<JsonValue>> {
-    let statements = rustdb_parser::parse(sql)?;
+    let statements = roastedduck_parser::parse(sql)?;
     let context = data
         .client
         .transaction_context()

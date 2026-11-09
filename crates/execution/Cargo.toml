@@ -1,5 +1,5 @@
 [package]
-name = "rustdb-execution"
+name = "roastedduck-execution"
 description = "Physical operators, pipelines and the vectorised execution engine."
 version.workspace = true
 edition.workspace = true
@@ -7,20 +7,20 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-rustdb-common.workspace = true
-rustdb-types.workspace = true
-rustdb-ast.workspace = true
-rustdb-function = { path = "../function" }
-rustdb-planner = { path = "../planner" }
-rustdb-optimizer = { path = "../optimizer" }
-rustdb-buffer = { path = "../buffer" }
-rustdb-row = { path = "../row" }
-rustdb-storage = { path = "../storage" }
-rustdb-catalog = { path = "../catalog" }
-rustdb-functions = { path = "../functions" }
+roastedduck-common.workspace = true
+roastedduck-types.workspace = true
+roastedduck-ast.workspace = true
+roastedduck-function = { path = "../function" }
+roastedduck-planner = { path = "../planner" }
+roastedduck-optimizer = { path = "../optimizer" }
+roastedduck-buffer = { path = "../buffer" }
+roastedduck-row = { path = "../row" }
+roastedduck-storage = { path = "../storage" }
+roastedduck-catalog = { path = "../catalog" }
+roastedduck-functions = { path = "../functions" }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-rustdb-buffer = { path = "../buffer" }
+roastedduck-buffer = { path = "../buffer" }

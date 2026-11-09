@@ -1,4 +1,4 @@
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use super::JsonValue;
 use crate::{FieldId, SerializationOptions, SerializeObject, Serializer};
@@ -259,7 +259,7 @@ impl Serializer for JsonSerializer {
     }
 
     fn write_data(&mut self, value: &[u8]) {
-        let text = rustdb_common::blob::to_string(value);
+        let text = roastedduck_common::blob::to_string(value);
         self.push_value(JsonValue::Str(text));
     }
 }

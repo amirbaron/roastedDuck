@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::format::{self, NestedQuoting};
 use crate::{
@@ -229,7 +229,7 @@ impl Value {
     /// value-construction boundary. Raw vector/string storage uses [`Value::bytes`].
     pub fn try_varchar(value: &[u8]) -> Result<Self> {
         std::str::from_utf8(value)
-            .map_err(|_| rustdb_common::utf8::invalid_unicode_error(value, "value construction"))?;
+            .map_err(|_| roastedduck_common::utf8::invalid_unicode_error(value, "value construction"))?;
         Ok(Self::bytes(LogicalType::VARCHAR, value))
     }
 
@@ -297,7 +297,7 @@ impl Value {
     }
 
     /// A STRUCT whose type is derived from its named fields.
-    pub fn struct_value(fields: Vec<(rustdb_common::ByteString, Value)>) -> Self {
+    pub fn struct_value(fields: Vec<(roastedduck_common::ByteString, Value)>) -> Self {
         let ty = LogicalType::struct_type(
             fields
                 .iter()
@@ -496,7 +496,7 @@ impl Value {
                 if ty.id() == LogicalTypeId::Type {
                     // TYPE values hold their serialized type (`Value::TYPE(string_t)`).
                     if let Ok(inner) =
-                        rustdb_serde::binary::BinaryDeserializer::deserialize::<LogicalType>(bytes)
+                        roastedduck_serde::binary::BinaryDeserializer::deserialize::<LogicalType>(bytes)
                     {
                         return Self::type_value(inner);
                     }
@@ -547,11 +547,11 @@ impl Value {
             }
             Payload::Type(ty) => {
                 // `Value::TYPE`: the type in DuckDB's binary serialization.
-                let bytes = rustdb_serde::binary::BinarySerializer::serialize(
+                let bytes = roastedduck_serde::binary::BinarySerializer::serialize(
                     ty,
-                    rustdb_serde::SerializationOptions {
-                        compatibility: rustdb_serde::SerializationCompatibility::latest(),
-                        ..rustdb_serde::SerializationOptions::default()
+                    roastedduck_serde::SerializationOptions {
+                        compatibility: roastedduck_serde::SerializationCompatibility::latest(),
+                        ..roastedduck_serde::SerializationOptions::default()
                     },
                 )
                 .map_err(|error| Error::internal(format!("serializing a TYPE value: {error}")))?;
@@ -573,7 +573,7 @@ impl Value {
     }
 
     /// Native bytes of DuckDB's `Value::ToString`, including byte-owned nested names.
-    pub fn to_varchar_bytes(&self) -> Result<rustdb_common::ByteString> {
+    pub fn to_varchar_bytes(&self) -> Result<roastedduck_common::ByteString> {
         if self.is_null() {
             return Ok("NULL".into());
         }
@@ -584,7 +584,7 @@ impl Value {
         // original value, including raw bytes already stored by native code.
         if self.ty.id() != LogicalTypeId::Varchar {
             std::str::from_utf8(&out)
-                .map_err(|_| rustdb_common::utf8::invalid_unicode_error(&out, "value construction"))?;
+                .map_err(|_| roastedduck_common::utf8::invalid_unicode_error(&out, "value construction"))?;
         }
         Ok(out.into())
     }
@@ -603,7 +603,7 @@ impl Value {
                 let text = usize::try_from(index)
                     .ok()
                     .and_then(|index| self.ty.enum_values()?.get(index));
-                out.extend_from_slice(text.map_or(b"".as_slice(), rustdb_common::ByteString::as_bytes));
+                out.extend_from_slice(text.map_or(b"".as_slice(), roastedduck_common::ByteString::as_bytes));
             }
             (Payload::I8(v), L::TinyInt) => format::write_i64((*v).into(), out),
             (Payload::I16(v), L::SmallInt) => format::write_i64((*v).into(), out),
@@ -826,7 +826,7 @@ mod tests {
             (b"\xf4\x90\x80\x80".as_slice(), "Invalid unicode"),
         ] {
             let error = Value::try_varchar(bytes).unwrap_err();
-            assert_eq!(error.kind(), rustdb_common::ErrorKind::InvalidInput);
+            assert_eq!(error.kind(), roastedduck_common::ErrorKind::InvalidInput);
             assert_eq!(
                 error.raw_message(),
                 format!("{reason} detected in value construction")
@@ -877,8 +877,8 @@ mod tests {
         assert_eq!(row.to_varchar().unwrap(), "{'k y': 'v,w', 'b': NULL}");
         let unnamed = Value::from_children(
             LogicalType::struct_type(vec![
-                (rustdb_common::ByteString::new(), LogicalType::INTEGER),
-                (rustdb_common::ByteString::new(), LogicalType::VARCHAR),
+                (roastedduck_common::ByteString::new(), LogicalType::INTEGER),
+                (roastedduck_common::ByteString::new(), LogicalType::VARCHAR),
             ]),
             vec![Value::integer(1), Value::varchar("a b")],
         );

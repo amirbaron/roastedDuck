@@ -3,10 +3,10 @@
 //! with the parallel merge formulas of DuckDB, operation for operation (including the fused
 //! multiply-adds the reference build's compiler forms from `a * b + c` expressions).
 
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::{Binary, BinaryAggregate, Unary, UnaryAggregate};
-use rustdb_function::{AggregateFunction, AggregateFunctionSet};
-use rustdb_types::LogicalType;
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::{Binary, BinaryAggregate, Unary, UnaryAggregate};
+use roastedduck_function::{AggregateFunction, AggregateFunctionSet};
+use roastedduck_types::LogicalType;
 
 /// Count, mean and sum of squared deviations (DuckDB's `StddevState`).
 #[derive(Clone, Copy, Debug, Default)]

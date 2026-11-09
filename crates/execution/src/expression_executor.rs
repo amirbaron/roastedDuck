@@ -8,16 +8,16 @@
 //!   positions, and evaluates later conjuncts of an AND only on rows that still pass.
 //! - `CASE` and `COALESCE` evaluate each branch only on the rows routed to it.
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_function::FunctionState;
-use rustdb_function::cast::CastParameters;
-use rustdb_planner::expression::{
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_function::FunctionState;
+use roastedduck_function::cast::CastParameters;
+use roastedduck_planner::expression::{
     BoundBetweenExpression, BoundCaseExpression, BoundCastExpression, BoundFunctionExpression,
 };
-use rustdb_planner::{Expression, ExpressionEvaluator, ExpressionKind, ExpressionType};
-use rustdb_types::compare::{CompareOp, compare};
-use rustdb_types::kernels::{scatter, unary};
-use rustdb_types::{
+use roastedduck_planner::{Expression, ExpressionEvaluator, ExpressionKind, ExpressionType};
+use roastedduck_types::compare::{CompareOp, compare};
+use roastedduck_types::kernels::{scatter, unary};
+use roastedduck_types::{
     DataChunk, LogicalType, LogicalTypeId, Sel, SelectionVector, Unified, ValidityMask, Value, Vector,
     VectorKind, partition_rows,
 };
@@ -74,7 +74,7 @@ impl LambdaRunner {
     }
 }
 
-impl rustdb_function::LambdaExecutor for LambdaRunner {
+impl roastedduck_function::LambdaExecutor for LambdaRunner {
     fn execute(&mut self, input: &DataChunk) -> Result<Vector> {
         let mut output = DataChunk::default();
         self.executor.execute(input, &mut output)?;
@@ -220,7 +220,7 @@ fn execute(
         ExpressionKind::Case(case) => execute_case(case, &expression.return_type, state, input, sel, count),
         ExpressionKind::Between(between) => execute_between(between, state, input, sel, count),
         ExpressionKind::Cast(cast) => execute_cast(expression, cast, state, input, sel, count),
-        ExpressionKind::ColumnRef(column) => Err(Error::internal(rustdb_common::byte_format!(
+        ExpressionKind::ColumnRef(column) => Err(Error::internal(roastedduck_common::byte_format!(
             "Failed to bind column reference \"{}\" [{}] (bindings: {{}})",
             expression.alias,
             column.binding
@@ -580,7 +580,7 @@ fn select(
             }
             let op = simple_compare_op(expression_type)
                 .ok_or_else(|| Error::internal("comparison without an operator"))?;
-            rustdb_types::compare::select(op, &left, &right, count, sel, true_sel, false_sel)
+            roastedduck_types::compare::select(op, &left, &right, count, sel, true_sel, false_sel)
         }
         _ => {
             let result = execute(expression, state, input, sel, count)?;
@@ -780,7 +780,7 @@ fn compare_variants(
             }
             continue;
         }
-        let order = rustdb_function::cast::variant_order;
+        let order = roastedduck_function::cast::variant_order;
         // `<` and `>=` run as `>` with swapped operands, `<=` as the negated `>`
         // (`VectorOperations::DistinctLessThan` and friends).
         let value = match expression_type {
@@ -879,7 +879,7 @@ fn conjoin(expression_type: ExpressionType, left: &Vector, right: &Vector, count
 #[cfg(test)]
 mod empty_output_tests {
     use super::*;
-    use rustdb_types::Value;
+    use roastedduck_types::Value;
 
     #[test]
     fn projected_vectors_outlive_inputs_with_initially_empty_output() -> Result<()> {

@@ -4,7 +4,7 @@
 
 use std::fmt;
 
-use rustdb_types::geometry::{self, GeometryExtent, GeometryType, VertexType};
+use roastedduck_types::geometry::{self, GeometryExtent, GeometryType, VertexType};
 
 /// `GeometryTypeSet`: one bit per geometry type (bit = WKB type id) per vertex type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

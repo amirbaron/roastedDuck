@@ -3,7 +3,7 @@ use crate::connection::{PyConnection, lock};
 use crate::error;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyTuple};
-use rustdb_common::ByteString;
+use roastedduck_common::ByteString;
 
 struct Arguments<'py> {
     name: ByteString,
@@ -111,14 +111,14 @@ fn execute<'py>(
                 columns.push_bytes(", ");
             }
             let name = name?.str()?.extract::<String>()?;
-            columns.push_bytes(rustdb_ast::keyword::write_optionally_quoted_bytes(
+            columns.push_bytes(roastedduck_ast::keyword::write_optionally_quoted_bytes(
                 name.as_bytes(),
             ));
         }
         columns.push(b')');
     }
-    let name = rustdb_ast::keyword::write_optionally_quoted_bytes(&args.name);
-    let sql = rustdb_common::byte_format!("INSERT INTO {name} {columns} SELECT * FROM __append_df");
+    let name = roastedduck_ast::keyword::write_optionally_quoted_bytes(&args.name);
+    let sql = roastedduck_common::byte_format!("INSERT INTO {name} {columns} SELECT * FROM __append_df");
     let state = std::sync::Arc::clone(&owner.get().state);
     py.detach(|| lock(&state).execute(&sql, None))
         .map_err(|e| error::native(py, &e))?;

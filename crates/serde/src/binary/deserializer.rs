@@ -1,4 +1,4 @@
-use rustdb_common::{Error, ErrorKind, Result};
+use roastedduck_common::{Error, ErrorKind, Result};
 
 use super::leb128::{decode_signed, decode_unsigned};
 use crate::{DeserializeObject, Deserializer, FieldId, MESSAGE_TERMINATOR_FIELD_ID};

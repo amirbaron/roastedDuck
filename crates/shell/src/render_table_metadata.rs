@@ -3,7 +3,7 @@
 //! `.databases` and `DESCRIBE`, grouped by database and schema, with small tables placed
 //! side by side.
 
-use rustdb_common::ByteString;
+use roastedduck_common::ByteString;
 use std::collections::{BTreeMap, HashSet};
 
 use crate::box_renderer::{
@@ -277,7 +277,10 @@ impl TableMetadataLine {
         let render_width = self.render_width;
         if line_idx == 0 {
             print(
-                &rustdb_common::byte_format!("{LTCORNER}{}{RTCORNER}", HORIZONTAL.repeat(render_width - 2)),
+                &roastedduck_common::byte_format!(
+                    "{LTCORNER}{}{RTCORNER}",
+                    HORIZONTAL.repeat(render_width - 2)
+                ),
                 layout_type,
             );
             return;
@@ -288,12 +291,12 @@ impl TableMetadataLine {
             let lspace = space_count / 2;
             let rspace = space_count - lspace;
             print(
-                &rustdb_common::byte_format!("{VERTICAL}{}", " ".repeat(lspace)),
+                &roastedduck_common::byte_format!("{VERTICAL}{}", " ".repeat(lspace)),
                 layout_type,
             );
             print(&table.table_name, HighlightElementType::TableName);
             print(
-                &rustdb_common::byte_format!("{}{VERTICAL}", " ".repeat(rspace)),
+                &roastedduck_common::byte_format!("{}{VERTICAL}", " ".repeat(rspace)),
                 layout_type,
             );
             return;
@@ -345,7 +348,7 @@ impl TableMetadataLine {
         if line_idx == 2 || (table.estimated_size.is_some() && line_idx == render_table.column_lines() + 3) {
             // A blank line after the table name, and before the row count.
             print(
-                &rustdb_common::byte_format!("{VERTICAL}{}{VERTICAL}", " ".repeat(render_width - 2)),
+                &roastedduck_common::byte_format!("{VERTICAL}{}{VERTICAL}", " ".repeat(render_width - 2)),
                 layout_type,
             );
             return;
@@ -357,7 +360,7 @@ impl TableMetadataLine {
             let lspace = space_count / 2;
             let rspace = space_count - lspace;
             print(
-                &rustdb_common::byte_format!("{VERTICAL}{}", " ".repeat(lspace)),
+                &roastedduck_common::byte_format!("{VERTICAL}{}", " ".repeat(lspace)),
                 layout_type,
             );
             print(
@@ -365,14 +368,14 @@ impl TableMetadataLine {
                 HighlightElementType::Comment,
             );
             print(
-                &rustdb_common::byte_format!("{}{VERTICAL}", " ".repeat(rspace)),
+                &roastedduck_common::byte_format!("{}{VERTICAL}", " ".repeat(rspace)),
                 layout_type,
             );
             return;
         }
         // The bottom line.
         print(
-            &rustdb_common::byte_format!("{LDCORNER}{}{RDCORNER}", HORIZONTAL.repeat(render_width - 2)),
+            &roastedduck_common::byte_format!("{LDCORNER}{}{RDCORNER}", HORIZONTAL.repeat(render_width - 2)),
             layout_type,
         );
     }
@@ -401,7 +404,7 @@ fn render_line_display(
     let total_lines = total_render_width - render_size - 4;
     let lline = total_lines / 2;
     let rline = total_lines - lline;
-    let line = rustdb_common::byte_format!(
+    let line = roastedduck_common::byte_format!(
         " {} {text} {} \n",
         HORIZONTAL.repeat(lline),
         HORIZONTAL.repeat(rline)
@@ -462,7 +465,7 @@ impl ShellState {
         for schemas in grouped_tables.values_mut() {
             for result in schemas.values_mut() {
                 // From the tallest table to the smallest.
-                rustdb_common::libcxx_sort::sort(result, &mut |a, b| a.line_count() > b.line_count());
+                roastedduck_common::libcxx_sort::sort(result, &mut |a, b| a.line_count() > b.line_count());
                 // Place tables next to each other, greedily.
                 let mut displayed_tables: HashSet<usize> = HashSet::new();
                 for table_idx in 0..result.len() {
@@ -541,9 +544,10 @@ impl ShellState {
                             displayed_tables.insert(next_idx);
                         }
                     }
-                    rustdb_common::libcxx_sort::sort(&mut metadata_display.display_lines, &mut |a, b| {
-                        a.render_height > b.render_height
-                    });
+                    roastedduck_common::libcxx_sort::sort(
+                        &mut metadata_display.display_lines,
+                        &mut |a, b| a.render_height > b.render_height,
+                    );
                     metadata_displays.push(metadata_display);
                 }
             }

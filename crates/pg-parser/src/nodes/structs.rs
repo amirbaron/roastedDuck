@@ -12,7 +12,7 @@ use super::{
     SortByDir, SortByNulls, SubLinkType, TransactionStmtKind, TransactionStmtType, Value, VariableSetKind,
     VariableSetScope, ViewCheckOption,
 };
-use rustdb_common::ByteString;
+use roastedduck_common::ByteString;
 
 nodes! {
     /// `PGRawStmt`: one statement of the input with its position in the query text.

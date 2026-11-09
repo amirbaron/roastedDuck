@@ -2,9 +2,9 @@
 //! over an input that produces no rows produces none either, as do inner and semi joins
 //! with an empty side.
 
-use rustdb_ast::JoinType;
-use rustdb_common::Result;
-use rustdb_planner::{LogicalKind, LogicalOperator, LogicalOperatorType};
+use roastedduck_ast::JoinType;
+use roastedduck_common::Result;
+use roastedduck_planner::{LogicalKind, LogicalOperator, LogicalOperatorType};
 
 use crate::filter_pushdown::empty_result;
 

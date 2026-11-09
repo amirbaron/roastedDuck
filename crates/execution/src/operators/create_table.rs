@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use rustdb_common::Result;
-use rustdb_storage::Transaction;
-use rustdb_types::{DataChunk, LogicalType};
+use roastedduck_common::Result;
+use roastedduck_storage::Transaction;
+use roastedduck_types::{DataChunk, LogicalType};
 
 use super::insert::TableCreator;
 use crate::operator::{ErasedSource, PhysicalOperator, PhysicalRef, SinkState};

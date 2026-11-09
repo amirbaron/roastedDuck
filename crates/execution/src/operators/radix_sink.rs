@@ -12,9 +12,9 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use rustdb_common::Result;
-use rustdb_row::RadixPartitioning;
-use rustdb_types::STANDARD_VECTOR_SIZE;
+use roastedduck_common::Result;
+use roastedduck_row::RadixPartitioning;
+use roastedduck_types::STANDARD_VECTOR_SIZE;
 
 use crate::ExecutionContext;
 use crate::aggregate_hashtable::{GroupedAggregateHashTable, capacity_for_count, resize_threshold};
@@ -222,8 +222,8 @@ impl RadixSinkTable {
 /// least, and how many partitions the source may combine at once (`MaxThreads`).
 #[derive(Debug)]
 pub(crate) struct RadixMemory {
-    pub state: rustdb_buffer::TemporaryMemoryState,
-    context: rustdb_buffer::TemporaryMemoryContext,
+    pub state: roastedduck_buffer::TemporaryMemoryState,
+    context: roastedduck_buffer::TemporaryMemoryContext,
     /// What the threads' tables need at the least: a sink-capacity table per thread with
     /// its partitions' blocks, and more partitions once out of core.
     minimum_reservation: AtomicU64,

@@ -1,7 +1,7 @@
 //! Frozen C++ filename-pattern metadata and deterministic generated paths.
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_planner::operator::FilenamePattern;
-use rustdb_serde::{SerializationOptions, Serializer, binary::BinarySerializer};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_planner::operator::FilenamePattern;
+use roastedduck_serde::{SerializationOptions, Serializer, binary::BinarySerializer};
 fn unhex(text: &str) -> Result<Vec<u8>> {
     let (pairs, rest) = text.as_bytes().as_chunks::<2>();
     if !rest.is_empty() {
@@ -23,7 +23,7 @@ pub fn compare(line: &str) -> Result<()> {
     let f: Vec<_> = line.split('\t').collect();
     if f.len() == 2 {
         let path = ByteString::from(unhex(f[0])?).replace_byte(b'\\', b"/");
-        if rustdb_ast::keyword::sql_string_bytes(&path).as_bytes() != unhex(f[1])? {
+        if roastedduck_ast::keyword::sql_string_bytes(&path).as_bytes() != unhex(f[1])? {
             return Err(Error::internal("export path SQL literal differs"));
         }
         return Ok(());
@@ -41,7 +41,7 @@ pub fn compare(line: &str) -> Result<()> {
         "5" => b"{other}",
         _ => return Err(Error::invalid_input("invalid filename mode")),
     };
-    let text = rustdb_common::byte_format!("{name}{suffix}");
+    let text = roastedduck_common::byte_format!("{name}{suffix}");
     let mut pattern = FilenamePattern::default();
     pattern.set_pattern(&text);
     let mut w = BinarySerializer::new(SerializationOptions::default());

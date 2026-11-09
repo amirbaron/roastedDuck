@@ -3,12 +3,12 @@
 
 use std::sync::Arc;
 
-use rustdb_ast::{
+use roastedduck_ast::{
     DeleteStatement, ExpressionType, InsertColumnOrder, InsertStatement, ParsedExpressionKind, QueryNodeKind,
     TableRefKind, UpdateSetInfo, UpdateStatement,
 };
-use rustdb_common::{Error, Result};
-use rustdb_types::LogicalType;
+use roastedduck_common::{Error, Result};
+use roastedduck_types::LogicalType;
 
 use super::super::query_node::bind_node;
 use super::super::query_node::bind_setop_node::cast_operator_to_types;
@@ -44,17 +44,19 @@ pub(super) fn check_column_count(
         return Ok(());
     }
     Err(Error::binder(if columns_provided {
-        rustdb_common::byte_format!(
+        roastedduck_common::byte_format!(
             "Column name/value mismatch for insert on {table}: expected {expected} columns but {result} values were supplied"
         )
     } else {
-        rustdb_common::byte_format!("table {table} has {expected} columns but {result} values were supplied")
+        roastedduck_common::byte_format!(
+            "table {table} has {expected} columns but {result} values were supplied"
+        )
     }))
 }
 
 /// The VALUES list an INSERT reads, if its query is a plain `VALUES (...)`
 /// (`InsertStatement::GetValuesList`).
-pub(super) fn values_list(stmt: &mut InsertStatement) -> Option<&mut rustdb_ast::ExpressionListRef> {
+pub(super) fn values_list(stmt: &mut InsertStatement) -> Option<&mut roastedduck_ast::ExpressionListRef> {
     let select = stmt.select_statement.as_mut()?;
     if !select.node.cte_map.map.is_empty() || !select.node.modifiers.is_empty() {
         return None;
@@ -81,7 +83,7 @@ pub(super) fn values_list(stmt: &mut InsertStatement) -> Option<&mut rustdb_ast:
 /// and names, and `DEFAULT` becomes the column's default.
 pub(super) fn expand_default_in_values_list(
     stmt: &mut InsertStatement,
-    table: &rustdb_catalog::TableEntry,
+    table: &roastedduck_catalog::TableEntry,
     table_name: impl AsRef<[u8]>,
     named_column_map: &[usize],
 ) -> Result<()> {
@@ -98,7 +100,7 @@ pub(super) fn expand_default_in_values_list(
     list.expected_types
         .resize(expected_columns, LogicalType::default());
     list.expected_names
-        .resize(expected_columns, rustdb_common::ByteString::new());
+        .resize(expected_columns, roastedduck_common::ByteString::new());
     let first_len = list.values.first().map_or(0, Vec::len);
     check_column_count(expected_columns, first_len, columns_provided, table_name)?;
     for (column_index, &logical) in named_column_map.iter().enumerate().take(expected_columns) {
@@ -203,7 +205,7 @@ pub fn bind_insert(scope: &mut BindScope<'_>, stmt: &mut InsertStatement) -> Res
         let alias = stmt
             .table_ref
             .as_ref()
-            .map_or_else(rustdb_common::ByteString::new, |r| r.alias.clone());
+            .map_or_else(roastedduck_common::ByteString::new, |r| r.alias.clone());
         let returning = std::mem::take(&mut stmt.returning_list);
         return bind_returning(
             scope,
@@ -232,9 +234,9 @@ pub(super) struct InsertColumnList {
 
 /// `Binder::BindInsertColumnList`.
 pub(super) fn bind_insert_column_list(
-    table: &rustdb_catalog::TableEntry,
+    table: &roastedduck_catalog::TableEntry,
     table_name: impl AsRef<[u8]>,
-    columns: &[rustdb_common::ByteString],
+    columns: &[roastedduck_common::ByteString],
     default_values: bool,
 ) -> Result<InsertColumnList> {
     let table_name = table_name.as_ref();
@@ -248,7 +250,7 @@ pub(super) fn bind_insert_column_list(
     }
     for (i, name) in columns.iter().enumerate() {
         if columns[..i].iter().any(|other| other.eq_ignore_ascii_case(name)) {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Duplicate column name \"{name}\" in INSERT"
             )));
         }
@@ -275,7 +277,10 @@ pub(super) fn bind_insert_column_list(
 }
 
 /// Binds a query in a child binder and moves its correlated columns up.
-fn bind_child_select(scope: &mut BindScope<'_>, node: &mut rustdb_ast::QueryNode) -> Result<BoundStatement> {
+fn bind_child_select(
+    scope: &mut BindScope<'_>,
+    node: &mut roastedduck_ast::QueryNode,
+) -> Result<BoundStatement> {
     let mut child = scope.binder.child()?;
     let bound = {
         let mut child_scope = BindScope {
@@ -336,7 +341,7 @@ fn add_scan_column(get: &mut LogicalOperator, logical: usize) -> Result<(u64, u6
 }
 
 /// The catalog of the table a scan reads.
-fn table_catalog(get: &crate::operator::LogicalGet) -> rustdb_common::ByteString {
+fn table_catalog(get: &crate::operator::LogicalGet) -> roastedduck_common::ByteString {
     get.table_schema
         .as_ref()
         .map(|(catalog, _)| catalog.clone())
@@ -414,7 +419,7 @@ pub fn bind_delete(scope: &mut BindScope<'_>, stmt: &mut DeleteStatement) -> Res
 
 /// Whether values of `ty` can be updated in place (`LogicalType::SupportsRegularUpdate`).
 fn supports_regular_update(ty: &LogicalType) -> bool {
-    use rustdb_types::LogicalTypeId as Id;
+    use roastedduck_types::LogicalTypeId as Id;
     match ty.id() {
         Id::List | Id::Array | Id::Map | Id::Union | Id::Variant | Id::Geometry => false,
         Id::Struct => ty
@@ -484,7 +489,7 @@ pub fn bind_update(scope: &mut BindScope<'_>, stmt: &mut UpdateStatement) -> Res
             base.catalog_name.clone()
         };
         let schema = if base.schema_name.is_empty() {
-            rustdb_common::ByteString::from("main")
+            roastedduck_common::ByteString::from("main")
         } else {
             base.schema_name.clone()
         };
@@ -555,7 +560,7 @@ pub(super) struct UpdateSet {
 /// columns become a delete plus an insert of whole rows. Returns whether the update is a
 /// delete plus insert.
 pub(super) fn bind_update_constraints(
-    table: &rustdb_catalog::TableEntry,
+    table: &roastedduck_catalog::TableEntry,
     get: &mut LogicalOperator,
     bound_constraints: &[BoundConstraint],
     return_chunk: bool,
@@ -595,7 +600,7 @@ pub(super) fn bind_update_set(
     scope: &mut BindScope<'_>,
     mut root: Option<&mut LogicalOperator>,
     set_info: &mut UpdateSetInfo,
-    table: &rustdb_catalog::TableEntry,
+    table: &roastedduck_catalog::TableEntry,
     set: &mut UpdateSet,
 ) -> Result<()> {
     let proj_index = set.proj_index;
@@ -607,20 +612,20 @@ pub(super) fn bind_update_set(
     } = set;
     for (name, expression) in set_info.columns.iter().zip(set_info.expressions.iter_mut()) {
         let Some((logical, column)) = table.column(name) else {
-            let candidates: Vec<rustdb_common::ByteString> =
+            let candidates: Vec<roastedduck_common::ByteString> =
                 table.physical_columns().map(|(_, _, c)| c.name.clone()).collect();
-            let message = rustdb_common::string_util::candidates_error_message_bytes(
+            let message = roastedduck_common::string_util::candidates_error_message_bytes(
                 &candidates,
                 name,
                 b"Did you mean",
             );
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Referenced update column {name} not found in table!\n{message}"
             )));
         };
         if column.generated.is_some() {
             return Err(Error::new_bytes(
-                rustdb_common::ErrorKind::Binder,
+                roastedduck_common::ErrorKind::Binder,
                 [
                     "Cant update column \"".as_bytes(),
                     column.name.as_bytes(),
@@ -633,7 +638,7 @@ pub(super) fn bind_update_set(
             .logical_to_physical(logical)
             .ok_or_else(|| Error::internal("generated column in UPDATE"))?;
         if columns.contains(&physical) {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Multiple assignments to same column \"{name}\""
             )));
         }
@@ -668,7 +673,7 @@ pub(super) fn bind_update_set(
 /// The columns of a `physical_index_set_t` filled from `columns`, in libc++'s iteration
 /// order (`std::hash<idx_t>` is the identity).
 fn physical_index_set(columns: &[usize]) -> Vec<usize> {
-    let mut set = rustdb_common::libcxx::UnorderedOrder::default();
+    let mut set = roastedduck_common::libcxx::UnorderedOrder::default();
     for &column in columns {
         set.insert(column as u64, column, |a, b| a == b);
     }
@@ -678,7 +683,7 @@ fn physical_index_set(columns: &[usize]) -> Vec<usize> {
 /// `LogicalUpdate::BindExtraColumns`: adds `c = c` updates for columns in `bound_columns`
 /// that are not updated yet.
 fn bind_extra_columns(
-    table: &rustdb_catalog::TableEntry,
+    table: &roastedduck_catalog::TableEntry,
     get: &mut LogicalOperator,
     set: &mut UpdateSet,
     bound_columns: &[usize],

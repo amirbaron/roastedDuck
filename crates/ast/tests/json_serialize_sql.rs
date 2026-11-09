@@ -5,11 +5,11 @@
 
 #![cfg(test)]
 
-use rustdb_ast::SelectStatement;
-use rustdb_ast::json::{JsonSerializeOptions, deserialize_statements, serialize_statements};
-use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
-use rustdb_serde::json::{JsonOptions, JsonValue, parse_json};
-use rustdb_serde::{SerializationCompatibility, SerializationOptions};
+use roastedduck_ast::SelectStatement;
+use roastedduck_ast::json::{JsonSerializeOptions, deserialize_statements, serialize_statements};
+use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
+use roastedduck_serde::json::{JsonOptions, JsonValue, parse_json};
+use roastedduck_serde::{SerializationCompatibility, SerializationOptions};
 
 struct Fixture {
     sql: String,

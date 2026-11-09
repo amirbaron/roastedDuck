@@ -2,14 +2,14 @@
 
 use std::collections::BTreeSet;
 
-use rustdb_ast::{
+use roastedduck_ast::{
     CommonTableExpressionMap, DistinctModifier, ExpressionType, OrderByNode, OrderByNullType, OrderModifier,
     OrderType, PivotRef, QueryNode, QueryNodeKind, ResultModifier, SqlStatement, SqlStatementKind,
     TableRefKind,
 };
-use rustdb_common::{Error, Result};
-use rustdb_pg_parser::nodes::SelectStmt;
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::{Error, Result};
+use roastedduck_pg_parser::nodes::SelectStmt;
+use roastedduck_types::{LogicalType, Value};
 
 use super::build::{self, set_ref_location};
 use super::{PivotEntry, Transformer, required, string_list};
@@ -56,7 +56,7 @@ impl<'a> Transformer<'a> {
                     "PIVOT statement with multiple names in pivot entry!?",
                 ));
             };
-            let enum_name = rustdb_common::byte_format!("__pivot_enum_{}", build::random_uuid());
+            let enum_name = roastedduck_common::byte_format!("__pivot_enum_{}", build::random_uuid());
             let mut base_cte_map = CommonTableExpressionMap::default();
             self.extract_ctes(&mut base_cte_map);
             let mut base = build::select_node();
@@ -106,7 +106,7 @@ impl<'a> Transformer<'a> {
         let mut statements = Vec::with_capacity(self.pivot_entries.len() + 1);
         for entry in std::mem::take(&mut self.pivot_entries) {
             if entry.has_parameters {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "PIVOT statements with pivot elements extracted from the data cannot have parameters in \
                      their source.\nIn order to use parameters the PIVOT values must be manually specified, \
                      e.g.:\nPIVOT ... ON {} IN (val1, val2, ...)",
@@ -160,11 +160,11 @@ fn generate_create_enum_statement(entry: PivotEntry) -> SqlStatementKind {
 }
 
 /// `SQLStatement::ToString` for the statements a PIVOT expands into.
-fn statement_to_string(statement: &SqlStatement) -> rustdb_common::ByteString {
+fn statement_to_string(statement: &SqlStatement) -> roastedduck_common::ByteString {
     match &statement.kind {
         SqlStatementKind::Select(select) => select.to_sql_bytes(),
         // `CreateStatement::ToString`.
         SqlStatementKind::Create(info) => info.to_sql().unwrap_or_default(),
-        _ => rustdb_common::ByteString::new(),
+        _ => roastedduck_common::ByteString::new(),
     }
 }

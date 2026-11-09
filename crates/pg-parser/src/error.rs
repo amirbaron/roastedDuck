@@ -5,8 +5,8 @@
 //! `position`. Messages are therefore truncated to `BUFSIZ - 1` bytes, and the
 //! position is the number of characters before the offending byte offset.
 
-use rustdb_common::ByteString;
-use rustdb_common::Error;
+use roastedduck_common::ByteString;
+use roastedduck_common::Error;
 
 /// `BUFSIZ` of the reference build (macOS libc), which bounds `errmsg` output.
 const BUFSIZ: usize = 1024;

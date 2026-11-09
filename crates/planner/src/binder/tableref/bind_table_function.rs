@@ -2,15 +2,15 @@
 //! `bind_named_parameters.cpp`): constant arguments are bound and evaluated, the
 //! overload is chosen, and the function's bind callback decides the output columns.
 
-use rustdb_ast::{
+use roastedduck_ast::{
     ExpressionType, FunctionExpression, MacroFunction, MacroFunctionKind, OrdinalityType, ParsedExpression,
     ParsedExpressionKind, QueryNode, TableFunctionRef,
 };
-use rustdb_catalog::{CatalogType, EntryKind};
-use rustdb_common::{ByteString, Error, ErrorKind, Result};
-use rustdb_function::cast::{CastParameters, ValueCast};
-use rustdb_function::{TableFunction, TableFunctionBindInput};
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_catalog::{CatalogType, EntryKind};
+use roastedduck_common::{ByteString, Error, ErrorKind, Result};
+use roastedduck_function::cast::{CastParameters, ValueCast};
+use roastedduck_function::{TableFunction, TableFunctionBindInput};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::binder::expression::bind_macro;
 use crate::binder::query_node::bind_node;
@@ -93,22 +93,22 @@ fn is_scalar_expression(expr: &mut ParsedExpression) -> bool {
 /// without FROM, whose rows feed the function (`UNNEST([1, 2])` reads
 /// `UNNEST((SELECT [1, 2]))`); its correlated columns move to this binder.
 fn bind_in_out_arguments(scope: &mut BindScope<'_>, children: &[ParsedExpression]) -> Result<BoundStatement> {
-    let mut node = rustdb_ast::QueryNode {
+    let mut node = roastedduck_ast::QueryNode {
         modifiers: Vec::new(),
-        cte_map: rustdb_ast::CommonTableExpressionMap::default(),
-        kind: rustdb_ast::QueryNodeKind::Select(Box::new(rustdb_ast::SelectNode {
+        cte_map: roastedduck_ast::CommonTableExpressionMap::default(),
+        kind: roastedduck_ast::QueryNodeKind::Select(Box::new(roastedduck_ast::SelectNode {
             select_list: children.to_vec(),
-            from_table: Box::new(rustdb_ast::TableRef {
-                external_dependency: rustdb_ast::ExternalDependency::default(),
+            from_table: Box::new(roastedduck_ast::TableRef {
+                external_dependency: roastedduck_ast::ExternalDependency::default(),
                 alias: ByteString::new(),
                 sample: None,
                 query_location: None,
-                kind: rustdb_ast::TableRefKind::Empty,
+                kind: roastedduck_ast::TableRefKind::Empty,
             }),
             where_clause: None,
             group_expressions: Vec::new(),
             group_sets: Vec::new(),
-            aggregate_handling: rustdb_ast::AggregateHandling::StandardHandling,
+            aggregate_handling: roastedduck_ast::AggregateHandling::StandardHandling,
             having: None,
             sample: None,
             qualify: None,
@@ -138,7 +138,7 @@ fn bind_parameters(
     children: &mut [ParsedExpression],
     location: Option<u64>,
     table_parameters: bool,
-    table_parameter_function: Option<&rustdb_function::TableFunctionSet>,
+    table_parameter_function: Option<&roastedduck_function::TableFunctionSet>,
 ) -> Result<BoundParameters> {
     // While a macro definition is verified its parameters stand for constants; binding
     // them reports that their types are unknown.
@@ -191,7 +191,7 @@ fn bind_parameters(
         {
             let only = functions.functions.first();
             if functions.functions.len() != 1 || only.is_none_or(|function| function.arguments.is_empty()) {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Only table-in-out functions can have subquery parameters - {} only accepts constant parameters",
                     only.map_or(function_name, |function| &*function.name)
                 )));
@@ -284,15 +284,15 @@ pub(crate) fn bind_named_parameters(
             let mut ordered: Vec<&(String, LogicalType)> = declared.iter().collect();
             ordered.sort_by(|a, b| a.0.cmp(&b.0));
             let named = ordered.iter().fold(ByteString::new(), |mut named, (name, ty)| {
-                let _ = rustdb_common::byte_write!(named, "    {name} {ty}\n");
+                let _ = roastedduck_common::byte_write!(named, "    {name} {ty}\n");
                 named
             });
             let message = if named.is_empty() {
                 ByteString::from("Function does not accept any named parameters.")
             } else {
-                rustdb_common::byte_format!("Candidates:\n{named}")
+                roastedduck_common::byte_format!("Candidates:\n{named}")
             };
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Invalid named parameter \"{name}\" for function {function_name}\n{message}"
             ))
             .with_position(location));
@@ -328,7 +328,7 @@ fn bind_table_function_internal(
     } = input_table;
     let bind_index = scope.binder.generate_table_index();
     let Some(bind) = function.bind.clone() else {
-        return Err(Error::invalid_input(rustdb_common::byte_format!(
+        return Err(Error::invalid_input(roastedduck_common::byte_format!(
             "Cannot call function \"{}\" directly - it has no bind function",
             function.name
         )));
@@ -350,13 +350,13 @@ fn bind_table_function_internal(
     let mut ordinality_index = None;
     if with_ordinality {
         // A name not taken by the function's columns or the aliases.
-        let mut taken = rustdb_common::CaseInsensitiveSet::<ByteString>::default();
+        let mut taken = roastedduck_common::CaseInsensitiveSet::<ByteString>::default();
         for name in names.iter().chain(column_name_alias) {
             taken.insert(name.clone());
         }
         let mut suffix = 0;
         while taken.contains(&ordinality_name) {
-            ordinality_name = rustdb_common::byte_format!("ordinality{suffix}");
+            ordinality_name = roastedduck_common::byte_format!("ordinality{suffix}");
             suffix += 1;
         }
         if correlated {
@@ -366,13 +366,13 @@ fn bind_table_function_internal(
         }
     }
     if return_types.len() != names.len() {
-        return Err(Error::internal(rustdb_common::byte_format!(
+        return Err(Error::internal(roastedduck_common::byte_format!(
             "Failed to bind \"{}\": return_types/names must have same size",
             function.name
         )));
     }
     if return_types.is_empty() {
-        return Err(Error::internal(rustdb_common::byte_format!(
+        return Err(Error::internal(roastedduck_common::byte_format!(
             "Failed to bind \"{}\": Table function must return at least one column",
             function.name
         )));
@@ -382,7 +382,7 @@ fn bind_table_function_internal(
     }
     for (i, name) in names.iter_mut().enumerate() {
         if name.is_empty() {
-            *name = rustdb_common::byte_format!("C{i}");
+            *name = roastedduck_common::byte_format!("C{i}");
         }
     }
     let shared_column_ids = crate::operator::SharedColumnIds::default();
@@ -416,7 +416,7 @@ fn bind_table_function_internal(
         shared_column_ids: Some(std::sync::Arc::clone(&shared_column_ids)),
         table: None,
         table_schema: None,
-        table_filters: rustdb_storage::TableFilterSet::default(),
+        table_filters: roastedduck_storage::TableFilterSet::default(),
         dynamic_filters: None,
         sample_options: None,
         file_filters: crate::operator::FileFilterInfo::default(),
@@ -495,7 +495,7 @@ pub fn bind_table_function(
         return bind_table_macro_ref(scope, function_ref, entry.entry.name(), &macros, alias, location);
     }
     let EntryKind::TableFunction(functions) = &entry.entry.kind else {
-        return Err(Error::not_implemented(rustdb_common::byte_format!(
+        return Err(Error::not_implemented(roastedduck_common::byte_format!(
             "{} as a table function",
             entry.entry.catalog_type().display_name()
         )));
@@ -592,7 +592,7 @@ pub fn bind_table_function(
                 .cast_with(&context.casts, &target, &mut cast_parameters)
                 .map_err(|error| {
                     if error.kind() == ErrorKind::Conversion {
-                        Error::invalid_input(rustdb_common::byte_format!(
+                        Error::invalid_input(roastedduck_common::byte_format!(
                             "Failed to cast value: {}",
                             error.raw_message()
                         ))
@@ -613,14 +613,14 @@ pub fn bind_table_function(
         .map_err(|error| error.caught().with_position(location))?;
         if let Some(replacement) = replacement {
             // The query replaces the call, keeping the reference's aliases.
-            let mut statements = rustdb_parser::parse(&replacement.query)?;
+            let mut statements = roastedduck_parser::parse(&replacement.query)?;
             let (Some(statement), true) = (statements.pop(), statements.is_empty()) else {
                 return Err(Error::parser(replacement.error));
             };
             let select = match statement.kind {
-                rustdb_ast::SqlStatementKind::Select(select) => select,
+                roastedduck_ast::SqlStatementKind::Select(select) => select,
                 // A PIVOT that creates enum types (`ParseSubquery`).
-                rustdb_ast::SqlStatementKind::Multi(_) => {
+                roastedduck_ast::SqlStatementKind::Multi(_) => {
                     return Err(Error::parser(
                         "PIVOT statements without explicit IN clauses are not supported in query() function. \
                          Please specify the pivot values explicitly, e.g.: PIVOT ... ON col IN (val1, val2, ...)",
@@ -628,7 +628,7 @@ pub fn bind_table_function(
                 }
                 _ => return Err(Error::parser(replacement.error)),
             };
-            let mut subquery = rustdb_ast::SubqueryRef {
+            let mut subquery = roastedduck_ast::SubqueryRef {
                 subquery: Box::new(select),
                 column_name_alias: function_ref.column_name_alias.clone(),
             };
@@ -674,7 +674,7 @@ fn attach_input(get: &mut BoundStatement, input: BoundStatement) -> Result<()> {
 /// arguments' subquery becomes the input of the function's scan.
 fn bind_in_out_function(
     scope: &mut BindScope<'_>,
-    functions: &rustdb_function::TableFunctionSet,
+    functions: &roastedduck_function::TableFunctionSet,
     children: &[ParsedExpression],
     function_ref: &TableFunctionRef,
     alias: &[u8],
@@ -804,7 +804,7 @@ fn bind_table_macro_ref(
     };
     let bind_index = bound.plan.root_index()?;
     let subquery_alias = if alias.is_empty() {
-        rustdb_common::byte_format!("unnamed_query{bind_index}")
+        roastedduck_common::byte_format!("unnamed_query{bind_index}")
     } else {
         ByteString::from(alias)
     };

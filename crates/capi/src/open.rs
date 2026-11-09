@@ -5,8 +5,8 @@ use std::ffi::c_char;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
-use rustdb::{ClientHandle, Config, Connection, Database, LogicalType, Value};
-use rustdb_function::FunctionClient;
+use roastedduck::{ClientHandle, Config, Connection, Database, LogicalType, Value};
+use roastedduck_function::FunctionClient;
 
 use crate::config::{DuckdbConfig, capi_config};
 use crate::helper::{c_string, catch};
@@ -63,7 +63,7 @@ impl SharedConnection {
 pub struct ConnectionWrapper {
     pub(crate) context: Arc<SharedConnection>,
     /// The profile `duckdb_get_profiling_info` handed out last, which its pointers read.
-    pub(crate) profiling: Mutex<Option<Arc<rustdb::ProfilingTree>>>,
+    pub(crate) profiling: Mutex<Option<Arc<roastedduck::ProfilingTree>>>,
 }
 
 /// `duckdb_connection`
@@ -109,7 +109,7 @@ pub type DuckdbClientContext = *mut ClientContextWrapper;
 /// `DBInstanceCache`).
 #[derive(Debug, Default)]
 pub struct InstanceCacheWrapper {
-    instances: Mutex<HashMap<rustdb_common::ByteString, (Weak<Database>, Config)>>,
+    instances: Mutex<HashMap<roastedduck_common::ByteString, (Weak<Database>, Config)>>,
 }
 
 /// `duckdb_instance_cache`
@@ -119,7 +119,7 @@ impl InstanceCacheWrapper {
     /// The database at `path`, opened before with the same configuration and still open,
     /// or opened now (`DBInstanceCache::GetOrCreateInstance`). Unnamed in-memory databases
     /// are never shared.
-    fn get_or_create(&self, path: &[u8], config: &Config) -> rustdb::Result<Arc<Database>> {
+    fn get_or_create(&self, path: &[u8], config: &Config) -> roastedduck::Result<Arc<Database>> {
         let key = cache_key(path);
         let mut instances = self.instances.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(key) = &key
@@ -127,8 +127,8 @@ impl InstanceCacheWrapper {
             && let Some(database) = database.upgrade()
         {
             if existing != config {
-                return Err(rustdb::Error::new(
-                    rustdb::ErrorKind::Connection,
+                return Err(roastedduck::Error::new(
+                    roastedduck::ErrorKind::Connection,
                     "Can't open a connection to same database file with a different configuration than \
                      existing connections",
                 ));
@@ -152,24 +152,24 @@ impl InstanceCacheWrapper {
 
 /// The cache key of a database path (`GetCacheKey`): the canonical absolute path,
 /// lower-cased on Apple platforms and Windows; `None` for an unnamed in-memory database.
-fn cache_key(path: &[u8]) -> Option<rustdb_common::ByteString> {
+fn cache_key(path: &[u8]) -> Option<roastedduck_common::ByteString> {
     if path.is_empty() || path == b":memory:" {
         return None;
     }
     if path.starts_with(b":memory:") {
         return Some(if cfg!(any(target_vendor = "apple", windows)) {
-            rustdb_common::ByteString::from(path).to_ascii_lowercase()
+            roastedduck_common::ByteString::from(path).to_ascii_lowercase()
         } else {
             path.into()
         });
     }
     let expanded = if let Some(rest) = path.strip_prefix(b"~/") {
         match std::env::var_os("HOME") {
-            Some(home) => Path::new(&home).join(rustdb_common::native_file_path(rest).ok()?),
-            None => rustdb_common::native_file_path(path).ok()?,
+            Some(home) => Path::new(&home).join(roastedduck_common::native_file_path(rest).ok()?),
+            None => roastedduck_common::native_file_path(path).ok()?,
         }
     } else {
-        rustdb_common::native_file_path(path).ok()?
+        roastedduck_common::native_file_path(path).ok()?
     };
     let absolute = if expanded.is_absolute() {
         expanded
@@ -186,7 +186,7 @@ fn cache_key(path: &[u8]) -> Option<rustdb_common::ByteString> {
             other => canonical.push(other),
         }
     }
-    let key = rustdb_common::ByteString::from(canonical.as_os_str().as_encoded_bytes());
+    let key = roastedduck_common::ByteString::from(canonical.as_os_str().as_encoded_bytes());
     Some(if cfg!(any(target_vendor = "apple", windows)) {
         key.to_ascii_lowercase()
     } else {
@@ -450,7 +450,7 @@ pub unsafe extern "C" fn duckdb_query(
     };
     let (outcome, properties) = {
         let mut connection = context.lock();
-        let outcome = catch(|| connection.query(sql)).map(rustdb::QueryResult::Materialized);
+        let outcome = catch(|| connection.query(sql)).map(roastedduck::QueryResult::Materialized);
         (outcome, connection.client_properties())
     };
     // SAFETY: `out_result` is NULL or writable.
@@ -479,7 +479,7 @@ pub unsafe extern "C" fn duckdb_get_table_names(
             names
                 .into_iter()
                 .map(|name| Value::try_varchar(&name))
-                .collect::<rustdb::Result<_>>()?,
+                .collect::<roastedduck::Result<_>>()?,
         ))
     }) {
         Ok(value) => wrap_value(value),

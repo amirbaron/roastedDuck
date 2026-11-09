@@ -1,9 +1,9 @@
 //! `count(x)`, `count()` and `count_star()` (DuckDB's `count.cpp`).
 
-use rustdb_common::Result;
-use rustdb_function::aggregate::{Aggregate, AggregateInput, States, Typed};
-use rustdb_function::{AggregateFunction, AggregateFunctionSet, NullHandling};
-use rustdb_types::{LogicalType, Sel, Vector, VectorKind};
+use roastedduck_common::Result;
+use roastedduck_function::aggregate::{Aggregate, AggregateInput, States, Typed};
+use roastedduck_function::{AggregateFunction, AggregateFunctionSet, NullHandling};
+use roastedduck_types::{LogicalType, Sel, Vector, VectorKind};
 
 /// Counts the non-NULL rows of its argument.
 #[derive(Debug)]
@@ -250,7 +250,7 @@ pub fn count_star_functions() -> AggregateFunctionSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustdb_types::{SelectionVector, Value};
+    use roastedduck_types::{SelectionVector, Value};
 
     #[test]
     fn counts_valid_rows_across_words() {

@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType, Vector};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType, Vector};
 
 use super::executor::{RowError, RowResult, addressable, cast_rows, try_map_strings};
 use super::numeric::out_of_range_message;

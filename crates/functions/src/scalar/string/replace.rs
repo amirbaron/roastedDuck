@@ -1,9 +1,9 @@
 //! `replace` (DuckDB's `replace.cpp`) and `repeat` (`repeat.cpp`).
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::kernels::scatter;
-use rustdb_types::{DataChunk, ListEntry, LogicalType, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::kernels::scatter;
+use roastedduck_types::{DataChunk, ListEntry, LogicalType, Vector};
 
 use crate::scalar::executor::{Str, StrOut, addressable, binary, ternary};
 use crate::scalar::nested::{ListInput, list_child_type};

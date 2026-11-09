@@ -1,7 +1,7 @@
 //! Compares actual C++ JSON reader/COPY option outcomes, retaining native keys.
-use rustdb_common::{Error, Result};
-use rustdb_json::json_reader_options::JsonReaderOptions;
-use rustdb_types::Value;
+use roastedduck_common::{Error, Result};
+use roastedduck_json::json_reader_options::JsonReaderOptions;
+use roastedduck_types::Value;
 use std::io::{self, BufRead};
 fn decode(hex: &str) -> Result<Vec<u8>> {
     hex.as_bytes()
@@ -25,7 +25,7 @@ pub fn compare(line: &str) -> Result<()> {
     let key = decode(f[1])?;
     let mut options = JsonReaderOptions::default();
     let actual = match f[0] {
-        "null" => options.parse_option(None, &key, &Value::null(rustdb_types::LogicalType::SQLNULL)),
+        "null" => options.parse_option(None, &key, &Value::null(roastedduck_types::LogicalType::SQLNULL)),
         "bool" => options.parse_option(None, &key, &Value::boolean(true)),
         "copy0" => options.parse_copy_option(&key, &[]),
         "copy1" => options.parse_copy_option(&key, &[Value::boolean(true)]),

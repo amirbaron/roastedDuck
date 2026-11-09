@@ -1,7 +1,7 @@
 //! Bit masks over the rows of a hash group (DuckDB uses `ValidityMask` for these): the
 //! partition and peer boundary masks, and the NULL masks used by `IGNORE NULLS`.
 
-use rustdb_types::ValidityMask;
+use roastedduck_types::ValidityMask;
 
 /// Bits per mask entry (`ValidityMask::BITS_PER_VALUE`).
 pub(crate) const BITS_PER_ENTRY: usize = 64;

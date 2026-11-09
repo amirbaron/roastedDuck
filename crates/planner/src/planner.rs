@@ -3,9 +3,9 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use rustdb_ast::SqlStatement;
-use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
-use rustdb_types::LogicalType;
+use roastedduck_ast::SqlStatement;
+use roastedduck_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
+use roastedduck_types::LogicalType;
 
 use crate::binder::statement::{BoundPragmaInfo, bind_statement};
 use crate::binder::{BindScope, Binder, BindingMode};
@@ -20,11 +20,12 @@ pub struct PlannedStatement {
     /// `None` when parameter types could not be resolved (the statement can only be
     /// prepared, not run).
     pub plan: Option<LogicalOperator>,
-    pub names: Vec<rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
     pub types: Vec<LogicalType>,
     pub properties: StatementProperties,
     /// The statement's parameters and their resolved types.
-    pub parameters: CaseInsensitiveMap<crate::expression::SharedParameterData, rustdb_common::ByteString>,
+    pub parameters:
+        CaseInsensitiveMap<crate::expression::SharedParameterData, roastedduck_common::ByteString>,
     /// The number of table indexes the binder generated; DuckDB's optimizer generates
     /// further ones with the same binder (`Optimizer(*planner.binder, context)`).
     pub table_index_count: u64,
@@ -58,7 +59,7 @@ impl Planner {
     pub fn create_plan_with_values(
         &self,
         mut statement: SqlStatement,
-        values: CaseInsensitiveMap<BoundParameterData, rustdb_common::ByteString>,
+        values: CaseInsensitiveMap<BoundParameterData, roastedduck_common::ByteString>,
     ) -> Result<PlannedStatement> {
         self.create_plan_with_values_mut(&mut statement, values, None)
     }
@@ -72,8 +73,8 @@ impl Planner {
             CaseInsensitiveMap::default(),
             Some(&mut replacements),
         )?;
-        if let rustdb_ast::SqlStatementKind::Select(original) = &mut statement.kind {
-            rustdb_ast::retain_external_replacement_list(original, replacements);
+        if let roastedduck_ast::SqlStatementKind::Select(original) = &mut statement.kind {
+            roastedduck_ast::retain_external_replacement_list(original, replacements);
         }
         Ok(plan)
     }
@@ -81,12 +82,12 @@ impl Planner {
     fn create_plan_with_values_mut(
         &self,
         statement: &mut SqlStatement,
-        values: CaseInsensitiveMap<BoundParameterData, rustdb_common::ByteString>,
-        retain_external: Option<&mut Vec<rustdb_ast::TableRef>>,
+        values: CaseInsensitiveMap<BoundParameterData, roastedduck_common::ByteString>,
+        retain_external: Option<&mut Vec<roastedduck_ast::TableRef>>,
     ) -> Result<PlannedStatement> {
         // The statements DuckDB's `Planner::CreatePlan` plans: all but the expanded ones
         // (`StatementTypeToString(MULTI_STATEMENT)` is `MULTI`).
-        if let rustdb_ast::SqlStatementKind::Multi(_) = statement.kind {
+        if let roastedduck_ast::SqlStatementKind::Multi(_) = statement.kind {
             return Err(Error::not_implemented("Cannot plan statement of type MULTI!"));
         }
         // DuckDB counts the parameters the parser found, bound or not.
@@ -123,13 +124,13 @@ impl Planner {
         for (identifier, data) in parameter_map.parameters {
             let mut locked = data.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if !locked.return_type.is_valid()
-                || locked.return_type.id() == rustdb_types::LogicalTypeId::Unknown
+                || locked.return_type.id() == roastedduck_types::LogicalTypeId::Unknown
             {
                 properties.bound_all_parameters = false;
                 drop(locked);
                 continue;
             }
-            locked.value = rustdb_types::Value::null(locked.return_type.clone());
+            locked.value = roastedduck_types::Value::null(locked.return_type.clone());
             drop(locked);
             parameters.insert(identifier, data);
         }
@@ -149,7 +150,7 @@ impl Planner {
         &self,
         mut statement: SqlStatement,
         qualified: bool,
-    ) -> Result<BTreeSet<rustdb_common::ByteString>> {
+    ) -> Result<BTreeSet<roastedduck_common::ByteString>> {
         let mut binder = Binder::new(Arc::clone(&self.context))?;
         binder.set_binding_mode(if qualified {
             BindingMode::ExtractQualifiedNames
@@ -163,7 +164,7 @@ impl Planner {
     /// Binds and plans `statement` (DuckDB's `Planner::CreatePlan`).
     /// Binds a pragma's overload and arguments (DuckDB's `Binder::BindPragma`, which the
     /// `PragmaHandler` calls before replacing a pragma by its query).
-    pub fn bind_pragma(&self, pragma: &mut rustdb_ast::PragmaInfo) -> Result<BoundPragmaInfo> {
+    pub fn bind_pragma(&self, pragma: &mut roastedduck_ast::PragmaInfo) -> Result<BoundPragmaInfo> {
         let mut binder = Binder::new(Arc::clone(&self.context))?;
         let mut scope = BindScope::root(&mut binder);
         crate::binder::statement::bind_pragma_info(&mut scope, pragma)
@@ -185,7 +186,7 @@ impl Planner {
     pub fn prepare_with_values(
         &self,
         statement: SqlStatement,
-        values: CaseInsensitiveMap<BoundParameterData, rustdb_common::ByteString>,
+        values: CaseInsensitiveMap<BoundParameterData, roastedduck_common::ByteString>,
     ) -> Result<(PreparedStatementData, LogicalOperator)> {
         let planned = self.create_plan_with_values(statement.clone(), values)?;
         let prepared = Self::prepared_data(statement, &planned);

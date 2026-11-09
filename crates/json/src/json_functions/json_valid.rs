@@ -1,8 +1,8 @@
 //! `json_valid` (DuckDB's `json_valid.cpp`).
 
-use rustdb_common::Result;
-use rustdb_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_common::Result;
+use roastedduck_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use super::input_types;
 use crate::json_executors::{ColumnBuilder, NativeBuilder, StrInput, addressable, all_constant, local_arena};

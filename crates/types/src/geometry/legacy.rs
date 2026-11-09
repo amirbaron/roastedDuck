@@ -6,7 +6,7 @@
 //! size, followed by the vertices of points and linestrings, the ring sizes (padded to 8
 //! bytes) and vertices of polygons, or nothing for collections.
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use super::{BlobReader, GeometryExtent, GeometryType};
 use crate::{LogicalType, LogicalTypeId};

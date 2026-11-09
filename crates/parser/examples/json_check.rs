@@ -1,8 +1,8 @@
-//! Compares `rustdb_parser::json::serialize_sql` with DuckDB's `json_serialize_sql` on the
+//! Compares `roastedduck_parser::json::serialize_sql` with DuckDB's `json_serialize_sql` on the
 //! statement corpus of `tools/corpus` (`statements.jsonl` + `serialized.jsonl`).
 //!
 //! ```text
-//! cargo run --release -p rustdb-parser --example json_check -- \
+//! cargo run --release -p roastedduck-parser --example json_check -- \
 //!     target/corpus/statements.jsonl target/corpus/serialized.jsonl [mismatch-file]
 //! ```
 //!
@@ -17,10 +17,10 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::time::{Duration, Instant};
 
-use rustdb_ast::json::JsonSerializeOptions;
-use rustdb_parser::json::serialize_sql;
-use rustdb_serde::SerializationCompatibility;
-use rustdb_serde::json::{JsonOptions, JsonValue, parse_json};
+use roastedduck_ast::json::JsonSerializeOptions;
+use roastedduck_parser::json::serialize_sql;
+use roastedduck_serde::SerializationCompatibility;
+use roastedduck_serde::json::{JsonOptions, JsonValue, parse_json};
 
 fn field(row: &JsonValue, key: &str) -> Option<String> {
     match row.get(key) {

@@ -3,10 +3,10 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::Result;
-use rustdb_storage::DataTable;
-use rustdb_storage::statistics::DistinctStatistics;
-use rustdb_types::{DataChunk, LogicalType};
+use roastedduck_common::Result;
+use roastedduck_storage::DataTable;
+use roastedduck_storage::statistics::DistinctStatistics;
+use roastedduck_types::{DataChunk, LogicalType};
 
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef};
 use crate::{ExecutionContext, Sink, SinkFinalize, SinkResult, Source, SourceResult};

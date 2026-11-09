@@ -1,9 +1,9 @@
 //! Compares actual persisted column definitions and SQL bytes with DuckDB's native oracle.
-use rustdb_ast::{ColumnDefinition, ColumnList, CompressionType, TableColumnType, columns_to_sql};
-use rustdb_common::{ByteString, OrderedMap};
-use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
-use rustdb_serde::{Deserializer, SerializationOptions, Serializer};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_ast::{ColumnDefinition, ColumnList, CompressionType, TableColumnType, columns_to_sql};
+use roastedduck_common::{ByteString, OrderedMap};
+use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
+use roastedduck_serde::{Deserializer, SerializationOptions, Serializer};
+use roastedduck_types::{LogicalType, Value};
 use std::io::{self, BufRead};
 
 fn decode(hex: &str) -> Vec<u8> {

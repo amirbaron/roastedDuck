@@ -18,12 +18,12 @@ use std::io::{BufReader, ErrorKind as IoErrorKind, Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use crate::file_system::{DatabaseFileSystem, StorageFile};
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_crypto::{CipherType, EncryptionNonce, EncryptionState, EncryptionTag, EncryptionVersion};
-use rustdb_function::registered_files::OpenFlags;
-use rustdb_serde::binary::BinarySerializer;
-use rustdb_serde::{Deserializer, SerializationOptions, Serializer};
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_crypto::{CipherType, EncryptionNonce, EncryptionState, EncryptionTag, EncryptionVersion};
+use roastedduck_function::registered_files::OpenFlags;
+use roastedduck_serde::binary::BinarySerializer;
+use roastedduck_serde::{Deserializer, SerializationOptions, Serializer};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use crate::checkpoint::pointers::{PersistentCollectionData, serialize_meta_block_pointer};
 use crate::checkpoint::stream::{ReadStream, StreamDeserializer};
@@ -106,27 +106,27 @@ impl WalType {
     }
 }
 
-fn io_error(message: impl Into<rustdb_common::ByteString>) -> Error {
+fn io_error(message: impl Into<roastedduck_common::ByteString>) -> Error {
     Error::new_bytes(ErrorKind::Io, message.into())
 }
 
 /// The path of the WAL of the database file at `path` (`StorageManager::GetWALPath`).
-pub fn wal_path(path: impl AsRef<[u8]>) -> rustdb_common::ByteString {
+pub fn wal_path(path: impl AsRef<[u8]>) -> roastedduck_common::ByteString {
     let path = path.as_ref();
-    rustdb_common::byte_format!("{path}.wal")
+    roastedduck_common::byte_format!("{path}.wal")
 }
 
 /// The path of the WAL written while a checkpoint runs (`GetCheckpointWALPath`).
-pub fn checkpoint_wal_path(path: impl AsRef<[u8]>) -> rustdb_common::ByteString {
+pub fn checkpoint_wal_path(path: impl AsRef<[u8]>) -> roastedduck_common::ByteString {
     let path = path.as_ref();
-    rustdb_common::byte_format!("{path}.wal.checkpoint")
+    roastedduck_common::byte_format!("{path}.wal.checkpoint")
 }
 
 /// The path the WAL and the checkpoint WAL of a failed checkpoint are merged into before
 /// they are replayed (`GetRecoveryWALPath`).
-pub fn recovery_wal_path(path: impl AsRef<[u8]>) -> rustdb_common::ByteString {
+pub fn recovery_wal_path(path: impl AsRef<[u8]>) -> roastedduck_common::ByteString {
     let path = path.as_ref();
-    rustdb_common::byte_format!("{path}.wal.recovery")
+    roastedduck_common::byte_format!("{path}.wal.recovery")
 }
 
 // ------------------------------------------------------------------------------------
@@ -354,7 +354,7 @@ fn frame_entry(buffer: &mut Vec<u8>, payload: &[u8]) {
 fn frame_encrypted_entry(buffer: &mut Vec<u8>, payload: &[u8], encryption: &FileEncryption) -> Result<()> {
     let state = EncryptionState::new(
         encryption.cipher,
-        rustdb_crypto::DEFAULT_ENCRYPTION_KEY_LENGTH,
+        roastedduck_crypto::DEFAULT_ENCRYPTION_KEY_LENGTH,
         EncryptionVersion::V0_1,
     )?;
     let nonce = EncryptionNonce::random(encryption.cipher, encryption.version)?;
@@ -392,7 +392,7 @@ struct WalState {
     requires_truncate: bool,
     /// Set when a checkpoint failed: the database is invalidated and nothing more is
     /// written (the WAL keeps the checkpoint marker last).
-    failed: Option<rustdb_common::ByteString>,
+    failed: Option<roastedduck_common::ByteString>,
     /// `RECOVERY_MODE NO_WAL_WRITES`: commits are not logged, only their size counted so
     /// that checkpoints still happen (`AddWALSize`).
     no_writes: bool,
@@ -401,9 +401,9 @@ struct WalState {
 /// The WAL of a database file.
 #[derive(Debug)]
 pub struct WriteAheadLog {
-    path: rustdb_common::ByteString,
+    path: roastedduck_common::ByteString,
     /// The WAL commits are written to while a checkpoint runs (`GetCheckpointWALPath`).
-    checkpoint_path: rustdb_common::ByteString,
+    checkpoint_path: roastedduck_common::ByteString,
     block_manager: Arc<SingleFileBlockManager>,
     options: SerializationOptions,
     state: Mutex<WalState>,
@@ -414,8 +414,8 @@ impl WriteAheadLog {
     /// `requires_truncate` anything after them is cut off before the next write.
     /// `checkpoint_path` is where commits go while a checkpoint runs.
     pub fn new(
-        path: rustdb_common::ByteString,
-        checkpoint_path: rustdb_common::ByteString,
+        path: roastedduck_common::ByteString,
+        checkpoint_path: roastedduck_common::ByteString,
         block_manager: Arc<SingleFileBlockManager>,
         options: SerializationOptions,
         size: u64,
@@ -537,7 +537,7 @@ impl WalGuard<'_> {
 
     /// Refuses every further commit with `message`, after a checkpoint failed and
     /// invalidated the database.
-    pub fn invalidate(&mut self, message: impl Into<rustdb_common::ByteString>) {
+    pub fn invalidate(&mut self, message: impl Into<roastedduck_common::ByteString>) {
         self.state.failed = Some(message.into());
     }
 
@@ -571,9 +571,9 @@ impl WalGuard<'_> {
                     if let Some(callback) = crate::file_system::callback_error(&error) {
                         return callback;
                     }
-                    io_error(rustdb_common::byte_format!(
+                    io_error(roastedduck_common::byte_format!(
                         "Cannot open file \"{path}\": {}",
-                        rustdb_common::os_error_text(&error)
+                        roastedduck_common::os_error_text(&error)
                     ))
                 })?;
             if self.state.requires_truncate {
@@ -581,7 +581,7 @@ impl WalGuard<'_> {
                     if let Some(callback) = crate::file_system::callback_error(&error) {
                         return callback;
                     }
-                    io_error(rustdb_common::byte_format!(
+                    io_error(roastedduck_common::byte_format!(
                         "Could not truncate file \"{path}\": {error}"
                     ))
                 })?;
@@ -591,7 +591,7 @@ impl WalGuard<'_> {
                 if let Some(callback) = crate::file_system::callback_error(&error) {
                     return callback;
                 }
-                io_error(rustdb_common::byte_format!(
+                io_error(roastedduck_common::byte_format!(
                     "Could not seek in file \"{path}\": {error}"
                 ))
             })?;
@@ -611,13 +611,13 @@ impl WalGuard<'_> {
             if let Some(callback) = crate::file_system::callback_error(&error) {
                 return callback;
             }
-            io_error(rustdb_common::byte_format!(
+            io_error(roastedduck_common::byte_format!(
                 "Could not write file \"{path}\": {error}"
             ))
         })?;
         self.state.size += bytes.len() as u64;
-        rustdb_common::profiling::add_to_counter(
-            rustdb_common::profiling::MetricType::TotalBytesWritten,
+        roastedduck_common::profiling::add_to_counter(
+            roastedduck_common::profiling::MetricType::TotalBytesWritten,
             bytes.len() as u64,
         );
         Ok(())
@@ -643,8 +643,8 @@ impl WalGuard<'_> {
             return Ok(());
         }
         if let Some(message) = &self.state.failed {
-            return Err(rustdb_common::Error::new_bytes(
-                rustdb_common::ErrorKind::Io,
+            return Err(roastedduck_common::Error::new_bytes(
+                roastedduck_common::ErrorKind::Io,
                 message.clone(),
             ));
         }
@@ -680,7 +680,7 @@ impl WalGuard<'_> {
             if let Some(callback) = crate::file_system::callback_error(&error) {
                 return callback;
             }
-            io_error(rustdb_common::byte_format!(
+            io_error(roastedduck_common::byte_format!(
                 "Could not fsync file \"{path}\": {error}"
             ))
         })
@@ -696,7 +696,7 @@ impl WalGuard<'_> {
                 if let Some(callback) = crate::file_system::callback_error(&error) {
                     return callback;
                 }
-                io_error(rustdb_common::byte_format!(
+                io_error(roastedduck_common::byte_format!(
                     "Could not truncate file \"{path}\": {error}"
                 ))
             })?;
@@ -715,7 +715,7 @@ impl WalGuard<'_> {
             return Ok(false);
         }
         if self.state.checkpoint_iteration.is_some() {
-            return Err(Error::internal(rustdb_common::byte_format!(
+            return Err(Error::internal(roastedduck_common::byte_format!(
                 "Current WAL path \"{}\" does not match base WAL path \"{}\" in WALStartCheckpoint",
                 self.wal.checkpoint_path,
                 self.wal.path
@@ -759,7 +759,7 @@ impl WalGuard<'_> {
                 if let Some(callback) = crate::file_system::callback_error(&error) {
                     return callback;
                 }
-                io_error(rustdb_common::byte_format!(
+                io_error(roastedduck_common::byte_format!(
                     "Could not move file \"{}\" to \"{}\": {error}",
                     self.wal.checkpoint_path,
                     self.wal.path
@@ -796,7 +796,7 @@ pub struct WalHeader {
 /// `GetEntryDeserializer`).
 #[derive(Debug)]
 pub struct WalReader {
-    path: rustdb_common::ByteString,
+    path: roastedduck_common::ByteString,
     reader: BufReader<StorageFile>,
     offset: u64,
     file_size: u64,
@@ -819,7 +819,7 @@ impl ReadStream for WalReader {
             if let Some(callback) = crate::file_system::callback_error(&error) {
                 return callback;
             }
-            io_error(rustdb_common::byte_format!(
+            io_error(roastedduck_common::byte_format!(
                 "Could not read file \"{}\": {error}",
                 self.path
             ))
@@ -855,9 +855,9 @@ impl WalReader {
                 if let Some(callback) = crate::file_system::callback_error(&error) {
                     return Err(callback);
                 }
-                return Err(io_error(rustdb_common::byte_format!(
+                return Err(io_error(roastedduck_common::byte_format!(
                     "Cannot open file \"{path}\": {}",
-                    rustdb_common::os_error_text(&error)
+                    roastedduck_common::os_error_text(&error)
                 )));
             }
         };
@@ -865,9 +865,9 @@ impl WalReader {
             if let Some(callback) = crate::file_system::callback_error(&error) {
                 return callback;
             }
-            io_error(rustdb_common::byte_format!(
+            io_error(roastedduck_common::byte_format!(
                 "Cannot open file \"{path}\": {}",
-                rustdb_common::os_error_text(&error)
+                roastedduck_common::os_error_text(&error)
             ))
         })?;
         Ok(Some(Self {
@@ -912,7 +912,7 @@ impl WalReader {
             if let Some(callback) = crate::file_system::callback_error(&error) {
                 return callback;
             }
-            io_error(rustdb_common::byte_format!(
+            io_error(roastedduck_common::byte_format!(
                 "Could not seek in file \"{}\": {error}",
                 self.path
             ))
@@ -974,7 +974,7 @@ impl WalReader {
             return read(&mut StreamDeserializer::new(self));
         }
         let payload = self.next_entry()?;
-        read(&mut rustdb_serde::binary::BinaryDeserializer::new(&payload))
+        read(&mut roastedduck_serde::binary::BinaryDeserializer::new(&payload))
     }
 
     /// Reads the payload of the next entry and verifies its checksum. A torn entry is a
@@ -991,7 +991,7 @@ impl WalReader {
         let stored = u64::from_le_bytes(stored);
         let offset = self.offset;
         if offset + size > self.file_size {
-            return Err(Error::serialization(rustdb_common::byte_format!(
+            return Err(Error::serialization(roastedduck_common::byte_format!(
                 "Corrupt WAL file: entry size exceeded remaining data in file at byte position {offset} (found \
                  entry with size {size} bytes, file size {} bytes)",
                 self.file_size
@@ -1002,7 +1002,7 @@ impl WalReader {
         self.read_data(&mut payload)?;
         let computed = checksum(&payload);
         if computed != stored {
-            return Err(io_error(rustdb_common::byte_format!(
+            return Err(io_error(roastedduck_common::byte_format!(
                 "Corrupt WAL file: entry at byte position {offset} computed checksum {computed} does not match \
                  stored checksum {stored}"
             )));
@@ -1016,7 +1016,7 @@ impl WalReader {
     /// invalid input error, a checksum mismatch an I/O error.
     fn next_encrypted_entry(&mut self) -> Result<Vec<u8>> {
         let Some(encryption) = self.encryption.clone() else {
-            return Err(io_error(rustdb_common::byte_format!(
+            return Err(io_error(roastedduck_common::byte_format!(
                 "Cannot read the encrypted WAL \"{}\" of a database that is not encrypted",
                 self.path
             )));
@@ -1031,10 +1031,10 @@ impl WalReader {
         let tag_size = if encryption.cipher == CipherType::Ctr {
             0
         } else {
-            rustdb_crypto::AES_TAG_LEN as u64
+            roastedduck_crypto::AES_TAG_LEN as u64
         };
         if offset + nonce.size() as u64 + ciphertext_size + tag_size > self.file_size {
-            return Err(Error::serialization(rustdb_common::byte_format!(
+            return Err(Error::serialization(roastedduck_common::byte_format!(
                 "Corrupt Encrypted WAL file: entry size exceeded remaining data in file at byte position {offset} \
                  (found entry with size {size} bytes, file size {} bytes)",
                 self.file_size
@@ -1042,7 +1042,7 @@ impl WalReader {
         }
         let state = EncryptionState::new(
             encryption.cipher,
-            rustdb_crypto::DEFAULT_ENCRYPTION_KEY_LENGTH,
+            roastedduck_crypto::DEFAULT_ENCRYPTION_KEY_LENGTH,
             encryption.version,
         )?;
         let mut buffer = vec![
@@ -1064,7 +1064,7 @@ impl WalReader {
         let payload = buffer.split_off(8);
         let computed = checksum(&payload);
         if computed != stored {
-            return Err(io_error(rustdb_common::byte_format!(
+            return Err(io_error(roastedduck_common::byte_format!(
                 "Corrupt WAL file: entry at byte position {offset} computed checksum {computed} does not match \
                  stored checksum {stored}"
             )));
@@ -1076,7 +1076,7 @@ impl WalReader {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustdb_serde::binary::BinaryDeserializer;
+    use roastedduck_serde::binary::BinaryDeserializer;
 
     #[test]
     fn entries_are_framed_with_their_checksum() {

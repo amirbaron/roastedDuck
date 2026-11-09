@@ -3,14 +3,14 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use crate::operator::{aggregate_names, expression_names, set_estimated_cardinality};
-use rustdb_common::tree_renderer::RenderParams;
-use rustdb_common::{Error, Result};
-use rustdb_planner::Expression;
-use rustdb_planner::expression::BoundAggregateExpression;
-use rustdb_planner::operator::GroupingSet;
-use rustdb_row::{PartitionedTupleData, TupleDataCollection, ValidityType, hash::hash_columns};
-use rustdb_storage::statistics::BaseStatistics;
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_common::tree_renderer::RenderParams;
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::Expression;
+use roastedduck_planner::expression::BoundAggregateExpression;
+use roastedduck_planner::operator::GroupingSet;
+use roastedduck_row::{PartitionedTupleData, TupleDataCollection, ValidityType, hash::hash_columns};
+use roastedduck_storage::statistics::BaseStatistics;
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 
 use super::radix_sink::{RadixMemory, RadixSinkConfig, RadixSinkTable, initial_radix_bits};
 use crate::aggregate_hashtable::{
@@ -415,7 +415,7 @@ impl Sink for PhysicalHashAggregate {
                 tuples.extend(inputs[index].iter().cloned());
                 let tuples = match &selections[index] {
                     Some(selection) => {
-                        let sel = rustdb_types::SelectionVector::new(selection.clone());
+                        let sel = roastedduck_types::SelectionVector::new(selection.clone());
                         DataChunk::new(tuples.iter().map(|c| c.slice(&sel)).collect(), selection.len())
                     }
                     None => DataChunk::new(tuples, chunk.len()),

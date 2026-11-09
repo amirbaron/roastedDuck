@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rustdb_common::Result;
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::Result;
+use roastedduck_types::{LogicalType, Value};
 
 use crate::random::RandomEngine;
 
@@ -34,7 +34,7 @@ pub type ExtensionOptionSet = std::sync::Arc<dyn Fn(&mut Value) -> Result<()> + 
 pub struct ExtensionOption {
     pub name: String,
     pub description: String,
-    pub input_type: rustdb_types::LogicalType,
+    pub input_type: roastedduck_types::LogicalType,
     pub default_value: Value,
     pub set_function: Option<ExtensionOptionSet>,
     /// Whether `SET` without a scope sets the option globally (a `default_scope` of
@@ -77,8 +77,9 @@ pub trait SettingsSource: Send + Sync + std::fmt::Debug {
 /// the parsed footers of Parquet files.
 #[derive(Default)]
 pub struct ObjectCache {
-    entries:
-        Mutex<std::collections::HashMap<rustdb_common::ByteString, Arc<dyn std::any::Any + Send + Sync>>>,
+    entries: Mutex<
+        std::collections::HashMap<roastedduck_common::ByteString, Arc<dyn std::any::Any + Send + Sync>>,
+    >,
 }
 
 impl std::fmt::Debug for ObjectCache {
@@ -91,7 +92,7 @@ impl ObjectCache {
     /// Atomically obtains a database-local registry, constructing it only once.
     pub fn get_or_insert_with<T: Send + Sync + 'static>(
         &self,
-        key: impl Into<rustdb_common::ByteString>,
+        key: impl Into<roastedduck_common::ByteString>,
         create: impl FnOnce() -> T,
     ) -> Arc<T> {
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
@@ -116,7 +117,11 @@ impl ObjectCache {
     }
 
     /// Stores `value` under `key`, replacing what was there.
-    pub fn put<T: Send + Sync + 'static>(&self, key: impl Into<rustdb_common::ByteString>, value: Arc<T>) {
+    pub fn put<T: Send + Sync + 'static>(
+        &self,
+        key: impl Into<roastedduck_common::ByteString>,
+        value: Arc<T>,
+    ) {
         self.entries
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -145,7 +150,7 @@ pub enum ClientRequest {
     /// Performs a checkpoint requested by the executing table function, before
     /// statement/profile finalization, including prepared/pending execution.
     Checkpoint {
-        database: Option<rustdb_common::ByteString>,
+        database: Option<roastedduck_common::ByteString>,
         force: bool,
     },
 }
@@ -179,8 +184,8 @@ impl HttpStats {
     }
 
     /// `HTTPState::WriteProfilingInformation`, shared by EXPLAIN and query profiles.
-    pub fn render(self) -> rustdb_common::ByteString {
-        let mut out = rustdb_common::ByteString::new();
+    pub fn render(self) -> roastedduck_common::ByteString {
+        let mut out = roastedduck_common::ByteString::new();
         if !self.active {
             return out;
         }
@@ -188,8 +193,8 @@ impl HttpStats {
         for line in [
             "HTTPFS HTTP Stats".to_owned(),
             String::new(),
-            format!("in: {}", rustdb_buffer::format_bytes(self.received)),
-            format!("out: {}", rustdb_buffer::format_bytes(self.sent)),
+            format!("in: {}", roastedduck_buffer::format_bytes(self.received)),
+            format!("out: {}", roastedduck_buffer::format_bytes(self.sent)),
             format!("#HEAD: {}", self.head),
             format!("#GET: {}", self.get),
             format!("#PUT: {}", self.put),
@@ -198,7 +203,7 @@ impl HttpStats {
         ] {
             let padding = 35_usize.saturating_sub(line.chars().count());
             let left = padding / 2 + padding % 2;
-            let _ = rustdb_common::byte_write!(
+            let _ = roastedduck_common::byte_write!(
                 out,
                 "││{}{}{}││\n",
                 " ".repeat(left),
@@ -219,12 +224,12 @@ pub struct FunctionClient {
     /// epoch (DuckDB's `MetaTransaction::start_timestamp`).
     transaction: Mutex<Option<(u64, i64)>>,
     /// The text of the query being run (DuckDB's `ClientContext::GetCurrentQuery`).
-    query: Mutex<rustdb_common::ByteString>,
+    query: Mutex<roastedduck_common::ByteString>,
     /// The number of statements run so far (DuckDB's query id).
     query_id: AtomicU64,
     http_stats: Mutex<HttpStats>,
     /// The default database (DuckDB's `DatabaseManager::GetDefaultDatabase`).
-    database: Mutex<rustdb_common::ByteString>,
+    database: Mutex<roastedduck_common::ByteString>,
     connection_id: u64,
     /// The configuration of the statement being run.
     settings: Mutex<Option<Arc<dyn SettingsSource>>>,
@@ -324,7 +329,7 @@ impl FunctionClient {
     }
 
     /// The text of the running query (`current_query()`).
-    pub fn query(&self) -> rustdb_common::ByteString {
+    pub fn query(&self) -> roastedduck_common::ByteString {
         self.query.lock().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
@@ -367,7 +372,7 @@ impl FunctionClient {
     }
 
     /// The default database (`current_database()`).
-    pub fn database(&self) -> rustdb_common::ByteString {
+    pub fn database(&self) -> roastedduck_common::ByteString {
         self.database
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

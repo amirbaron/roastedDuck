@@ -2,8 +2,8 @@
 //! `libpg_query`'s `makefuncs.cpp` and of the helper functions at the end of
 //! `gram.y` (`makeColumnRef`, `doNegate`, `insertSelectOptions`, ...).
 
-use rustdb_common::ByteString;
-use rustdb_common::{Error, Result};
+use roastedduck_common::ByteString;
+use roastedduck_common::{Error, Result};
 
 use crate::error::{internal, unimplemented};
 use crate::nodes::{
@@ -68,7 +68,7 @@ pub(crate) fn null_error() -> Error {
 /// `(PGFoo *) node` for a node that must be present.
 pub(crate) fn downcast<T: NodeStruct>(node: Node) -> Result<Box<T>> {
     T::from_node(node).map_err(|node| {
-        internal(rustdb_common::byte_format!(
+        internal(roastedduck_common::byte_format!(
             "expected {}, found {}",
             T::NAME,
             node.name()
@@ -84,7 +84,7 @@ pub(crate) fn downcast_opt<T: NodeStruct>(node: Option<Node>) -> Result<Option<B
 /// `(PGList *) node`.
 pub(crate) fn into_list(node: Option<Node>) -> Result<List> {
     Node::into_list(node).map_err(|node| {
-        internal(rustdb_common::byte_format!(
+        internal(roastedduck_common::byte_format!(
             "expected a list, found {}",
             node.name()
         ))
@@ -92,9 +92,9 @@ pub(crate) fn into_list(node: Option<Node>) -> Result<List> {
 }
 
 /// `strVal(node)`.
-pub(crate) fn str_val(node: &Node) -> Result<rustdb_common::ByteString> {
+pub(crate) fn str_val(node: &Node) -> Result<roastedduck_common::ByteString> {
     node.str_val().map(ByteString::from).ok_or_else(|| {
-        internal(rustdb_common::byte_format!(
+        internal(roastedduck_common::byte_format!(
             "expected a string, found {}",
             node.name()
         ))
@@ -561,7 +561,7 @@ pub(crate) fn partition_and_sort_lists(options: List) -> Result<(List, List)> {
     let mut sort_list = List::new();
     for option in options {
         let Node::DefElem(def) = option else {
-            return Err(internal(rustdb_common::byte_format!(
+            return Err(internal(roastedduck_common::byte_format!(
                 "expected DefElem, found {}",
                 option.name()
             )));
@@ -626,7 +626,7 @@ pub(crate) fn do_negate_float(value: &mut Value) {
         let unsigned = text.strip_prefix(b"+").unwrap_or(text);
         *text = match unsigned.strip_prefix(b"-") {
             Some(positive) => positive.into(),
-            None => rustdb_common::byte_format!("-{unsigned}"),
+            None => roastedduck_common::byte_format!("-{unsigned}"),
         };
     }
 }
@@ -721,7 +721,7 @@ pub(crate) fn process_cas_bits(
     }
     let unsupported = |what: &str| {
         scanner.error_at(
-            rustdb_common::byte_format!("{constr_type} constraints cannot be marked {what}"),
+            roastedduck_common::byte_format!("{constr_type} constraints cannot be marked {what}"),
             location,
         )
     };

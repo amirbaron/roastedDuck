@@ -9,23 +9,23 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::aggregate::AggregateInput;
-use rustdb_function::{
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::aggregate::AggregateInput;
+use roastedduck_function::{
     AggregateFunction, BindInput, BoundAggregateFunction, FunctionData, FunctionState, NullHandling,
     OwnedStates, ScalarFunction, ScalarFunctionSet, StatePtr,
 };
-use rustdb_row::hash::hash_bytes;
-use rustdb_row::sort::{NullOrder, OrderModifiers, OrderType, create_sort_keys};
-use rustdb_types::kernels::scatter;
-use rustdb_types::{
+use roastedduck_row::hash::hash_bytes;
+use roastedduck_row::sort::{NullOrder, OrderModifiers, OrderType, create_sort_keys};
+use roastedduck_types::kernels::scatter;
+use roastedduck_types::{
     DataChunk, ListEntry, LogicalType, LogicalTypeId, PhysicalType, SelectionVector, StringT, Vector,
 };
 
 use crate::scalar::executor::addressable;
 use crate::scalar::nested::{ListInput, all_constant, list_child_type};
 use crate::signature::template;
-use rustdb_common::libcxx::UnorderedOrder;
+use roastedduck_common::libcxx::UnorderedOrder;
 
 type BindResult = Result<Option<std::sync::Arc<dyn FunctionData>>>;
 
@@ -335,7 +335,10 @@ fn bind_list_aggregate_function(function: &mut ScalarFunction, input: &BindInput
         .ok_or_else(|| Error::internal("list_aggregate bound without an aggregate resolver"))?;
     // The aggregated input is a NULL constant of the element type
     // (`ListAggregatesBindFunction`).
-    let mut arguments = vec![(child_type.clone(), Some(rustdb_types::Value::null(child_type)))];
+    let mut arguments = vec![(
+        child_type.clone(),
+        Some(roastedduck_types::Value::null(child_type)),
+    )];
     for index in 2..input.argument_types.len() {
         arguments.push((
             input.argument_types[index].clone(),
@@ -349,7 +352,7 @@ fn bind_list_aggregate_function(function: &mut ScalarFunction, input: &BindInput
         && separator.is_null()
     {
         *ty = LogicalType::VARCHAR;
-        *separator = rustdb_types::Value::varchar(",");
+        *separator = roastedduck_types::Value::varchar(",");
     }
     let bound = resolver.bind_aggregate(&name, &arguments)?;
     if bound.argument_count > 1 {
@@ -378,7 +381,7 @@ fn bind_list_aggregate_function(function: &mut ScalarFunction, input: &BindInput
 /// `ListAggregatesBindData::SerializeFunction`: the result type and the aggregate, NULL
 /// when the bind found no list.
 fn serialize_list_aggregate(
-    serializer: &mut dyn rustdb_serde::Serializer,
+    serializer: &mut dyn roastedduck_serde::Serializer,
     bind_data: Option<&dyn FunctionData>,
     _: &ScalarFunction,
 ) -> Result<()> {

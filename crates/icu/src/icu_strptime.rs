@@ -5,15 +5,15 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::executor::{RowError, addressable, cast_rows, cast_rows_to_string};
-use rustdb_function::cast::{BoundCastInfo, CastFunctionSet};
-use rustdb_function::{
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::executor::{RowError, addressable, cast_rows, cast_rows_to_string};
+use roastedduck_function::cast::{BoundCastInfo, CastFunctionSet};
+use roastedduck_function::{
     BindInput, FunctionData, FunctionState, ScalarBind, ScalarFunction, ScalarFunctionSet,
 };
-use rustdb_functions::scalar::date::strftime_format::{ParseResult, Spec, StrTimeFormat};
-use rustdb_functions::scalar::executor::{Str, StrOut, binary, str_at, unary};
-use rustdb_types::{
+use roastedduck_functions::scalar::date::strftime_format::{ParseResult, Spec, StrTimeFormat};
+use roastedduck_functions::scalar::executor::{Str, StrOut, binary, str_at, unary};
+use roastedduck_types::{
     DataChunk, Date, LogicalType, LogicalTypeId, StringT, Time, TimeTz, Timestamp, Value, Vector,
 };
 
@@ -266,7 +266,7 @@ fn varchar_to_timestamp_tz(info: &BindData) -> BoundCastInfo {
             let input = source.string_value(&strings[slot]);
             let parsed = match Timestamp::parse_parts(input, true) {
                 Ok(parsed) => parsed,
-                Err(rustdb_types::TimestampParseError::Range) => {
+                Err(roastedduck_types::TimestampParseError::Range) => {
                     return Err(RowError::Invalid(Timestamp::range_error(input)));
                 }
                 Err(_) => return Err(RowError::Invalid(Timestamp::format_error(input))),

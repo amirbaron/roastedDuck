@@ -2,10 +2,10 @@
 //! `DataPointer`, `PersistentColumnData` and `RowGroupPointer`, with their
 //! serialization).
 
-use rustdb_buffer::{BlockId, INVALID_BLOCK};
-use rustdb_common::{Error, Result};
-use rustdb_serde::{Deserializer, Serializer};
-use rustdb_types::{GeometryStorageType, LogicalType, LogicalTypeId, PhysicalType};
+use roastedduck_buffer::{BlockId, INVALID_BLOCK};
+use roastedduck_common::{Error, Result};
+use roastedduck_serde::{Deserializer, Serializer};
+use roastedduck_types::{GeometryStorageType, LogicalType, LogicalTypeId, PhysicalType};
 
 use crate::compression::CompressionType;
 use crate::metadata::MetaBlockPointer;
@@ -139,7 +139,7 @@ impl DataPointer {
         serializer.write_object_property(102, "block_pointer", |s| self.block_pointer.serialize_fields(s))?;
         serializer.on_property_begin(103, "compression_type");
         let compression = self.compression as u8;
-        rustdb_serde::write_enum(serializer, compression_enum_name(self.compression), |s| {
+        roastedduck_serde::write_enum(serializer, compression_enum_name(self.compression), |s| {
             s.write_u8(compression);
         });
         serializer.on_property_end();
@@ -243,7 +243,7 @@ fn extra_data_type_name(value: u8) -> &'static str {
 /// `ExtraPersistentColumnData::Serialize` of a `GeometryPersistentColumnData`.
 fn write_geometry_extra_data(serializer: &mut dyn Serializer, storage: GeometryStorageType) -> Result<()> {
     serializer.on_property_begin(100, "type");
-    rustdb_serde::write_enum(serializer, extra_data_type_name(EXTRA_DATA_GEOMETRY), |s| {
+    roastedduck_serde::write_enum(serializer, extra_data_type_name(EXTRA_DATA_GEOMETRY), |s| {
         s.write_u8(EXTRA_DATA_GEOMETRY);
     });
     serializer.on_property_end();
@@ -253,7 +253,7 @@ fn write_geometry_extra_data(serializer: &mut dyn Serializer, storage: GeometryS
 /// `ExtraPersistentColumnData::Serialize` of a `VariantPersistentColumnData`.
 fn write_variant_extra_data(serializer: &mut dyn Serializer, shredded_type: &LogicalType) -> Result<()> {
     serializer.on_property_begin(100, "type");
-    rustdb_serde::write_enum(serializer, extra_data_type_name(EXTRA_DATA_VARIANT), |s| {
+    roastedduck_serde::write_enum(serializer, extra_data_type_name(EXTRA_DATA_VARIANT), |s| {
         s.write_u8(EXTRA_DATA_VARIANT);
     });
     serializer.on_property_end();
@@ -263,7 +263,7 @@ fn write_variant_extra_data(serializer: &mut dyn Serializer, shredded_type: &Log
 /// `ExtraPersistentColumnData::Deserialize`.
 fn read_extra_data(deserializer: &mut dyn Deserializer) -> Result<ExtraData> {
     let kind = if deserializer.on_optional_property_begin(100, "type")? {
-        let kind = rustdb_serde::read_enum(
+        let kind = roastedduck_serde::read_enum(
             deserializer,
             "ExtraPersistentColumnDataType",
             |name| {
@@ -431,7 +431,7 @@ impl PersistentColumnData {
                 deserializer,
                 102,
                 "unshredded",
-                &rustdb_types::variant::unshredded_type(),
+                &roastedduck_types::variant::unshredded_type(),
             )?);
             if let Some(shredded_type) = &variant_shredded_type {
                 result
@@ -442,7 +442,7 @@ impl PersistentColumnData {
             return Ok(result);
         }
         let stored_type = match geometry_storage {
-            Some(storage) => rustdb_types::geometry::vectorized_type(storage)?,
+            Some(storage) => roastedduck_types::geometry::vectorized_type(storage)?,
             None => ty.clone(),
         };
         let ty = &stored_type;
@@ -729,7 +729,7 @@ pub fn deserialize_index_storage_info(
     deserializer: &mut dyn Deserializer,
 ) -> Result<crate::index::art::ArtStorageInfo> {
     use crate::index::fixed_size_allocator::{BufferPointer, FixedSizeAllocatorInfo};
-    let name: rustdb_common::ByteString = deserializer.read_optional(100, "name")?.unwrap_or_default();
+    let name: roastedduck_common::ByteString = deserializer.read_optional(100, "name")?.unwrap_or_default();
     let root: u64 = deserializer.read_optional(101, "root")?.unwrap_or(0);
     let mut allocator_infos = Vec::new();
     if deserializer.on_optional_property_begin(102, "allocator_infos")? {
@@ -775,7 +775,7 @@ pub fn deserialize_index_storage_info(
         deserializer.on_list_end()?;
         deserializer.on_optional_property_end(true)?;
     }
-    let options: rustdb_common::CaseInsensitiveMap<rustdb_types::Value> =
+    let options: roastedduck_common::CaseInsensitiveMap<roastedduck_types::Value> =
         deserializer.read_optional(103, "options")?.unwrap_or_default();
     Ok(crate::index::art::ArtStorageInfo {
         name,

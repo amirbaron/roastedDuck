@@ -1,7 +1,7 @@
 //! Token classes for syntax highlighting of queries and error messages (DuckDB's
 //! `Parser::Tokenize` and `Parser::TokenizeError`, used by the shell).
 
-use rustdb_pg_parser::{SimplifiedTokenType, tokenize};
+use roastedduck_pg_parser::{SimplifiedTokenType, tokenize};
 
 /// The highlighting class of a token (DuckDB's `SimplifiedTokenType`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

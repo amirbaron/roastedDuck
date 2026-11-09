@@ -4,7 +4,7 @@
 //! then rounds to DOUBLE. Preserve binary64 finalization on the other targets.
 //! Fixed-size integer arithmetic keeps the aggregate state and row update path unchanged.
 
-use rustdb_function::cast::numeric::i128_to_f64;
+use roastedduck_function::cast::numeric::i128_to_f64;
 
 pub(super) fn average(sum: i128, count: u64, scale: Option<f64>) -> f64 {
     if cfg!(all(target_os = "linux", target_arch = "aarch64")) {

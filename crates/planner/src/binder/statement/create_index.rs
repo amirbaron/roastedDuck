@@ -3,10 +3,10 @@
 
 use std::sync::Arc;
 
-use rustdb_ast::{BaseTableRef, CreateIndexInfo, CreateInfo, CreateInfoKind, TableRef, TableRefKind};
-use rustdb_catalog::{CatalogEntry, TableEntry};
-use rustdb_common::{Error, Result};
-use rustdb_types::LogicalType;
+use roastedduck_ast::{BaseTableRef, CreateIndexInfo, CreateInfo, CreateInfoKind, TableRef, TableRefKind};
+use roastedduck_catalog::{CatalogEntry, TableEntry};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::LogicalType;
 
 use super::super::tableref::bind_table_ref;
 use super::super::{BindScope, Binder, Binding, BindingAlias, BindingKind};
@@ -26,8 +26,8 @@ pub fn bind_create_index(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Re
         return Err(Error::internal("expected CREATE INDEX"));
     };
     let mut table_ref = TableRef {
-        external_dependency: rustdb_ast::ExternalDependency::default(),
-        alias: rustdb_common::ByteString::new(),
+        external_dependency: roastedduck_ast::ExternalDependency::default(),
+        alias: roastedduck_common::ByteString::new(),
         sample: None,
         query_location: None,
         kind: TableRefKind::BaseTable(Box::new(BaseTableRef {
@@ -97,7 +97,7 @@ pub fn bind_create_index(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Re
         to_physical_references(expression, get.table_index, &column_ids, table)?;
     }
     let schema = table.storage.as_ref().map_or_else(
-        || rustdb_common::ByteString::from(rustdb_catalog::DEFAULT_SCHEMA),
+        || roastedduck_common::ByteString::from(roastedduck_catalog::DEFAULT_SCHEMA),
         |storage| storage.info().schema_name(),
     );
     let names = table.columns.iter().map(|column| column.name.clone()).collect();
@@ -108,7 +108,7 @@ pub fn bind_create_index(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Re
             .get_entry(
                 &base.catalog_name,
                 &base.schema_name,
-                rustdb_catalog::CatalogType::Table,
+                roastedduck_catalog::CatalogType::Table,
                 &base.table_name,
                 true,
             )?
@@ -195,7 +195,7 @@ pub fn bind_index_expressions(
         .iter()
         .map(|column| column.logical_type.clone())
         .collect();
-    let names: Vec<rustdb_common::ByteString> =
+    let names: Vec<roastedduck_common::ByteString> =
         table.columns.iter().map(|column| column.name.clone()).collect();
     let shared_column_ids = crate::operator::SharedColumnIds::default();
     scope.bind_context.add_binding(Binding::new(

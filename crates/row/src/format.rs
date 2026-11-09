@@ -7,8 +7,8 @@
 
 use std::borrow::Cow;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{
     DataChunk, ListEntry, PhysicalType, Sel, StringT, TypeInfo, ValidityMask, Vector, VectorKind,
 };
 
@@ -93,7 +93,7 @@ fn format_kind(vector: &Vector) -> Result<FormatKind> {
         PhysicalType::Struct => FormatKind::Struct,
         PhysicalType::List => FormatKind::List,
         PhysicalType::Array => match ty.info() {
-            Some(TypeInfo::Array(rustdb_types::ArrayTypeInfo { size, .. })) => {
+            Some(TypeInfo::Array(roastedduck_types::ArrayTypeInfo { size, .. })) => {
                 FormatKind::Array(u64::from(*size))
             }
             _ => return Err(Error::internal(format!("ARRAY type without size: {ty}"))),
@@ -291,13 +291,13 @@ impl<'a> ChunkFormat<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustdb_types::{LogicalType, LogicalTypeId, SelectionVector};
+    use roastedduck_types::{LogicalType, LogicalTypeId, SelectionVector};
 
     #[test]
     fn struct_children_follow_a_dictionary_parent() {
         let ty = LogicalType::with_info(
             LogicalTypeId::Struct,
-            TypeInfo::Struct(rustdb_types::StructTypeInfo {
+            TypeInfo::Struct(roastedduck_types::StructTypeInfo {
                 child_types: vec![("a".into(), LogicalType::INTEGER)],
             }),
         );

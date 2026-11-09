@@ -44,7 +44,7 @@ pub fn opener() -> Option<Arc<FunctionClient>> {
 }
 
 /// A native local path at the operating-system boundary.
-pub fn native_path(bytes: &[u8]) -> rustdb_common::Result<std::path::PathBuf> {
+pub fn native_path(bytes: &[u8]) -> roastedduck_common::Result<std::path::PathBuf> {
     #[cfg(unix)]
     {
         use std::os::unix::ffi::OsStrExt;
@@ -53,13 +53,13 @@ pub fn native_path(bytes: &[u8]) -> rustdb_common::Result<std::path::PathBuf> {
     #[cfg(not(unix))]
     {
         Ok(std::str::from_utf8(bytes)
-            .map_err(|_| rustdb_common::Error::invalid_input("Invalid UTF-8 in filesystem path"))?
+            .map_err(|_| roastedduck_common::Error::invalid_input("Invalid UTF-8 in filesystem path"))?
             .into())
     }
 }
 
 /// Native `GetHomeDirectory`, including the OS environment's path bytes.
-pub fn home_directory_bytes() -> rustdb_common::ByteString {
+pub fn home_directory_bytes() -> roastedduck_common::ByteString {
     opener()
         .and_then(|client| client.settings())
         .and_then(|settings| settings.current_setting("home_directory").ok())
@@ -67,7 +67,7 @@ pub fn home_directory_bytes() -> rustdb_common::ByteString {
         .and_then(|value| value.to_varchar_bytes().ok())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| {
-            std::env::var_os("HOME").map_or_else(rustdb_common::ByteString::new, |path| {
+            std::env::var_os("HOME").map_or_else(roastedduck_common::ByteString::new, |path| {
                 path.as_encoded_bytes().into()
             })
         })
@@ -88,14 +88,14 @@ fn file_url_offset_bytes(path: &[u8]) -> usize {
     }
     0
 }
-pub fn expand_path_bytes(path: &[u8]) -> rustdb_common::ByteString {
+pub fn expand_path_bytes(path: &[u8]) -> roastedduck_common::ByteString {
     if let Some(rest) = path.strip_prefix(b"~") {
-        return rustdb_common::byte_format!("{}{rest}", home_directory_bytes());
+        return roastedduck_common::byte_format!("{}{rest}", home_directory_bytes());
     }
     path[file_url_offset_bytes(path)..].into()
 }
-pub fn canonicalize_path_bytes(path: &[u8]) -> rustdb_common::ByteString {
-    use rustdb_common::ByteString;
+pub fn canonicalize_path_bytes(path: &[u8]) -> roastedduck_common::ByteString {
+    use roastedduck_common::ByteString;
     if REMOTE_PREFIXES
         .iter()
         .any(|prefix| path.starts_with(prefix.as_bytes()))
@@ -129,8 +129,8 @@ pub fn canonicalize_path_bytes(path: &[u8]) -> rustdb_common::ByteString {
     out.push_bytes(ByteString::join(&stack, b"/"));
     out
 }
-pub fn canonicalize_local_path_bytes(input: &[u8]) -> rustdb_common::ByteString {
-    use rustdb_common::{ByteString, byte_format};
+pub fn canonicalize_local_path_bytes(input: &[u8]) -> roastedduck_common::ByteString {
+    use roastedduck_common::{ByteString, byte_format};
     let mut path = expand_path_bytes(input);
     if !path.starts_with(b"/") && !path.starts_with(b"file:/") {
         let cwd = std::env::current_dir().map_or_else(
@@ -176,7 +176,7 @@ pub fn canonicalize_local_path_bytes(input: &[u8]) -> rustdb_common::ByteString 
     }
     canonicalize_path_bytes(&path)
 }
-pub fn sanitize_allowed_path_bytes(path: &[u8]) -> rustdb_common::ByteString {
+pub fn sanitize_allowed_path_bytes(path: &[u8]) -> roastedduck_common::ByteString {
     if path.windows(3).any(|part| part == b"://") && file_url_offset_bytes(path) == 0 {
         canonicalize_path_bytes(path)
     } else {
@@ -361,16 +361,16 @@ pub fn external_access_enabled() -> bool {
         .unwrap_or(true)
 }
 
-fn verify_can_access(path: &[u8], directory: bool) -> rustdb_common::Result<()> {
+fn verify_can_access(path: &[u8], directory: bool) -> roastedduck_common::Result<()> {
     let Some(client) = opener() else {
         return Ok(());
     };
     if let Some(settings) = client.settings()
         && !can_access_bytes(settings.as_ref(), path, directory)
     {
-        return Err(rustdb_common::Error::new_bytes(
-            rustdb_common::ErrorKind::Permission,
-            rustdb_common::byte_format!(
+        return Err(roastedduck_common::Error::new_bytes(
+            roastedduck_common::ErrorKind::Permission,
+            roastedduck_common::byte_format!(
                 "Cannot access {} \"{path}\" - file system operations are disabled by configuration",
                 if directory { "directory" } else { "file" }
             ),
@@ -385,8 +385,8 @@ fn verify_can_access(path: &[u8], directory: bool) -> rustdb_common::Result<()> 
         .and_then(|cache| cache.get::<DisabledFileSystems>(DISABLED_FILE_SYSTEMS_KEY))
         .is_some_and(|disabled| disabled.contains(name))
     {
-        return Err(rustdb_common::Error::new(
-            rustdb_common::ErrorKind::Permission,
+        return Err(roastedduck_common::Error::new(
+            roastedduck_common::ErrorKind::Permission,
             format!("File system {name} has been disabled by configuration"),
         ));
     }
@@ -415,8 +415,8 @@ const EXTENSION_FILE_PREFIXES: [(&str, &str); 12] = [
 ];
 
 /// `VirtualFileSystem::FindFileSystem`: a path of a file system an extension registers
-/// needs that extension, and rustdb loads none of them.
-fn verify_file_system_loaded(client: &crate::FunctionClient, path: &[u8]) -> rustdb_common::Result<()> {
+/// needs that extension, and roastedduck loads none of them.
+fn verify_file_system_loaded(client: &crate::FunctionClient, path: &[u8]) -> roastedduck_common::Result<()> {
     let Some((_, extension)) = EXTENSION_FILE_PREFIXES
         .iter()
         .find(|(prefix, _)| path.starts_with(prefix.as_bytes()))
@@ -425,11 +425,11 @@ fn verify_file_system_loaded(client: &crate::FunctionClient, path: &[u8]) -> rus
     };
     let message = crate::extension_entries::add_client_install_hint_bytes(
         client,
-        &rustdb_common::byte_format!("File {path} requires the extension {extension} to be loaded"),
+        &roastedduck_common::byte_format!("File {path} requires the extension {extension} to be loaded"),
         extension,
     );
-    Err(rustdb_common::Error::new_bytes(
-        rustdb_common::ErrorKind::MissingExtension,
+    Err(roastedduck_common::Error::new_bytes(
+        roastedduck_common::ErrorKind::MissingExtension,
         message,
     ))
 }
@@ -461,26 +461,26 @@ fn file_system_name(path: &[u8]) -> &'static str {
 
 /// The object cache key under which the database marks the ZSTD file system as
 /// registered (`FileSystemRegistry::compressed_fs`, which the parquet extension extends).
-pub const ZSTD_FILE_SYSTEM_KEY: &str = "rustdb.zstd_file_system";
+pub const ZSTD_FILE_SYSTEM_KEY: &str = "roastedduck.zstd_file_system";
 
 /// `VirtualFileSystem::OpenFile` with a compression: ZSTD files need the ZSTD file
 /// system, which the parquet extension registers. Without a statement (worker threads)
 /// the check was made when the reader was bound.
-pub fn verify_zstd_file_system() -> rustdb_common::Result<()> {
+pub fn verify_zstd_file_system() -> roastedduck_common::Result<()> {
     let Some(cache) = opener().and_then(|client| client.object_cache()) else {
         return Ok(());
     };
     if cache.get::<()>(ZSTD_FILE_SYSTEM_KEY).is_some() {
         return Ok(());
     }
-    Err(rustdb_common::Error::not_implemented(
+    Err(roastedduck_common::Error::not_implemented(
         "Attempting to open a compressed file, but the compression type is not supported.\nConsider explicitly \
          \"INSTALL parquet; LOAD parquet;\" to support this compression scheme",
     ))
 }
 
 /// The object cache key of the database's [`DisabledFileSystems`].
-pub const DISABLED_FILE_SYSTEMS_KEY: &str = "rustdb.disabled_filesystems";
+pub const DISABLED_FILE_SYSTEMS_KEY: &str = "roastedduck.disabled_filesystems";
 
 /// The file systems the `disabled_filesystems` setting disabled
 /// (`FileSystemRegistry::disabled_file_systems`); once disabled they stay disabled.
@@ -490,10 +490,10 @@ pub struct DisabledFileSystems(std::sync::Mutex<std::collections::BTreeSet<Strin
 impl DisabledFileSystems {
     /// Check the live registry policy for an already selected backend. Database
     /// storage retains the backend, but newly opened files still obey this policy.
-    pub fn verify_enabled(&self, name: &str) -> rustdb_common::Result<()> {
+    pub fn verify_enabled(&self, name: &str) -> roastedduck_common::Result<()> {
         if self.contains(name) {
-            Err(rustdb_common::Error::new(
-                rustdb_common::ErrorKind::Permission,
+            Err(roastedduck_common::Error::new(
+                roastedduck_common::ErrorKind::Permission,
                 format!("File system {name} has been disabled by configuration"),
             ))
         } else {
@@ -509,21 +509,21 @@ impl DisabledFileSystems {
     }
 
     /// `FileSystemRegistry::SetDisabledFileSystems`.
-    pub fn set(&self, names: &[&str]) -> rustdb_common::Result<()> {
+    pub fn set(&self, names: &[&str]) -> roastedduck_common::Result<()> {
         let mut new = std::collections::BTreeSet::new();
         for &name in names {
             if name.is_empty() {
                 continue;
             }
             if !new.insert(name.to_owned()) {
-                return Err(rustdb_common::Error::invalid_input(format!(
+                return Err(roastedduck_common::Error::invalid_input(format!(
                     "Duplicate disabled file system \"{name}\""
                 )));
             }
         }
         let mut current = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(previous) = current.iter().find(|previous| !new.contains(*previous)) {
-            return Err(rustdb_common::Error::invalid_input(format!(
+            return Err(roastedduck_common::Error::invalid_input(format!(
                 "File system \"{previous}\" has been disabled previously, it cannot be re-enabled"
             )));
         }
@@ -534,12 +534,12 @@ impl DisabledFileSystems {
 
 /// `OpenerFileSystem::VerifyCanAccessExtension`: files ending with `.duckdb_extension`
 /// are only written by `INSTALL`.
-pub fn verify_can_write(path: impl AsRef<[u8]>) -> rustdb_common::Result<()> {
+pub fn verify_can_write(path: impl AsRef<[u8]>) -> roastedduck_common::Result<()> {
     let path = path.as_ref();
     if path.ends_with(b".duckdb_extension") {
-        return Err(rustdb_common::Error::new_bytes(
-            rustdb_common::ErrorKind::Permission,
-            rustdb_common::byte_format!(
+        return Err(roastedduck_common::Error::new_bytes(
+            roastedduck_common::ErrorKind::Permission,
+            roastedduck_common::byte_format!(
                 "File '{path}' cannot be opened for writing since files ending with '.duckdb_extension' are \
                  reserved for DuckDB extensions, and these can only be installed through the INSTALL command"
             ),
@@ -559,12 +559,12 @@ pub fn verify_can_write(path: impl AsRef<[u8]>) -> rustdb_common::Result<()> {
 
 /// `OpenerFileSystem::VerifyCanAccessFile`: a Permission Error if the configuration
 /// forbids accessing the file `path`.
-pub fn verify_can_access_file(path: impl AsRef<[u8]>) -> rustdb_common::Result<()> {
+pub fn verify_can_access_file(path: impl AsRef<[u8]>) -> roastedduck_common::Result<()> {
     verify_can_access(path.as_ref(), false)
 }
 
 /// `OpenerFileSystem::VerifyCanAccessDirectory`.
-pub fn verify_can_access_directory(path: impl AsRef<[u8]>) -> rustdb_common::Result<()> {
+pub fn verify_can_access_directory(path: impl AsRef<[u8]>) -> roastedduck_common::Result<()> {
     verify_can_access(path.as_ref(), true)
 }
 

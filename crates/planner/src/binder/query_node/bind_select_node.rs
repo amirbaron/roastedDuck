@@ -1,11 +1,11 @@
 //! SELECT nodes (DuckDB's `bind_select_node.cpp` and `plan_select_node.cpp`).
 
-use rustdb_ast::{
+use roastedduck_ast::{
     AggregateHandling, ExpressionType, ParsedExpression, ParsedExpressionKind, QueryNode, QueryNodeKind,
     SelectNode,
 };
-use rustdb_common::{CaseInsensitiveMap, Error, Result};
-use rustdb_types::LogicalType;
+use roastedduck_common::{CaseInsensitiveMap, Error, Result};
+use roastedduck_types::LogicalType;
 
 use super::modifiers::{OrderTargets, bind_modifiers, prepare_modifiers, visit_query_node};
 use super::{BoundSelectNode, plan_subqueries};
@@ -52,7 +52,7 @@ fn bind_where_star_expression(scope: &mut BindScope<'_>, expr: &mut ParsedExpres
     }
     let original = std::mem::replace(
         expr,
-        ParsedExpression::constant(rustdb_types::Value::boolean(true)),
+        ParsedExpression::constant(roastedduck_types::Value::boolean(true)),
     );
     let mut conditions = Vec::new();
     expand_star_expression(scope, original, &mut conditions)?;
@@ -65,7 +65,7 @@ fn bind_where_star_expression(scope: &mut BindScope<'_>, expr: &mut ParsedExpres
     *expr = conditions.fold(first, |left, right| {
         ParsedExpression::new(
             ExpressionType::ConjunctionAnd,
-            ParsedExpressionKind::Conjunction(rustdb_ast::ConjunctionExpression {
+            ParsedExpressionKind::Conjunction(roastedduck_ast::ConjunctionExpression {
                 children: vec![left, right],
             }),
         )
@@ -77,7 +77,7 @@ fn bind_where_star_expression(scope: &mut BindScope<'_>, expr: &mut ParsedExpres
 pub fn bind_select_node(
     scope: &mut BindScope<'_>,
     statement: &mut SelectNode,
-    mut modifiers: Vec<rustdb_ast::ResultModifier>,
+    mut modifiers: Vec<roastedduck_ast::ResultModifier>,
     from_table: BoundStatement,
 ) -> Result<BoundStatement> {
     let mut result = BoundSelectNode {
@@ -361,7 +361,7 @@ pub fn bind_select_node(
         bound_columns.extend(bound_qualify_columns);
         if let Some(column) = bound_columns.first() {
             let name = &column.name;
-            let mut message = rustdb_common::byte_format!(
+            let mut message = roastedduck_common::byte_format!(
                 "column \"{name}\" must appear in the GROUP BY clause or must be part of an aggregate function."
             );
             if statement.aggregate_handling == AggregateHandling::ForceAggregates {
@@ -370,7 +370,7 @@ pub fn bind_select_node(
                      this entry explicitly.",
                 );
             } else {
-                let _ = rustdb_common::byte_write!(
+                let _ = roastedduck_common::byte_write!(
                     message,
                     "\nEither add it to the GROUP BY list, or use \"ANY_VALUE({name})\" if the exact value of \"{name}\" \
                      is not important."

@@ -1,5 +1,5 @@
 [package]
-name = "rustdb-pg-parser"
+name = "roastedduck-pg-parser"
 description = "DuckDB's Postgres-dialect SQL parser: scanner, LALR driver and semantic actions producing Postgres parse trees."
 version.workspace = true
 edition.workspace = true
@@ -7,7 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-rustdb-common.workspace = true
+roastedduck-common.workspace = true
 
 [lints]
 workspace = true

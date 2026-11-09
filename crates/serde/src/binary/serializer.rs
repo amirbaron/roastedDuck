@@ -1,4 +1,4 @@
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use super::leb128::{encode_signed, encode_unsigned};
 use crate::{FieldId, MESSAGE_TERMINATOR_FIELD_ID, SerializationOptions, SerializeObject, Serializer};

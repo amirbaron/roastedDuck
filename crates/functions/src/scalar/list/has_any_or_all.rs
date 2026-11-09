@@ -3,10 +3,10 @@
 
 use std::collections::HashSet;
 
-use rustdb_common::Result;
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_row::sort::{NullOrder, OrderModifiers, OrderType, SortKeyBuffer, create_sort_keys};
-use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Vector};
+use roastedduck_common::Result;
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_row::sort::{NullOrder, OrderModifiers, OrderType, SortKeyBuffer, create_sort_keys};
+use roastedduck_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Vector};
 
 use crate::scalar::executor::{addressable, binary};
 use crate::scalar::nested::{ListInput, list_child_type};

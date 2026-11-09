@@ -1,11 +1,11 @@
 //! Read preserved C++ databases with raw names through the native catalog/storage APIs.
-use rustdb_buffer::{BufferManager, BufferManagerConfig};
-use rustdb_catalog::{Catalog, CatalogType, EntryKind, Transaction, TransactionManager};
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_storage::storage_manager::{StorageManager, StorageOptions};
-use rustdb_storage::table::StorageIndex;
-use rustdb_storage::{TableConstraints, TableScanState};
-use rustdb_types::{DataChunk, Value, Vector};
+use roastedduck_buffer::{BufferManager, BufferManagerConfig};
+use roastedduck_catalog::{Catalog, CatalogType, EntryKind, Transaction, TransactionManager};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_storage::storage_manager::{StorageManager, StorageOptions};
+use roastedduck_storage::table::StorageIndex;
+use roastedduck_storage::{TableConstraints, TableScanState};
+use roastedduck_types::{DataChunk, Value, Vector};
 use std::sync::Arc;
 fn hex(bytes: &[u8]) -> String {
     let mut out = String::new();
@@ -54,7 +54,7 @@ fn run() -> Result<()> {
     let catalog = Catalog::new("raw_name_fixture")?;
     catalog.set_io(Arc::clone(storage.io()))?;
     catalog.set_storage(&storage);
-    rustdb_catalog::checkpoint::load_checkpoint(&catalog, &storage)?;
+    roastedduck_catalog::checkpoint::load_checkpoint(&catalog, &storage)?;
     let transaction = Transaction::system();
     let entry = catalog
         .get_entry(&transaction, CatalogType::Table, &schema, &table)
@@ -109,7 +109,7 @@ fn run() -> Result<()> {
             values.push(if args[2] == "enum" {
                 // Read the actual stored code; VARCHAR conversion of the raw label is
                 // separately expected to fail exactly as in C++.
-                rustdb_common::byte_format!(
+                roastedduck_common::byte_format!(
                     "{}",
                     value
                         .as_i128()
@@ -155,11 +155,11 @@ fn run() -> Result<()> {
         data.local_append(&mut local, &DataChunk::new(vec![Vector::constant(&next)?], 1))?;
         data.finalize_local_append(local);
         manager.commit(&append)?;
-        let mut on_start = |_: rustdb_storage::metadata::MetaBlockPointer, lock: &mut dyn FnMut()| {
+        let mut on_start = |_: roastedduck_storage::metadata::MetaBlockPointer, lock: &mut dyn FnMut()| {
             lock();
             Ok(manager.last_commit())
         };
-        rustdb_catalog::checkpoint::write_checkpoint(
+        roastedduck_catalog::checkpoint::write_checkpoint(
             &catalog,
             &storage,
             &Transaction::system(),

@@ -1,4 +1,4 @@
-// Offline differential oracle; links only the frozen C++ reference, never rustdb.
+// Offline differential oracle; links only the frozen C++ reference, never roastedduck.
 #include "duckdb/common/render_tree.hpp"
 #include "duckdb/common/tree_renderer.hpp"
 #include "duckdb/common/error_data.hpp"

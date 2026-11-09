@@ -1,5 +1,5 @@
 //! Actual C++ query context output through the native Error boundary.
-use rustdb_common::{Error, ErrorKind, Result};
+use roastedduck_common::{Error, ErrorKind, Result};
 use std::io::{self, BufRead};
 fn decode(hex: &str) -> Result<Vec<u8>> {
     hex.as_bytes()

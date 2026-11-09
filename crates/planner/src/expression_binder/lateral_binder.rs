@@ -2,8 +2,8 @@
 //! bound (DuckDB's `LateralBinder`), and the depth reduction applied when the right side
 //! turns out not to reference the left side.
 
-use rustdb_ast::{ParsedExpression, ParsedExpressionKind};
-use rustdb_common::{Error, Result};
+use roastedduck_ast::{ParsedExpression, ParsedExpressionKind};
+use roastedduck_common::{Error, Result};
 
 use super::base::{BinderBase, expression_binder_accessors, expression_binder_base};
 use super::{BindResult, ExpressionBinder};
@@ -77,7 +77,7 @@ impl ExpressionBinder for LateralBinder<'_> {
         }
     }
 
-    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+    fn unsupported_aggregate_message(&self) -> roastedduck_common::ByteString {
         "LATERAL join cannot contain aggregates!".into()
     }
 }

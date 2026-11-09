@@ -1,11 +1,11 @@
 //! Type detection, refinement and replacement (DuckDB's `type_detection.cpp`,
 //! `type_refinement.cpp` and `type_replacement.cpp`).
 
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::text_parse::{TextFloat, TextInteger, parse_bool_strict, parse_decimal};
-use rustdb_function::cast::{CastFunctionSet, CastParameters, ValueCast};
-use rustdb_functions::strtime::StrpTimeFormat;
-use rustdb_types::{DataChunk, Date, LogicalType, LogicalTypeId, Time, Timestamp, Value, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::text_parse::{TextFloat, TextInteger, parse_bool_strict, parse_decimal};
+use roastedduck_function::cast::{CastFunctionSet, CastParameters, ValueCast};
+use roastedduck_functions::strtime::StrpTimeFormat;
+use roastedduck_types::{DataChunk, Date, LogicalType, LogicalTypeId, Time, Timestamp, Value, Vector};
 
 use super::{CsvSniffer, DialectCandidates};
 use crate::error::{CsvError, CsvErrorType};

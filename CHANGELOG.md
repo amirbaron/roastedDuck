@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased — validation tooling
+## 1.5.6.post2 — candidate, not yet published
 
+- Rename all internal Rust crates/modules to `roastedduck-*`/`roastedduck_*`, retaining DuckDB-compatible public interfaces.
 - Name the public Cargo CLI package `roastedduck-cli` and source-built executable `roastedDuck`; build it with `cargo build --locked --release --bin roastedDuck -j 1`.
 - Update pytest, PyArrow, and fsspec test dependencies to patched releases and pin current pip/setuptools bootstrap tools.
 - Recheck published wheel/native hashes and paired Python outcomes without rebuilding release payloads; retain and audit complete resolved validation environments.

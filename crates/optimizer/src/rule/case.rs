@@ -1,8 +1,8 @@
 //! `CASE` with constant conditions (DuckDB's `CaseSimplificationRule`): checks that are
 //! always false are dropped, the first one that is always true becomes the ELSE.
 
-use rustdb_common::Result;
-use rustdb_planner::{Expression, ExpressionKind};
+use roastedduck_common::Result;
+use roastedduck_planner::{Expression, ExpressionKind};
 
 use super::RuleOutcome;
 use crate::expression_rewriter::RuleContext;
@@ -36,7 +36,7 @@ pub fn case_simplification(
     if case.case_checks.is_empty() {
         let else_expr = std::mem::replace(
             &mut case.else_expr,
-            Expression::constant(rustdb_types::Value::default()),
+            Expression::constant(roastedduck_types::Value::default()),
         );
         return Ok(RuleOutcome::Replaced(else_expr));
     }

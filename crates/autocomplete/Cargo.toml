@@ -1,5 +1,5 @@
 [package]
-name = "rustdb-autocomplete"
+name = "roastedduck-autocomplete"
 description = "The autocomplete extension: sql_auto_complete and the PEG grammar matcher behind it (DuckDB's extension/autocomplete)."
 version.workspace = true
 edition.workspace = true
@@ -7,17 +7,17 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-rustdb-common.workspace = true
-rustdb-types.workspace = true
-rustdb-ast.workspace = true
-rustdb-planner.workspace = true
-rustdb-catalog = { path = "../catalog" }
-rustdb-function = { path = "../function" }
-rustdb-pg-parser = { path = "../pg-parser" }
-rustdb-parser.workspace = true
+roastedduck-common.workspace = true
+roastedduck-types.workspace = true
+roastedduck-ast.workspace = true
+roastedduck-planner.workspace = true
+roastedduck-catalog = { path = "../catalog" }
+roastedduck-function = { path = "../function" }
+roastedduck-pg-parser = { path = "../pg-parser" }
+roastedduck-parser.workspace = true
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-rustdb-serde.workspace = true
+roastedduck-serde.workspace = true

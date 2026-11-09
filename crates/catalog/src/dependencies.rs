@@ -1,13 +1,13 @@
 //! Keeping a table's dependencies in step with its definition when it is altered
 //! (DuckDB re-binds the altered table, which records its dependencies anew).
 
-use rustdb_ast::visit::{VisitorMut, walk_expression};
-use rustdb_ast::{
+use roastedduck_ast::visit::{VisitorMut, walk_expression};
+use roastedduck_ast::{
     CatalogEntryInfo, CatalogType as AstCatalogType, LogicalDependency, ParsedExpression,
     ParsedExpressionKind,
 };
-use rustdb_common::ByteString;
-use rustdb_types::{LogicalType, LogicalTypeId};
+use roastedduck_common::ByteString;
+use roastedduck_types::{LogicalType, LogicalTypeId};
 
 use crate::TableEntry;
 

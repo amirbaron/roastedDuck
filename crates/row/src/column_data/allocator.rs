@@ -8,10 +8,10 @@
 
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rustdb_buffer::{
+use roastedduck_buffer::{
     BlockHandle, BufferHandle, BufferManager, DEFAULT_BLOCK_HEADER_STORAGE_SIZE, DestroyBufferUpon, MemoryTag,
 };
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)

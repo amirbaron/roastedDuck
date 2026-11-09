@@ -2,17 +2,17 @@
 
 use std::sync::Arc;
 
-use rustdb_ast::{ExpressionType, JoinType};
-use rustdb_common::Result;
-use rustdb_planner::operator::ExpressionTableFilter;
-use rustdb_planner::{
+use roastedduck_ast::{ExpressionType, JoinType};
+use roastedduck_common::Result;
+use roastedduck_planner::operator::ExpressionTableFilter;
+use roastedduck_planner::{
     BoundLimitNode, ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator,
     LogicalOperatorType,
 };
-use rustdb_storage::TableFilter;
-use rustdb_storage::statistics::{BaseStatistics, FilterPropagateResult};
-use rustdb_types::compare::CompareOp;
-use rustdb_types::{LogicalTypeId, Value};
+use roastedduck_storage::TableFilter;
+use roastedduck_storage::statistics::{BaseStatistics, FilterPropagateResult};
+use roastedduck_types::compare::CompareOp;
+use roastedduck_types::{LogicalTypeId, Value};
 
 use super::expression::is_compare_distinct;
 use super::{
@@ -144,7 +144,7 @@ impl StatisticsPropagator<'_> {
                 self.propagate_child(node, 0)?;
                 Ok(match &node.kind {
                     LogicalKind::Limit {
-                        limit: rustdb_planner::BoundLimitNode::ConstantValue(limit),
+                        limit: roastedduck_planner::BoundLimitNode::ConstantValue(limit),
                         ..
                     } => Some(NodeStatistics::new(*limit, *limit)),
                     _ => None,
@@ -487,9 +487,9 @@ impl StatisticsPropagator<'_> {
         });
         if let LogicalKind::Aggregate(aggregate) = &mut node.kind {
             aggregate.distinct_validity = if inputs_valid {
-                rustdb_planner::TupleDataValidityType::CannotHaveNullValues
+                roastedduck_planner::TupleDataValidityType::CannotHaveNullValues
             } else {
-                rustdb_planner::TupleDataValidityType::CanHaveNullValues
+                roastedduck_planner::TupleDataValidityType::CanHaveNullValues
             };
         }
         // Whole-table count/min/max may be answered by the row group statistics.
@@ -898,7 +898,7 @@ fn cross_product(left: LogicalOperator, right: LogicalOperator) -> LogicalOperat
 }
 
 /// DuckDB's `LogicalType::IsIntegral`.
-fn is_integral(ty: &rustdb_types::LogicalType) -> bool {
+fn is_integral(ty: &roastedduck_types::LogicalType) -> bool {
     matches!(
         ty.id(),
         LogicalTypeId::TinyInt

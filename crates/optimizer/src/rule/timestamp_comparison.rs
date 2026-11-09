@@ -1,10 +1,10 @@
 //! `CAST(ts AS DATE) = CAST('...' AS DATE)` as a timestamp range (DuckDB's
 //! `TimeStampComparison`): `ts >= DATE AND ts < DATE + 1`.
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::Result;
-use rustdb_planner::{Expression, ExpressionKind};
-use rustdb_types::{Date, LogicalTypeId, Timestamp, Value};
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::Result;
+use roastedduck_planner::{Expression, ExpressionKind};
+use roastedduck_types::{Date, LogicalTypeId, Timestamp, Value};
 
 use super::RuleOutcome;
 use crate::expression_rewriter::RuleContext;

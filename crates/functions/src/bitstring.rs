@@ -1,11 +1,11 @@
 //! Operations on stored BIT strings (DuckDB's `Bit::BitwiseAnd`, `Bit::LeftShift`, ...),
 //! shared by the bitwise operators, `get_bit`/`set_bit` and the `bit_*` aggregates.
 //!
-//! See [`rustdb_types::bit`] for the layout: a padding-count byte followed by the bits,
+//! See [`roastedduck_types::bit`] for the layout: a padding-count byte followed by the bits,
 //! most significant first, with the padding bits set to 1.
 
-use rustdb_common::{Error, Result};
-use rustdb_types::bit::bit_length;
+use roastedduck_common::{Error, Result};
+use roastedduck_types::bit::bit_length;
 
 /// The padding count of a stored bit string.
 fn padding(bits: &[u8]) -> usize {
@@ -122,7 +122,7 @@ pub(crate) fn right_shift(bits: &[u8], shift: usize) -> Vec<u8> {
 
 /// An all-zero bit string of `len` bits.
 pub(crate) fn zeros(len: usize) -> Vec<u8> {
-    let mut result = vec![0u8; rustdb_types::bit::stored_len(len)];
+    let mut result = vec![0u8; roastedduck_types::bit::stored_len(len)];
     result[0] = ((8 - len % 8) % 8) as u8;
     finalize(&mut result);
     result
@@ -134,13 +134,13 @@ mod tests {
 
     fn parse(text: &str) -> Vec<u8> {
         let mut out = Vec::new();
-        rustdb_types::bit::parse_text(text.as_bytes(), &mut out).unwrap();
+        roastedduck_types::bit::parse_text(text.as_bytes(), &mut out).unwrap();
         out
     }
 
     fn render(bits: &[u8]) -> String {
         let mut out = Vec::new();
-        rustdb_types::bit::write_text(bits, &mut out);
+        roastedduck_types::bit::write_text(bits, &mut out);
         String::from_utf8(out).unwrap()
     }
 

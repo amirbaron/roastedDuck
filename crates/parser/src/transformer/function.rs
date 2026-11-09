@@ -1,12 +1,12 @@
 //! Function calls and window functions (`transform_function.cpp`).
 
-use rustdb_ast::{
+use roastedduck_ast::{
     CaseCheck, ExpressionType, OrderModifier, ParsedExpression, ParsedExpressionKind, WindowBoundary,
     WindowExcludeMode, WindowExpression, expression_type_to_string,
 };
-use rustdb_common::{Error, Result};
-use rustdb_pg_parser::nodes::{FuncCall, IgnoreNulls, WindowDef, frame_option as fo};
-use rustdb_types::LogicalType;
+use roastedduck_common::{Error, Result};
+use roastedduck_pg_parser::nodes::{FuncCall, IgnoreNulls, WindowDef, frame_option as fo};
+use roastedduck_types::LogicalType;
 
 use super::build::{self, set_location};
 use super::star::is_empty_star;
@@ -50,7 +50,7 @@ pub fn is_orderable_window_function(expression_type: ExpressionType) -> Result<b
         | E::WindowFill
         | E::WindowAggregate => Ok(true),
         E::WindowRankDense => Ok(false),
-        other => Err(Error::internal(rustdb_common::byte_format!(
+        other => Err(Error::internal(roastedduck_common::byte_format!(
             "Unknown orderable window type {}",
             expression_type_to_string(other)
         ))),
@@ -71,7 +71,7 @@ pub fn is_excludable_window_function(expression_type: ExpressionType) -> Result<
         | E::WindowLead
         | E::WindowLag
         | E::WindowFill => Ok(false),
-        other => Err(Error::internal(rustdb_common::byte_format!(
+        other => Err(Error::internal(roastedduck_common::byte_format!(
             "Unknown excludable window type {}",
             expression_type_to_string(other)
         ))),
@@ -95,8 +95,8 @@ const fn frame_boundary(
 }
 
 fn new_window(
-    catalog: rustdb_common::ByteString,
-    schema: rustdb_common::ByteString,
+    catalog: roastedduck_common::ByteString,
+    schema: roastedduck_common::ByteString,
     name: &[u8],
 ) -> WindowExpression {
     WindowExpression {
@@ -132,7 +132,7 @@ impl<'a> Transformer<'a> {
             if let Some(name) = window_name
                 && !expr.partitions.is_empty()
             {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Cannot override PARTITION BY clause of window \"{name}\""
                 )));
             }
@@ -142,7 +142,7 @@ impl<'a> Transformer<'a> {
             if let Some(name) = window_name
                 && !expr.orders.is_empty()
             {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Cannot override ORDER BY clause of window \"{name}\""
                 )));
             }
@@ -240,7 +240,7 @@ impl<'a> Transformer<'a> {
             && !expr.arg_orders.is_empty()
             && !is_excludable_window_function(window_type_of(expr))?
         {
-            return Err(Error::parser(rustdb_common::byte_format!(
+            return Err(Error::parser(roastedduck_common::byte_format!(
                 "EXCLUDE is not supported for the window function \"{}\"",
                 expr.function_name
             )));
@@ -254,10 +254,10 @@ impl<'a> Transformer<'a> {
         let names: Vec<&[u8]> = root.funcname.iter().map(node_string).collect::<Result<_>>()?;
         let (catalog, schema, function_name) = match names.as_slice() {
             [catalog, schema, name] => ((*catalog).into(), (*schema).into(), *name),
-            [schema, name] => (rustdb_common::ByteString::new(), (*schema).into(), *name),
+            [schema, name] => (roastedduck_common::ByteString::new(), (*schema).into(), *name),
             [name] => (
-                rustdb_common::ByteString::new(),
-                rustdb_common::ByteString::new(),
+                roastedduck_common::ByteString::new(),
+                roastedduck_common::ByteString::new(),
                 *name,
             ),
             _ => {
@@ -315,7 +315,7 @@ impl<'a> Transformer<'a> {
                     }
                 }
                 _ => {
-                    return Err(Error::parser(rustdb_common::byte_format!(
+                    return Err(Error::parser(roastedduck_common::byte_format!(
                         "Unknown ordered aggregate \"{function_name}\"."
                     )));
                 }
@@ -420,8 +420,8 @@ impl<'a> Transformer<'a> {
         &mut self,
         root: &'a FuncCall,
         over: &'a WindowDef,
-        catalog: rustdb_common::ByteString,
-        schema: rustdb_common::ByteString,
+        catalog: roastedduck_common::ByteString,
+        schema: roastedduck_common::ByteString,
         lowercase_name: &[u8],
         mut children: Vec<ParsedExpression>,
     ) -> Result<ParsedExpression> {
@@ -440,7 +440,7 @@ impl<'a> Transformer<'a> {
             ));
         }
         if !root.agg_order.is_empty() && !is_orderable_window_function(win_fun_type)? {
-            return Err(Error::parser(rustdb_common::byte_format!(
+            return Err(Error::parser(roastedduck_common::byte_format!(
                 "ORDER BY is not supported for the window function \"{lowercase_name}\""
             )));
         }
@@ -479,7 +479,7 @@ impl<'a> Transformer<'a> {
                     expr.offset_expr = rest.next().map(Box::new);
                     expr.default_expr = rest.next().map(Box::new);
                     if count > 3 {
-                        return Err(Error::parser(rustdb_common::byte_format!(
+                        return Err(Error::parser(roastedduck_common::byte_format!(
                             "Incorrect number of parameters for function {lowercase_name}"
                         )));
                     }
@@ -489,14 +489,14 @@ impl<'a> Transformer<'a> {
                         expr.children.push(second);
                     }
                     if count > 2 {
-                        return Err(Error::parser(rustdb_common::byte_format!(
+                        return Err(Error::parser(roastedduck_common::byte_format!(
                             "Incorrect number of parameters for function {lowercase_name}"
                         )));
                     }
                 }
                 _ => {
                     if count > 1 {
-                        return Err(Error::parser(rustdb_common::byte_format!(
+                        return Err(Error::parser(roastedduck_common::byte_format!(
                             "Incorrect number of parameters for function {lowercase_name}"
                         )));
                     }
@@ -506,20 +506,24 @@ impl<'a> Transformer<'a> {
         let mut window_spec = over;
         if let Some(name) = &window_spec.name {
             window_spec = *self.frame().window_clauses.get(name).ok_or_else(|| {
-                Error::parser(rustdb_common::byte_format!("window \"{name}\" does not exist"))
+                Error::parser(roastedduck_common::byte_format!(
+                    "window \"{name}\" does not exist"
+                ))
             })?;
         }
         let mut window_ref = window_spec;
         let window_name = window_ref.refname.as_deref();
         if let Some(refname) = &window_spec.refname {
             window_ref = *self.frame().window_clauses.get(refname).ok_or_else(|| {
-                Error::parser(rustdb_common::byte_format!("window \"{refname}\" does not exist"))
+                Error::parser(roastedduck_common::byte_format!(
+                    "window \"{refname}\" does not exist"
+                ))
             })?;
             if window_ref.start_offset.is_some()
                 || window_ref.end_offset.is_some()
                 || window_ref.frame_options != fo::DEFAULTS
             {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "cannot copy window \"{refname}\" because it has a frame clause"
                 )));
             }

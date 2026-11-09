@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rustdb_common::{ByteString, Error, ErrorKind, Result};
+use roastedduck_common::{ByteString, Error, ErrorKind, Result};
 
 use crate::transaction::{StorageHook, TRANSACTION_ID_START, Transaction, TransactionExt};
 use crate::{CatalogEntry, WalRecord};
@@ -283,16 +283,16 @@ impl CatalogSet {
         if !self.default_types || chains.contains_key(name_key) {
             return;
         }
-        let Some(id) = rustdb_types::builtin_type_id(name) else {
+        let Some(id) = roastedduck_types::builtin_type_id(name) else {
             return;
         };
-        if id == rustdb_types::LogicalTypeId::Invalid {
+        if id == roastedduck_types::LogicalTypeId::Invalid {
             return;
         }
         let mut entry = CatalogEntry::with_oid(
             name,
             crate::EntryKind::Type(crate::TypeEntry {
-                user_type: rustdb_types::LogicalType::simple(id),
+                user_type: roastedduck_types::LogicalType::simple(id),
             }),
             self.catalog.next_oid(),
         );
@@ -303,7 +303,7 @@ impl CatalogSet {
 
     fn create_default_types(&self, chains: &mut BTreeMap<ByteString, EntryChain>) {
         if self.default_types && !self.all_default_types.load(Ordering::Relaxed) {
-            for name in rustdb_types::builtin_type_names() {
+            for name in roastedduck_types::builtin_type_names() {
                 self.create_default_type(chains, name.as_bytes(), &key(name));
             }
             self.all_default_types.store(true, Ordering::Relaxed);
@@ -315,7 +315,7 @@ impl CatalogSet {
         let mut chains = self.lock();
         let name = key(entry.name());
         if chains.contains_key(&name) {
-            return Err(Error::internal(rustdb_common::byte_format!(
+            return Err(Error::internal(roastedduck_common::byte_format!(
                 "Entry with name \"{}\" already exists",
                 entry.name()
             )));
@@ -331,7 +331,7 @@ impl CatalogSet {
         let mut chains = self.lock();
         let name = key(entry.name());
         if chains.contains_key(&name) {
-            return Err(Error::catalog(rustdb_common::byte_format!(
+            return Err(Error::catalog(roastedduck_common::byte_format!(
                 "Entry with name \"{}\" already exists",
                 entry.name()
             )));
@@ -430,7 +430,7 @@ impl CatalogSet {
                     if conflicts(transaction, head.timestamp()) {
                         return Err(Error::new_bytes(
                             ErrorKind::Transaction,
-                            rustdb_common::byte_format!(
+                            roastedduck_common::byte_format!(
                                 "Catalog write-write conflict on create with \"{}\"",
                                 display_name(head, &name)
                             ),
@@ -468,7 +468,7 @@ impl CatalogSet {
         name: impl AsRef<[u8]>,
         mut entry: CatalogEntry,
         hook: StorageHook,
-        info: Option<rustdb_ast::AlterInfo>,
+        info: Option<roastedduck_ast::AlterInfo>,
     ) -> Result<bool> {
         let name = name.as_ref();
 
@@ -493,7 +493,7 @@ impl CatalogSet {
                     ));
                 }
                 if head.entry.is_some() {
-                    return Err(Error::catalog(rustdb_common::byte_format!(
+                    return Err(Error::catalog(roastedduck_common::byte_format!(
                         "Could not rename \"{name}\" to \"{}\": another entry with this name already exists!",
                         entry.name()
                     )));
@@ -506,7 +506,7 @@ impl CatalogSet {
             if conflicts(transaction, head.timestamp()) {
                 return Err(Error::new_bytes(
                     ErrorKind::Transaction,
-                    rustdb_common::byte_format!(
+                    roastedduck_common::byte_format!(
                         "Catalog write-write conflict on alter with \"{}\"",
                         display_name(head, &old)
                     ),
@@ -559,7 +559,7 @@ impl CatalogSet {
         name: impl AsRef<[u8]>,
         entry: CatalogEntry,
         hook: StorageHook,
-        info: Option<rustdb_ast::AlterInfo>,
+        info: Option<roastedduck_ast::AlterInfo>,
     ) -> Result<bool> {
         let name = name.as_ref();
 
@@ -575,7 +575,7 @@ impl CatalogSet {
             if conflicts(transaction, head.timestamp()) {
                 return Err(Error::new_bytes(
                     ErrorKind::Transaction,
-                    rustdb_common::byte_format!(
+                    roastedduck_common::byte_format!(
                         "Catalog write-write conflict on alter with \"{}\"",
                         display_name(head, &name)
                     ),
@@ -616,7 +616,7 @@ impl CatalogSet {
             if conflicts(transaction, head.timestamp()) {
                 return Err(Error::new_bytes(
                     ErrorKind::Transaction,
-                    rustdb_common::byte_format!(
+                    roastedduck_common::byte_format!(
                         "Catalog write-write conflict on alter with \"{}\"",
                         display_name(head, &name)
                     ),
@@ -627,7 +627,7 @@ impl CatalogSet {
             };
             dropped = Arc::clone(entry);
             if entry.internal && !allow_internal {
-                return Err(Error::catalog(rustdb_common::byte_format!(
+                return Err(Error::catalog(roastedduck_common::byte_format!(
                     "Cannot drop entry \"{}\" because it is an internal system entry",
                     entry.name()
                 )));
@@ -670,7 +670,7 @@ impl CatalogSet {
         if conflicts(transaction, head.timestamp()) {
             return Err(Error::new_bytes(
                 ErrorKind::Transaction,
-                rustdb_common::byte_format!(
+                roastedduck_common::byte_format!(
                     "Catalog write-write conflict on alter with \"{}\"",
                     display_name(head, &key(name))
                 ),
@@ -760,7 +760,7 @@ impl CatalogSet {
         self.create_default_types(&mut chains);
         let mut best = (0.0, ByteString::new());
         for chain in chains.values() {
-            let score = rustdb_common::string_util::similarity_rating(&chain.name, name);
+            let score = roastedduck_common::string_util::similarity_rating(&chain.name, name);
             if score > best.0 {
                 best = (score, chain.name.clone());
             }
@@ -878,13 +878,13 @@ mod tests {
         assert_eq!(integer.name(), "INTEGER");
         assert!(integer.internal && integer.temporary);
         assert!(matches!(&integer.kind, EntryKind::Type(ty)
-            if ty.user_type == rustdb_types::LogicalType::INTEGER));
+            if ty.user_type == roastedduck_types::LogicalType::INTEGER));
         manager.rollback(&transaction);
 
         let transaction = manager.begin();
         assert!(Arc::ptr_eq(&integer, &set.get(&transaction, "integer").unwrap()));
         let entries = set.scan(&transaction);
-        assert_eq!(entries.len(), rustdb_types::builtin_type_names().count());
+        assert_eq!(entries.len(), roastedduck_types::builtin_type_names().count());
         assert_eq!(
             entries.iter().filter(|entry| entry.name() == "INTEGER").count(),
             1

@@ -2,7 +2,7 @@
 
 use std::ffi::{CString, c_char};
 
-use rustdb::{ColumnDescription, TableDescription};
+use roastedduck::{ColumnDescription, TableDescription};
 
 use crate::helper::{c_string, catch, opt_bytes, to_cstring};
 use crate::logical_types::{DuckdbLogicalType, wrap_type};

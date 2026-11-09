@@ -3,9 +3,9 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_function::{BindInput, CollationHandling, FunctionData, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_function::{BindInput, CollationHandling, FunctionData, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{LogicalType, LogicalTypeId, TypeInfo};
 
 use crate::scalar::executor::{Str, binary, ternary, unary};
 use crate::scalar::string::caseconvert::case_convert;
@@ -284,7 +284,7 @@ fn bind_like(
         let matcher = Arc::new(matcher);
         let data: Arc<dyn FunctionData> = Arc::clone(&matcher) as Arc<dyn FunctionData>;
         function.kernel = Arc::new(move |args, _, result| {
-            let strings = rustdb_types::DataChunk::new(vec![args.column(0).clone()], args.len());
+            let strings = roastedduck_types::DataChunk::new(vec![args.column(0).clone()], args.len());
             unary::<Str, bool>(&strings, result, |string, out| {
                 *out = matcher.matches(string) != invert;
                 Ok(true)
@@ -309,9 +309,9 @@ fn like_kernel(
     op: Matcher,
     invert: bool,
 ) -> impl Fn(
-    &rustdb_types::DataChunk,
-    &mut rustdb_function::FunctionState,
-    &mut rustdb_types::Vector,
+    &roastedduck_types::DataChunk,
+    &mut roastedduck_function::FunctionState,
+    &mut roastedduck_types::Vector,
 ) -> Result<()>
 + Send
 + Sync

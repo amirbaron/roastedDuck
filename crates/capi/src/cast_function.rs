@@ -3,9 +3,9 @@
 use std::ffi::{c_char, c_void};
 use std::sync::Arc;
 
-use rustdb_common::Result;
-use rustdb_function::cast::{BoundCastInfo, CastParameters};
-use rustdb_types::{LogicalType, STANDARD_VECTOR_SIZE, Vector};
+use roastedduck_common::Result;
+use roastedduck_function::cast::{BoundCastInfo, CastParameters};
+use roastedduck_types::{LogicalType, STANDARD_VECTOR_SIZE, Vector};
 
 use crate::data_chunk::DuckdbVector;
 use crate::function::{

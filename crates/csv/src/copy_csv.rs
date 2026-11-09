@@ -6,16 +6,16 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
-use rustdb_function::cast::{CastFunctionSet, CastParameters};
-use rustdb_function::copy::{
+use roastedduck_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
+use roastedduck_function::cast::{CastFunctionSet, CastParameters};
+use roastedduck_function::copy::{
     CopyFromBindInput, CopyFunctionBindInput, CopyFunctionExecutionMode, CopyGlobalState, CopyLocalState,
     PreparedBatch,
 };
-use rustdb_function::{CopyFunction, CopyOption, CopyOptionMode, FunctionData};
-use rustdb_functions::strtime::StrpTimeFormat;
-use rustdb_planner::ClientContext;
-use rustdb_types::{DataChunk, Date, LogicalType, LogicalTypeId, StringT, Timestamp, Value, Vector};
+use roastedduck_function::{CopyFunction, CopyOption, CopyOptionMode, FunctionData};
+use roastedduck_functions::strtime::StrpTimeFormat;
+use roastedduck_planner::ClientContext;
+use roastedduck_types::{DataChunk, Date, LogicalType, LogicalTypeId, StringT, Timestamp, Value, Vector};
 
 use crate::multi_file::{FileList, MultiFileOptions, create_file_list};
 use crate::options::{CsvReaderOptions, FileCompressionType};
@@ -79,7 +79,7 @@ enum ColumnFormat {
 /// A bound `strftime(column, format)` call.
 #[derive(Clone)]
 struct BoundStrftime {
-    kernel: rustdb_function::ScalarKernel,
+    kernel: roastedduck_function::ScalarKernel,
     bind_info: Option<Arc<dyn FunctionData>>,
     format: Value,
 }
@@ -104,24 +104,24 @@ fn bind_strftime(context: &ClientContext, format: &Value) -> Result<Option<Bound
     let Some(entry) = context.get_entry(
         "system",
         "main",
-        rustdb_catalog::CatalogType::ScalarFunction,
+        roastedduck_catalog::CatalogType::ScalarFunction,
         "strftime",
         true,
     )?
     else {
         return Ok(None);
     };
-    let rustdb_catalog::EntryKind::ScalarFunction(functions) = &entry.entry.kind else {
+    let roastedduck_catalog::EntryKind::ScalarFunction(functions) = &entry.entry.kind else {
         return Ok(None);
     };
     let children = vec![
-        rustdb_planner::Expression::reference("", LogicalType::TIMESTAMP_TZ, 0),
-        rustdb_planner::Expression::constant(format.clone()),
+        roastedduck_planner::Expression::reference("", LogicalType::TIMESTAMP_TZ, 0),
+        roastedduck_planner::Expression::constant(format.clone()),
     ];
-    let bound = rustdb_planner::function_binder::FunctionBinder::new(context)
+    let bound = roastedduck_planner::function_binder::FunctionBinder::new(context)
         .bind_scalar_function(functions, children, false)?
         .map_err(|error| error.error)?;
-    let rustdb_planner::ExpressionKind::Function(function) = bound.kind else {
+    let roastedduck_planner::ExpressionKind::Function(function) = bound.kind else {
         return Ok(None);
     };
     Ok(Some(BoundStrftime {
@@ -139,7 +139,7 @@ pub struct WriteCsvData {
     formats: Vec<ColumnFormat>,
     casts: Arc<CastFunctionSet>,
     /// The connection writing, whose loggers see the file operations.
-    client: Option<Arc<rustdb_function::FunctionClient>>,
+    client: Option<Arc<roastedduck_function::FunctionClient>>,
 }
 
 impl FunctionData for WriteCsvData {
@@ -158,7 +158,7 @@ fn write_format(format: &Value) -> Result<StrpTimeFormat> {
 /// `WriteCSVBind`.
 fn write_csv_bind(
     input: &mut CopyFunctionBindInput<'_>,
-    names: &[rustdb_common::ByteString],
+    names: &[roastedduck_common::ByteString],
     types: &[LogicalType],
 ) -> Result<Arc<dyn FunctionData>> {
     let context = client_context(input.binder)?;
@@ -239,8 +239,8 @@ fn write_csv_bind(
 /// A created file whose writes are logged to the connection's `FileSystem` log
 /// (the `DUCKDB_LOG_FILE_SYSTEM_*` calls of a local file handle).
 pub(crate) struct LoggedFile {
-    file: rustdb_function::registered_files::Output,
-    logger: Option<rustdb_function::logging::FileSystemLogger>,
+    file: roastedduck_function::registered_files::Output,
+    logger: Option<roastedduck_function::logging::FileSystemLogger>,
     position: u64,
 }
 
@@ -282,24 +282,24 @@ impl CsvSink {
     pub(crate) fn create(
         path: &[u8],
         compression: FileCompressionType,
-        client: Option<&rustdb_function::FunctionClient>,
+        client: Option<&roastedduck_function::FunctionClient>,
     ) -> Result<Self> {
         let compression = compression.resolve(path);
         if compression == FileCompressionType::Zstd {
-            rustdb_function::file_system::verify_zstd_file_system()?;
+            roastedduck_function::file_system::verify_zstd_file_system()?;
         }
-        rustdb_function::file_system::verify_can_write(path)?;
-        let file = if rustdb_function::registered_files::lookup(path).is_some() {
-            rustdb_function::registered_files::Output::create(path)?
+        roastedduck_function::file_system::verify_can_write(path)?;
+        let file = if roastedduck_function::registered_files::lookup(path).is_some() {
+            roastedduck_function::registered_files::Output::create(path)?
         } else {
-            rustdb_function::registered_files::Output::Local(
-                File::create(rustdb_function::file_system::native_path(path)?)
+            roastedduck_function::registered_files::Output::Local(
+                File::create(roastedduck_function::file_system::native_path(path)?)
                     .map_err(|error| crate::buffer::open_error(path, &error))?,
             )
         };
         let file = LoggedFile {
             file,
-            logger: rustdb_function::logging::FileSystemLogger::open_for(client, path),
+            logger: roastedduck_function::logging::FileSystemLogger::open_for(client, path),
             position: 0,
         };
         let file = BufWriter::with_capacity(1 << 15, file);
@@ -331,9 +331,9 @@ impl CsvSink {
             Self::Gzip(encoder) => Self::close_file(encoder.finish()?),
             Self::Zstd(buffer, mut file) => {
                 // `ZstdStreamWrapper`: a stream at the default level, ended at the close.
-                file.write_all(&rustdb_zstd::compress_streamed(
+                file.write_all(&roastedduck_zstd::compress_streamed(
                     &buffer,
-                    rustdb_zstd::DEFAULT_LEVEL,
+                    roastedduck_zstd::DEFAULT_LEVEL,
                 ))?;
                 Self::close_file(file)
             }
@@ -350,7 +350,7 @@ impl CsvSink {
 /// The writer of one file (DuckDB's `CSVWriter` with `GlobalWriteCSVData`).
 struct CsvWriter {
     sink: CsvSink,
-    path: rustdb_common::ByteString,
+    path: roastedduck_common::ByteString,
     written_anything: bool,
     bytes_written: u64,
     /// Rows not written to the file yet (the `MemoryStream` of `CSVWriterState`); they
@@ -365,12 +365,12 @@ struct CsvWriter {
 const FLUSH_SIZE: usize = 4096 * 8;
 
 fn write_error(path: &[u8], error: &std::io::Error) -> Error {
-    if let Some(error) = rustdb_function::registered_files::callback_error(error) {
+    if let Some(error) = roastedduck_function::registered_files::callback_error(error) {
         return error;
     }
     Error::new_bytes(
         ErrorKind::Io,
-        rustdb_common::byte_format!("Could not write file \"{path}\": {error}"),
+        roastedduck_common::byte_format!("Could not write file \"{path}\": {error}"),
     )
 }
 
@@ -561,9 +561,9 @@ fn column_text(data: &WriteCsvData, column: usize, vector: &Vector, count: usize
         ColumnFormat::Function(strftime) => {
             let format = Vector::constant(&strftime.format)?;
             let args = DataChunk::new(vec![vector.clone(), format], count);
-            let mut state = rustdb_function::FunctionState {
+            let mut state = roastedduck_function::FunctionState {
                 bind_data: strftime.bind_info.clone(),
-                ..rustdb_function::FunctionState::default()
+                ..roastedduck_function::FunctionState::default()
             };
             let mut result = Vector::flat(LogicalType::VARCHAR, count.max(1));
             (strftime.kernel)(&args, &mut state, &mut result)?;
@@ -682,7 +682,7 @@ fn write_csv_execution_mode(
 fn write_csv_prepare_batch(
     bind_data: &dyn FunctionData,
     _: &CopyGlobalState,
-    batch: &dyn rustdb_function::copy::CopyBatch,
+    batch: &dyn roastedduck_function::copy::CopyBatch,
 ) -> Result<PreparedBatch> {
     let data = write_data(bind_data)?;
     let mut blocks = Vec::new();
@@ -748,13 +748,13 @@ fn write_csv_file_size(state: &CopyGlobalState) -> u64 {
 /// `MultiFileBindCopy` with `CSVMultiFileInfo`: binds `read_csv` for the target columns.
 fn read_csv_copy_bind(
     input: &CopyFromBindInput<'_>,
-    expected_names: &[rustdb_common::ByteString],
+    expected_names: &[roastedduck_common::ByteString],
     expected_types: &[LogicalType],
 ) -> Result<Arc<dyn FunctionData>> {
     let context = client_context(input.binder)?;
     let files: FileList = create_file_list(
         "COPY",
-        std::slice::from_ref(&rustdb_common::ByteString::from(input.file_path)),
+        std::slice::from_ref(&roastedduck_common::ByteString::from(input.file_path)),
         "csv",
     )?;
     let mut options = CsvReaderOptions::default();

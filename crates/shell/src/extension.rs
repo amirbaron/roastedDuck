@@ -5,12 +5,12 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb::{Connection, Database, LogLevel, LogStorage, LogicalType, Result};
-use rustdb_ast::{ColumnDataRef, TableRef, TableRefKind};
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_functions::scalar::executor::{Str, StrOut, unary};
-use rustdb_planner::{ReplacementScan, ReplacementScanInput};
-use rustdb_types::ColumnDataCollection;
+use roastedduck::{Connection, Database, LogLevel, LogStorage, LogicalType, Result};
+use roastedduck_ast::{ColumnDataRef, TableRef, TableRefKind};
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_functions::scalar::executor::{Str, StrOut, unary};
+use roastedduck_planner::{ReplacementScan, ReplacementScanInput};
+use roastedduck_types::ColumnDataCollection;
 
 use crate::highlight::{HighlightElementType, ShellHighlight};
 use crate::output::{Output, PrintOutput};
@@ -46,8 +46,8 @@ pub fn load_shell_extension(db: &Database, conn: &mut Connection, last_result: &
             .and_then(|value| value.as_bool())
             .unwrap_or(true);
         if !external_access {
-            return Err(rustdb::Error::new(
-                rustdb::ErrorKind::Permission,
+            return Err(roastedduck::Error::new(
+                roastedduck::ErrorKind::Permission,
                 "getenv is disabled through configuration",
             ));
         }
@@ -73,18 +73,18 @@ fn shell_scan_last_result(
         return Ok(None);
     }
     let Some(scanned) = last_result.lock().unwrap_or_else(PoisonError::into_inner).clone() else {
-        return Err(rustdb::Error::binder(
+        return Err(roastedduck::Error::binder(
             "Failed to query last result \"_\": no result available",
         ));
     };
     let result = &scanned.result;
     let collection = ColumnDataCollection::new(result.types().to_vec(), result.collect_chunks()?);
-    Ok(Some(rustdb_parser::build::table_ref(TableRefKind::ColumnData(
-        ColumnDataRef {
+    Ok(Some(roastedduck_parser::build::table_ref(
+        TableRefKind::ColumnData(ColumnDataRef {
             expected_names: result.names().to_vec(),
             collection: Some(Box::new(collection)),
-        },
-    ))))
+        }),
+    )))
 }
 
 /// `ShellLogStorage`: prints each log entry once, to the shell's output.
@@ -111,7 +111,7 @@ impl LogStorage for ShellLogStorage {
         let highlight = ShellHighlight::new(&self.out);
         highlight.print_text(&format!("{}:\n", level.name()), PrintOutput::Stdout, element_type);
         highlight.print_bytes(
-            &rustdb_common::byte_format!("{message}\n\n"),
+            &roastedduck_common::byte_format!("{message}\n\n"),
             PrintOutput::Stdout,
             element_type,
         );

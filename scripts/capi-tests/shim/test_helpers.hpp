@@ -1,5 +1,5 @@
 // Stand-in for DuckDB's test/include/test_helpers.hpp when the C API tests are built
-// against rustdb's libduckdb: the tests must only reach the engine through duckdb.h, so
+// against roastedduck's libduckdb: the tests must only reach the engine through duckdb.h, so
 // the C++ utilities they use (strings, containers, exceptions, a few value helpers) are
 // provided here as header-only test code. Test-only; never shipped.
 #pragma once

@@ -5,7 +5,7 @@ use std::alloc::Layout;
 use std::ptr::NonNull;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::SECTOR_SIZE;
 use crate::allocator::BlockAllocator;
@@ -65,7 +65,7 @@ pub(crate) const fn aligned_alloc_size(user_size: usize, header_size: usize) -> 
 
 fn allocation_failure(size: usize) -> Error {
     Error::new(
-        rustdb_common::ErrorKind::OutOfMemory,
+        roastedduck_common::ErrorKind::OutOfMemory,
         format!("Failed to allocate block of {size} bytes (bad allocation)"),
     )
 }

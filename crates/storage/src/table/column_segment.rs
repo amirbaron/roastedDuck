@@ -14,11 +14,11 @@ use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
-use rustdb_buffer::{
+use roastedduck_buffer::{
     BlockHandle, BlockId, BlockManager, BufferHandle, BufferManager, INVALID_BLOCK, MemoryTag,
 };
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId, PhysicalType, Vector};
 
 use crate::compression::{self, CompressionType, SegmentScan, constant, uncompressed};
 use crate::statistics::BaseStatistics;

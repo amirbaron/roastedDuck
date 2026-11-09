@@ -1,7 +1,7 @@
 //! The `catalog_page` table (`w_catalog_page.c`): catalogs are issued monthly, quarterly
 //! or bi-annually, with one of each type circulating at all times.
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use super::Output;
 use super::build_support::{bkey_str, mk_bkey};

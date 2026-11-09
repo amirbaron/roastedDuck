@@ -1,5 +1,5 @@
 [package]
-name = "rustdb-httpfs"
+name = "roastedduck-httpfs"
 description = "HTTP(S) positional filesystem for the DuckDB Rust engine."
 version.workspace = true
 edition.workspace = true
@@ -7,10 +7,10 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-rustdb-common.workspace = true
-rustdb-buffer = { path = "../buffer" }
-rustdb-types.workspace = true
-rustdb-function = { path = "../function" }
+roastedduck-common.workspace = true
+roastedduck-buffer = { path = "../buffer" }
+roastedduck-types.workspace = true
+roastedduck-function = { path = "../function" }
 ureq = { version = "=3.5.0", default-features = false, features = ["_tls"] }
 ureq-proto = { version = "=0.6.5", default-features = false }
 httpdate = "1"

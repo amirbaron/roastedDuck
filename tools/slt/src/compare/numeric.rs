@@ -6,7 +6,7 @@
 //! decimal points and exponents rounded half away from zero, `0x`/`0b` literals for integers)
 //! and floating point values are compared with DuckDB's `ApproxEqual`.
 
-use rustdb::{LogicalType, LogicalTypeId};
+use roastedduck::{LogicalType, LogicalTypeId};
 
 /// A parsed numeric value of a known column type.
 #[derive(Clone, Copy, Debug, PartialEq)]

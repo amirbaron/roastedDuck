@@ -1,7 +1,7 @@
 //! Native C++ cast outcomes for raw STRUCT/UNION member names.
-use rustdb_common::ByteString;
-use rustdb_function::cast::{CastFunctionSet, ValueCast};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::ByteString;
+use roastedduck_function::cast::{CastFunctionSet, ValueCast};
+use roastedduck_types::{LogicalType, Value};
 fn decode(hex: &str) -> Vec<u8> {
     hex.as_bytes()
         .as_chunks::<2>()

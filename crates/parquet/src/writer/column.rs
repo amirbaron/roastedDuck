@@ -6,8 +6,8 @@
 //! `prepare` (levels and page boundaries), `begin_write`, `write` (encode pages) and
 //! `finalize_write` (write pages to the file).
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_types::{ListEntry, LogicalType, LogicalTypeId, SelectionVector, Vector};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_types::{ListEntry, LogicalType, LogicalTypeId, SelectionVector, Vector};
 
 use super::encoders::RleBpEncoder;
 use super::stats::WriterStatistics;
@@ -29,14 +29,14 @@ const MAX_UNCOMPRESSED_PAGE_SIZE: usize = 104_857_600;
 /// The schema of a column being written (the writer's `ParquetColumnSchema`).
 #[derive(Clone, Debug)]
 pub struct WriterSchema {
-    pub name: rustdb_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     pub logical_type: LogicalType,
     pub max_define: u16,
     pub max_repeat: u16,
     pub repetition: FieldRepetitionType,
     pub field_id: Option<i32>,
     /// `path_in_schema` of the column chunks below this node.
-    pub path: Vec<rustdb_common::ByteString>,
+    pub path: Vec<roastedduck_common::ByteString>,
 }
 
 /// The levels computed for a node while preparing a row group (`ColumnWriterState`).
@@ -586,7 +586,7 @@ fn consecutive_child_list(vector: &Vector, count: usize) -> Result<(Vector, usiz
     }
     let sliced = child.slice(&SelectionVector::new(sel));
     let mut flat = Vector::flat(child.logical_type().clone(), total as usize);
-    rustdb_types::vector_ops::copy_rows(&sliced, 0, total as usize, &mut flat, 0)?;
+    roastedduck_types::vector_ops::copy_rows(&sliced, 0, total as usize, &mut flat, 0)?;
     Ok((flat, total as usize))
 }
 
@@ -770,7 +770,7 @@ pub struct FinishedColumn {
     /// The min/max of the values when NaNs kept them out of the file.
     pub nan_min_max: Option<(Vec<u8>, Vec<u8>)>,
     /// The geometry statistics of a GEOMETRY column: its name, type and statistics.
-    pub geo: Option<(rustdb_common::ByteString, LogicalType, crate::geo::GeoStats)>,
+    pub geo: Option<(roastedduck_common::ByteString, LogicalType, crate::geo::GeoStats)>,
     pub bloom_filter: Option<super::bloom::BloomFilter>,
 }
 
@@ -1317,7 +1317,7 @@ pub fn set_schema_properties(ty: &LogicalType, element: &mut SchemaElement, opti
             element.converted_type = Some(ConvertedType::DECIMAL);
             element.precision = Some(i32::from(width));
             element.scale = Some(i32::from(scale));
-            if ty.physical_type() == rustdb_types::PhysicalType::Int128 {
+            if ty.physical_type() == roastedduck_types::PhysicalType::Int128 {
                 element.type_length = Some(16);
             }
             element.logical_type = Some(ParquetLogicalType {
@@ -1355,8 +1355,8 @@ pub fn try_parquet_type(ty: &LogicalType) -> Option<Type> {
         | L::TimestampSec => Type::INT64,
         L::Interval | L::Uuid => Type::FIXED_LEN_BYTE_ARRAY,
         L::Decimal => match ty.physical_type() {
-            rustdb_types::PhysicalType::Int16 | rustdb_types::PhysicalType::Int32 => Type::INT32,
-            rustdb_types::PhysicalType::Int64 => Type::INT64,
+            roastedduck_types::PhysicalType::Int16 | roastedduck_types::PhysicalType::Int32 => Type::INT32,
+            roastedduck_types::PhysicalType::Int64 => Type::INT64,
             _ => Type::FIXED_LEN_BYTE_ARRAY,
         },
         _ => return None,

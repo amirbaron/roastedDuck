@@ -2,9 +2,9 @@
 //! reference of a materialized CTE is filtered, the OR of those filters (rewritten to the
 //! CTE definition's bindings) is pushed into the definition.
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::Result;
-use rustdb_planner::{Expression, LogicalKind, LogicalOperator};
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::Result;
+use roastedduck_planner::{Expression, LogicalKind, LogicalOperator};
 
 use crate::column_binding_replacer::{ColumnBindingReplacer, ReplacementBinding};
 use crate::expression_rewriter::ExpressionRewriter;
@@ -147,7 +147,7 @@ fn push_filter_into_cte(optimizer: &Optimizer, plan: &mut LogicalOperator, info:
         projection_map: Vec::new(),
     })
     .with_expressions(vec![outer]);
-    rustdb_planner::operator::split_predicates(&mut new_cte.expressions);
+    roastedduck_planner::operator::split_predicates(&mut new_cte.expressions);
     ExpressionRewriter::new(optimizer).visit_operator(&mut new_cte)?;
     new_cte.children.push(cte.children.remove(0));
     let new_cte = FilterPushdown::new(optimizer, true).rewrite(new_cte)?;

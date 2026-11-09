@@ -23,7 +23,7 @@ SQL / Python / Go / Swift / C API / ADBC
 | Values, vectors, errors | `crates/types`, `crates/common` |
 | SQL syntax and planning | `crates/ast`, `crates/parser`, `crates/planner` |
 | Optimization and execution | `crates/optimizer`, `crates/execution`, `crates/row` |
-| Database API and catalog | `crates/rustdb`, `crates/catalog` |
+| Database API and catalog | `crates/roastedduck`, `crates/catalog` |
 | Persistence and memory | `crates/storage`, `crates/buffer` |
 | File formats and extensions | `crates/parquet`, `crates/csv`, `crates/json`, `crates/httpfs` |
 | Clients and shell | `crates/capi`, `crates/python`, `crates/shell` |
@@ -34,8 +34,8 @@ this is not a claim that the complete dependency graph is Rust or free of unsafe
 code. The upstream C++ engine is used as a reference for testing, not as the
 runtime engine in the release payload.
 
-The public CLI package is `roastedduck-cli`, producing `roastedDuck`. Internal
-engine crate names remain `rustdb-*` for continuity; release versions match the targeted DuckDB
+The public CLI package is `roastedduck-cli`, producing `roastedDuck`. Rust engine
+crates and modules use `roastedduck-*` and `roastedduck_*`; release versions match the targeted DuckDB
 compatibility version.
 
 Read the [detailed engineering conventions](https://github.com/amirbaron/roastedDuck/blob/main/docs/architecture.md)

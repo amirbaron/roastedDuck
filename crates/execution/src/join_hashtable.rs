@@ -12,16 +12,16 @@ use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::{ExpressionType, JoinType};
-use rustdb_buffer::{AllocatedData, BufferManager, MemoryTag};
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_row::hash::{combine_hash_vector, hash_columns, hash_vector};
-use rustdb_row::{
+use roastedduck_ast::{ExpressionType, JoinType};
+use roastedduck_buffer::{AllocatedData, BufferManager, MemoryTag};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_row::hash::{combine_hash_vector, hash_columns, hash_vector};
+use roastedduck_row::{
     ChunkFormat, ChunkIterator, HeapKeepAlive, MatchPredicate, PartitionedAppendState, PartitionedTupleData,
     PinProperties, RadixPartitioning, RowMatcher, RowPtr, ScanState, TupleDataCollection, TupleDataLayout,
     ValidityType,
 };
-use rustdb_types::{DataChunk, LogicalType, PhysicalType, Sel, ValidityMask, Value, Vector, VectorKind};
+use roastedduck_types::{DataChunk, LogicalType, PhysicalType, Sel, ValidityMask, Value, Vector, VectorKind};
 
 use crate::aggregate_hashtable::{AggregateObject, GroupedAggregateHashTable, initial_capacity};
 use crate::operators::join::{self, propagates_build_side};
@@ -100,7 +100,7 @@ impl FirstRound<'_> {
         reason = "one copy of the hot loop per selection shape"
     )]
     #[inline(always)]
-    fn run<T: rustdb_types::NativeType + PartialEq>(
+    fn run<T: roastedduck_types::NativeType + PartialEq>(
         &self,
         row_of: impl Fn(usize) -> u32,
         key_of: impl Fn(u32) -> T,
@@ -352,7 +352,7 @@ struct CorrelatedMarkJoinInfo {
 
 impl CorrelatedMarkJoinInfo {
     fn new(buffer_manager: BufferManager, correlated_types: Vec<LogicalType>) -> Result<Self> {
-        use rustdb_functions::aggregate::distributive::count::{count_function, count_star_function};
+        use roastedduck_functions::aggregate::distributive::count::{count_function, count_star_function};
         let aggregates = [
             AggregateObject {
                 function: count_star_function(),
@@ -454,7 +454,7 @@ pub struct JoinHashTable {
     pub(crate) total_probe_matches: std::sync::atomic::AtomicUsize,
     /// Logs the builds of the pointer table, for the join's operator (`op` and `context`
     /// of DuckDB's `JoinHashTable`), if the query logs them.
-    logger: Option<rustdb_function::logging::OperatorLogger>,
+    logger: Option<roastedduck_function::logging::OperatorLogger>,
 }
 
 impl JoinHashTable {
@@ -576,7 +576,7 @@ impl JoinHashTable {
     }
 
     /// Logs the builds of the pointer table with `logger` (the join's operator).
-    pub fn set_logger(&mut self, logger: Option<rustdb_function::logging::OperatorLogger>) {
+    pub fn set_logger(&mut self, logger: Option<roastedduck_function::logging::OperatorLogger>) {
         self.logger = logger;
     }
 
@@ -1160,7 +1160,7 @@ impl JoinHashTable {
     }
 
     /// [`Self::probe_integer_keys`] for keys of native type `T`.
-    fn probe_typed_keys<T: rustdb_types::NativeType + PartialEq>(
+    fn probe_typed_keys<T: roastedduck_types::NativeType + PartialEq>(
         &self,
         entries: &[AtomicU64],
         key: &Vector,

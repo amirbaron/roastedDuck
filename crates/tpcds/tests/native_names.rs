@@ -1,12 +1,12 @@
 //! Generator bind/scan with raw catalog/schema/suffix identities, at scale zero.
-use rustdb_buffer::{BufferManager, BufferManagerConfig, InMemoryBlockManager};
-use rustdb_catalog::{Catalog, CatalogType, TransactionManager};
-use rustdb_common::{ByteString, Result};
-use rustdb_execution::ScalarEvaluator;
-use rustdb_function::{FunctionClient, TableFunctionBindInput, TableScanState, cast::CastFunctionSet};
-use rustdb_planner::{ClientContext, PlannerConfig};
-use rustdb_storage::TableIoManager;
-use rustdb_types::{DataChunk, Value};
+use roastedduck_buffer::{BufferManager, BufferManagerConfig, InMemoryBlockManager};
+use roastedduck_catalog::{Catalog, CatalogType, TransactionManager};
+use roastedduck_common::{ByteString, Result};
+use roastedduck_execution::ScalarEvaluator;
+use roastedduck_function::{FunctionClient, TableFunctionBindInput, TableScanState, cast::CastFunctionSet};
+use roastedduck_planner::{ClientContext, PlannerConfig};
+use roastedduck_storage::TableIoManager;
+use roastedduck_types::{DataChunk, Value};
 use std::sync::Arc;
 #[test]
 fn native_generator_names_survive_real_table_creation() -> Result<()> {
@@ -38,28 +38,28 @@ fn native_generator_names_survive_real_table_creation() -> Result<()> {
             casts: Arc::new(CastFunctionSet::new()),
             evaluator: Arc::new(ScalarEvaluator),
             config: PlannerConfig::default(),
-            prepared_statements: rustdb_common::CaseInsensitiveMap::default(),
+            prepared_statements: roastedduck_common::CaseInsensitiveMap::default(),
             function_client: Arc::new(FunctionClient::default()),
             dependency_recorder: Arc::default(),
             database_state: None,
-            user_variables: rustdb_common::CaseInsensitiveMap::default(),
+            user_variables: roastedduck_common::CaseInsensitiveMap::default(),
             replacement_scans: Vec::new(),
         };
-        let functions = rustdb_tpcds::tpcds_table_functions();
+        let functions = roastedduck_tpcds::tpcds_table_functions();
         let function = &functions[0].functions[0];
         let params = vec![
             ("sf".into(), Value::double(0.0)),
             (
                 "catalog".into(),
-                Value::bytes(rustdb_types::LogicalType::VARCHAR, &catalog_name),
+                Value::bytes(roastedduck_types::LogicalType::VARCHAR, &catalog_name),
             ),
             (
                 "schema".into(),
-                Value::bytes(rustdb_types::LogicalType::VARCHAR, &schema),
+                Value::bytes(roastedduck_types::LogicalType::VARCHAR, &schema),
             ),
             (
                 "suffix".into(),
-                Value::bytes(rustdb_types::LogicalType::VARCHAR, &suffix),
+                Value::bytes(roastedduck_types::LogicalType::VARCHAR, &suffix),
             ),
         ];
         let bound = function.bind.as_ref().unwrap()(&TableFunctionBindInput {

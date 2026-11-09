@@ -4,18 +4,18 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::{
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::{
     FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
     TableScanState,
 };
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 /// The repeated row and how often it is produced (`RepeatFunctionData` /
 /// `RepeatRowFunctionData`).
 #[derive(Debug)]
 struct RepeatData {
-    values: Vec<rustdb_types::Value>,
+    values: Vec<roastedduck_types::Value>,
     target_count: u64,
 }
 
@@ -57,7 +57,7 @@ fn repeat_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOu
         return Err(Error::internal("repeat takes two arguments"));
     };
     let name = if value.is_null() {
-        rustdb_common::ByteString::from("NULL")
+        roastedduck_common::ByteString::from("NULL")
     } else {
         value.to_varchar_bytes()?
     };
@@ -87,7 +87,7 @@ fn repeat_row_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBi
         .map(|value| value.logical_type().clone())
         .collect();
     let names = (0..input.inputs.len())
-        .map(|index| rustdb_common::byte_format!("column{index}"))
+        .map(|index| roastedduck_common::byte_format!("column{index}"))
         .collect();
     let num_rows = input
         .named_parameters

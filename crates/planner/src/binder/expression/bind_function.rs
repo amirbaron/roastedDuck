@@ -1,12 +1,12 @@
 //! Function calls (DuckDB's `bind_function_expression.cpp`).
 
-use rustdb_ast::{
+use roastedduck_ast::{
     ExpressionClass, ExpressionType, ParsedExpression, ParsedExpressionKind, lambda_parameters,
 };
-use rustdb_catalog::EntryKind;
-use rustdb_common::{Error, Result};
-use rustdb_function::{BindLambda, LambdaInput, ScalarFunctionSet};
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_catalog::EntryKind;
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{BindLambda, LambdaInput, ScalarFunctionSet};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::binder::Binding;
 use crate::expression::{BoundLambdaExpression, Expression, ExpressionKind};
@@ -34,7 +34,7 @@ pub fn bind_function_expression<B: ExpressionBinder + ?Sized>(
     if !is_aggregate
         && (function.distinct || function.filter.is_some() || !function.order_bys.orders.is_empty())
     {
-        return Err(Error::invalid_input(rustdb_common::byte_format!(
+        return Err(Error::invalid_input(roastedduck_common::byte_format!(
             "Function \"{}\" is a {}. \"DISTINCT\", \"FILTER\", and \"ORDER BY\" are only applicable to aggregate \
              functions.",
             function.function_name,
@@ -98,14 +98,14 @@ fn bind_scalar_function<B: ExpressionBinder + ?Sized>(
         FunctionBinder::new(&context).bind_scalar_function(functions, children, function.is_operator)?;
     let bound = result.map_err(|error| error.with_position(location).error)?;
     if let crate::expression::ExpressionKind::Function(bound_function) = &bound.kind {
-        if bound_function.function.stability == rustdb_function::Stability::ConsistentWithinQuery {
+        if bound_function.function.stability == roastedduck_function::Stability::ConsistentWithinQuery {
             binder.binder_ref().set_always_require_rebind();
         }
         // `get_modified_databases`: e.g. `nextval` writes to the sequence's database.
         if let Some(database) = bound_function
             .bind_info
             .as_deref()
-            .and_then(rustdb_function::FunctionData::modified_database)
+            .and_then(roastedduck_function::FunctionData::modified_database)
         {
             binder.binder_ref().with_properties(|properties| {
                 if !properties
@@ -129,7 +129,7 @@ fn try_bind_lambda_or_json<B: ExpressionBinder + ?Sized>(
     functions: &ScalarFunctionSet,
     depth: u64,
 ) -> Result<BindResult> {
-    use rustdb_ast::LambdaSyntaxType;
+    use roastedduck_ast::LambdaSyntaxType;
     let syntax = match &expr.kind {
         ParsedExpressionKind::Function(function) => {
             function.children.iter().find_map(|child| match &child.kind {
@@ -158,7 +158,7 @@ fn try_bind_lambda_or_json<B: ExpressionBinder + ?Sized>(
             return Ok(());
         }
         if let Some(logger) = context.function_client.logger() {
-            use rustdb_function::logging::{LogLevel, LogScope};
+            use roastedduck_function::logging::{LogLevel, LogScope};
             if logger.should_log(LogScope::Connection, "", LogLevel::Warning) {
                 logger.write_log(
                     LogScope::Connection,
@@ -171,7 +171,9 @@ fn try_bind_lambda_or_json<B: ExpressionBinder + ?Sized>(
         Ok(())
     };
     let result = match bind_lambda_function(binder, expr, functions, depth) {
-        Err(error) if invalid_syntax && error.kind() == rustdb_common::ErrorKind::ParameterNotResolved => {
+        Err(error)
+            if invalid_syntax && error.kind() == roastedduck_common::ErrorKind::ParameterNotResolved =>
+        {
             return Err(Error::binder(DEPRECATED_LAMBDA_ARROW));
         }
         result => result?,
@@ -334,7 +336,7 @@ fn bind_lambda_function<B: ExpressionBinder + ?Sized>(
     let unnests = binder.unnest_bindings();
     let mut lambda_expr = std::mem::replace(
         &mut bound_lambda.lambda_expr,
-        Expression::constant(rustdb_types::Value::null(LogicalType::SQLNULL)),
+        Expression::constant(roastedduck_types::Value::null(LogicalType::SQLNULL)),
     );
     capture_lambda_columns(
         &mut lambda_expr,
@@ -411,7 +413,7 @@ fn bind_lambda_function<B: ExpressionBinder + ?Sized>(
         .as_ref()
         .and_then(|data| {
             data.as_any()
-                .downcast_ref::<rustdb_function::ListLambdaBindData>()
+                .downcast_ref::<roastedduck_function::ListLambdaBindData>()
         })
         .is_none_or(|data| data.has_lambda);
     if keeps_lambda {

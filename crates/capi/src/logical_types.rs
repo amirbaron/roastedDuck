@@ -6,7 +6,7 @@
 
 use std::ffi::c_char;
 
-use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, TypeInfo};
+use roastedduck_types::{LogicalType, LogicalTypeId, PhysicalType, TypeInfo};
 
 use crate::helper::{c_string, logical_type_id_from_c, logical_type_id_to_c};
 use crate::types::*;
@@ -75,7 +75,7 @@ unsafe fn members(
     types: *mut DuckdbLogicalType,
     names: *const *const c_char,
     count: Idx,
-) -> Option<Vec<(rustdb_common::ByteString, LogicalType)>> {
+) -> Option<Vec<(roastedduck_common::ByteString, LogicalType)>> {
     (0..count as usize)
         .map(|i| {
             // SAFETY: both arrays hold `count` entries per the caller.
@@ -85,7 +85,7 @@ unsafe fn members(
             (!name.is_null()).then(|| {
                 // SAFETY: `name` is a NUL-terminated string.
                 (
-                    rustdb_common::ByteString::from(
+                    roastedduck_common::ByteString::from(
                         unsafe { crate::helper::opt_bytes(name) }.unwrap_or_default(),
                     ),
                     ty.clone(),
@@ -179,13 +179,15 @@ pub unsafe extern "C" fn duckdb_create_enum_type(
     if member_names.is_null() {
         return std::ptr::null_mut();
     }
-    let names: Option<Vec<rustdb_common::ByteString>> = (0..member_count as usize)
+    let names: Option<Vec<roastedduck_common::ByteString>> = (0..member_count as usize)
         .map(|i| {
             // SAFETY: the array holds `member_count` entries per the API contract.
             let name = unsafe { *member_names.add(i) };
             // SAFETY: a non-NULL entry is a NUL-terminated string.
             (!name.is_null()).then(|| {
-                rustdb_common::ByteString::from(unsafe { crate::helper::opt_bytes(name) }.unwrap_or_default())
+                roastedduck_common::ByteString::from(
+                    unsafe { crate::helper::opt_bytes(name) }.unwrap_or_default(),
+                )
             })
         })
         .collect();
@@ -458,7 +460,7 @@ pub unsafe extern "C" fn duckdb_logical_type_set_alias(ty: DuckdbLogicalType, al
     }
     // SAFETY: `alias` is a NUL-terminated string.
     let alias =
-        rustdb_common::ByteString::from(unsafe { crate::helper::opt_bytes(alias) }.unwrap_or_default());
+        roastedduck_common::ByteString::from(unsafe { crate::helper::opt_bytes(alias) }.unwrap_or_default());
     *ty = ty.clone().with_alias(alias);
 }
 

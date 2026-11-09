@@ -1,6 +1,6 @@
 //! Authenticated externally; SDK-only filesystem removal controls through SQL.
-use rustdb::{Config, Database, Error, LogicalType, Result, Value};
-use rustdb_function::{ScalarFunction, ScalarFunctionSet, Stability};
+use roastedduck::{Config, Database, Error, LogicalType, Result, Value};
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet, Stability};
 use std::fmt::Write as _;
 
 fn quote(value: &str) -> String {
@@ -50,10 +50,10 @@ fn main() -> Result<()> {
         vec![LogicalType::VARCHAR],
         LogicalType::BOOLEAN,
         |input, _, output| {
-            *output = rustdb_types::Vector::flat(LogicalType::BOOLEAN, input.len().max(1));
+            *output = roastedduck_types::Vector::flat(LogicalType::BOOLEAN, input.len().max(1));
             for row in 0..input.len() {
                 let path = input.column(0).get_value(row).to_varchar_bytes()?;
-                let fs = rustdb_function::registered_files::lookup(&path)
+                let fs = roastedduck_function::registered_files::lookup(&path)
                     .ok_or_else(|| Error::internal("S3 filesystem not registered"))?;
                 fs.remove(&path)?;
                 output.set_value(row, &Value::boolean(true))?;

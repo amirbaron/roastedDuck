@@ -5,13 +5,13 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_csv::multi_file::{FileList, glob_file_list, parse_paths};
-use rustdb_function::cast::{CastFunctionSet, ValueCast as _};
-use rustdb_function::{
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_csv::multi_file::{FileList, glob_file_list, parse_paths};
+use roastedduck_function::cast::{CastFunctionSet, ValueCast as _};
+use roastedduck_function::{
     FunctionData, TableFunction, TableFunctionBindOutput, TableFunctionSet, TableScanState,
 };
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::reader::ParquetReader;
 use crate::schema::{ColumnSchema, ParquetOptions, derive_logical_type};
@@ -49,7 +49,7 @@ impl FunctionData for MetadataBindData {
     }
 }
 
-fn names_types(columns: &[(&str, LogicalType)]) -> (Vec<rustdb_common::ByteString>, Vec<LogicalType>) {
+fn names_types(columns: &[(&str, LogicalType)]) -> (Vec<roastedduck_common::ByteString>, Vec<LogicalType>) {
     columns
         .iter()
         .map(|(name, ty)| ((*name).into(), ty.clone()))
@@ -418,7 +418,7 @@ fn row_group_rows(reader: &ParquetReader, data: &MetadataBindData) -> Result<Vec
                 Value::bigint(column_index as i64),
                 bigint(group.file_offset.map(|_| column.file_offset)),
                 Value::bigint(meta.num_values),
-                Value::try_varchar(&rustdb_common::ByteString::join(&meta.path_in_schema, b", "))?,
+                Value::try_varchar(&roastedduck_common::ByteString::join(&meta.path_in_schema, b", "))?,
                 Value::varchar(enum_text(meta.type_.name(), meta.type_.0)),
                 stats_text(schema, stats.min.as_ref(), &data.casts)?,
                 stats_text(schema, stats.max.as_ref(), &data.casts)?,
@@ -555,7 +555,7 @@ fn bloom_probe_rows(reader: &ParquetReader, data: &MetadataBindData) -> Result<V
         .iter()
         .position(|definition| &definition.name == column)
     else {
-        return Err(Error::invalid_input(rustdb_common::byte_format!(
+        return Err(Error::invalid_input(roastedduck_common::byte_format!(
             "Column {column} not found in {}",
             reader.file_name()
         )));
@@ -565,7 +565,7 @@ fn bloom_probe_rows(reader: &ParquetReader, data: &MetadataBindData) -> Result<V
     let constant = constant
         .try_cast_as(&data.casts, &column_type, false)
         .map_err(|error| {
-            Error::invalid_input(rustdb_common::byte_format!(
+            Error::invalid_input(roastedduck_common::byte_format!(
                 "Failed to cast value: {}",
                 error.raw_message()
             ))
@@ -592,7 +592,7 @@ fn bloom_probe_rows(reader: &ParquetReader, data: &MetadataBindData) -> Result<V
 /// `ValueXXH64`: the hash of a constant as its Parquet plain encoding (0 when unsupported).
 pub fn value_hash(constant: &Value) -> u64 {
     use crate::writer::types::xxhash64;
-    use rustdb_types::PhysicalType as P;
+    use roastedduck_types::PhysicalType as P;
     let ty = constant.logical_type();
     let integer = || constant.as_i128().unwrap_or(0);
     match ty.physical_type() {
@@ -681,7 +681,7 @@ fn nested_rows(kind: MetadataKind, rows: Vec<Vec<Value>>) -> Value {
                 Value::struct_value(
                     fields
                         .iter()
-                        .map(|(name, _)| rustdb_common::ByteString::from(*name))
+                        .map(|(name, _)| roastedduck_common::ByteString::from(*name))
                         .zip(row)
                         .collect(),
                 )
@@ -771,7 +771,7 @@ fn metadata_scan(
 
 /// The options of the metadata functions (`ParquetOptions(context)`).
 fn context_options(
-    input: &rustdb_function::TableFunctionBindInput<'_>,
+    input: &roastedduck_function::TableFunctionBindInput<'_>,
 ) -> Result<(ParquetOptions, Arc<CastFunctionSet>)> {
     let context = crate::scan::client_context(input)?;
     let mut options = ParquetOptions {

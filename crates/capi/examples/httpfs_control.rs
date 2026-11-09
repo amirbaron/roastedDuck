@@ -1,5 +1,5 @@
 //! Signed externally; loopback TLS provider control through real SQL readers.
-use rustdb::{Config, Database, Error, ErrorKind, Result, Value};
+use roastedduck::{Config, Database, Error, ErrorKind, Result, Value};
 
 fn main() -> Result<()> {
     duckdb::register_extension_loader();
@@ -52,7 +52,7 @@ fn main() -> Result<()> {
         ))?;
         let installed = std::path::Path::new(out)
             .join("v1.5.6")
-            .join(rustdb::external_extensions::platform())
+            .join(roastedduck::external_extensions::platform())
             .join("c_only_probe.duckdb_extension");
         let read = |p| std::fs::read(p).map_err(|e| Error::new(ErrorKind::Io, e.to_string()));
         assert_eq!(

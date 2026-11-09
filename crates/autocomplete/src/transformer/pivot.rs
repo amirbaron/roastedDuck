@@ -2,7 +2,7 @@
 //! statements), and the `CREATE TYPE ... AS ENUM` statements a `PIVOT` without `IN`
 //! lists expands into (`PEGTransformer::CreatePivotStatement`).
 
-use rustdb_parser::{build, has_subquery, is_scalar};
+use roastedduck_parser::{build, has_subquery, is_scalar};
 
 use super::prelude::*;
 
@@ -51,8 +51,8 @@ fn unpivot_entries(target_list: Vec<ParsedExpression>) -> impl Iterator<Item = P
 /// `SQLStatement::ToString` of a statement a `PIVOT` expands into.
 fn statement_to_string(statement: &SqlStatement) -> Result<ByteString> {
     Ok(match &statement.kind {
-        SqlStatementKind::Select(select) => rustdb_common::byte_format!("{select}"),
-        SqlStatementKind::Insert(insert) => rustdb_common::byte_format!("{insert}"),
+        SqlStatementKind::Select(select) => roastedduck_common::byte_format!("{select}"),
+        SqlStatementKind::Insert(insert) => roastedduck_common::byte_format!("{insert}"),
         SqlStatementKind::Create(info) => info.to_sql().unwrap_or_default(),
         _ => ByteString::new(),
     })

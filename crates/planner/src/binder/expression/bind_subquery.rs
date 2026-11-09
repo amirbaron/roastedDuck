@@ -1,8 +1,10 @@
 //! Subqueries used as expressions (DuckDB's `bind_subquery_expression.cpp`).
 
-use rustdb_ast::{BoundExpression, ExpressionType, ParsedExpression, ParsedExpressionKind, SubqueryType};
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId};
+use roastedduck_ast::{
+    BoundExpression, ExpressionType, ParsedExpression, ParsedExpressionKind, SubqueryType,
+};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId};
 
 use crate::binder::{BindScope, Binder, BoundStatement};
 use crate::expression::{BoundSubqueryExpression, Expression, ExpressionKind};

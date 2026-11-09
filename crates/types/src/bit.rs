@@ -10,7 +10,7 @@
 //! DuckDB's, byte for byte, including invalid UTF-8 in conversion diagnostics.
 
 use crate::PhysicalType;
-use rustdb_common::ByteString;
+use roastedduck_common::ByteString;
 
 /// Number of padding bits a bit string of `bit_len` bits needs.
 const fn padding_for(bit_len: usize) -> u8 {
@@ -58,7 +58,7 @@ pub fn octet_length(bits: &[u8]) -> usize {
 /// `Bit::TryGetBitStringSize`).
 pub fn text_stored_len(input: &[u8]) -> Result<usize, ByteString> {
     if let Some(&bad) = input.iter().find(|&&c| c != b'0' && c != b'1') {
-        return Err(rustdb_common::byte_format!(
+        return Err(roastedduck_common::byte_format!(
             "Invalid character encountered in string -> bit conversion: '{}'",
             &[bad][..]
         ));

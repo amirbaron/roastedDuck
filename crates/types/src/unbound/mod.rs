@@ -5,12 +5,12 @@ mod default_bind;
 
 pub use default_bind::{builtin_type_has_bind_function, builtin_type_id, builtin_type_names};
 
-use rustdb_serde::{
+use roastedduck_serde::{
     DeserializeObject, Deserializer, Error, OptionalIdx, Result, SerializeObject, Serializer, write_enum,
 };
 
 use crate::Value;
-use rustdb_common::ByteString;
+use roastedduck_common::ByteString;
 
 /// A type name the parser could not resolve yet (DuckDB's `UnboundTypeInfo` holding a
 /// `TypeExpression`): `catalog.schema.name(parameters)`, bound later by the binder.
@@ -289,9 +289,9 @@ impl DeserializeObject for UnboundTypeInfo {
 impl UnboundTypeInfo {
     /// Native `TypeExpression` SQL text, also used by `ParsedExpression::GetName` during
     /// legacy default binding when a parameter has no explicit alias.
-    pub fn to_sql_bytes(&self) -> rustdb_common::Result<ByteString> {
+    pub fn to_sql_bytes(&self) -> roastedduck_common::Result<ByteString> {
         use crate::identifier::{sql_identifier_bytes, type_identifier_bytes};
-        use rustdb_common::{byte_format, byte_write};
+        use roastedduck_common::{byte_format, byte_write};
         let mut output = ByteString::new();
         if !self.catalog.is_empty() {
             let _ = byte_write!(output, "{}.", sql_identifier_bytes(&self.catalog));
@@ -362,8 +362,8 @@ impl UnboundTypeInfo {
 
 #[cfg(test)]
 mod tests {
-    use rustdb_serde::SerializationOptions;
-    use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
+    use roastedduck_serde::SerializationOptions;
+    use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
 
     use super::*;
     use crate::{LogicalType, LogicalTypeId, TypeInfo};
@@ -391,7 +391,7 @@ mod tests {
         );
         assert_eq!(round_trip(&unbound, SerializationOptions::default()), unbound);
         let latest = SerializationOptions {
-            compatibility: rustdb_serde::SerializationCompatibility::latest(),
+            compatibility: roastedduck_serde::SerializationCompatibility::latest(),
             ..SerializationOptions::default()
         };
         assert_eq!(round_trip(&unbound, latest), unbound);

@@ -8,9 +8,9 @@ mod writer;
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{BindInput, FunctionData, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{BindInput, FunctionData, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, Vector};
 
 use self::parse::Arg;
 use crate::scalar::executor::{ScalarOutput, StrOut, addressable, str_at};

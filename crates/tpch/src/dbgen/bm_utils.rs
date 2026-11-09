@@ -3,7 +3,7 @@
 
 use std::sync::LazyLock;
 
-use rustdb_types::Date;
+use roastedduck_types::Date;
 
 use super::dss::{MAX_LONG, STARTDATE, Seed, TOTDATE};
 use super::rnd::dss_random;

@@ -4,16 +4,16 @@
 
 use std::sync::Arc;
 
-use rustdb_buffer::{BufferManager, BufferManagerConfig, InMemoryBlockManager};
-use rustdb_storage::index::IndexConstraintType;
-use rustdb_storage::table::StorageIndex;
-use rustdb_storage::table_filter::{TableFilter, TableFilterSet};
-use rustdb_storage::{
+use roastedduck_buffer::{BufferManager, BufferManagerConfig, InMemoryBlockManager};
+use roastedduck_storage::index::IndexConstraintType;
+use roastedduck_storage::table::StorageIndex;
+use roastedduck_storage::table_filter::{TableFilter, TableFilterSet};
+use roastedduck_storage::{
     BoundForeignKey, ColumnDefinition, DataTable, ForeignKeyKind, TableConstraints, TableIoManager,
     TableScanState, Transaction, TransactionManager,
 };
-use rustdb_types::compare::CompareOp;
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_types::compare::CompareOp;
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 
 fn io() -> Arc<TableIoManager> {
     let buffer_manager = BufferManager::new(BufferManagerConfig::default()).unwrap();
@@ -323,8 +323,8 @@ fn foreign_keys() {
 
 #[test]
 fn create_index_keeps_concurrent_append_visible_in_index() {
-    use rustdb_storage::index::IndexKeyExpressions;
-    use rustdb_storage::index::art::{IndexKeyExecutor, create_key};
+    use roastedduck_storage::index::IndexKeyExpressions;
+    use roastedduck_storage::index::art::{IndexKeyExecutor, create_key};
     use std::collections::BTreeSet;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Mutex, mpsc};
@@ -332,14 +332,14 @@ fn create_index_keeps_concurrent_append_visible_in_index() {
 
     #[derive(Debug)]
     struct PausedKeys {
-        names: Vec<rustdb_common::ByteString>,
+        names: Vec<roastedduck_common::ByteString>,
         first: AtomicBool,
         started: mpsc::Sender<()>,
         resume: Mutex<mpsc::Receiver<()>>,
     }
 
     impl IndexKeyExecutor for PausedKeys {
-        fn execute(&self, data: &DataChunk) -> rustdb_common::Result<DataChunk> {
+        fn execute(&self, data: &DataChunk) -> roastedduck_common::Result<DataChunk> {
             if self.first.swap(false, Ordering::AcqRel) {
                 self.started.send(()).unwrap();
                 self.resume.lock().unwrap().recv().unwrap();
@@ -347,7 +347,7 @@ fn create_index_keeps_concurrent_append_visible_in_index() {
             Ok(DataChunk::new(vec![data.column(0).clone()], data.len()))
         }
 
-        fn names(&self) -> &[rustdb_common::ByteString] {
+        fn names(&self) -> &[roastedduck_common::ByteString] {
             &self.names
         }
     }

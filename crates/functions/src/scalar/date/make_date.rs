@@ -2,10 +2,10 @@
 //! `make_date.cpp`) and `to_timestamp`, `normalized_interval`, `timetz_byte_comparable`
 //! (`epoch.cpp`).
 
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::numeric::TryCastTo;
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, Date, Interval, LogicalType, Time, TimeTz, Timestamp, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::numeric::TryCastTo;
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, Date, Interval, LogicalType, Time, TimeTz, Timestamp, Vector};
 
 use crate::scalar::executor::{addressable, ternary, unary};
 use crate::scalar::nested::struct_field;

@@ -5,7 +5,7 @@
 //! every database knows. Serialization uses it too: when targeting versions before
 //! v1.5, DuckDB writes an unbound builtin type as the bound type.
 
-use rustdb_common::{ByteString, Error, Result};
+use roastedduck_common::{ByteString, Error, Result};
 
 use super::{TypeParameter, TypeParameterValue, UnboundTypeInfo};
 use crate::{EnumTypeInfo, LogicalType, LogicalTypeId, TypeInfo, Value};
@@ -176,7 +176,7 @@ impl UnboundTypeInfo {
         match bind {
             Some(bind) => bind(&arguments),
             None if arguments.is_empty() => Ok(LogicalType::simple(id)),
-            None => Err(Error::binder(rustdb_common::byte_format!(
+            None => Err(Error::binder(roastedduck_common::byte_format!(
                 "Type '{}' does not take any type parameters",
                 self.name
             ))),
@@ -320,7 +320,7 @@ fn bind_enum(arguments: &[TypeArgument]) -> Result<LogicalType> {
     let mut values = Vec::with_capacity(arguments.len());
     for (index, argument) in arguments.iter().enumerate() {
         if !argument.name.is_empty() {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "ENUM type arguments cannot have names (argument {} has name \"{}\")",
                 index + 1,
                 argument.name
@@ -400,12 +400,12 @@ fn named_children(
     arguments: &[TypeArgument],
     duplicate: &str,
     anonymous: bool,
-) -> Result<Vec<(rustdb_common::ByteString, LogicalType)>> {
+) -> Result<Vec<(roastedduck_common::ByteString, LogicalType)>> {
     let mut names = std::collections::HashSet::new();
     let mut children = Vec::with_capacity(arguments.len());
     for argument in arguments {
         if !anonymous && !names.insert(argument.name.to_ascii_lowercase()) {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "{duplicate} \"{}\"",
                 argument.name
             )));

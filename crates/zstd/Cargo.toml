@@ -1,5 +1,5 @@
 [package]
-name = "rustdb-zstd"
+name = "roastedduck-zstd"
 description = "A zstd compressor ported from zstd 1.5.6, the version DuckDB vendors, writing the frames it writes."
 version.workspace = true
 edition.workspace = true

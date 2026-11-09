@@ -1,5 +1,5 @@
 [package]
-name = "rustdb-types"
+name = "roastedduck-types"
 description = "Logical/physical types, values, vectors and data chunks."
 version.workspace = true
 edition.workspace = true
@@ -7,8 +7,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-rustdb-common.workspace = true
-rustdb-serde.workspace = true
+roastedduck-common.workspace = true
+roastedduck-serde.workspace = true
 
 [lints]
 workspace = true

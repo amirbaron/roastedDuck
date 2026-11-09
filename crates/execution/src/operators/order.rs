@@ -1,16 +1,16 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::operator::order_names;
-use rustdb_ast::{OrderByNullType, OrderType};
-use rustdb_common::tree_renderer::RenderParams;
-use rustdb_common::{Error, Result};
-use rustdb_planner::expression::BoundOrderByNode;
-use rustdb_planner::{Expression, ExpressionKind};
-use rustdb_row::sort::{
+use roastedduck_ast::{OrderByNullType, OrderType};
+use roastedduck_common::tree_renderer::RenderParams;
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::expression::BoundOrderByNode;
+use roastedduck_planner::{Expression, ExpressionKind};
+use roastedduck_row::sort::{
     MergerLocalState, NullOrder, OrderModifiers, OrderType as SortOrder, Sort, SortColumn, SortConfig,
     SortGlobalSinkState, SortLocalSinkState, SortSource,
 };
-use rustdb_types::{DataChunk, LogicalType};
+use roastedduck_types::{DataChunk, LogicalType};
 
 use crate::operator::{
     ErasedSink, ErasedSource, OperatorPartitionData, OperatorPartitionInfo, OrderPreservationType,

@@ -6,7 +6,7 @@
 //! stubs out (`unicode_to_utf8`, `pg_verifymbstr`); those raise the same
 //! `"... NOT IMPLEMENTED"` errors here.
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use super::{Scanner, Token, is_newline, is_space};
 use crate::error::unimplemented;
@@ -57,7 +57,7 @@ impl<'a> Scanner<'a> {
     }
 
     /// Takes the literal buffer as a string.
-    fn take_literal(&mut self) -> rustdb_common::ByteString {
+    fn take_literal(&mut self) -> roastedduck_common::ByteString {
         std::mem::take(&mut self.lit).into()
     }
 
@@ -223,7 +223,7 @@ impl<'a> Scanner<'a> {
     /// A well-formed `\uXXXX` / `\UXXXXXXXX` escape at `escape` inside an `E'...'`
     /// string that starts at `start`. Every outcome is an error in DuckDB: either an
     /// invalid code point, or the unimplemented `unicode_to_utf8`.
-    fn unicode_escape(&mut self, start: usize, escape: usize, digits: usize) -> rustdb_common::Error {
+    fn unicode_escape(&mut self, start: usize, escape: usize, digits: usize) -> roastedduck_common::Error {
         let end = escape + 2 + digits;
         let code = parse_hex(&self.buf[escape + 2..end]);
         if is_utf16_surrogate_second(code) {
@@ -341,7 +341,12 @@ impl<'a> Scanner<'a> {
     /// The `xusend`/`xuiend` states after the closing quote at `after - 1`, then
     /// `litbuf_udeescape`. DuckDB's stubbed `pg_verifymbstr` (called on every
     /// result) and `unicode_to_utf8` make every outcome an error.
-    fn unicode_literal_end(&mut self, start: usize, after: usize, identifier: bool) -> rustdb_common::Error {
+    fn unicode_literal_end(
+        &mut self,
+        start: usize,
+        after: usize,
+        identifier: bool,
+    ) -> roastedduck_common::Error {
         // skip {whitespace}* (spaces and -- comments)
         let mut i = after;
         loop {
@@ -394,7 +399,7 @@ impl<'a> Scanner<'a> {
     }
 
     /// `litbuf_udeescape`: validates the escapes; reports the first problem.
-    fn decode_unicode_escapes(&self, start: usize, escape: u8, flex_end: usize) -> rustdb_common::Error {
+    fn decode_unicode_escapes(&self, start: usize, escape: u8, flex_end: usize) -> roastedduck_common::Error {
         let lit = &self.lit;
         let mut pair_first = false;
         let mut i = 0;

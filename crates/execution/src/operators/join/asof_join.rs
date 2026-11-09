@@ -17,15 +17,15 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use rustdb_ast::{ExpressionType, JoinType};
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_planner::Expression;
-use rustdb_planner::operator::JoinCondition;
-use rustdb_row::sort::{
+use roastedduck_ast::{ExpressionType, JoinType};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_planner::Expression;
+use roastedduck_planner::operator::JoinCondition;
+use roastedduck_row::sort::{
     ChunkRow, ExternalBlockIteratorState, NullOrder, OrderModifiers, OrderType, SortColumn, SortConfig,
     SortKey, SortStrategy, SortedRun, StrategyGlobalState, StrategyLocalState, decode_sort_key_column,
 };
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, ValidityMask, Vector};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, ValidityMask, Vector};
 
 use super::range_join::{key_before, order_modifiers};
 use super::{
@@ -761,7 +761,7 @@ impl AsOfPayloadScanner {
         self.base = self.scanned;
         let count = self.next_size();
         let run = Arc::clone(&self.run);
-        rustdb_row::dispatch_sort_key!(run.key_type(), K => {
+        roastedduck_row::dispatch_sort_key!(run.key_type(), K => {
             let mut keys: Vec<K> = Vec::with_capacity(count);
             for i in 0..count {
                 keys.push(self.block_state.get::<K>(&run, self.chunk_idx * STANDARD_VECTOR_SIZE + i)?);
@@ -1062,7 +1062,7 @@ impl PhysicalAsOfJoin {
         }
         let left_group = Arc::clone(left_group);
         let right_group = Arc::clone(right_group);
-        rustdb_row::dispatch_sort_key!(key_type, K => self.resolve_join_typed::<K>(
+        roastedduck_row::dispatch_sort_key!(key_type, K => self.resolve_join_typed::<K>(
             probe,
             &left_group,
             &right_group,
@@ -1202,7 +1202,7 @@ impl PhysicalAsOfJoin {
         match (&probe.right_group, &mut probe.rhs_itr) {
             (Some(right_group), Some(rhs_itr)) if !matched.is_empty() => {
                 rhs_itr.repin();
-                rustdb_row::dispatch_sort_key!(right_group.key_type(), K => {
+                roastedduck_row::dispatch_sort_key!(right_group.key_type(), K => {
                     let mut keys: Vec<K> = Vec::with_capacity(matched.len());
                     for &row in &matched {
                         keys.push(rhs_itr.get::<K>(right_group, row as usize)?);

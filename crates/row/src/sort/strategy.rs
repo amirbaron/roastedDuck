@@ -18,9 +18,9 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rustdb_buffer::{BufferManager, MemoryTag};
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_buffer::{BufferManager, MemoryTag};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 
 use super::encode::{NullOrder, OrderModifiers, OrderType};
 use super::group_data::{GroupData, GroupDataAppend};

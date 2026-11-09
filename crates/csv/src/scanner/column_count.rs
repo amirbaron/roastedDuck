@@ -4,7 +4,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use super::base::{BaseScanner, CsvProcess};
 use super::boundary::{CsvIterator, FullLinePosition, LinePosition};

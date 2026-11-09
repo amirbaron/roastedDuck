@@ -4,12 +4,12 @@
 
 use std::sync::Arc;
 
-use rustdb_common::Result;
-use rustdb_storage::CatalogUndo;
-pub use rustdb_storage::transaction::{
+use roastedduck_common::Result;
+use roastedduck_storage::CatalogUndo;
+pub use roastedduck_storage::transaction::{
     MAX_TRANSACTION_ID, TRANSACTION_ID_START, Transaction, TransactionManager,
 };
-use rustdb_storage::wal::WalBatch;
+use roastedduck_storage::wal::WalBatch;
 
 use crate::WalRecord;
 use crate::catalog_set::{CatalogSet, Version};
@@ -20,27 +20,39 @@ pub enum StorageHook {
     None,
     /// The previous storage of an altered table, made the main table again on rollback
     /// (`DuckTableEntry::SetAsRoot`).
-    AlteredTable(Arc<rustdb_storage::DataTable>),
+    AlteredTable(Arc<roastedduck_storage::DataTable>),
     /// A renamed table's storage and its old name, restored on rollback
     /// (`DuckTableEntry::UndoAlter`).
-    RenamedTable(Arc<rustdb_storage::DataTableInfo>, rustdb_common::ByteString),
+    RenamedTable(
+        Arc<roastedduck_storage::DataTableInfo>,
+        roastedduck_common::ByteString,
+    ),
     /// The storage of a dropped table, restored as the main table on rollback
     /// (`DuckTableEntry::OnDrop` / `SetAsRoot`).
-    DroppedTable(Arc<rustdb_storage::DataTable>),
+    DroppedTable(Arc<roastedduck_storage::DataTable>),
     /// A created index, removed from its table on rollback (`DuckIndexEntry::Rollback`).
-    CreatedIndex(Arc<rustdb_storage::DataTableInfo>, rustdb_common::ByteString),
+    CreatedIndex(
+        Arc<roastedduck_storage::DataTableInfo>,
+        roastedduck_common::ByteString,
+    ),
     /// The previous storage of a table given a primary key and the key's index: the
     /// storage is made the main table again and the index removed on rollback.
-    AddedPrimaryKey(Arc<rustdb_storage::DataTable>, rustdb_common::ByteString),
+    AddedPrimaryKey(
+        Arc<roastedduck_storage::DataTable>,
+        roastedduck_common::ByteString,
+    ),
     /// A dropped index, removed from its table on commit (`DuckIndexEntry::CommitDrop`).
-    DroppedIndex(Arc<rustdb_storage::DataTableInfo>, rustdb_common::ByteString),
+    DroppedIndex(
+        Arc<roastedduck_storage::DataTableInfo>,
+        roastedduck_common::ByteString,
+    ),
 }
 
 /// A created or dropped catalog entry version, as an undo-log entry.
 #[derive(Debug)]
 struct CatalogChange {
     set: Arc<CatalogSet>,
-    name: rustdb_common::ByteString,
+    name: roastedduck_common::ByteString,
     version: Arc<Version>,
     hook: StorageHook,
     wal: WalRecord,
@@ -128,20 +140,20 @@ pub(crate) enum CommitCheck {
     /// A dropped schema: no other transaction may have created entries in it since this
     /// one started (`VerifyCommitDrop`; DuckDB's entries depend on their schema).
     SchemaDropped {
-        name: rustdb_common::ByteString,
+        name: roastedduck_common::ByteString,
         sets: Vec<Arc<CatalogSet>>,
     },
     /// A dropped entry: no other transaction may have committed an entry depending on
     /// it or owned by it since this one started (`VerifyCommitDrop`).
     EntryDropped {
-        entry: rustdb_ast::CatalogEntryInfo,
+        entry: roastedduck_ast::CatalogEntryInfo,
         sets: Vec<Arc<CatalogSet>>,
     },
     /// An entry created in a schema, or an entry given an owner: no other transaction
     /// may have dropped the schema or the owner `name` of `set` since
     /// (`VerifyExistence`).
     SubjectExists {
-        name: rustdb_common::ByteString,
+        name: roastedduck_common::ByteString,
         set: Arc<CatalogSet>,
     },
 }
@@ -158,9 +170,9 @@ impl CatalogUndo for CommitCheck {
                     .iter()
                     .any(|set| set.created_since(start_time, |_| true).is_some())
                 {
-                    return Err(rustdb_common::Error::new_bytes(
-                        rustdb_common::ErrorKind::Dependency,
-                        rustdb_common::byte_format!(
+                    return Err(roastedduck_common::Error::new_bytes(
+                        roastedduck_common::ErrorKind::Dependency,
+                        roastedduck_common::byte_format!(
                             "Could not commit DROP of \"{name}\" because a dependency was created after the transaction started"
                         ),
                     ));
@@ -181,9 +193,9 @@ impl CatalogUndo for CommitCheck {
                     .iter()
                     .any(|set| set.created_since(start_time, refers).is_some())
                 {
-                    return Err(rustdb_common::Error::new_bytes(
-                        rustdb_common::ErrorKind::Dependency,
-                        rustdb_common::byte_format!(
+                    return Err(roastedduck_common::Error::new_bytes(
+                        roastedduck_common::ErrorKind::Dependency,
+                        roastedduck_common::byte_format!(
                             "Could not commit DROP of \"{}\" because a dependency was created after the transaction started",
                             entry.name
                         ),
@@ -192,9 +204,9 @@ impl CatalogUndo for CommitCheck {
             }
             Self::SubjectExists { name, set } => {
                 if set.dropped_since(name, start_time) {
-                    return Err(rustdb_common::Error::new_bytes(
-                        rustdb_common::ErrorKind::Dependency,
-                        rustdb_common::byte_format!(
+                    return Err(roastedduck_common::Error::new_bytes(
+                        roastedduck_common::ErrorKind::Dependency,
+                        roastedduck_common::byte_format!(
                             "Could not commit creation of dependency, subject \"{name}\" has been deleted"
                         ),
                     ));
@@ -210,7 +222,7 @@ pub(crate) trait TransactionExt {
     fn push_catalog_change(
         &self,
         set: Arc<CatalogSet>,
-        name: rustdb_common::ByteString,
+        name: roastedduck_common::ByteString,
         version: Arc<Version>,
         hook: StorageHook,
         wal: WalRecord,
@@ -221,7 +233,7 @@ impl TransactionExt for Transaction {
     fn push_catalog_change(
         &self,
         set: Arc<CatalogSet>,
-        name: rustdb_common::ByteString,
+        name: roastedduck_common::ByteString,
         version: Arc<Version>,
         hook: StorageHook,
         wal: WalRecord,

@@ -1,9 +1,9 @@
 //! `time_bucket` (DuckDB's `time_bucket.cpp`): truncation to buckets of a fixed width,
 //! counted from an origin (2000-01-03 for micro-based widths, 2000-01 for month widths).
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, Date, Interval, LogicalType, NativeType, Time, Timestamp, Vector};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, Date, Interval, LogicalType, NativeType, Time, Timestamp, Vector};
 
 use super::date_part::interval_micros;
 use crate::operator::subtract_overflow;

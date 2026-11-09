@@ -4,14 +4,14 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{DataChunk, LogicalType, SelectionVector, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{DataChunk, LogicalType, SelectionVector, Vector};
 
 use super::chunk_info::ScanOptions;
 use super::column_data::{ColumnData, ColumnDataType};
 use super::row_group::{DeleteRecord, RowGroup, RowGroupAppendState, TableScanType, UpdateRecord};
-use super::scan_state::{CollectionScanState, ParallelCollectionScanState, ScanFilterInfo, StorageIndex};
 use super::row_group_reorderer::{RowGroupOrderOptions, order_row_groups};
+use super::scan_state::{CollectionScanState, ParallelCollectionScanState, ScanFilterInfo, StorageIndex};
 use super::segment_tree::{SegmentNode, SegmentTree};
 use crate::checkpoint::pointers::PersistentCollectionData;
 use crate::data_table::TableIoManager;
@@ -108,7 +108,7 @@ fn empty_distinct(ty: &LogicalType) -> Option<DistinctStatistics> {
 
 /// Whether `ty` is or contains a VARIANT or GEOMETRY (`TypeVisitor::Contains`).
 fn contains_shredded_type(ty: &LogicalType) -> bool {
-    use rustdb_types::LogicalTypeId;
+    use roastedduck_types::LogicalTypeId;
     if matches!(ty.id(), LogicalTypeId::Variant | LogicalTypeId::Geometry) {
         return true;
     }
@@ -494,9 +494,8 @@ impl RowGroupCollection {
         let row_groups = self.row_groups();
         let mut inner = state.inner.lock().unwrap_or_else(PoisonError::into_inner);
         inner.max_row = row_groups.base_row_id + self.total_rows();
-        inner.order = order.map(|(options, transaction)| {
-            order_row_groups(&row_groups.tree.nodes(), options, transaction)
-        });
+        inner.order = order
+            .map(|(options, transaction)| order_row_groups(&row_groups.tree.nodes(), options, transaction));
         inner.row_groups = Some(row_groups);
         inner.next_row_group = 0;
         inner.batch_index = 0;
@@ -539,7 +538,8 @@ impl RowGroupCollection {
             };
             scan_state.max_row = max_row;
             if scan_state.column_scans.is_empty() {
-                scan_state.column_scans = RowGroup::column_scan_states(&self.types, column_ids, scan_state.casts.as_ref())?;
+                scan_state.column_scans =
+                    RowGroup::column_scan_states(&self.types, column_ids, scan_state.casts.as_ref())?;
             }
             scan_state.row_groups = Some(row_groups);
             if node
@@ -1171,7 +1171,7 @@ impl RowGroupCollection {
                 .initialize_scan(&mut state, bound_columns, &mut filters, node.row_start, 0)?
             {
                 state.row_group = Some((position, node.clone()));
-                let mut chunk = DataChunk::with_types(&scan_types, rustdb_common::STANDARD_VECTOR_SIZE);
+                let mut chunk = DataChunk::with_types(&scan_types, roastedduck_common::STANDARD_VECTOR_SIZE);
                 loop {
                     node.node.scan(
                         options,
@@ -1212,7 +1212,7 @@ impl RowGroupCollection {
         self.initialize_scan(&mut state, &column_ids, &mut filters)?;
         let mut chunk = DataChunk::with_types(
             std::slice::from_ref(&self.types[column]),
-            rustdb_common::STANDARD_VECTOR_SIZE,
+            roastedduck_common::STANDARD_VECTOR_SIZE,
         );
         let options = RowGroup::scan_options(TableScanType::OmitPermanentlyDeleted, transaction);
         while Self::scan(options, &mut state, &column_ids, &mut filters, &mut chunk)? {

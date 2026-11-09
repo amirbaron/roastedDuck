@@ -4,13 +4,13 @@
 //! Structures are declared with [`thrift_struct!`], which generates the Rust struct and its
 //! reader and writer from the field list of `parquet.thrift`. Writers emit fields in
 //! declaration order and skip unset optional fields, exactly like the C++ generated code,
-//! so metadata written by rustdb is byte-identical to DuckDB's for the same values.
+//! so metadata written by roastedduck is byte-identical to DuckDB's for the same values.
 
 mod types;
 
 pub use types::*;
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 /// Compact protocol type ids (`TCompactProtocol::Types`).
 pub mod compact_type {
@@ -37,7 +37,7 @@ const MAX_RECURSION_DEPTH: u32 = 64;
 /// (`TProtocolException::INVALID_DATA`).
 fn invalid_data() -> Error {
     Error::new(
-        rustdb_common::ErrorKind::Invalid,
+        roastedduck_common::ErrorKind::Invalid,
         "TProtocolException: Invalid data",
     )
 }
@@ -47,7 +47,7 @@ fn invalid_data() -> Error {
 fn validate_type(field_type: u8) -> Result<()> {
     if field_type > compact_type::STRUCT {
         return Err(Error::new(
-            rustdb_common::ErrorKind::Invalid,
+            roastedduck_common::ErrorKind::Invalid,
             format!("don't know what type: {}", char::from(field_type)),
         ));
     }
@@ -57,7 +57,7 @@ fn validate_type(field_type: u8) -> Result<()> {
 /// Reading past the end of the input (`TTransportException::END_OF_FILE`).
 fn end_of_input() -> Error {
     Error::new(
-        rustdb_common::ErrorKind::Invalid,
+        roastedduck_common::ErrorKind::Invalid,
         "TTransportException: No more data to read.",
     )
 }
@@ -186,7 +186,7 @@ impl<'a> CompactReader<'a> {
     fn struct_begin(&mut self) -> Result<()> {
         if self.last_field_ids.len() as u32 >= MAX_RECURSION_DEPTH {
             return Err(Error::new(
-                rustdb_common::ErrorKind::Invalid,
+                roastedduck_common::ErrorKind::Invalid,
                 "TProtocolException: Exceeded recursion depth",
             ));
         }
@@ -479,7 +479,7 @@ impl ThriftValue for String {
 }
 
 // Thrift string fields are length-prefixed bytes in C++ TCompactProtocol.
-impl ThriftValue for rustdb_common::ByteString {
+impl ThriftValue for roastedduck_common::ByteString {
     const TYPE: u8 = compact_type::BINARY;
     fn read(reader: &mut CompactReader<'_>) -> Result<Self> {
         reader.read_binary().map(Into::into)
@@ -559,7 +559,7 @@ macro_rules! thrift_enum {
         impl $crate::thrift::ThriftValue for $name {
             const TYPE: u8 = $crate::thrift::compact_type::I32;
 
-            fn read(reader: &mut $crate::thrift::CompactReader<'_>) -> rustdb_common::Result<Self> {
+            fn read(reader: &mut $crate::thrift::CompactReader<'_>) -> roastedduck_common::Result<Self> {
                 reader.read_i32().map(Self)
             }
 
@@ -651,7 +651,7 @@ macro_rules! thrift_struct {
             const TYPE: u8 = $crate::thrift::compact_type::STRUCT;
 
             #[allow(unused_mut, unused_variables)]
-            fn read(reader: &mut $crate::thrift::CompactReader<'_>) -> rustdb_common::Result<Self> {
+            fn read(reader: &mut $crate::thrift::CompactReader<'_>) -> roastedduck_common::Result<Self> {
                 let mut result = Self::default();
                 let mut seen: u64 = 0;
                 reader.read_struct(|reader, id, field_type| {
@@ -670,8 +670,8 @@ macro_rules! thrift_struct {
                 })?;
                 $(
                     if $crate::thrift::thrift_field_required!($req) && seen & (1 << $id) == 0 {
-                        return Err(rustdb_common::Error::new(
-                            rustdb_common::ErrorKind::Invalid,
+                        return Err(roastedduck_common::Error::new(
+                            roastedduck_common::ErrorKind::Invalid,
                             "TProtocolException: Invalid data",
                         ));
                     }

@@ -10,13 +10,13 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::{
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::{
     FunctionData, ParallelScanGlobal, ParallelScanLocal, ParallelTableScan, TableFunction,
     TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet, TableScanState,
 };
-use rustdb_storage::{COLUMN_IDENTIFIER_ROW_ID, TableFilterSet};
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_storage::{COLUMN_IDENTIFIER_ROW_ID, TableFilterSet};
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::conversion::{ArrowArrayScanState, convert_column};
 use crate::duck_schema::{ArrowTableSchema, ArrowType};
@@ -28,9 +28,9 @@ use crate::ffi::{
 #[derive(Clone, Debug, Default)]
 pub struct ArrowProjectedColumns {
     /// The name of the column at each scanned position.
-    pub projection_map: HashMap<usize, rustdb_common::ByteString>,
+    pub projection_map: HashMap<usize, roastedduck_common::ByteString>,
     /// The names of the scanned columns, in order.
-    pub columns: Vec<rustdb_common::ByteString>,
+    pub columns: Vec<roastedduck_common::ByteString>,
     /// The column of each scanned position, which filters are keyed by.
     pub filter_to_col: HashMap<usize, usize>,
 }
@@ -103,12 +103,12 @@ pub unsafe fn populate_arrow_table_schema(
         // SAFETY: as above.
         let name = unsafe { schema.name_string() };
         names.push(if name.is_empty() {
-            rustdb_common::byte_format!("v{index}")
+            roastedduck_common::byte_format!("v{index}")
         } else {
             name
         });
     }
-    rustdb_planner::deduplicate_columns(&mut names);
+    roastedduck_planner::deduplicate_columns(&mut names);
     for (schema, name) in children.into_iter().zip(names) {
         // SAFETY: as above.
         let arrow_type = unsafe { ArrowType::from_schema_with_dictionary(schema) }?;
@@ -253,8 +253,8 @@ fn global_state(global: &ParallelScanGlobal) -> Result<&ArrowScanGlobalState> {
 fn arrow_scan_init_global(
     bind: Option<&dyn FunctionData>,
     column_ids: &[u64],
-    _: &[rustdb_types::ColumnIndex],
-    _: Option<&rustdb_function::logging::OperatorLogger>,
+    _: &[roastedduck_types::ColumnIndex],
+    _: Option<&roastedduck_function::logging::OperatorLogger>,
 ) -> Result<ParallelScanGlobal> {
     let stream = produce_arrow_scan(bind_data(bind)?, column_ids)?;
     Ok(Arc::new(ArrowScanGlobalState {
@@ -477,7 +477,7 @@ pub fn retain_factory_owner(
 }
 fn arrow_type_has_view(ty: &ArrowType) -> bool {
     use crate::duck_schema::ArrowVariableSizeType as V;
-    use rustdb_types::LogicalTypeId as L;
+    use roastedduck_types::LogicalTypeId as L;
     if ty.dictionary().is_some_and(arrow_type_has_view) {
         return true;
     }
@@ -494,7 +494,7 @@ fn arrow_type_has_view(ty: &ArrowType) -> bool {
     }
 }
 fn arrow_type_can_filter(ty: &ArrowType) -> bool {
-    use rustdb_types::{LogicalTypeId as L, PhysicalType};
+    use roastedduck_types::{LogicalTypeId as L, PhysicalType};
     let ty = ty.dictionary().unwrap_or(ty);
     match ty.duck_type(true).id() {
         L::Boolean
@@ -526,7 +526,7 @@ fn arrow_type_can_filter(ty: &ArrowType) -> bool {
     }
 }
 fn arrow_filter_supported(data: &dyn FunctionData, column: usize, filter: &dyn Any) -> bool {
-    use rustdb_storage::TableFilter as F;
+    use roastedduck_storage::TableFilter as F;
     fn supported(filter: &F) -> bool {
         match filter {
             F::Expression(_) => false,

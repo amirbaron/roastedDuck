@@ -5,9 +5,9 @@
 //! python3 crates/pg-parser/scripts/mutate_corpus.py    # -> target/pg-corpus/mutations.txt
 //! python3 crates/pg-parser/scripts/gen_cpp_oracle.py   # -> target/pg-oracle/pg_oracle
 //! target/pg-oracle/pg_oracle < target/pg-corpus/corpus.txt > target/pg-corpus/corpus.oracle.jsonl
-//! cargo run --release -p rustdb-pg-parser --example corpus_check -- \
+//! cargo run --release -p roastedduck-pg-parser --example corpus_check -- \
 //!     target/pg-corpus/corpus.txt target/pg-corpus/corpus.oracle.jsonl
-//! cargo run --release -p rustdb-pg-parser --example corpus_check -- target/pg-corpus/corpus.txt --bench 10
+//! cargo run --release -p roastedduck-pg-parser --example corpus_check -- target/pg-corpus/corpus.txt --bench 10
 //! target/pg-oracle/pg_oracle bench 10 < target/pg-corpus/corpus.txt
 //! ```
 //!
@@ -19,8 +19,8 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::time::Instant;
 
-use rustdb_common::{ByteString, byte_write};
-use rustdb_pg_parser::{parse_bytes, strip_unicode_spaces_bytes, tokenize_bytes};
+use roastedduck_common::{ByteString, byte_write};
+use roastedduck_pg_parser::{parse_bytes, strip_unicode_spaces_bytes, tokenize_bytes};
 #[path = "support/pg_native.rs"]
 mod pg_native;
 use pg_native::render;

@@ -12,11 +12,11 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex, Weak};
 
-use rustdb_buffer::{BlockHandle, BlockId, MAXIMUM_BLOCK, MemoryTag};
-use rustdb_common::{Error, Result};
-use rustdb_serde::binary::BinarySerializer;
-use rustdb_serde::{SerializationOptions, Serializer};
-use rustdb_types::LogicalType;
+use roastedduck_buffer::{BlockHandle, BlockId, MAXIMUM_BLOCK, MemoryTag};
+use roastedduck_common::{Error, Result};
+use roastedduck_serde::binary::BinarySerializer;
+use roastedduck_serde::{SerializationOptions, Serializer};
+use roastedduck_types::LogicalType;
 
 use super::column_checkpointer::{CheckpointContext, checkpoint_column, merge_persistent_statistics};
 use super::pointers::{BlockPointer, DataPointer, PersistentColumnData, RowGroupPointer};
@@ -196,10 +196,10 @@ impl AppendBlocks {
     }
 
     fn block_size(&self) -> usize {
-        rustdb_buffer::BlockManager::block_size(self.manager.as_ref())
+        roastedduck_buffer::BlockManager::block_size(self.manager.as_ref())
     }
 
-    fn dyn_manager(&self) -> Arc<dyn rustdb_buffer::BlockManager> {
+    fn dyn_manager(&self) -> Arc<dyn roastedduck_buffer::BlockManager> {
         Arc::clone(&self.manager) as _
     }
 
@@ -456,10 +456,10 @@ impl BlockWriter {
 
     pub(crate) fn block_size(&self) -> usize {
         match &self.target {
-            BlockTarget::File(manager) => rustdb_buffer::BlockManager::block_size(manager.as_ref()),
+            BlockTarget::File(manager) => roastedduck_buffer::BlockManager::block_size(manager.as_ref()),
             BlockTarget::AppendToTable(blocks) => blocks.block_size(),
             BlockTarget::InMemory(blocks) => {
-                rustdb_buffer::BlockManager::block_size(blocks.io.block_manager().as_ref())
+                roastedduck_buffer::BlockManager::block_size(blocks.io.block_manager().as_ref())
             }
         }
     }
@@ -473,7 +473,7 @@ impl BlockWriter {
     /// What the codecs of this checkpoint need to know: the block size, the storage version
     /// written and the compression settings.
     pub(crate) fn compression_info(&self) -> CompressionInfo {
-        use rustdb_buffer::BlockManager;
+        use roastedduck_buffer::BlockManager;
         let (storage_version, config, block_header_size) = match &self.target {
             BlockTarget::File(manager) => (
                 manager.storage_version(),
@@ -833,8 +833,8 @@ pub(crate) fn segment_bytes(
             Ok((bytes.to_vec(), Vec::new()))
         }
         Layout::Validity => {
-            let size = count.div_ceil(rustdb_common::STANDARD_VECTOR_SIZE)
-                * (rustdb_common::STANDARD_VECTOR_SIZE / 8);
+            let size = count.div_ceil(roastedduck_common::STANDARD_VECTOR_SIZE)
+                * (roastedduck_common::STANDARD_VECTOR_SIZE / 8);
             // SAFETY: as above.
             let bytes = unsafe { buffer.bytes(0, size)? };
             Ok((bytes.to_vec(), Vec::new()))
@@ -1050,7 +1050,7 @@ pub(crate) fn write_row_groups_to_disk(
     let compression_types: Vec<CompressionType> =
         table.columns().iter().map(|column| column.compression).collect();
     let table_name =
-        rustdb_common::byte_format!("{}.{}", table.info().schema_name(), table.info().table_name());
+        roastedduck_common::byte_format!("{}.{}", table.info().schema_name(), table.info().table_name());
     let storage_version = blocks.compression_info().storage_version;
     let mut columns: Vec<Vec<PersistentColumnData>> = row_groups
         .iter()
@@ -1367,7 +1367,7 @@ fn write_row_group_data(
 fn column_types(
     collection: &RowGroupCollection,
     columns: &[PersistentColumnData],
-) -> Arc<[rustdb_types::LogicalType]> {
+) -> Arc<[roastedduck_types::LogicalType]> {
     let types = collection.types();
     if types.len() == columns.len() {
         return types.iter().cloned().collect();
@@ -1386,7 +1386,8 @@ fn merge_kept_column_statistics(
 ) -> Result<()> {
     // VARIANT columns are loaded for their statistics, whose shredding cannot be merged
     // with the previous table statistics.
-    if row_group.column_is_loaded(index) || stats.logical_type().id() == rustdb_types::LogicalTypeId::Variant
+    if row_group.column_is_loaded(index)
+        || stats.logical_type().id() == roastedduck_types::LogicalTypeId::Variant
     {
         row_group.column(index)?.merge_into_statistics(stats)
     } else {
@@ -1515,7 +1516,7 @@ pub fn write_table_data(
     let compression_types: Vec<CompressionType> =
         table.columns().iter().map(|column| column.compression).collect();
     let table_name =
-        rustdb_common::byte_format!("{}.{}", table.info().schema_name(), table.info().table_name());
+        roastedduck_common::byte_format!("{}.{}", table.info().schema_name(), table.info().table_name());
     let context = TableWriteContext {
         collection,
         metadata,
@@ -1601,8 +1602,9 @@ pub fn write_table_data(
     // `DataTable::Checkpoint`: with row ids moved, the indexes are built anew before
     // they are written; the table takes them with the vacuumed row groups.
     let rebuilt_indexes = if rebuild_indexes {
-        let _timer =
-            rustdb_common::profiling::start_timer(rustdb_common::profiling::MetricType::CumulativeVacuumTime);
+        let _timer = roastedduck_common::profiling::start_timer(
+            roastedduck_common::profiling::MetricType::CumulativeVacuumTime,
+        );
         Some(table.rebuild_indexes(&layout)?)
     } else {
         None
@@ -1759,7 +1761,7 @@ pub fn checkpoint_in_memory_table(
     let compression_types: Vec<CompressionType> =
         table.columns().iter().map(|column| column.compression).collect();
     let table_name =
-        rustdb_common::byte_format!("{}.{}", table.info().schema_name(), table.info().table_name());
+        roastedduck_common::byte_format!("{}.{}", table.info().schema_name(), table.info().table_name());
     let mut blocks = BlockWriter::in_memory(Arc::clone(io), config);
     let (row_groups, _, new_total_rows, rebuild_indexes) =
         checkpoint_row_groups(table, settings, !vacuum_only, None, |row_group, row_start, _| {
@@ -1822,8 +1824,9 @@ pub fn checkpoint_in_memory_table(
     }
     // `DataTable::Checkpoint`: with row ids moved, the indexes are built anew.
     let rebuilt_indexes = if rebuild_indexes {
-        let _timer =
-            rustdb_common::profiling::start_timer(rustdb_common::profiling::MetricType::CumulativeVacuumTime);
+        let _timer = roastedduck_common::profiling::start_timer(
+            roastedduck_common::profiling::MetricType::CumulativeVacuumTime,
+        );
         let layout: Vec<(Arc<RowGroup>, u64)> = nodes
             .iter()
             .map(|node| (Arc::clone(&node.node), node.row_start - base))
@@ -2042,8 +2045,9 @@ fn vacuum_row_groups(
     use crate::table::{
         CollectionScanState, ColumnDataType, RowGroupAppendState, ScanFilterInfo, StorageIndex, TableScanType,
     };
-    let _timer =
-        rustdb_common::profiling::start_timer(rustdb_common::profiling::MetricType::CumulativeVacuumTime);
+    let _timer = roastedduck_common::profiling::start_timer(
+        roastedduck_common::profiling::MetricType::CumulativeVacuumTime,
+    );
     let row_group_size = collection.row_group_size();
     let types = collection.types();
     let io = collection.io();
@@ -2077,14 +2081,15 @@ fn vacuum_row_groups(
             ..CollectionScanState::default()
         };
         if source.initialize_scan(&mut scan, &column_ids, &mut filters, 0, 0)? {
-            let mut chunk = rustdb_types::DataChunk::with_types(types, rustdb_common::STANDARD_VECTOR_SIZE);
+            let mut chunk =
+                roastedduck_types::DataChunk::with_types(types, roastedduck_common::STANDARD_VECTOR_SIZE);
             loop {
                 chunk.reset();
                 source.scan(options, &mut scan, &column_ids, &mut filters, 0, &mut chunk)?;
                 if chunk.is_empty() {
                     break;
                 }
-                let columns: Vec<rustdb_types::Vector> = chunk
+                let columns: Vec<roastedduck_types::Vector> = chunk
                     .columns()
                     .iter()
                     .map(|vector| vector.flattened(chunk.len()))
@@ -2095,12 +2100,12 @@ fn vacuum_row_groups(
                     let append_count =
                         (remaining as u64).min(row_group_size - append_counts[current]) as usize;
                     let part = if offset == 0 {
-                        rustdb_types::DataChunk::new(columns.clone(), remaining)
+                        roastedduck_types::DataChunk::new(columns.clone(), remaining)
                     } else {
                         let rows: Vec<u32> = (offset as u32..(offset + remaining) as u32).collect();
-                        let sel = rustdb_types::SelectionVector::new(&rows[..]);
-                        rustdb_types::DataChunk::new(
-                            rustdb_types::Vector::slice_all(&columns, &sel),
+                        let sel = roastedduck_types::SelectionVector::new(&rows[..]);
+                        roastedduck_types::DataChunk::new(
+                            roastedduck_types::Vector::slice_all(&columns, &sel),
                             remaining,
                         )
                     };

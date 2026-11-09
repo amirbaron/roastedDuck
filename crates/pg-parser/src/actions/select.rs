@@ -5052,7 +5052,7 @@ pub(super) fn all_op<'a>(rhs: &mut Reduction<'_, 'a>, alt: usize) -> Result<SemV
     match alt {
         // MathOp
         1 => Ok(SemValue::Str(
-            rhs.const_str(1)?.map(rustdb_common::ByteString::from),
+            rhs.const_str(1)?.map(roastedduck_common::ByteString::from),
         )),
         _ => Err(rhs.bad_alternative()),
     }

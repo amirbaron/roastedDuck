@@ -7,11 +7,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rustdb_ast::keyword::write_optionally_quoted_bytes;
-use rustdb_catalog::{Catalog, CatalogEntry, CatalogSet, EntryKind, SchemaEntry};
-use rustdb_common::string_util::{similarity_score, top_n_distances};
-use rustdb_common::{ByteString, Result};
-use rustdb_planner::ClientContext;
+use roastedduck_ast::keyword::write_optionally_quoted_bytes;
+use roastedduck_catalog::{Catalog, CatalogEntry, CatalogSet, EntryKind, SchemaEntry};
+use roastedduck_common::string_util::{similarity_score, top_n_distances};
+use roastedduck_common::{ByteString, Result};
+use roastedduck_planner::ClientContext;
 
 use crate::matcher::{
     AutoCompleteCandidate, CandidateType, Grammar, MatchContext, MatchState, MatcherSuggestion,
@@ -316,10 +316,10 @@ fn suggest_type(context: &ClientContext) -> Vec<AutoCompleteCandidate> {
             .iter()
             .map(|entry| (entry.name().to_owned(), entry.internal))
             .collect();
-        if schema.name() == rustdb_catalog::DEFAULT_SCHEMA {
+        if schema.name() == roastedduck_catalog::DEFAULT_SCHEMA {
             types.extend(
-                rustdb_types::builtin_type_names()
-                    .filter(|name| rustdb_types::builtin_type_id(name).is_some())
+                roastedduck_types::builtin_type_names()
+                    .filter(|name| roastedduck_types::builtin_type_id(name).is_some())
                     .map(|name| (ByteString::from(name.to_ascii_lowercase()), true)),
             );
         }
@@ -433,11 +433,11 @@ fn suggest_file_name(
     let search_dir = if search_dir.is_empty() {
         if is_path_absolute { "/" } else { "." }.to_owned()
     } else {
-        rustdb_function::file_system::expand_path(&search_dir)
+        roastedduck_function::file_system::expand_path(&search_dir)
     };
     let mut result = Vec::new();
     // `LocalFileSystem::ListFiles`: regular files and directories (following links).
-    let Ok(entries) = std::fs::read_dir(rustdb_function::file_system::expand_path(&search_dir)) else {
+    let Ok(entries) = std::fs::read_dir(roastedduck_function::file_system::expand_path(&search_dir)) else {
         return result;
     };
     for entry in entries.flatten() {
@@ -503,7 +503,7 @@ pub fn generate_suggestions(
     parameters: &mut AutoCompleteParameters,
 ) -> Result<Vec<AutoCompleteSuggestion>> {
     let context = sources.context;
-    let stripped = rustdb_pg_parser::strip_unicode_spaces(sql);
+    let stripped = roastedduck_pg_parser::strip_unicode_spaces(sql);
     let sql = stripped.as_deref().unwrap_or(sql);
     let mut tokens = Vec::new();
     let mut tokenizer = AutoCompleteTokenizer::default();

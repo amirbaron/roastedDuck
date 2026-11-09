@@ -4,9 +4,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{CollationHandling, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::LogicalType;
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{CollationHandling, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::LogicalType;
 
 use crate::scalar::executor::{Str, StrOut, binary, ternary, unary};
 use crate::scalar::string::contains::find;

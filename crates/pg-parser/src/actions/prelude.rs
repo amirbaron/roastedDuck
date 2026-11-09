@@ -1,6 +1,6 @@
 //! Names shared by the action modules.
 
-pub(super) use rustdb_common::Result;
+pub(super) use roastedduck_common::Result;
 
 pub(super) use crate::error::{internal, unimplemented};
 pub(super) use crate::helpers::*;

@@ -1,8 +1,8 @@
 //! VARCHAR -> LIST/ARRAY/STRUCT/MAP (DuckDB's `StringToNestedTypeCast`): the text is split
 //! into VARCHAR children (see [`super::split`]), which are then cast to the child types.
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{ListEntry, LogicalType, StringT, ValidityMask, Value, Vector, VectorKind};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{ListEntry, LogicalType, StringT, ValidityMask, Value, Vector, VectorKind};
 
 use super::executor::StringColumn;
 use super::nested::{cast_child, missing_child};
@@ -47,10 +47,10 @@ impl<'a> TextInput<'a> {
 }
 
 /// `Type VARCHAR with value '...' can't be cast to the destination type ...`.
-fn cannot_cast(text: &[u8], target: &LogicalType) -> rustdb_common::ByteString {
-    rustdb_common::byte_format!(
+fn cannot_cast(text: &[u8], target: &LogicalType) -> roastedduck_common::ByteString {
+    roastedduck_common::byte_format!(
         "Type VARCHAR with value '{}' can't be cast to the destination type {target}",
-        rustdb_common::ByteString::from(text)
+        roastedduck_common::ByteString::from(text)
     )
 }
 
@@ -124,13 +124,13 @@ fn string_to_array(
         if count_list_parts(text) != size {
             if all_lengths_match {
                 all_lengths_match = false;
-                let message = rustdb_common::byte_format!(
+                let message = roastedduck_common::byte_format!(
                     "{}, the size of the array must match the destination type",
                     cannot_cast(text, &target)
                 );
                 if params.strict {
                     return Err(Error::new_bytes(
-                        rustdb_common::ErrorKind::Conversion,
+                        roastedduck_common::ErrorKind::Conversion,
                         message.into_bytes(),
                     ));
                 }
@@ -318,7 +318,7 @@ fn verify_map_keys(keys: &Vector, entries: &[ListEntry], validity: &ValidityMask
 
 /// Casts from VARCHAR to nested types.
 pub(super) fn cast_switch(set: &CastFunctionSet, target: &LogicalType) -> Result<Option<BoundCastInfo>> {
-    use rustdb_types::LogicalTypeId as L;
+    use roastedduck_types::LogicalTypeId as L;
     Ok(Some(match target.id() {
         L::List => {
             let child = target.child_type().ok_or_else(|| missing_child(target))?;

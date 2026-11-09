@@ -1,7 +1,7 @@
 //! VARIANT vectors read and extracted in place (DuckDB's `UnifiedVariantVectorData` and
 //! `VariantUtils::VariantExtract`), without unpacking rows into [`VariantData`]s.
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::variant::{VariantData, VariantLogicalType, VariantNested, VariantPathComponent, varint_decode};
 use crate::{ListEntry, LogicalType, Sel, SelectionVector, Vector, VectorKind};

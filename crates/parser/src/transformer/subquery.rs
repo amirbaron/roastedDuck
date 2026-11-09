@@ -1,13 +1,13 @@
 //! Subquery expressions (`transform_subquery.cpp`).
 
-use rustdb_ast::{
+use roastedduck_ast::{
     CaseCheck, ExpressionType, OrderModifier, ParsedExpression, ParsedExpressionKind, QueryNodeKind,
     ResultModifier, SelectStatement, SubqueryExpression, SubqueryType,
 };
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::ValueCast;
-use rustdb_pg_parser::nodes::{SubLink, SubLinkType};
-use rustdb_types::LogicalType;
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_pg_parser::nodes::{SubLink, SubLinkType};
+use roastedduck_types::LogicalType;
 
 use super::build;
 use super::expression::{negate_comparison, operator_to_expression_type};
@@ -117,7 +117,7 @@ impl<'a> Transformer<'a> {
                     ExpressionType::Invalid,
                 )))
             }
-            other => Err(Error::not_implemented(rustdb_common::byte_format!(
+            other => Err(Error::not_implemented(roastedduck_common::byte_format!(
                 "Subquery of type {} not implemented\n",
                 other as i32
             ))),
@@ -132,7 +132,7 @@ fn transform_array_subquery(mut subquery: SelectStatement, location: Option<u64>
     let is_select = matches!(subquery.node.kind, QueryNodeKind::Select(_));
     let array_agg_child = if let QueryNodeKind::Select(select) = &subquery.node.kind {
         if select.select_list.len() != 1 {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Subquery returns {} columns - expected 1",
                 select.select_list.len()
             ))
@@ -166,7 +166,7 @@ fn transform_array_subquery(mut subquery: SelectStatement, location: Option<u64>
             }
         } else if is_select {
             array_idx += 1;
-            let alias = rustdb_common::byte_format!("__array_internal_idx_{array_idx}");
+            let alias = roastedduck_common::byte_format!("__array_internal_idx_{array_idx}");
             let mut expression =
                 std::mem::replace(&mut *order.expression, build::column_ref(vec![alias.clone()]));
             expression.alias = alias;

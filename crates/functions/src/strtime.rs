@@ -2,7 +2,7 @@
 //! outside the function library (the CSV reader's `dateformat`, the CSV writer's
 //! `timestampformat`).
 
-use rustdb_types::{Date, Timestamp};
+use roastedduck_types::{Date, Timestamp};
 
 use crate::scalar::date::strftime_format::StrTimeFormat;
 
@@ -92,12 +92,12 @@ impl StrpTimeFormat {
         let date = timestamp.to_date();
         let micros = timestamp.to_time().0;
         let (year, month, day) = date.to_ymd();
-        let hour = micros / rustdb_types::Interval::MICROS_PER_HOUR;
-        let minute =
-            micros % rustdb_types::Interval::MICROS_PER_HOUR / rustdb_types::Interval::MICROS_PER_MINUTE;
-        let second =
-            micros % rustdb_types::Interval::MICROS_PER_MINUTE / rustdb_types::Interval::MICROS_PER_SEC;
-        let fraction = micros % rustdb_types::Interval::MICROS_PER_SEC;
+        let hour = micros / roastedduck_types::Interval::MICROS_PER_HOUR;
+        let minute = micros % roastedduck_types::Interval::MICROS_PER_HOUR
+            / roastedduck_types::Interval::MICROS_PER_MINUTE;
+        let second = micros % roastedduck_types::Interval::MICROS_PER_MINUTE
+            / roastedduck_types::Interval::MICROS_PER_SEC;
+        let fraction = micros % roastedduck_types::Interval::MICROS_PER_SEC;
         let data = [
             year,
             month,

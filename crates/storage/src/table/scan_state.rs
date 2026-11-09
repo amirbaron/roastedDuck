@@ -10,7 +10,7 @@ use super::row_group_collection::RowGroupSegmentTree;
 use super::segment_tree::SegmentNode;
 use crate::COLUMN_IDENTIFIER_ROW_ID;
 use crate::table_filter::{TableFilter, TableFilterSet};
-use rustdb_types::{ColumnIndex, LogicalType, LogicalTypeId};
+use roastedduck_types::{ColumnIndex, LogicalType, LogicalTypeId};
 
 /// A column to scan, possibly a field path into a STRUCT or VARIANT (DuckDB's
 /// `StorageIndex`).
@@ -20,7 +20,7 @@ pub struct StorageIndex {
     /// [`COLUMN_IDENTIFIER_ROW_ID`].
     pub index: u64,
     /// The field name of a VARIANT path element (DuckDB's `has_index` false).
-    pub field: Option<rustdb_common::ByteString>,
+    pub field: Option<roastedduck_common::ByteString>,
     /// The type the index produces (a pushdown extract), `INVALID` if unset.
     pub ty: LogicalType,
     /// Whether the scan extracts the (single) child path and emits it directly
@@ -31,10 +31,13 @@ pub struct StorageIndex {
     pub children: Vec<StorageIndex>,
 }
 
-impl rustdb_serde::Serialize for StorageIndex {
+impl roastedduck_serde::Serialize for StorageIndex {
     /// `StorageIndex::Serialize`.
-    fn serialize(&self, serializer: &mut dyn rustdb_serde::Serializer) -> rustdb_common::Result<()> {
-        let empty = rustdb_common::ByteString::new();
+    fn serialize(
+        &self,
+        serializer: &mut dyn roastedduck_serde::Serializer,
+    ) -> roastedduck_common::Result<()> {
+        let empty = roastedduck_common::ByteString::new();
         serializer.write_object(&crate::generated::nodes::StorageIndex {
             has_index: self.field.is_none(),
             index: self.index,
@@ -394,11 +397,11 @@ pub struct ParallelTableScanState {
     pub local_state: ParallelCollectionScanState,
 }
 
-impl rustdb_serde::DeserializeObject for StorageIndex {
-    fn deserialize_fields(d: &mut dyn rustdb_serde::Deserializer) -> rustdb_common::Result<Self> {
+impl roastedduck_serde::DeserializeObject for StorageIndex {
+    fn deserialize_fields(d: &mut dyn roastedduck_serde::Deserializer) -> roastedduck_common::Result<Self> {
         let has_index: bool = d.read_property_with_default(100, "has_index")?;
         let index = d.read_property_with_default(101, "index")?;
-        let field: rustdb_common::ByteString = d.read_property_with_default(102, "field")?;
+        let field: roastedduck_common::ByteString = d.read_property_with_default(102, "field")?;
         let ty = d.read_property(103, "type")?;
         let index_type: crate::StorageIndexType = d.read_property(104, "index_type")?;
         let children = d.read_property_with_default(105, "child_indexes")?;
@@ -411,8 +414,8 @@ impl rustdb_serde::DeserializeObject for StorageIndex {
         })
     }
 }
-impl rustdb_serde::Deserialize for StorageIndex {
-    fn deserialize(d: &mut dyn rustdb_serde::Deserializer) -> rustdb_common::Result<Self> {
+impl roastedduck_serde::Deserialize for StorageIndex {
+    fn deserialize(d: &mut dyn roastedduck_serde::Deserializer) -> roastedduck_common::Result<Self> {
         d.read_object()
     }
 }

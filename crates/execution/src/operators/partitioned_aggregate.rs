@@ -7,11 +7,11 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use rustdb_common::tree_renderer::RenderParams;
-use rustdb_common::{Error, Result};
-use rustdb_planner::Expression;
-use rustdb_planner::expression::BoundAggregateExpression as BoundAggregate;
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_common::tree_renderer::RenderParams;
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::Expression;
+use roastedduck_planner::expression::BoundAggregateExpression as BoundAggregate;
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::column_data_collection::ColumnDataCollection;
 use crate::operator::{
@@ -77,10 +77,10 @@ impl PhysicalOperator for PhysicalPartitionedAggregate {
 
     fn params_to_string(&self, _: u64) -> RenderParams {
         let mut result = RenderParams::new();
-        let groups: Vec<rustdb_common::ByteString> = self.groups.iter().map(Expression::name).collect();
+        let groups: Vec<roastedduck_common::ByteString> = self.groups.iter().map(Expression::name).collect();
         result.insert(
             "Groups".to_owned(),
-            rustdb_common::ByteString::join(&groups, b"\n"),
+            roastedduck_common::ByteString::join(&groups, b"\n"),
         );
         result.insert("Aggregates".to_owned(), aggregate_names(&self.aggregates));
         result

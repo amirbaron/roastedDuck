@@ -39,10 +39,10 @@ private:duckdb_connection connection;string query;duckdb_result result{},text_re
 };
 using MaterializedQueryResult=CapiTestQueryResult;
 #ifdef ADBC_RUST_TARGET
-extern "C" duckdb_connection rustdb_adbc_test_connection(AdbcConnection *);
-extern "C" duckdb_database rustdb_adbc_test_database(AdbcDatabase *);
-inline duckdb_database NativeDatabase(AdbcDatabase *database){return rustdb_adbc_test_database(database);}
-inline duckdb_connection NativeConnection(AdbcConnection *connection){return rustdb_adbc_test_connection(connection);}
+extern "C" duckdb_connection roastedduck_adbc_test_connection(AdbcConnection *);
+extern "C" duckdb_database roastedduck_adbc_test_database(AdbcDatabase *);
+inline duckdb_database NativeDatabase(AdbcDatabase *database){return roastedduck_adbc_test_database(database);}
+inline duckdb_connection NativeConnection(AdbcConnection *connection){return roastedduck_adbc_test_connection(connection);}
 #else
 extern "C" duckdb_connection adbc_cpp_test_connection(AdbcConnection *);
 extern "C" duckdb_connection adbc_cpp_test_connect(AdbcConnection *);

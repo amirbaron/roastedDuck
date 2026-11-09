@@ -4,13 +4,13 @@
 
 use std::sync::Arc;
 
-use rustdb_ast::{ExpressionType, JoinType};
-use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
-use rustdb_planner::operator::{JoinCondition, LogicalComparisonJoin};
-use rustdb_planner::{
+use roastedduck_ast::{ExpressionType, JoinType};
+use roastedduck_common::{Result, STANDARD_VECTOR_SIZE};
+use roastedduck_planner::operator::{JoinCondition, LogicalComparisonJoin};
+use roastedduck_planner::{
     ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator, LogicalOperatorType,
 };
-use rustdb_types::{DataChunk, LogicalType};
+use roastedduck_types::{DataChunk, LogicalType};
 
 use crate::expression_util::try_evaluate_scalar;
 use crate::optimizer::Optimizer;
@@ -132,7 +132,7 @@ fn rewrite_expression(
             let value = if value.logical_type() == &in_type {
                 value.clone()
             } else {
-                use rustdb_function::cast::ValueCast;
+                use roastedduck_function::cast::ValueCast;
                 value.try_cast(&in_type)?
             };
             chunk.column_mut(0).set_value(row, &value)?;

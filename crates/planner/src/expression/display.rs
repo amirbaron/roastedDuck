@@ -3,11 +3,11 @@
 
 use std::fmt;
 
-use rustdb_ast::{
+use roastedduck_ast::{
     ExpressionType, OrderByNullType, OrderType, WindowBoundary, WindowExcludeMode,
     expression_type_to_operator, expression_type_to_string, value_to_sql_string,
 };
-use rustdb_common::ByteString;
+use roastedduck_common::ByteString;
 
 use super::{BoundOrderByNode, Expression, ExpressionKind};
 
@@ -98,7 +98,7 @@ fn function_call(
             _ => {}
         }
     }
-    let mut out = rustdb_ast::keyword::write_optionally_quoted_bytes(name);
+    let mut out = roastedduck_ast::keyword::write_optionally_quoted_bytes(name);
     out.push(b'(');
     if distinct {
         out.push_bytes("DISTINCT ");
@@ -157,7 +157,7 @@ fn operator_text(expression: &Expression, children: &[Expression]) -> ByteString
                 "(",
                 child(0),
                 ").",
-                rustdb_ast::keyword::sql_identifier_bytes(inner)
+                roastedduck_ast::keyword::sql_identifier_bytes(inner)
             )
         }
         _ => ByteString::new(),
@@ -373,7 +373,9 @@ impl Expression {
                 }
             }
             ExpressionKind::Operator(operator) => operator_text(self, &operator.children),
-            ExpressionKind::Parameter(parameter) => rustdb_common::byte_format!("${}", parameter.identifier),
+            ExpressionKind::Parameter(parameter) => {
+                roastedduck_common::byte_format!("${}", parameter.identifier)
+            }
             ExpressionKind::Reference(reference) => {
                 if self.alias.is_empty() {
                     format!("#{}", reference.index).into()
@@ -396,13 +398,13 @@ impl fmt::Display for Expression {
     }
 }
 
-impl rustdb_common::byte_format::NativeByteFormat for Expression {
+impl roastedduck_common::byte_format::NativeByteFormat for Expression {
     fn append_native_bytes(&self, output: &mut ByteString) {
         output.push_bytes(self.to_bytes());
     }
 }
 
-impl rustdb_common::byte_format::NativeByteFormat for BoundOrderByNode {
+impl roastedduck_common::byte_format::NativeByteFormat for BoundOrderByNode {
     fn append_native_bytes(&self, output: &mut ByteString) {
         output.push_bytes(self.to_bytes());
     }

@@ -3,8 +3,8 @@
 //! Segment layout: an 8-byte header with the offset of the run lengths, the run values
 //! (`T`) and, at that (8-byte aligned) offset, one `u16` length per run.
 
-use rustdb_common::Result;
-use rustdb_types::{LogicalType, PhysicalType, Vector};
+use roastedduck_common::Result;
+use roastedduck_types::{LogicalType, PhysicalType, Vector};
 
 use super::primitive::{
     Primitive, align8, align8_floor, corrupt, load, result_bytes, unified_values, update_numeric_stats,
@@ -242,7 +242,7 @@ impl<T: Primitive> CodecScan for RleScanState<T> {
     /// `CanEmitConstantVector` + `RLEScanConstant`: a whole vector inside one run is a
     /// constant vector.
     fn scan_constant(&mut self, segment: &ColumnSegment, count: usize) -> Result<Option<Vector>> {
-        if count != rustdb_common::STANDARD_VECTOR_SIZE {
+        if count != roastedduck_common::STANDARD_VECTOR_SIZE {
             return Ok(None);
         }
         let run_length = self.run_length(self.entry_pos)?;

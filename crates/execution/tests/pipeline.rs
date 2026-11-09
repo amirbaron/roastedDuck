@@ -1,20 +1,20 @@
 //! End-to-end execution of small hand-built logical plans.
 #![allow(clippy::unwrap_used)]
 
-use rustdb_execution::operators::{CollectedResult, PhysicalResultCollector};
-use rustdb_execution::{Executor, PhysicalRef, create_physical_plan};
-use rustdb_planner::expression::{
+use roastedduck_execution::operators::{CollectedResult, PhysicalResultCollector};
+use roastedduck_execution::{Executor, PhysicalRef, create_physical_plan};
+use roastedduck_planner::expression::{
     AggregateType, BoundAggregateExpression, BoundCaseCheck, BoundCaseExpression,
 };
-use rustdb_planner::operator::LogicalAggregate;
-use rustdb_planner::{
+use roastedduck_planner::operator::LogicalAggregate;
+use roastedduck_planner::{
     BoundLimitNode, Expression, ExpressionKind, ExpressionType, LogicalKind, LogicalOperator,
 };
-use rustdb_types::{LogicalType, Value};
+use roastedduck_types::{LogicalType, Value};
 use std::sync::{Arc, Mutex};
 
 fn plus(left: Expression, right: Expression) -> Expression {
-    let set = rustdb_functions::builtin_scalar_functions()
+    let set = roastedduck_functions::builtin_scalar_functions()
         .into_iter()
         .find(|set| set.name.as_bytes() == b"+")
         .unwrap();
@@ -26,11 +26,11 @@ fn plus(left: Expression, right: Expression) -> Expression {
     Expression::function(function, vec![left, right], None, true)
 }
 
-fn run(mut plan: LogicalOperator) -> rustdb_common::Result<Vec<Vec<Value>>> {
+fn run(mut plan: LogicalOperator) -> roastedduck_common::Result<Vec<Vec<Value>>> {
     plan.resolve_operator_types()?;
     let physical = create_physical_plan(plan)?;
     let root: PhysicalRef = Arc::new(PhysicalResultCollector::new(physical));
-    let state = Executor::execute(&root, rustdb_execution::ClientEnv::standalone()?)?;
+    let state = Executor::execute(&root, roastedduck_execution::ClientEnv::standalone()?)?;
     let collected = state
         .downcast_ref::<Mutex<CollectedResult>>()
         .unwrap()
@@ -85,7 +85,7 @@ fn errors_propagate_out_of_the_pipeline() {
 }
 
 fn function(name: &str, ty: &LogicalType, children: Vec<Expression>) -> Expression {
-    let set = rustdb_functions::builtin_scalar_functions()
+    let set = roastedduck_functions::builtin_scalar_functions()
         .into_iter()
         .find(|set| set.name.as_bytes() == name.as_bytes())
         .unwrap();
@@ -95,7 +95,7 @@ fn function(name: &str, ty: &LogicalType, children: Vec<Expression>) -> Expressi
 
 /// A one-column INTEGER table.
 fn ints(values: &[Option<i32>]) -> LogicalOperator {
-    use rustdb_types::{DataChunk, Vector};
+    use roastedduck_types::{DataChunk, Vector};
     let mut vector = Vector::flat(LogicalType::INTEGER, values.len());
     for (row, value) in values.iter().enumerate() {
         vector
@@ -192,34 +192,34 @@ fn case_evaluates_branches_only_on_their_rows() {
 /// `sum(INTEGER) -> BIGINT`, enough to exercise the aggregate operators.
 struct TestSum;
 
-impl rustdb_function::UnaryAggregate for TestSum {
+impl roastedduck_function::UnaryAggregate for TestSum {
     type Input = i32;
     type State = Option<i64>;
     type Output = i64;
 
-    fn update(state: &mut Option<i64>, value: i32) -> rustdb_common::Result<()> {
+    fn update(state: &mut Option<i64>, value: i32) -> roastedduck_common::Result<()> {
         *state = Some(state.unwrap_or(0) + i64::from(value));
         Ok(())
     }
 
-    fn combine(source: &Option<i64>, target: &mut Option<i64>) -> rustdb_common::Result<()> {
+    fn combine(source: &Option<i64>, target: &mut Option<i64>) -> roastedduck_common::Result<()> {
         if let Some(value) = source {
             *target = Some(target.unwrap_or(0) + value);
         }
         Ok(())
     }
 
-    fn finalize(state: &Option<i64>) -> rustdb_common::Result<Option<i64>> {
+    fn finalize(state: &Option<i64>) -> roastedduck_common::Result<Option<i64>> {
         Ok(*state)
     }
 }
 
 fn sum(filter: Option<Expression>) -> Expression {
-    let function = rustdb_function::AggregateFunction::new(
+    let function = roastedduck_function::AggregateFunction::new(
         "sum",
         vec![LogicalType::INTEGER],
         LogicalType::BIGINT,
-        rustdb_function::aggregate::Unary::<TestSum>::default(),
+        roastedduck_function::aggregate::Unary::<TestSum>::default(),
     );
     Expression::new(
         ExpressionType::BoundAggregate,
@@ -244,7 +244,7 @@ fn aggregate(child: LogicalOperator, aggregates: Vec<Expression>) -> LogicalOper
         grouping_sets: vec![],
         grouping_functions: vec![],
         group_stats: vec![],
-        distinct_validity: rustdb_planner::TupleDataValidityType::default(),
+        distinct_validity: roastedduck_planner::TupleDataValidityType::default(),
     })))
     .with_expressions(aggregates)
     .with_children(vec![child])
@@ -280,7 +280,7 @@ fn limit_and_offset() {
 
 /// A two-column INTEGER table `(g, x)`, split into chunks of at most 2048 rows.
 fn pairs(rows: &[(Option<i32>, Option<i32>)]) -> LogicalOperator {
-    use rustdb_types::{DataChunk, Vector};
+    use roastedduck_types::{DataChunk, Vector};
     let to_value = |value: Option<i32>| value.map_or(Value::null(LogicalType::INTEGER), Value::integer);
     let chunks: Vec<DataChunk> = rows
         .chunks(2048)
@@ -318,7 +318,7 @@ fn group_by(child: LogicalOperator, sets: Vec<Vec<u64>>, aggregates: Vec<Express
         grouping_sets: sets.into_iter().map(|set| set.into_iter().collect()).collect(),
         grouping_functions: vec![],
         group_stats: vec![],
-        distinct_validity: rustdb_planner::TupleDataValidityType::default(),
+        distinct_validity: roastedduck_planner::TupleDataValidityType::default(),
     })))
     .with_expressions(aggregates)
     .with_children(vec![child])

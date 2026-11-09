@@ -2,9 +2,9 @@
 //! `ColumnBindingResolver`): every `BOUND_COLUMN_REF` becomes a `BOUND_REF` to the column
 //! of the operator's input chunk that produces that binding.
 
-use rustdb_ast::JoinType;
-use rustdb_common::{Error, Result};
-use rustdb_types::LogicalType;
+use roastedduck_ast::JoinType;
+use roastedduck_common::{Error, Result};
+use roastedduck_types::LogicalType;
 
 use crate::ColumnBinding;
 use crate::expression::{Expression, ExpressionKind};
@@ -136,8 +136,8 @@ impl ColumnBindingResolver {
             let binding = column.binding;
             let Some(index) = self.bindings.iter().position(|candidate| *candidate == binding) else {
                 return Err(Error::new_bytes(
-                    rustdb_common::ErrorKind::Internal,
-                    rustdb_common::byte_format!(
+                    roastedduck_common::ErrorKind::Internal,
+                    roastedduck_common::byte_format!(
                         "Failed to bind column reference \"{}\" [{}.{}] (bindings: {})",
                         expr.alias,
                         binding.table_index,
@@ -155,8 +155,8 @@ impl ColumnBindingResolver {
                 && ty != &expr.return_type
             {
                 return Err(Error::new_bytes(
-                    rustdb_common::ErrorKind::Internal,
-                    rustdb_common::byte_format!(
+                    roastedduck_common::ErrorKind::Internal,
+                    roastedduck_common::byte_format!(
                         "Failed to bind column reference \"{}\" [{}.{}]: inequal types ({} != {ty})",
                         expr.alias,
                         binding.table_index,

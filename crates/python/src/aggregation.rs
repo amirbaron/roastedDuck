@@ -2,8 +2,8 @@
 use crate::error;
 use pyo3::prelude::*;
 use pyo3::types::{PyFloat, PyInt, PyList};
-use rustdb_ast::ParsedExpressionKind;
-use rustdb_common::{Error, ErrorKind};
+use roastedduck_ast::ParsedExpressionKind;
+use roastedduck_common::{Error, ErrorKind};
 #[allow(clippy::too_many_arguments)]
 pub(super) fn expressions(
     py: Python<'_>,
@@ -34,7 +34,7 @@ pub(super) fn expressions(
         let parsed = match crate::expression::parse_list(py, column) {
             Ok(parsed) => parsed,
             Err(e) if e.is_instance_of::<error::ParserException>(py) => {
-                let quoted = rustdb_ast::keyword::write_quoted(column, '"');
+                let quoted = roastedduck_ast::keyword::write_quoted(column, '"');
                 let parsed = crate::expression::parse_list(py, &quoted)?;
                 if parsed.len() != 1 || !matches!(parsed[0].kind, ParsedExpressionKind::ColumnRef(_)) {
                     return Err(error::native(

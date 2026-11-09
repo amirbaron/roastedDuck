@@ -1,7 +1,7 @@
 //! The transform functions of DuckDB's `transform_select.cpp`.
 
-use rustdb_function::cast::ValueCast;
-use rustdb_parser::build;
+use roastedduck_function::cast::ValueCast;
+use roastedduck_parser::build;
 
 use super::create_view::to_recursive_cte;
 use super::expression::expression_is_empty_star;
@@ -334,9 +334,9 @@ struct GroupingExpressionMap {
 impl GroupingExpressionMap {
     /// The index of an expression equal to `expression`.
     fn find(&self, expression: &ParsedExpression) -> Option<usize> {
-        let hash = rustdb_parser::equality::expression_hash(expression);
+        let hash = roastedduck_parser::equality::expression_hash(expression);
         self.expressions.iter().position(|(other_hash, other)| {
-            *other_hash == hash && rustdb_parser::equality::expressions_equal(other, expression)
+            *other_hash == hash && roastedduck_parser::equality::expressions_equal(other, expression)
         })
     }
 }
@@ -366,7 +366,7 @@ fn add_group_by_expression(
     } else {
         let index = result.group_expressions.len();
         map.expressions.push((
-            rustdb_parser::equality::expression_hash(&expression),
+            roastedduck_parser::equality::expression_hash(&expression),
             expression.clone(),
         ));
         result.group_expressions.push(expression);
@@ -382,10 +382,10 @@ fn sample_method_from_string(name: &str) -> Result<SampleMethod> {
             .iter()
             .map(|method| method.name().to_owned())
             .collect();
-        let closest = rustdb_common::string_util::top_n_jaro_winkler(&candidates, name);
+        let closest = roastedduck_common::string_util::top_n_jaro_winkler(&candidates, name);
         Error::not_implemented(byte_format!(
             "Enum value: unrecognized value \"{name}\" for enum \"SampleMethod\"\n{}",
-            rustdb_common::string_util::candidates_message(&closest, "Candidates")
+            roastedduck_common::string_util::candidates_message(&closest, "Candidates")
         ))
     })
 }
@@ -2001,7 +2001,7 @@ impl PegTransformer {
             repeatable: false,
         };
         if is_percentage {
-            let percentage = rustdb_parser::get_value_f64(value)?;
+            let percentage = roastedduck_parser::get_value_f64(value)?;
             if !(0.0..=100.0).contains(&percentage) {
                 return Err(Error::parser(format!(
                     "Sample sample_size {percentage:.6} out of range, must be between 0 and 100"
@@ -2010,7 +2010,7 @@ impl PegTransformer {
             result.sample_size = Value::double(percentage);
             result.method = SampleMethod::SystemSample;
         } else {
-            let rows = rustdb_parser::get_value_i64(value)?;
+            let rows = roastedduck_parser::get_value_i64(value)?;
             if rows < 0 || rows.unsigned_abs() > MAX_SAMPLE_ROWS {
                 return Err(Error::parser(byte_format!(
                     "Sample rows {rows} out of range, must be between 0 and {MAX_SAMPLE_ROWS}"

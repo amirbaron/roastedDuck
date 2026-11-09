@@ -9,14 +9,14 @@ license = "MIT"
 rust-version = "1.99"
 
 [workspace.dependencies]
-rustdb-common = { path = "crates/common" }
-rustdb-types = { path = "crates/types" }
-rustdb-serde = { path = "crates/serde" }
-rustdb-ast = { path = "crates/ast" }
-rustdb-parser = { path = "crates/parser" }
-rustdb-planner = { path = "crates/planner" }
-rustdb-execution = { path = "crates/execution" }
-rustdb = { path = "crates/rustdb" }
+roastedduck-common = { path = "crates/common" }
+roastedduck-types = { path = "crates/types" }
+roastedduck-serde = { path = "crates/serde" }
+roastedduck-ast = { path = "crates/ast" }
+roastedduck-parser = { path = "crates/parser" }
+roastedduck-planner = { path = "crates/planner" }
+roastedduck-execution = { path = "crates/execution" }
+roastedduck = { path = "crates/roastedduck" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

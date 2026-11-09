@@ -5,11 +5,11 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::{CreateInfo, CreateInfoKind};
-use rustdb_catalog::Catalog;
-use rustdb_common::{Error, Result};
-use rustdb_storage::Transaction;
-use rustdb_types::{DataChunk, LogicalType};
+use roastedduck_ast::{CreateInfo, CreateInfoKind};
+use roastedduck_catalog::Catalog;
+use roastedduck_common::{Error, Result};
+use roastedduck_storage::Transaction;
+use roastedduck_types::{DataChunk, LogicalType};
 
 use super::ddl::{CreateEntryAction, DdlAction};
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};

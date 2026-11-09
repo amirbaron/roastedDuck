@@ -8,13 +8,13 @@
 
 use std::sync::Arc;
 
-use rustdb_buffer::{BufferManager, BufferManagerConfig};
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::{Aggregate, AggregateInput, AggregateState, States, Typed};
-use rustdb_function::{AggregateFunction, FunctionData};
-pub use rustdb_row::sort::{NullOrder, OrderModifiers, OrderType};
-use rustdb_row::sort::{Sort, SortColumn, SortConfig};
-use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
+use roastedduck_buffer::{BufferManager, BufferManagerConfig};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::{Aggregate, AggregateInput, AggregateState, States, Typed};
+use roastedduck_function::{AggregateFunction, FunctionData};
+pub use roastedduck_row::sort::{NullOrder, OrderModifiers, OrderType};
+use roastedduck_row::sort::{Sort, SortColumn, SortConfig};
+use roastedduck_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
 
 /// Rows per sort batch before the batch is sorted (DuckDB's `ordered_aggregate_threshold`).
 const DEFAULT_THRESHOLD: usize = 262_144;

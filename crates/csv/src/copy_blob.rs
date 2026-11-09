@@ -3,10 +3,10 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::{Error, Result};
-use rustdb_function::FunctionData;
-use rustdb_function::copy::{CopyFunction, CopyFunctionBindInput, CopyGlobalState};
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::FunctionData;
+use roastedduck_function::copy::{CopyFunction, CopyFunctionBindInput, CopyGlobalState};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, Value};
 
 use crate::copy_csv::CsvSink;
 use crate::options::FileCompressionType;
@@ -16,7 +16,7 @@ use crate::options::FileCompressionType;
 struct WriteBlobData {
     compression: FileCompressionType,
     /// The connection writing, whose loggers see the file operations.
-    client: Option<Arc<rustdb_function::FunctionClient>>,
+    client: Option<Arc<roastedduck_function::FunctionClient>>,
 }
 
 impl FunctionData for WriteBlobData {
@@ -33,13 +33,13 @@ fn parse_string_option(value: &Value, option: &[u8]) -> Result<String> {
     if value.logical_type().id() == LogicalTypeId::List {
         return match value.children().unwrap_or_default() {
             [single] => parse_string_option(single, option),
-            _ => Err(Error::binder(rustdb_common::byte_format!(
+            _ => Err(Error::binder(roastedduck_common::byte_format!(
                 "\"{option}\" expects a single argument as a string value"
             ))),
         };
     }
     if value.logical_type().id() != LogicalTypeId::Varchar {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "\"{option}\" expects a string argument!"
         )));
     }
@@ -49,7 +49,7 @@ fn parse_string_option(value: &Value, option: &[u8]) -> Result<String> {
 /// `WriteBlobBind`.
 fn write_blob_bind(
     input: &mut CopyFunctionBindInput<'_>,
-    _: &[rustdb_common::ByteString],
+    _: &[roastedduck_common::ByteString],
     types: &[LogicalType],
 ) -> Result<Arc<dyn FunctionData>> {
     if !matches!(types, [ty] if ty.id() == LogicalTypeId::Blob) {
@@ -63,21 +63,21 @@ fn write_blob_bind(
             let value = values.first().cloned().unwrap_or_default();
             compression = FileCompressionType::from_string(&parse_string_option(&value, name)?)?;
         } else {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Unrecognized option for COPY (FORMAT BLOB): \"{name}\""
             )));
         }
     }
     Ok(Arc::new(WriteBlobData {
         compression,
-        client: rustdb_function::file_system::opener(),
+        client: roastedduck_function::file_system::opener(),
     }))
 }
 
 /// `WriteBlobGlobalState`: the open file.
 struct WriteBlobGlobal {
     sink: Mutex<CsvSink>,
-    path: rustdb_common::ByteString,
+    path: roastedduck_common::ByteString,
 }
 
 fn global_state(state: &CopyGlobalState) -> Result<&WriteBlobGlobal> {
@@ -87,12 +87,12 @@ fn global_state(state: &CopyGlobalState) -> Result<&WriteBlobGlobal> {
 }
 
 fn write_error(path: &[u8], error: &std::io::Error) -> Error {
-    if let Some(error) = rustdb_function::registered_files::callback_error(error) {
+    if let Some(error) = roastedduck_function::registered_files::callback_error(error) {
         return error;
     }
     Error::new_bytes(
-        rustdb_common::ErrorKind::Io,
-        rustdb_common::byte_format!("Could not write file \"{path}\": {error}"),
+        roastedduck_common::ErrorKind::Io,
+        roastedduck_common::byte_format!("Could not write file \"{path}\": {error}"),
     )
 }
 

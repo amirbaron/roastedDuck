@@ -7,11 +7,11 @@
 //! ragged input rows at its ends. The order in which values and nodes are combined is the
 //! same as DuckDB's, so floating-point results match bit for bit.
 
-use rustdb_ast::WindowExcludeMode;
-use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::StatePtr;
-use rustdb_function::aggregate::OrderDependence;
-use rustdb_types::Vector;
+use roastedduck_ast::WindowExcludeMode;
+use roastedduck_common::{Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::StatePtr;
+use roastedduck_function::aggregate::OrderDependence;
+use roastedduck_types::Vector;
 
 use super::aggregate_states::{ScratchStates, WindowAggregateStates};
 use super::aggregator::{FlushBuffer, WindowAggregator};

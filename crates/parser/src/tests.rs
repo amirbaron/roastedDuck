@@ -1,11 +1,11 @@
-use rustdb_ast::json::JsonSerializeOptions;
-use rustdb_ast::{
+use roastedduck_ast::json::JsonSerializeOptions;
+use roastedduck_ast::{
     AlterInfoKind, AlterTableInfo, CatalogType, Constraint, CreateInfo, CreateInfoKind, ExpressionType,
     InsertColumnOrder, OnConflictAction, OnCreateConflict, ParsedExpressionKind, QueryNodeKind, SetScope,
     SqlStatement, SqlStatementKind, TableColumnType, TableRefKind,
 };
-use rustdb_common::ErrorKind;
-use rustdb_types::{LogicalTypeId, TypeInfo};
+use roastedduck_common::ErrorKind;
+use roastedduck_types::{LogicalTypeId, TypeInfo};
 
 use crate::json::serialize_sql;
 use crate::{SYNTAX_ERROR, parse};
@@ -27,7 +27,7 @@ fn create(sql: &str) -> Box<CreateInfo> {
     }
 }
 
-fn error(sql: &str) -> rustdb_common::Error {
+fn error(sql: &str) -> roastedduck_common::Error {
     parse(sql).expect_err(sql)
 }
 
@@ -91,7 +91,7 @@ fn expression_depth_is_limited() {
 #[test]
 fn parameters_are_numbered_per_statement() {
     let statements = parse("SELECT $a, $b; SELECT $c").expect("parses");
-    let names: Vec<Vec<(rustdb_common::ByteString, u64)>> = statements
+    let names: Vec<Vec<(roastedduck_common::ByteString, u64)>> = statements
         .iter()
         .map(|statement| {
             statement
@@ -287,7 +287,7 @@ fn compression_names_ignore_ascii_case_and_preserve_native_column_names() {
         assert_eq!(column.name.as_bytes(), b"col\xff");
         assert_eq!(
             column.compression_type,
-            rustdb_ast::CompressionType::CompressionZstd
+            roastedduck_ast::CompressionType::CompressionZstd
         );
     }
 }

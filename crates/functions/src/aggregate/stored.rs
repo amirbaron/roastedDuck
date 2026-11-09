@@ -9,12 +9,12 @@
 use std::cmp::Ordering;
 use std::marker::PhantomData;
 
-use rustdb_common::Result;
-use rustdb_row::sort::{
+use roastedduck_common::Result;
+use roastedduck_row::sort::{
     NullOrder, OrderModifiers, OrderType, SortKeyBuffer, create_sort_keys, decode_sort_key,
 };
-use rustdb_types::compare::SqlOrd;
-use rustdb_types::{Interval, NativeType, StringT, Unified, Vector};
+use roastedduck_types::compare::SqlOrd;
+use roastedduck_types::{Interval, NativeType, StringT, Unified, Vector};
 
 /// The SQL order of a fixed-width type (DuckDB's `LessThan`/`GreaterThan` operators).
 pub(crate) trait FixedOrd: NativeType {
@@ -244,14 +244,14 @@ impl<const DESC: bool> StoredKind for SortKey<DESC> {
 macro_rules! with_stored_kind {
     ($ty:expr, $desc:literal, $K:ident => $body:expr) => {{
         use crate::aggregate::stored::{Bytes, Fixed, SortKey};
-        use rustdb_types::PhysicalType as P;
+        use roastedduck_types::PhysicalType as P;
         match $ty.physical_type() {
             P::Varchar => {
                 type $K = Bytes;
                 $body
             }
             P::Interval => {
-                type $K = Fixed<rustdb_types::Interval>;
+                type $K = Fixed<roastedduck_types::Interval>;
                 $body
             }
             P::List | P::Struct | P::Array | P::Invalid | P::Unknown | P::Bit => {

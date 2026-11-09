@@ -7,8 +7,8 @@
 
 use std::cmp::Ordering;
 
-use rustdb_common::Result;
-use rustdb_types::{PhysicalType, Vector};
+use roastedduck_common::Result;
+use roastedduck_types::{PhysicalType, Vector};
 
 use crate::format::{FormatKind, VectorFormat};
 

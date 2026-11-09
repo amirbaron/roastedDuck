@@ -4,15 +4,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_csv::multi_file::{
+use roastedduck_common::{Error, Result};
+use roastedduck_csv::multi_file::{
     FileList, MultiFileBindData, MultiFileOptions, bind_options, create_file_list, parse_paths,
 };
-use rustdb_function::cast::CastFunctionSet;
-use rustdb_function::{TableFunctionBindInput, TableFunctionBindOutput};
-use rustdb_functions::strtime::StrpTimeFormat;
-use rustdb_planner::ClientContext;
-use rustdb_types::{LogicalType, LogicalTypeId};
+use roastedduck_function::cast::CastFunctionSet;
+use roastedduck_function::{TableFunctionBindInput, TableFunctionBindOutput};
+use roastedduck_functions::strtime::StrpTimeFormat;
+use roastedduck_planner::ClientContext;
+use roastedduck_types::{LogicalType, LogicalTypeId};
 
 use crate::json_enums::{JsonFormat, JsonRecordType, JsonScanType};
 use crate::json_functions::json_structure::{
@@ -134,7 +134,7 @@ fn remove_duplicate_struct_keys(ty: &LogicalType, ignore_errors: bool) -> Result
                     if ignore_errors {
                         continue;
                     }
-                    return Err(Error::not_implemented(rustdb_common::byte_format!(
+                    return Err(Error::not_implemented(roastedduck_common::byte_format!(
                         "Duplicate name \"{name}\" in struct auto-detected in JSON, try ignore_errors=true"
                     )));
                 }
@@ -224,7 +224,7 @@ fn auto_detect(
     date_format_map: &DateFormatMap,
     threads: u64,
     return_types: &mut Vec<LogicalType>,
-    names: &mut Vec<rustdb_common::ByteString>,
+    names: &mut Vec<roastedduck_common::ByteString>,
 ) -> Result<Option<u64>> {
     let file_count = if file_options.union_by_name {
         files.files.len()
@@ -295,7 +295,7 @@ pub(crate) fn bind_json_files(
     files: FileList,
     mut file_options: MultiFileOptions,
     mut options: JsonReaderOptions,
-    expected: Option<(&[rustdb_common::ByteString], &[LogicalType])>,
+    expected: Option<(&[roastedduck_common::ByteString], &[LogicalType])>,
 ) -> Result<JsonScanData> {
     let casts = Arc::clone(&context.casts);
     let threads = thread_count(context);
@@ -354,18 +354,18 @@ pub(crate) fn bind_json_files(
     };
     if options.auto_detect {
         // Rename "id" / "Id" style duplicates (CSV's header detection scheme).
-        let mut collisions: HashMap<rustdb_common::ByteString, u64> = HashMap::new();
+        let mut collisions: HashMap<roastedduck_common::ByteString, u64> = HashMap::new();
         for name in &mut names {
             while let Some(count) = collisions.get_mut(&name.to_ascii_lowercase()) {
                 *count += 1;
-                *name = rustdb_common::byte_format!("{name}_{count}");
+                *name = roastedduck_common::byte_format!("{name}_{count}");
             }
             collisions.insert(name.to_ascii_lowercase(), 0);
         }
     }
     if let Some((expected_names, expected_types)) = expected {
         if expected_types.len() != types.len() {
-            return Err(Error::conversion(rustdb_common::byte_format!(
+            return Err(Error::conversion(roastedduck_common::byte_format!(
                 "Failed to read file(s) \"{}\" - column count mismatch: expected {} columns but found {}",
                 files.first_file().unwrap_or_default(),
                 expected_types.len(),
@@ -413,7 +413,7 @@ pub(crate) fn json_bind(
             continue;
         }
         if !options.parse_option(Some(context), key, value)? {
-            return Err(Error::not_implemented(rustdb_common::byte_format!(
+            return Err(Error::not_implemented(roastedduck_common::byte_format!(
                 "Unsupported option for {function_name}: {key}"
             )));
         }
@@ -430,8 +430,11 @@ pub(crate) fn json_bind(
 pub(crate) fn json_copy_from_bind(
     context: &ClientContext,
     file_path: &[u8],
-    copy_options: &rustdb_common::CaseInsensitiveMap<Vec<rustdb_types::Value>, rustdb_common::ByteString>,
-    expected_names: &[rustdb_common::ByteString],
+    copy_options: &roastedduck_common::CaseInsensitiveMap<
+        Vec<roastedduck_types::Value>,
+        roastedduck_common::ByteString,
+    >,
+    expected_names: &[roastedduck_common::ByteString],
     expected_types: &[LogicalType],
 ) -> Result<JsonScanData> {
     let files = create_file_list("COPY", &[file_path.into()], "json")?;
@@ -444,7 +447,7 @@ pub(crate) fn json_copy_from_bind(
         if options.parse_copy_option(key, values)? {
             continue;
         }
-        return Err(Error::not_implemented(rustdb_common::byte_format!(
+        return Err(Error::not_implemented(roastedduck_common::byte_format!(
             "Unsupported option for COPY FROM: {key}"
         )));
     }

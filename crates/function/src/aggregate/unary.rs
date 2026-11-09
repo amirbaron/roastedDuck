@@ -5,8 +5,8 @@ use std::alloc::Layout;
 use std::fmt;
 use std::marker::PhantomData;
 
-use rustdb_common::Result;
-use rustdb_types::{NativeType, Sel, Vector, VectorKind};
+use roastedduck_common::Result;
+use roastedduck_types::{NativeType, Sel, Vector, VectorKind};
 
 use super::{AggregateInput, AggregateOps, StatePtr, set_nulls, state_mut};
 
@@ -290,7 +290,7 @@ impl<A: UnaryAggregate> AggregateOps for Unary<A> {
 mod tests {
     use super::*;
     use crate::aggregate::test_support::StateBuffer;
-    use rustdb_types::{LogicalType, Value};
+    use roastedduck_types::{LogicalType, Value};
 
     /// `sum(INTEGER)`-like aggregate for testing the adapter.
     struct SumInt;

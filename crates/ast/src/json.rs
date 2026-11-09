@@ -1,8 +1,10 @@
 //! The JSON documents of `json_serialize_sql` and `json_deserialize_sql`.
 
-use rustdb_common::{Error, Result};
-use rustdb_serde::json::{JsonDeserializer, JsonOptions, JsonSerializer, JsonValue, parse_json, write_json};
-use rustdb_serde::{SerializationCompatibility, SerializationOptions};
+use roastedduck_common::{Error, Result};
+use roastedduck_serde::json::{
+    JsonDeserializer, JsonOptions, JsonSerializer, JsonValue, parse_json, write_json,
+};
+use roastedduck_serde::{SerializationCompatibility, SerializationOptions};
 
 use crate::SelectStatement;
 

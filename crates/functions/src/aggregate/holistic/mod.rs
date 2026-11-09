@@ -11,9 +11,9 @@ pub(crate) mod tdigest;
 /// The integer type stored in a physical type (the functions DuckDB binds for DECIMAL
 /// inputs of the approximate quantiles).
 pub(crate) fn integer_type_of(
-    physical: rustdb_types::PhysicalType,
-) -> rustdb_common::Result<rustdb_types::LogicalType> {
-    use rustdb_types::{LogicalType, PhysicalType};
+    physical: roastedduck_types::PhysicalType,
+) -> roastedduck_common::Result<roastedduck_types::LogicalType> {
+    use roastedduck_types::{LogicalType, PhysicalType};
     Ok(match physical {
         PhysicalType::Int8 => LogicalType::TINYINT,
         PhysicalType::Int16 => LogicalType::SMALLINT,
@@ -21,7 +21,7 @@ pub(crate) fn integer_type_of(
         PhysicalType::Int64 => LogicalType::BIGINT,
         PhysicalType::Int128 => LogicalType::HUGEINT,
         _ => {
-            return Err(rustdb_common::Error::internal(
+            return Err(roastedduck_common::Error::internal(
                 "Unimplemented quantile decimal aggregate",
             ));
         }

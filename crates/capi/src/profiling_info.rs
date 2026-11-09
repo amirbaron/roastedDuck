@@ -7,8 +7,8 @@
 use std::ffi::c_char;
 use std::sync::{Arc, PoisonError};
 
-use rustdb::ProfilingTree;
-use rustdb_types::{LogicalType, Value};
+use roastedduck::ProfilingTree;
+use roastedduck_types::{LogicalType, Value};
 
 use crate::helper::{catch, opt_str};
 use crate::open::DuckdbConnection;

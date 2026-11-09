@@ -8,8 +8,8 @@
 
 use std::marker::PhantomData;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, PhysicalType, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, PhysicalType, Vector};
 
 use super::bitpacking_primitives::{
     BITPACKING_HEADER_SIZE, GROUP_SIZE, minimum_bit_width_signed, minimum_bit_width_unsigned,

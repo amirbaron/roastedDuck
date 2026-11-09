@@ -3,10 +3,12 @@
 
 use std::fmt::Write as _;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{TableFunction, TableFunctionBindInput, TableFunctionReplacement, TableFunctionSet};
-use rustdb_types::identifier::sql_identifier;
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{
+    TableFunction, TableFunctionBindInput, TableFunctionReplacement, TableFunctionSet,
+};
+use roastedduck_types::identifier::sql_identifier;
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 /// `QualifiedName::ParseComponents`: the dot-separated parts of a name, double quotes
 /// grouping (and removed from) a part.

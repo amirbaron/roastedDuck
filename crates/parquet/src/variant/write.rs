@@ -5,10 +5,10 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use rustdb_common::libcxx::{UnorderedOrder, ci_hash};
-use rustdb_common::{Error, Result};
-use rustdb_types::variant::{VariantData, VariantLogicalType as V};
-use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Value};
+use roastedduck_common::libcxx::{UnorderedOrder, ci_hash};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::variant::{VariantData, VariantLogicalType as V};
+use roastedduck_types::{LogicalType, LogicalTypeId, PhysicalType, Value};
 
 /// `CalculateByteLength`: the bytes needed for `value` (at least 1).
 fn byte_length(value: u64) -> usize {
@@ -23,7 +23,7 @@ fn push_le(out: &mut Vec<u8>, value: u64, bytes: usize) {
 }
 
 /// `CreateMetadata`: the dictionary of a row's keys (unsorted).
-pub fn metadata_blob(keys: &[rustdb_common::ByteString]) -> Result<Vec<u8>> {
+pub fn metadata_blob(keys: &[roastedduck_common::ByteString]) -> Result<Vec<u8>> {
     let dictionary_size: u64 = keys.iter().map(|key| key.len() as u64).sum();
     if dictionary_size >= u64::from(u32::MAX) {
         return Err(Error::invalid_input(
@@ -225,7 +225,7 @@ fn encode_nested(
 pub fn encode_value(
     data: Option<&VariantData>,
     index: u32,
-    excluded: Option<&HashSet<rustdb_common::ByteString>>,
+    excluded: Option<&HashSet<roastedduck_common::ByteString>>,
 ) -> Result<Option<Vec<u8>>> {
     let mut out = Vec::new();
     let Some(data) = data else {
@@ -416,7 +416,7 @@ fn write_shredded(
         LogicalTypeId::Struct => {
             // Shredded fields leave the `value`; the rest stays there.
             let shredded_fields = shredding.struct_children().unwrap_or_default();
-            let excluded: HashSet<rustdb_common::ByteString> = shredded_fields
+            let excluded: HashSet<roastedduck_common::ByteString> = shredded_fields
                 .iter()
                 .map(|(name, _)| name.to_ascii_lowercase())
                 .collect();
@@ -503,7 +503,7 @@ pub fn to_parquet_variant(
     let output_type = LogicalType::struct_type(fields.to_vec());
     rows.iter()
         .map(|row| {
-            let keys: &[rustdb_common::ByteString] = row.as_ref().map_or(&[], |data| &data.keys);
+            let keys: &[roastedduck_common::ByteString] = row.as_ref().map_or(&[], |data| &data.keys);
             let metadata = Value::blob(&metadata_blob(keys)?);
             let item = row.as_ref().map_or(Item::Null, |data| Item::Value(data, 0));
             let group = write_group(item, &shredding, &group_type)?;
@@ -522,14 +522,14 @@ pub fn to_parquet_variant(
 #[derive(Debug, Default)]
 struct ObjectFields {
     /// The fields in insertion order, with their hashes.
-    entries: Vec<(rustdb_common::ByteString, u64, AnalyzeData)>,
+    entries: Vec<(roastedduck_common::ByteString, u64, AnalyzeData)>,
     /// The position in `entries` of each lowercased key.
-    positions: std::collections::HashMap<rustdb_common::ByteString, usize>,
+    positions: std::collections::HashMap<roastedduck_common::ByteString, usize>,
 }
 
 impl ObjectFields {
     /// `operator[]`: the field of `key`, inserted if new.
-    fn entry(&mut self, key: &rustdb_common::ByteString) -> &mut AnalyzeData {
+    fn entry(&mut self, key: &roastedduck_common::ByteString) -> &mut AnalyzeData {
         let lower = key.to_ascii_lowercase();
         let position = if let Some(&position) = self.positions.get(&lower) {
             position
@@ -545,7 +545,7 @@ impl ObjectFields {
 
     /// The fields in the iteration order of libc++'s `unordered_map` after inserting
     /// them in this order.
-    fn iter_in_map_order(&self) -> impl Iterator<Item = (&rustdb_common::ByteString, &AnalyzeData)> {
+    fn iter_in_map_order(&self) -> impl Iterator<Item = (&roastedduck_common::ByteString, &AnalyzeData)> {
         let mut table = UnorderedOrder::default();
         for (position, (_, hash, _)) in self.entries.iter().enumerate() {
             table.insert(*hash, position, |a, b| a == b);
@@ -684,7 +684,7 @@ impl AnalyzeData {
                 return Some(LogicalType::list(element));
             }
         } else if objects > highest {
-            let fields: Vec<(rustdb_common::ByteString, LogicalType)> = self
+            let fields: Vec<(roastedduck_common::ByteString, LogicalType)> = self
                 .object
                 .as_ref()?
                 .iter_in_map_order()
@@ -727,11 +727,11 @@ pub fn is_decimal_physical(physical: PhysicalType) -> bool {
 #[cfg(test)]
 mod schema_reuse_tests {
     use super::*;
-    use rustdb_types::variant_value::{VariantValue as VV, to_variant_data};
+    use roastedduck_types::variant_value::{VariantValue as VV, to_variant_data};
 
     #[test]
     fn vector_input_matches_value_input_for_nested_selections_and_constants() {
-        use rustdb_types::{SelectionVector, Vector};
+        use roastedduck_types::{SelectionVector, Vector};
         let rows = to_variant_data(&[
             VV::Missing,
             VV::Primitive(Value::integer(7)),

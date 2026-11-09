@@ -8,7 +8,7 @@
 //! (including its 8/4-bit split counters and its sampling hash), so the same input gives
 //! the same symbol table and the same compressed bytes as DuckDB.
 
-use rustdb_common::libcxx::UnorderedOrder;
+use roastedduck_common::libcxx::UnorderedOrder;
 use std::collections::HashMap;
 
 /// `FSST_VERSION` (`FSST_VERSION_20190218`).

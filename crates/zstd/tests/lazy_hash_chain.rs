@@ -29,7 +29,7 @@ pub fn input(kind: &str, size: usize) -> Vec<u8> {
 #[test]
 fn frozen_hash_chain_frames_match_and_reused_contexts_reset() {
     let fixtures = include_str!("data/lazy_hash_chain_1.5.6.tsv");
-    let mut compressor = rustdb_zstd::Compressor::new(3);
+    let mut compressor = roastedduck_zstd::Compressor::new(3);
     for _ in 0..2 {
         for row in fixtures.lines().filter(|row| !row.starts_with('#')) {
             let fields: Vec<_> = row.split('\t').collect();
@@ -45,7 +45,7 @@ fn frozen_hash_chain_frames_match_and_reused_contexts_reset() {
             assert_eq!((frame.len(), common::fnv64(&frame)), (bytes, hash), "{row}");
             let mut decoded = vec![0; size];
             assert_eq!(
-                rustdb_zstd::decompress(&mut decoded, &frame).expect("frame decodes"),
+                roastedduck_zstd::decompress(&mut decoded, &frame).expect("frame decodes"),
                 size
             );
             assert_eq!(decoded, data, "{row}");

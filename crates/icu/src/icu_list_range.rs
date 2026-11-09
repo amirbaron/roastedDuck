@@ -3,9 +3,9 @@
 
 use std::borrow::Cow;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, Interval, ListEntry, LogicalType, Timestamp, Vector, VectorKind};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, Interval, ListEntry, LogicalType, Timestamp, Vector, VectorKind};
 
 use crate::icu_dateadd::add;
 use crate::icu_datefunc::{self, BindData, TzCalendar};

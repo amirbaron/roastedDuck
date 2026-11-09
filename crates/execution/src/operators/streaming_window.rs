@@ -2,16 +2,16 @@
 //! `PhysicalStreamingWindow`): functions over `OVER ()` whose value for a row only
 //! depends on the rows before it (or a bounded number after it, for `LEAD`).
 
-use rustdb_common::tree_renderer::RenderParams;
+use roastedduck_common::tree_renderer::RenderParams;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Mutex, PoisonError};
 
-use rustdb_ast::{WindowBoundary, WindowExcludeMode};
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::StatePtr;
-use rustdb_function::cast::ValueCast;
-use rustdb_planner::{Expression, ExpressionType};
-use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
+use roastedduck_ast::{WindowBoundary, WindowExcludeMode};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::StatePtr;
+use roastedduck_function::cast::ValueCast;
+use roastedduck_planner::{Expression, ExpressionType};
+use roastedduck_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
 
 use crate::aggregate_hashtable::GroupedAggregateHashTable;
 use crate::operator::{ErasedOperator, PhysicalOperator, PhysicalRef};
@@ -406,7 +406,7 @@ impl AggregateState {
             .aggregate
             .as_ref()
             .ok_or_else(|| Error::internal("window aggregate without a function"))?;
-        let bind = rustdb_function::aggregate::AggregateInput {
+        let bind = roastedduck_function::aggregate::AggregateInput {
             bind_data: wexpr.window.bind_info.as_deref(),
         };
         // The FILTER mask.
@@ -445,7 +445,7 @@ impl AggregateState {
             let mut new_rows = Vec::new();
             if !candidates.is_empty() {
                 let column_refs: Vec<&Vector> = candidates.columns().iter().collect();
-                let hashes = rustdb_row::hash::hash_columns(&column_refs, candidates.len())?;
+                let hashes = roastedduck_row::hash::hash_columns(&column_refs, candidates.len())?;
                 table.find_or_create_groups(&candidates, &hashes)?;
                 new_rows.extend(table.new_group_rows().iter().map(|&row| filtered[row as usize]));
             }
@@ -560,7 +560,7 @@ impl PhysicalOperator for PhysicalStreamingWindow {
         let projections: Vec<&[u8]> = self.select_list.iter().map(|w| w.alias.as_bytes()).collect();
         result.insert(
             "Projections".to_owned(),
-            rustdb_common::ByteString::join(&projections, b"\n"),
+            roastedduck_common::ByteString::join(&projections, b"\n"),
         );
         result
     }

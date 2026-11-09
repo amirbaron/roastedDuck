@@ -1,12 +1,12 @@
-//! `bindcheck`: the binder/planner dev loop. Until rustdb has a parser, statements are
-//! parsed by the reference CLI (`json_serialize_sql`), deserialized into rustdb's parse
-//! tree, and bound, planned and executed by rustdb; results and errors are compared with
+//! `bindcheck`: the binder/planner dev loop. Until roastedduck has a parser, statements are
+//! parsed by the reference CLI (`json_serialize_sql`), deserialized into roastedduck's parse
+//! tree, and bound, planned and executed by roastedduck; results and errors are compared with
 //! the CLI's.
 //!
 //! ```text
 //! cargo run -p corpus -- extract && cargo run -p corpus -- oracle   # statements + parse trees
 //! cargo run --release -p bindcheck -- oracle    # CLI results of single SELECT statements (cached)
-//! cargo run --release -p bindcheck -- check     # rustdb against them → target/bindcheck/
+//! cargo run --release -p bindcheck -- check     # roastedduck against them → target/bindcheck/
 //! cargo run --release -p bindcheck -- sql "SELECT 1 + 1"   # one statement, both engines
 //! ```
 //!
@@ -92,7 +92,7 @@ fn candidates(options: &Options) -> Result<Vec<Candidate>> {
     let mut result = Vec::new();
     for entry in entries {
         let Some(row) = by_id.get(&entry.id) else { continue };
-        let Ok(statements) = rustdb_ast::json::deserialize_statements(&row.json_latest) else {
+        let Ok(statements) = roastedduck_ast::json::deserialize_statements(&row.json_latest) else {
             continue;
         };
         if statements.len() != 1 {
@@ -143,7 +143,7 @@ fn run_oracle(options: &Options) -> Result<()> {
     Ok(())
 }
 
-/// `check`: rustdb against the cached oracle results.
+/// `check`: roastedduck against the cached oracle results.
 fn run_check(options: &Options) -> Result<bool> {
     let candidates = candidates(options)?;
     let out_dir = options.dir.join("bindcheck");
@@ -156,7 +156,7 @@ fn run_check(options: &Options) -> Result<bool> {
         let Some(expected) = oracle.get(&candidate.id) else {
             continue;
         };
-        let actual = compare::run_rustdb(&candidate.sql, &candidate.json);
+        let actual = compare::run_roastedduck(&candidate.sql, &candidate.json);
         let outcome = compare::compare(expected, &actual);
         report.add(
             candidate.id,
@@ -179,9 +179,9 @@ fn run_check(options: &Options) -> Result<bool> {
 fn run_sql(options: &Options, sql: &str) -> Result<bool> {
     let json = oracle::serialize(&options.duckdb, sql)?;
     let expected = oracle::run_one(&options.duckdb, 0, sql);
-    let actual = compare::run_rustdb(sql, &json);
+    let actual = compare::run_roastedduck(sql, &json);
     println!("== duckdb\n{}", compare::render(&expected.outcome()));
-    println!("== rustdb\n{}", compare::render(&actual.result));
+    println!("== roastedduck\n{}", compare::render(&actual.result));
     if let Some(plan) = &expected.plan {
         println!(
             "== duckdb plan\n{}",
@@ -189,7 +189,7 @@ fn run_sql(options: &Options, sql: &str) -> Result<bool> {
         );
     }
     println!(
-        "== rustdb plan\n{}",
+        "== roastedduck plan\n{}",
         actual.plan.as_ref().unwrap_or_else(|error| error)
     );
     let outcome = compare::compare(&expected, &actual);

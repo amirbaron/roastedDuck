@@ -2,11 +2,11 @@
 //! `DateTruncSimplificationRule`), so that it can become a table filter, e.g.
 //! `date_trunc('day', d) = '2025-01-08'` as `d >= '2025-01-08' AND d < '2025-01-09'`.
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::Result;
-use rustdb_planner::function_binder::add_cast_to_type;
-use rustdb_planner::{Expression, ExpressionKind};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::Result;
+use roastedduck_planner::function_binder::add_cast_to_type;
+use roastedduck_planner::{Expression, ExpressionKind};
+use roastedduck_types::{LogicalType, Value};
 
 use super::RuleOutcome;
 use super::date_part::part_function;

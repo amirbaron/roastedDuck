@@ -3,9 +3,9 @@
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 
-use rustdb_common::{Error, Result};
-use rustdb_storage::StorageIndex;
-use rustdb_types::{DataChunk, LogicalType, Value, Vector, VectorKind};
+use roastedduck_common::{Error, Result};
+use roastedduck_storage::StorageIndex;
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector, VectorKind};
 
 /// What a modifying statement returns: the affected row count, or with `RETURNING` the
 /// affected rows (DuckDB's `return_chunk`).
@@ -59,7 +59,7 @@ impl ModifyResult {
 
 /// The transaction-local append of a table, shared by the operators of one statement
 /// that insert into it (appends must not interleave).
-pub type SharedAppend = std::sync::Arc<Mutex<Option<rustdb_storage::LocalAppendState>>>;
+pub type SharedAppend = std::sync::Arc<Mutex<Option<roastedduck_storage::LocalAppendState>>>;
 
 /// The result types of a modifying statement without `RETURNING`: one BIGINT `Count`.
 pub fn count_types() -> Vec<LogicalType> {
@@ -68,7 +68,7 @@ pub fn count_types() -> Vec<LogicalType> {
 
 /// The row ids of a BIGINT row-id vector as a slice of `i64`.
 pub fn row_ids(vector: &Vector, count: usize) -> Result<Vec<i64>> {
-    if vector.logical_type().physical_type() != rustdb_types::PhysicalType::Int64 {
+    if vector.logical_type().physical_type() != roastedduck_types::PhysicalType::Int64 {
         return Err(Error::internal("row id column is not a BIGINT"));
     }
     let flat;

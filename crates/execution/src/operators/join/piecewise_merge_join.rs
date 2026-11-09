@@ -2,17 +2,17 @@
 //! condition (plus optional further conditions) by sorting the right side once and each
 //! input chunk on the range key, then merging.
 
-use rustdb_common::tree_renderer::RenderParams;
+use roastedduck_common::tree_renderer::RenderParams;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::{ExpressionType, JoinType};
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_planner::Expression;
-use rustdb_planner::operator::JoinCondition;
-use rustdb_row::sort::{ExternalBlockIteratorState, SortKey, SortedRun};
-use rustdb_row::{ParallelScanState, PinProperties, ScanState};
-use rustdb_types::{DataChunk, LogicalType, SelectionVector, ValidityMask};
+use roastedduck_ast::{ExpressionType, JoinType};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_planner::Expression;
+use roastedduck_planner::operator::JoinCondition;
+use roastedduck_row::sort::{ExternalBlockIteratorState, SortKey, SortedRun};
+use roastedduck_row::{ParallelScanState, PinProperties, ScanState};
+use roastedduck_types::{DataChunk, LogicalType, SelectionVector, ValidityMask};
 
 use super::range_join::{
     LocalSortedTable, SortedTable, is_strict_comparison, key_before, order_modifiers,
@@ -158,7 +158,7 @@ impl PhysicalPiecewiseMergeJoin {
         else {
             return Err(Error::internal("merge join without iterators"));
         };
-        rustdb_row::dispatch_sort_key!(sort_key_type, K => merge_join_simple_blocks::<K>(
+        roastedduck_row::dispatch_sort_key!(sort_key_type, K => merge_join_simple_blocks::<K>(
             lhs_table,
             lhs_iterator,
             rhs,
@@ -272,7 +272,7 @@ impl PhysicalPiecewiseMergeJoin {
             rhs_iterator.repin();
             let lhs_run = lhs_table.sorted()?;
             let rhs_run = rhs_table.sorted()?;
-            let result_count = rustdb_row::dispatch_sort_key!(sort_key_type, K => merge_join_complex_blocks::<K>(
+            let result_count = roastedduck_row::dispatch_sort_key!(sort_key_type, K => merge_join_complex_blocks::<K>(
                 &mut MergeSide {
                     run: lhs_run,
                     iterator: lhs_iterator,
@@ -721,7 +721,7 @@ impl Source for PhysicalPiecewiseMergeJoin {
             .ok()
             .and_then(|sink| sink.table.sorted().ok())
             .and_then(SortedRun::payload_data)
-            .map_or(1, rustdb_row::TupleDataCollection::chunk_count)
+            .map_or(1, roastedduck_row::TupleDataCollection::chunk_count)
     }
 
     fn get_data(

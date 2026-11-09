@@ -9,8 +9,8 @@
 
 use std::marker::PhantomData;
 
-use rustdb_common::Result;
-use rustdb_types::{PhysicalType, Vector};
+use roastedduck_common::Result;
+use roastedduck_types::{PhysicalType, Vector};
 
 use super::primitive::{Primitive, corrupt, load, write_values};
 use super::{CodecScan, SegmentScan, Sequential};

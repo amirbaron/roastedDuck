@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use rustdb_buffer::{BufferManager, BufferManagerConfig};
-use rustdb_common::{Error, ErrorKind, Result};
+use roastedduck_buffer::{BufferManager, BufferManagerConfig};
+use roastedduck_common::{Error, ErrorKind, Result};
 
 use crate::parallel::TaskScheduler;
 
@@ -53,7 +53,7 @@ pub struct QueryClient {
     /// (`ClientConfig::force_external`).
     pub force_external: bool,
     /// The connection's loggers (`Logger::Get(context)`).
-    pub logger: Option<Arc<dyn rustdb_function::logging::ClientLogger>>,
+    pub logger: Option<Arc<dyn roastedduck_function::logging::ClientLogger>>,
     /// The estimated cardinality of the plan's operators.
     pub estimates: crate::CardinalityEstimates,
 }
@@ -147,8 +147,8 @@ impl ExecutionContext {
     pub fn operator_logger(
         &self,
         op: &dyn crate::PhysicalOperator,
-    ) -> Option<rustdb_function::logging::OperatorLogger> {
-        rustdb_function::logging::OperatorLogger::new(self.client.logger.clone(), op.name(), || {
+    ) -> Option<roastedduck_function::logging::OperatorLogger> {
+        roastedduck_function::logging::OperatorLogger::new(self.client.logger.clone(), op.name(), || {
             let estimate = self.client.estimates.get_by_key(crate::operator_key(op));
             op.params_to_string(estimate)
                 .iter()

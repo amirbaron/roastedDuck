@@ -1,11 +1,11 @@
 //! `EXPLAIN` rendering of logical plans (DuckDB's `LogicalOperator::GetName`,
 //! `ParamsToString` and `ToString(ExplainFormat)`).
 
-use rustdb_ast::ExplainFormat;
-use rustdb_common::tree_renderer::{
+use roastedduck_ast::ExplainFormat;
+use roastedduck_common::tree_renderer::{
     RenderParams, RenderSource, RenderTree, RenderTreeNode, RendererKind, render,
 };
-use rustdb_common::{ByteString, Result};
+use roastedduck_common::{ByteString, Result};
 
 use super::{LogicalKind, LogicalOperator};
 use crate::expression::Expression;
@@ -195,7 +195,7 @@ impl LogicalOperator {
                 if let (Some(table), Some((catalog, schema))) = (&get.table, &get.table_schema) {
                     result.insert(
                         "Table".to_owned(),
-                        rustdb_ast::qualifier_to_string(catalog, schema, table.name()),
+                        roastedduck_ast::qualifier_to_string(catalog, schema, table.name()),
                     );
                     result.insert("Type".to_owned(), "Sequential Scan".to_owned());
                 }

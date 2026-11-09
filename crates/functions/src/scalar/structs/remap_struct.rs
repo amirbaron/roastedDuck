@@ -6,17 +6,17 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{ByteString, CaseInsensitiveMap, Error, Result};
-use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Value, Vector};
+use roastedduck_common::{ByteString, CaseInsensitiveMap, Error, Result};
+use roastedduck_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Value, Vector};
 
 /// `IsRemappable`: a nested type (`LogicalType::IsNested`) other than VARIANT.
 fn is_remappable(ty: &LogicalType) -> bool {
     matches!(
         ty.physical_type(),
-        rustdb_types::PhysicalType::Struct
-            | rustdb_types::PhysicalType::List
-            | rustdb_types::PhysicalType::Array
+        roastedduck_types::PhysicalType::Struct
+            | roastedduck_types::PhysicalType::List
+            | roastedduck_types::PhysicalType::Array
     ) && ty.id() != LogicalTypeId::Variant
 }
 
@@ -57,7 +57,7 @@ fn type_fields(ty: &LogicalType) -> Result<Vec<(ByteString, LogicalType)>> {
                 .ok_or_else(|| Error::internal("MAP without key and value types"))?;
             Ok(vec![("key".into(), key.clone()), ("value".into(), value.clone())])
         }
-        _ => Err(Error::binder(rustdb_common::byte_format!(
+        _ => Err(Error::binder(roastedduck_common::byte_format!(
             "Can't remap type {ty}"
         ))),
     }
@@ -160,12 +160,12 @@ fn perform_remap(
         }
     };
     let source = source_map.get(&remap_source).ok_or_else(|| {
-        Error::binder(rustdb_common::byte_format!(
+        Error::binder(roastedduck_common::byte_format!(
             "Source value {remap_source} not found"
         ))
     })?;
     let target = target_map.get(remap_target).ok_or_else(|| {
-        Error::binder(rustdb_common::byte_format!(
+        Error::binder(roastedduck_common::byte_format!(
             "Target value {remap_target} not found"
         ))
     })?;
@@ -178,7 +178,7 @@ fn perform_remap(
     };
     if source_nested || target_nested || struct_value.is_some() {
         if source.ty.id() != target.ty.id() {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Can't change source type ({}) to target type ({}), type conversion not allowed",
                 source.ty,
                 target.ty
@@ -186,7 +186,7 @@ fn perform_remap(
         }
         if let Some(struct_value) = struct_value {
             if !source_nested || !target_nested {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Found a struct value ({}) as a remap, this is only expected for a nested type, source type is \
                      '{}', target type is '{}'",
                     struct_value.to_varchar_bytes()?,
@@ -217,13 +217,13 @@ fn handle_default(
     result: &mut CaseInsensitiveMap<RemapEntry, ByteString>,
 ) -> Result<()> {
     let target = target_map.get(default_target).ok_or_else(|| {
-        Error::binder(rustdb_common::byte_format!(
+        Error::binder(roastedduck_common::byte_format!(
             "Default value {default_target} not found for remap"
         ))
     })?;
     if default_type.id() == LogicalTypeId::Struct {
         if !is_remappable(&target.ty) {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Default value is a struct - target value should be a nested type, is '{}'",
                 target.ty
             )));
@@ -258,13 +258,13 @@ fn handle_default(
         return Ok(());
     }
     if default_type != &target.ty {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "Default key {default_target} does not match target type {} - add a cast",
             target.ty
         )));
     }
     if result.contains_key(default_target) {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "Duplicate value provided for target {default_target}"
         )));
     }
@@ -287,7 +287,7 @@ fn construct_map(
         .into_iter()
         .map(|(name, child_type)| {
             let entry = remap_map.get(&name).ok_or_else(|| {
-                Error::binder(rustdb_common::byte_format!(
+                Error::binder(roastedduck_common::byte_format!(
                     "Missing target value {name} for remap"
                 ))
             })?;
@@ -330,7 +330,7 @@ fn remap_cast(
         LogicalTypeId::Struct => Ok(LogicalType::struct_type(remapped)),
         LogicalTypeId::List => Ok(LogicalType::list(remapped[0].1.clone())),
         LogicalTypeId::Map => Ok(LogicalType::map(remapped[0].1.clone(), remapped[1].1.clone())),
-        _ => Err(Error::binder(rustdb_common::byte_format!(
+        _ => Err(Error::binder(roastedduck_common::byte_format!(
             "Can't RemapCast for type '{ty}'"
         ))),
     }
@@ -347,7 +347,7 @@ fn bind(function: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Option<A
             continue;
         }
         if !is_remappable(ty) {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Struct remap can only remap nested types, not '{ty}'"
             )));
         }
@@ -367,7 +367,7 @@ fn bind(function: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Option<A
         ));
     }
     if (is_remappable(from_type) || is_remappable(to_type)) && from_type.id() != to_type.id() {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "Can't change source type ({from_type}) to target type ({to_type}), type conversion not allowed"
         )));
     }
@@ -475,7 +475,7 @@ fn remap_nested(
                 .collect::<Result<Vec<_>>>()?;
             Ok(Value::from_children(ty.clone(), entries))
         }
-        _ => Err(Error::invalid_input(rustdb_common::byte_format!(
+        _ => Err(Error::invalid_input(roastedduck_common::byte_format!(
             "Can't RemapNested for type '{ty}'"
         ))),
     }
@@ -692,7 +692,7 @@ pub fn remap_struct_functions() -> ScalarFunctionSet {
 mod tests {
     #![allow(clippy::unwrap_used, reason = "Controlled vector ownership fixtures")]
     use super::*;
-    use rustdb_types::SelectionVector;
+    use roastedduck_types::SelectionVector;
 
     #[test]
     fn reordered_dictionary_fields_keep_strings_alive_after_input_release() {

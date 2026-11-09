@@ -4,13 +4,13 @@
 
 use std::collections::HashSet;
 
-use rustdb_ast::visit::{VisitorMut, walk_expression, walk_query_node};
-use rustdb_ast::{
+use roastedduck_ast::visit::{VisitorMut, walk_expression, walk_query_node};
+use roastedduck_ast::{
     CastExpression, ExpressionType, FunctionExpression, MacroFunction, MacroFunctionKind, ParsedExpression,
     ParsedExpressionKind, QueryNode, lambda_parameters,
 };
-use rustdb_common::{ByteString, CaseInsensitiveMap, Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId};
+use roastedduck_common::{ByteString, CaseInsensitiveMap, Error, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId};
 
 use crate::binder::{Binder, Binding, DUMMY_NAME};
 use crate::expression_binder::{BaseBinder, BindResult, ExpressionBinder, qualify_column_names};
@@ -69,7 +69,7 @@ pub fn format_macro_function(function: &MacroFunction, name: impl AsRef<[u8]>) -
             text
         })
         .collect();
-    rustdb_common::byte_format!("{name}({})", ByteString::join(&parameters, ", "))
+    roastedduck_common::byte_format!("{name}({})", ByteString::join(&parameters, ", "))
 }
 
 /// A cast of a macro argument to its parameter's type.
@@ -172,7 +172,7 @@ pub fn bind_macro_function(
         }
         if !argument.alias.is_empty() {
             if named.contains_key(&argument.alias) {
-                return Ok(Err(rustdb_common::byte_format!(
+                return Ok(Err(roastedduck_common::byte_format!(
                     "Macro {name}() has named argument repeated '{}'",
                     argument.alias
                 )));
@@ -180,7 +180,7 @@ pub fn bind_macro_function(
             named_types.insert(argument.alias.clone(), argument_type);
             named.insert(argument.alias.clone(), argument);
         } else if !named.is_empty() {
-            return Ok(Err(rustdb_common::byte_format!(
+            return Ok(Err(roastedduck_common::byte_format!(
                 "Macro {name}() has positional argument following named argument"
             )));
         } else {
@@ -206,7 +206,7 @@ pub fn bind_macro_function(
     let [index] = candidates.as_slice() else {
         let (message, listed): (ByteString, Vec<&MacroFunction>) = if candidates.is_empty() {
             (
-                rustdb_common::byte_format!(
+                roastedduck_common::byte_format!(
                     "Macro {name}() does not support the supplied arguments. You might need to add explicit type \
                      casts.\nCandidate macros:"
                 ),
@@ -214,7 +214,7 @@ pub fn bind_macro_function(
             )
         } else {
             (
-                rustdb_common::byte_format!(
+                roastedduck_common::byte_format!(
                     "Macro {name}() has multiple overloads that match the supplied arguments.\nIn order to select \
                      one, please supply all arguments by name, and/or add explicit type casts.\nCandidate macros:"
                 ),
@@ -235,7 +235,7 @@ pub fn bind_macro_function(
         if ty.id() != LogicalTypeId::Unknown {
             let value = std::mem::replace(
                 argument,
-                ParsedExpression::constant(rustdb_types::Value::default()),
+                ParsedExpression::constant(roastedduck_types::Value::default()),
             );
             *argument = cast_argument(ty, value);
         }
@@ -455,7 +455,7 @@ fn empty_function() -> FunctionExpression {
         schema: String::new().into(),
         children: Vec::new(),
         filter: None,
-        order_bys: rustdb_ast::OrderModifier { orders: Vec::new() },
+        order_bys: roastedduck_ast::OrderModifier { orders: Vec::new() },
         distinct: false,
         is_operator: false,
         export_state: false,

@@ -1,7 +1,7 @@
 //! Row-level access to nested vectors shared by the LIST/STRUCT/MAP/ARRAY functions.
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{ListEntry, LogicalType, Sel, SelectionVector, Unified, Vector, VectorKind};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{ListEntry, LogicalType, Sel, SelectionVector, Unified, Vector, VectorKind};
 
 use crate::scalar::executor::addressable;
 
@@ -86,9 +86,9 @@ pub(crate) fn all_constant(columns: &[Vector]) -> bool {
 /// `VariableReturnBindData::Serialize` (`struct_pack`, `row`, `struct_insert`,
 /// `struct_update`, `union_value`): the return type the bind computed.
 pub(crate) fn serialize_variable_return(
-    serializer: &mut dyn rustdb_serde::Serializer,
-    _: Option<&dyn rustdb_function::FunctionData>,
-    function: &rustdb_function::ScalarFunction,
+    serializer: &mut dyn roastedduck_serde::Serializer,
+    _: Option<&dyn roastedduck_function::FunctionData>,
+    function: &roastedduck_function::ScalarFunction,
 ) -> Result<()> {
     serializer.write_property(100, "variable_return_type", &function.return_type)
 }

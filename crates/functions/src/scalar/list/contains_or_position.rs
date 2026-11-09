@@ -2,10 +2,10 @@
 //! `list_indexof`/`array_position`/`array_indexof` (DuckDB's `contains_or_position.cpp`)
 //! and `map_contains` (`map_contains.cpp`).
 
-use rustdb_common::Result;
-use rustdb_function::{NullHandling, ScalarFunction, ScalarFunctionSet};
-use rustdb_row::sort::{NullOrder, OrderModifiers, OrderType, create_sort_keys};
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Vector};
+use roastedduck_common::Result;
+use roastedduck_function::{NullHandling, ScalarFunction, ScalarFunctionSet};
+use roastedduck_row::sort::{NullOrder, OrderModifiers, OrderType, create_sort_keys};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, Vector};
 
 use crate::scalar::executor::addressable;
 use crate::scalar::nested::{ListInput, struct_field};
@@ -92,7 +92,7 @@ fn list_search_function(args: &DataChunk, result: &mut Vector, position: bool) -
     let (child, child_size) = lists
         .list_child()
         .map(|(child, size)| (child.clone(), size))
-        .ok_or_else(|| rustdb_common::Error::internal("list search on a non-list vector"))?;
+        .ok_or_else(|| roastedduck_common::Error::internal("list search on a non-list vector"))?;
     list_search(
         &lists, &child, child_size, &target, count, position, position, result,
     )
@@ -146,7 +146,7 @@ pub(crate) fn map_contains_function(name: &str) -> ScalarFunction {
             let (child, child_size) = maps
                 .list_child()
                 .map(|(child, size)| (child.clone(), size))
-                .ok_or_else(|| rustdb_common::Error::internal("map_contains on a non-map vector"))?;
+                .ok_or_else(|| roastedduck_common::Error::internal("map_contains on a non-map vector"))?;
             let keys = struct_field(&child, 0, child_size)?;
             list_search(&maps, &keys, child_size, &target, count, false, false, result)
         },

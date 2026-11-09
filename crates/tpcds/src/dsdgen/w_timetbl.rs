@@ -1,6 +1,6 @@
 //! The `time_dim` and `warehouse` tables (`w_timetbl.c`, `w_warehouse.c`).
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use super::Output;
 use super::address::Address;

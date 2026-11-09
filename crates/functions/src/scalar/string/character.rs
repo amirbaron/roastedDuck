@@ -1,9 +1,9 @@
 //! `ascii` (DuckDB's `ascii.cpp`), `chr` (`chr.cpp`) and `unicode`/`ord`
 //! (`unicode.cpp`).
 
-use rustdb_common::Error;
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::LogicalType;
+use roastedduck_common::Error;
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::LogicalType;
 
 use crate::scalar::executor::{Str, StrOut, unary};
 use crate::scalar::string::utf8::{decode_first, push_char};

@@ -4,11 +4,13 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{ByteString, Error, ErrorKind, Result};
-use rustdb_function::cast::{CastFunctionSet, CastParameters, cast_vector};
-use rustdb_function::logging::{ClientLogger, LogLevel, LogScope};
-use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet, Stability};
-use rustdb_types::{LogicalType, LogicalTypeId, Value, Vector};
+use roastedduck_common::{ByteString, Error, ErrorKind, Result};
+use roastedduck_function::cast::{CastFunctionSet, CastParameters, cast_vector};
+use roastedduck_function::logging::{ClientLogger, LogLevel, LogScope};
+use roastedduck_function::{
+    BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet, Stability,
+};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value, Vector};
 
 /// `WriteLogBindData`.
 #[derive(Debug)]
@@ -34,7 +36,7 @@ fn constant_argument<'a>(input: &'a BindInput<'_>, index: usize) -> Result<&'a V
         .get(index)
         .and_then(Option::as_ref)
         .ok_or_else(|| {
-            Error::binder(rustdb_common::byte_format!(
+            Error::binder(roastedduck_common::byte_format!(
                 "write_log: argument '{}' must be constant",
                 input
                     .aliases
@@ -87,7 +89,7 @@ fn bind_write_log(
             b"scope" | b"level" | b"log_type" => {
                 let value = constant_argument(input, index)?;
                 if ty.id() != LogicalTypeId::Varchar {
-                    return Err(Error::binder(rustdb_common::byte_format!(
+                    return Err(Error::binder(roastedduck_common::byte_format!(
                         "write_log: '{alias}' argument must be a string"
                     )));
                 }
@@ -103,7 +105,7 @@ fn bind_write_log(
                 data.output_column = Some(index);
             }
             _ => {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "write_log: Unknown argument '{alias}'"
                 )));
             }
@@ -185,7 +187,7 @@ fn bind_parse_log_message(
         return Err(Error::binder("structured_log_schema: expects 1 argument"));
     }
     let Some(log_type) = input.constants[0].as_ref() else {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "structured_log_schema: argument '{}' must be constant",
             input.aliases.first().map_or(b"".as_slice(), ByteString::as_bytes)
         )));

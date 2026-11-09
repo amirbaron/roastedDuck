@@ -8,16 +8,16 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::{OrderByNullType, OrderType};
-use rustdb_common::tree_renderer::RenderParams;
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_planner::expression::BoundOrderByNode;
-use rustdb_row::sort::{
+use roastedduck_ast::{OrderByNullType, OrderType};
+use roastedduck_common::tree_renderer::RenderParams;
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_planner::expression::BoundOrderByNode;
+use roastedduck_row::sort::{
     NullOrder, OrderModifiers, OrderType as SortOrder, create_sort_keys, decode_sort_key,
 };
-use rustdb_storage::table_filter::DynamicFilterData;
-use rustdb_types::compare::CompareOp;
-use rustdb_types::{
+use roastedduck_storage::table_filter::DynamicFilterData;
+use roastedduck_types::compare::CompareOp;
+use roastedduck_types::{
     DataChunk, LogicalType, PhysicalType, SelectionVector, StringT, Vector, VectorKind, append_where,
 };
 
@@ -369,7 +369,7 @@ impl TopNHeap {
                 (false, false) => CompareOp::LessThanOrEqual,
             };
             rows.reserve(count);
-            rustdb_types::compare::select(op, column, &known.first, count, None, Some(&mut rows), None)?;
+            roastedduck_types::compare::select(op, column, &known.first, count, None, Some(&mut rows), None)?;
         } else {
             let limit = &known.key[..known.first_length];
             let firsts = create_sort_keys(&[column], &self.modifiers[..1], count)?;

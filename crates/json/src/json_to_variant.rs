@@ -3,11 +3,11 @@
 //! ARRAYs, strings VARCHAR, unsigned integers UINT64, signed ones INT64 and other numbers
 //! (bignums included) DOUBLE. A JSON `null` at the top is a NULL VARIANT.
 
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::text_parse::TextFloat;
-use rustdb_function::cast::{BoundCastInfo, CastParameters};
-use rustdb_types::Vector;
-use rustdb_types::variant::{
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::text_parse::TextFloat;
+use roastedduck_function::cast::{BoundCastInfo, CastParameters};
+use roastedduck_types::Vector;
+use roastedduck_types::variant::{
     VariantChild, VariantData, VariantEntry, VariantLogicalType, varint_encode, varint_size,
 };
 
@@ -38,7 +38,11 @@ impl VariantBuilder {
     }
 
     /// `WriteContainerData` and the reservation of the container's children (and keys).
-    fn container(&mut self, count: usize, keys: Option<Vec<rustdb_common::ByteString>>) -> Result<usize> {
+    fn container(
+        &mut self,
+        count: usize,
+        keys: Option<Vec<roastedduck_common::ByteString>>,
+    ) -> Result<usize> {
         let children_offset = self.data.children.len();
         varint_encode(count as u64, &mut self.data.data);
         if count > 0 {
@@ -86,7 +90,7 @@ impl VariantBuilder {
                 self.metadata(VariantLogicalType::Object)?;
                 let keys = doc
                     .obj_iter(val)
-                    .map(|(key, _)| rustdb_common::ByteString::from(doc.str(key)))
+                    .map(|(key, _)| roastedduck_common::ByteString::from(doc.str(key)))
                     .collect();
                 let start = self.container(doc.len(val), Some(keys))?;
                 for (i, (_, child)) in doc.obj_iter(val).enumerate() {

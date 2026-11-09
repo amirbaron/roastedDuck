@@ -104,12 +104,12 @@ fn space_ranges(q: &[u8]) -> Vec<(usize, usize)> {
 
 /// Replaces known Unicode-space byte sequences outside quotes/comments.
 /// Other bytes, including invalid UTF-8, are preserved exactly.
-pub fn strip_unicode_spaces_bytes(query: &[u8]) -> Option<rustdb_common::ByteString> {
+pub fn strip_unicode_spaces_bytes(query: &[u8]) -> Option<roastedduck_common::ByteString> {
     let spaces = space_ranges(query);
     if spaces.is_empty() {
         return None;
     }
-    let mut out = rustdb_common::ByteString::new();
+    let mut out = roastedduck_common::ByteString::new();
     let mut prev = 0;
     for (start, len) in spaces {
         out.push_bytes(&query[prev..start]);

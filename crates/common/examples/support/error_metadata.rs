@@ -1,5 +1,5 @@
 //! Frozen C++ native exception metadata and JSON comparison.
-use rustdb_common::{ByteString, Error, Result};
+use roastedduck_common::{ByteString, Error, Result};
 fn decode(hex: &str) -> Result<Vec<u8>> {
     if !hex.len().is_multiple_of(2) {
         return Err(Error::invalid_input("odd oracle hex length"));

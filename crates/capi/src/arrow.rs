@@ -2,20 +2,20 @@
 //! options functions of `duckdb-c.cpp` and `result-c.cpp`): results and data chunks as
 //! Arrow schemas and arrays, Arrow arrays as data chunks, and views over Arrow streams.
 //!
-//! The structs are those of the Arrow C data interface ([`rustdb_arrow::ffi`]); the
-//! conversions are [`rustdb_arrow`]'s.
+//! The structs are those of the Arrow C data interface ([`roastedduck_arrow::ffi`]); the
+//! conversions are [`roastedduck_arrow`]'s.
 
 use std::ffi::{c_char, c_int};
 
-use rustdb::{MaterializedResult, QueryResult, StatementReturnType};
-use rustdb_arrow::ffi::{ArrowArray, ArrowArrayStream, ArrowArrayStreamWrapper, ArrowSchema};
-use rustdb_arrow::{
+use roastedduck::{MaterializedResult, QueryResult, StatementReturnType};
+use roastedduck_arrow::ffi::{ArrowArray, ArrowArrayStream, ArrowArrayStreamWrapper, ArrowSchema};
+use roastedduck_arrow::{
     ArrowStreamParameters, ArrowTableSchema, ClientProperties, StreamFactoryGetSchema, StreamFactoryProduce,
 };
-use rustdb_ast::visit::{VisitorMut, walk_expression};
-use rustdb_ast::{ParsedExpression, ParsedExpressionKind};
-use rustdb_common::Error;
-use rustdb_types::{DataChunk, LogicalType, Value};
+use roastedduck_ast::visit::{VisitorMut, walk_expression};
+use roastedduck_ast::{ParsedExpression, ParsedExpressionKind};
+use roastedduck_common::Error;
+use roastedduck_types::{DataChunk, LogicalType, Value};
 
 use crate::data_chunk::{DuckdbDataChunk, wrap_chunk};
 use crate::error_data::{DuckdbErrorData, ErrorDataWrapper};
@@ -51,7 +51,7 @@ pub struct ArrowResultWrapper {
 }
 
 impl ArrowResultWrapper {
-    fn new(outcome: rustdb::Result<MaterializedResult>, properties: ClientProperties) -> Self {
+    fn new(outcome: roastedduck::Result<MaterializedResult>, properties: ClientProperties) -> Self {
         let chunks = match &outcome {
             Ok(result) => pack_chunks(result.types(), &crate::result::materialized_chunks(result)),
             Err(_) => Vec::new(),
@@ -85,7 +85,7 @@ fn invalid_input(message: &str) -> DuckdbErrorData {
 /// it, a JSON object, reported as `INVALID_INPUT`.
 fn conversion_error(error: Error) -> DuckdbErrorData {
     ErrorDataWrapper::new(Some(Error::new_bytes(
-        rustdb_common::ErrorKind::InvalidInput,
+        roastedduck_common::ErrorKind::InvalidInput,
         error.into_json().raw_message_bytes().to_vec(),
     )))
     .into_handle()
@@ -123,12 +123,12 @@ pub unsafe extern "C" fn duckdb_to_arrow_schema(
         };
         schema_types.push(ty.clone());
         // SAFETY: as above, each name is a C string.
-        schema_names.push(rustdb_common::ByteString::from(
+        schema_names.push(roastedduck_common::ByteString::from(
             unsafe { crate::helper::opt_bytes(name) }.unwrap_or_default(),
         ));
     }
     match catch(|| {
-        rustdb_arrow::to_arrow_schema(out_schema, &schema_types, &schema_names, &options.properties)
+        roastedduck_arrow::to_arrow_schema(out_schema, &schema_types, &schema_names, &options.properties)
     }) {
         Ok(()) => std::ptr::null_mut(),
         Err(error) => conversion_error(error),
@@ -149,7 +149,7 @@ pub unsafe extern "C" fn duckdb_data_chunk_to_arrow(
     else {
         return invalid_input("Invalid argument(s) to duckdb_data_chunk_to_arrow");
     };
-    match catch(|| rustdb_arrow::to_arrow_array(chunk, &options.properties)) {
+    match catch(|| roastedduck_arrow::to_arrow_array(chunk, &options.properties)) {
         Ok(array) => {
             *out = array;
             std::ptr::null_mut()
@@ -176,7 +176,7 @@ pub unsafe extern "C" fn duckdb_schema_from_arrow(
     let mut arrow_table = ArrowTableSchema::default();
     // SAFETY: `schema` is a struct schema of the C data interface (API contract).
     if let Err(error) =
-        catch(|| unsafe { rustdb_arrow::populate_arrow_table_schema(&mut arrow_table, schema) })
+        catch(|| unsafe { roastedduck_arrow::populate_arrow_table_schema(&mut arrow_table, schema) })
     {
         return conversion_error(error);
     }
@@ -210,7 +210,7 @@ pub unsafe extern "C" fn duckdb_data_chunk_from_arrow(
         return invalid_input("Invalid argument(s) to duckdb_data_chunk_to_arrow");
     }
     // SAFETY: the array has the schema it was converted from (API contract).
-    match catch(|| unsafe { rustdb_arrow::data_chunk_from_arrow(arrow_array, arrow_table) }) {
+    match catch(|| unsafe { roastedduck_arrow::data_chunk_from_arrow(arrow_array, arrow_table) }) {
         Ok(chunk) => {
             // SAFETY: checked non-null above.
             unsafe { *out_chunk = wrap_chunk(chunk) };
@@ -336,7 +336,7 @@ pub unsafe extern "C" fn duckdb_query_arrow_schema(
         Ok(result) => (result.types(), result.names()),
         Err(_) => (&[][..], &[][..]),
     };
-    let converted = catch(|| rustdb_arrow::to_arrow_schema(schema, types, names, &wrapper.properties));
+    let converted = catch(|| roastedduck_arrow::to_arrow_schema(schema, types, names, &wrapper.properties));
     DuckdbState::from_ok(converted.is_ok())
 }
 
@@ -361,7 +361,8 @@ pub unsafe extern "C" fn duckdb_prepared_arrow_schema(
     let properties = wrapper.context.lock().client_properties();
     let count = statement.parameter_count();
     let types = vec![LogicalType::SQLNULL; count];
-    let names: Vec<rustdb_common::ByteString> = (0..count).map(|index| index.to_string().into()).collect();
+    let names: Vec<roastedduck_common::ByteString> =
+        (0..count).map(|index| index.to_string().into()).collect();
     // SAFETY: `out_schema` points to NULL or an Arrow schema.
     let Some(schema) = (unsafe { (*out_schema).as_mut() }) else {
         return DuckdbState::DuckDBError;
@@ -371,7 +372,7 @@ pub unsafe extern "C" fn duckdb_prepared_arrow_schema(
         // SAFETY: the caller's schema is live and owned by it.
         unsafe { release(schema) };
     }
-    let converted = catch(|| rustdb_arrow::to_arrow_schema(schema, &types, &names, &properties));
+    let converted = catch(|| roastedduck_arrow::to_arrow_schema(schema, &types, &names, &properties));
     DuckdbState::from_ok(converted.is_ok())
 }
 
@@ -405,7 +406,7 @@ pub unsafe extern "C" fn duckdb_query_arrow_array(
     let Some(target) = (unsafe { (*out_array).as_mut() }) else {
         return DuckdbState::DuckDBError;
     };
-    match catch(|| rustdb_arrow::to_arrow_array(chunk, &wrapper.properties)) {
+    match catch(|| roastedduck_arrow::to_arrow_array(chunk, &wrapper.properties)) {
         Ok(array) => {
             *target = array;
             DuckdbState::DuckDBSuccess
@@ -438,7 +439,7 @@ pub unsafe extern "C" fn duckdb_result_arrow_array(
         return;
     };
     // DuckDB lets a failed conversion escape; the array is then left alone.
-    if let Ok(array) = catch(|| rustdb_arrow::to_arrow_array(chunk, &data.properties)) {
+    if let Ok(array) = catch(|| roastedduck_arrow::to_arrow_array(chunk, &data.properties)) {
         *target = array;
     }
 }
@@ -473,7 +474,7 @@ pub unsafe extern "C" fn duckdb_arrow_rows_changed(result: DuckdbArrow) -> Idx {
     if result.row_count() == 0 || result.return_type() != StatementReturnType::ChangedRows {
         return 0;
     }
-    rustdb_function::cast::ValueCast::try_cast(&result.value(0, 0), &LogicalType::BIGINT)
+    roastedduck_function::cast::ValueCast::try_cast(&result.value(0, 0), &LogicalType::BIGINT)
         .ok()
         .and_then(|count| count.as_i64())
         .map_or(0, |count| count as Idx)
@@ -597,7 +598,10 @@ unsafe extern "C" fn empty_stream_release(stream: *mut ArrowArrayStream) {
 /// # Safety
 /// `stream` must be a live Arrow stream.
 #[allow(clippy::unnecessary_wraps, reason = "a `StreamFactoryGetSchema`")]
-unsafe fn factory_get_schema(stream: *mut ArrowArrayStream, schema: &mut ArrowSchema) -> rustdb::Result<()> {
+unsafe fn factory_get_schema(
+    stream: *mut ArrowArrayStream,
+    schema: &mut ArrowSchema,
+) -> roastedduck::Result<()> {
     // SAFETY: guaranteed by the caller.
     let stream_ref = unsafe { &*stream };
     if let Some(get_schema) = stream_ref.get_schema {
@@ -619,7 +623,7 @@ unsafe fn factory_get_schema(stream: *mut ArrowArrayStream, schema: &mut ArrowSc
 unsafe fn factory_get_next(
     stream_factory_ptr: usize,
     _: &ArrowStreamParameters,
-) -> rustdb::Result<Box<ArrowArrayStreamWrapper>> {
+) -> roastedduck::Result<Box<ArrowArrayStreamWrapper>> {
     // SAFETY: guaranteed by the caller.
     let stream = unsafe { &*(stream_factory_ptr as *const ArrowArrayStream) };
     Ok(Box::new(ArrowArrayStreamWrapper {
@@ -734,7 +738,7 @@ unsafe fn ingest(
         .collect();
     let sql = format!(
         "CREATE OR REPLACE VIEW {} AS SELECT * FROM arrow_scan(NULL, NULL, NULL)",
-        rustdb_ast::keyword::write_quoted(&view_name, '"')
+        roastedduck_ast::keyword::write_quoted(&view_name, '"')
     );
     let created = catch(|| {
         let mut connection = context.lock();
@@ -742,10 +746,10 @@ unsafe fn ingest(
         let mut statement = statements
             .pop()
             .ok_or_else(|| Error::internal("arrow scan view without a statement"))?;
-        let rustdb_ast::SqlStatementKind::Create(info) = &mut statement.kind else {
+        let roastedduck_ast::SqlStatementKind::Create(info) = &mut statement.kind else {
             return Err(Error::internal("arrow scan view is not a CREATE statement"));
         };
-        let rustdb_ast::CreateInfoKind::View(view) = &mut info.kind else {
+        let roastedduck_ast::CreateInfoKind::View(view) = &mut info.kind else {
             return Err(Error::internal("arrow scan view is not a view"));
         };
         PointerArguments(pointers.into_iter()).visit_query_node(&mut view.query.node);
@@ -834,8 +838,8 @@ pub unsafe extern "C" fn duckdb_arrow_array_scan(
 mod tests {
     use std::ffi::CStr;
 
-    use rustdb_arrow::{ArrowAppender, to_arrow_schema};
-    use rustdb_types::{STANDARD_VECTOR_SIZE, Vector};
+    use roastedduck_arrow::{ArrowAppender, to_arrow_schema};
+    use roastedduck_types::{STANDARD_VECTOR_SIZE, Vector};
 
     use super::*;
     use crate::helper::duckdb_free;

@@ -1,8 +1,8 @@
 use crate::operator::set_estimated_cardinality;
-use rustdb_common::Result;
-use rustdb_common::tree_renderer::RenderParams;
-use rustdb_planner::Expression;
-use rustdb_types::{DataChunk, LogicalType, SelectionVector, Vector};
+use roastedduck_common::Result;
+use roastedduck_common::tree_renderer::RenderParams;
+use roastedduck_planner::Expression;
+use roastedduck_types::{DataChunk, LogicalType, SelectionVector, Vector};
 
 use crate::operator::{ErasedOperator, PhysicalOperator, PhysicalRef};
 use crate::{ExecutionContext, ExpressionExecutor, Operator, OperatorResult};

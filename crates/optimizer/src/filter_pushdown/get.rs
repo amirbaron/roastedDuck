@@ -2,10 +2,10 @@
 //! columns with constants become table filters that the scan applies (and uses to skip
 //! row groups by their statistics).
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::Result;
-use rustdb_planner::operator::{COLUMN_IDENTIFIER_ROW_ID, LogicalGet};
-use rustdb_planner::{Expression, ExpressionKind, LogicalKind, LogicalOperator};
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::Result;
+use roastedduck_planner::operator::{COLUMN_IDENTIFIER_ROW_ID, LogicalGet};
+use roastedduck_planner::{Expression, ExpressionKind, LogicalKind, LogicalOperator};
 
 use super::{FilterPushdown, empty_result};
 use crate::expression_util::can_throw;
@@ -45,7 +45,7 @@ fn normalize_column_ref_aliases(expression: &mut Expression, get: &LogicalGet) {
 /// position) with constants (`ConvertKnownColRefToConstants`).
 fn convert_known_columns(
     expression: &mut Expression,
-    known: &[Option<rustdb_types::Value>],
+    known: &[Option<roastedduck_types::Value>],
     table_index: u64,
 ) {
     if let ExpressionKind::ColumnRef(column) = &expression.kind {
@@ -80,7 +80,11 @@ impl FilterPushdown<'_> {
             return Ok(());
         };
         // The scanned columns by name (`HivePartitioningFilterInfo::column_map`).
-        let mut column_map: Vec<(rustdb_common::ByteString, usize, rustdb_types::LogicalType)> = Vec::new();
+        let mut column_map: Vec<(
+            roastedduck_common::ByteString,
+            usize,
+            roastedduck_types::LogicalType,
+        )> = Vec::new();
         for (position, column) in get.column_ids.iter().enumerate() {
             let Some(index) = usize::try_from(column.index)
                 .ok()
@@ -168,7 +172,7 @@ impl FilterPushdown<'_> {
             return self.finish_pushdown(op);
         };
         let mut pushdown_results = Vec::new();
-        let supported = |column, filter: &rustdb_storage::TableFilter| match (
+        let supported = |column, filter: &roastedduck_storage::TableFilter| match (
             &get.function.filter_support,
             &get.bind_data,
         ) {

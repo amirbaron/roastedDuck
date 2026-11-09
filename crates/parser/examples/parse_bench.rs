@@ -1,9 +1,9 @@
-//! Parses every query of a corpus `iterations` times with `rustdb_parser::parse`
+//! Parses every query of a corpus `iterations` times with `roastedduck_parser::parse`
 //! (grammar + transformer), for comparison with DuckDB's `Parser::ParseQuery`
 //! (`scripts/parser_bench.cpp`).
 //!
 //! ```text
-//! cargo run --release -p rustdb-parser --example parse_bench -- <corpus> <iterations>
+//! cargo run --release -p roastedduck-parser --example parse_bench -- <corpus> <iterations>
 //! ```
 //!
 //! The corpus is a sequence of records `<byte length>\n<sql>`; records that are not
@@ -46,7 +46,7 @@ fn main() -> std::io::Result<()> {
     let mut errors = 0;
     for _ in 0..iterations {
         for sql in &corpus {
-            match rustdb_parser::parse(sql) {
+            match roastedduck_parser::parse(sql) {
                 Ok(parsed) => statements += parsed.len(),
                 Err(_) => errors += 1,
             }

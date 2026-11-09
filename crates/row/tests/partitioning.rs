@@ -8,10 +8,12 @@ use std::sync::Arc;
 use common::{
     Rng, TestValue, buffer_manager, build_vector, random_values, read_rows, spilling_buffer_manager,
 };
-use rustdb_buffer::{BufferManager, MemoryTag};
-use rustdb_row::hash::hash_vector;
-use rustdb_row::{PartitionedTupleData, PinProperties, RadixPartitioning, TupleDataLayout, ValidityType};
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_buffer::{BufferManager, MemoryTag};
+use roastedduck_row::hash::hash_vector;
+use roastedduck_row::{
+    PartitionedTupleData, PinProperties, RadixPartitioning, TupleDataLayout, ValidityType,
+};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 fn types() -> Vec<LogicalType> {
     vec![LogicalType::BIGINT, LogicalType::VARCHAR, LogicalType::UBIGINT]

@@ -7,15 +7,15 @@
 //! subtracting the column minimum) and short strings (packed into an unsigned integer
 //! that orders like the string). Like DuckDB, binding them from SQL is an error.
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, LogicalType, NativeType, PhysicalType, StringHeap, StringT, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, LogicalType, NativeType, PhysicalType, StringHeap, StringT, Vector};
 use std::sync::Arc;
 
 /// `CMUtils::Bind`.
 fn bind_internal(
     _: &mut ScalarFunction,
-    _: &rustdb_function::BindInput<'_>,
+    _: &roastedduck_function::BindInput<'_>,
 ) -> Result<Option<std::sync::Arc<dyn FunctionData>>> {
     Err(Error::binder(
         "Compressed materialization functions are for internal use only!",
@@ -24,7 +24,7 @@ fn bind_internal(
 
 /// `CMIntegralSerialize` and `CMStringCompressSerialize`: the bound types.
 fn serialize_compress(
-    serializer: &mut dyn rustdb_serde::Serializer,
+    serializer: &mut dyn roastedduck_serde::Serializer,
     _: Option<&dyn FunctionData>,
     function: &ScalarFunction,
 ) -> Result<()> {
@@ -34,7 +34,7 @@ fn serialize_compress(
 
 /// `CMStringDecompressSerialize`: the argument types (the result is VARCHAR).
 fn serialize_string_decompress(
-    serializer: &mut dyn rustdb_serde::Serializer,
+    serializer: &mut dyn roastedduck_serde::Serializer,
     _: Option<&dyn FunctionData>,
     function: &ScalarFunction,
 ) -> Result<()> {
@@ -42,7 +42,7 @@ fn serialize_string_decompress(
 }
 
 /// An internal function (`CMUtils::Bind`) written with `serialize`.
-fn internal(function: ScalarFunction, serialize: rustdb_function::ScalarSerialize) -> ScalarFunction {
+fn internal(function: ScalarFunction, serialize: roastedduck_function::ScalarSerialize) -> ScalarFunction {
     let mut function = function.with_bind(bind_internal);
     function.serialize = Some(serialize);
     function
@@ -83,7 +83,7 @@ fn constant_min<T: NativeType>(args: &DataChunk) -> T {
 #[allow(clippy::unnecessary_wraps, reason = "a `Kernel`")]
 fn compress_kernel<I: Bits, R: Bits>(args: &DataChunk, result: &mut Vector) -> Result<()> {
     let min = constant_min::<I>(args).to_bits();
-    rustdb_types::kernels::unary::<I, R>(&args.columns()[0], args.len(), result, |input| {
+    roastedduck_types::kernels::unary::<I, R>(&args.columns()[0], args.len(), result, |input| {
         R::from_bits(input.to_bits().wrapping_sub(min))
     });
     Ok(())
@@ -93,7 +93,7 @@ fn compress_kernel<I: Bits, R: Bits>(args: &DataChunk, result: &mut Vector) -> R
 #[allow(clippy::unnecessary_wraps, reason = "a `Kernel`")]
 fn decompress_kernel<I: Bits, R: Bits>(args: &DataChunk, result: &mut Vector) -> Result<()> {
     let min = constant_min::<R>(args).to_bits();
-    rustdb_types::kernels::unary::<I, R>(&args.columns()[0], args.len(), result, |input| {
+    roastedduck_types::kernels::unary::<I, R>(&args.columns()[0], args.len(), result, |input| {
         R::from_bits(min.wrapping_add(input.to_bits()))
     });
     Ok(())
@@ -312,7 +312,7 @@ fn string_compress_function(result: &LogicalType) -> ScalarFunctionSet {
             move |args, _, out| {
                 macro_rules! run {
                     ($t:ty) => {{
-                        rustdb_types::kernels::unary::<StringT, $t>(
+                        roastedduck_types::kernels::unary::<StringT, $t>(
                             &args.columns()[0],
                             args.len(),
                             out,
@@ -399,7 +399,7 @@ fn string_decompress_set() -> ScalarFunctionSet {
                             if SIZE <= StringT::INLINE_LENGTH + 1 {
                                 // Every string fits inline.
                                 let mut heap = StringHeap::default();
-                                rustdb_types::kernels::unary::<$t, StringT>(
+                                roastedduck_types::kernels::unary::<$t, StringT>(
                                     &args.columns()[0],
                                     args.len(),
                                     out,
@@ -409,7 +409,7 @@ fn string_decompress_set() -> ScalarFunctionSet {
                                 let heaps = DecompressHeaps::of(state)?;
                                 let mut heap = heaps.take();
                                 if let Some(target) = Arc::get_mut(&mut heap) {
-                                    rustdb_types::kernels::unary::<$t, StringT>(
+                                    roastedduck_types::kernels::unary::<$t, StringT>(
                                         &args.columns()[0],
                                         args.len(),
                                         out,
@@ -559,11 +559,11 @@ mod tests {
         let mut saved = Vec::new();
         for index in 0..24 {
             let text = format!("abcdefghijk{index:04}");
-            let value = rustdb_types::Value::uhugeint(compress_string(text.as_bytes(), 16));
+            let value = roastedduck_types::Value::uhugeint(compress_string(text.as_bytes(), 16));
             let args = DataChunk::new(vec![Vector::constant(&value)?], 1);
             let mut output = Vector::flat(LogicalType::VARCHAR, 0);
             (function.kernel)(&args, &mut state, &mut output)?;
-            assert_eq!(output.get_value(0), rustdb_types::Value::varchar(&text));
+            assert_eq!(output.get_value(0), roastedduck_types::Value::varchar(&text));
             if index % 3 == 0 {
                 saved.push((text, output.clone()));
             }
@@ -572,7 +572,7 @@ mod tests {
         // goes away; resetting a shared heap would overwrite these strings.
         drop(state);
         for (text, output) in saved {
-            assert_eq!(output.get_value(0), rustdb_types::Value::varchar(text));
+            assert_eq!(output.get_value(0), roastedduck_types::Value::varchar(text));
         }
         Ok(())
     }

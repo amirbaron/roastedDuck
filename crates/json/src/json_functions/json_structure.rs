@@ -4,9 +4,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, Vector};
 
 use super::input_types;
 use crate::json_common::{val_to_string, val_type_to_logical_type_id};
@@ -245,7 +245,7 @@ impl StructureNode {
 /// (`RefineCandidateTypes`' arguments).
 #[derive(Debug)]
 pub(crate) struct CandidateRefiner<'a> {
-    pub(crate) casts: &'a rustdb_function::cast::CastFunctionSet,
+    pub(crate) casts: &'a roastedduck_function::cast::CastFunctionSet,
     pub(crate) date_formats: &'a super::json_transform::DateFormatMap,
 }
 
@@ -270,7 +270,7 @@ impl CandidateRefiner<'_> {
         strings: &Vector,
         count: usize,
     ) -> Result<()> {
-        use rustdb_function::cast::{CastParameters, cast_vector};
+        use roastedduck_function::cast::{CastParameters, cast_vector};
         while let Some(&ty) = candidates.last() {
             if let Some(formats) = self.date_formats.formats(ty) {
                 if eliminate_candidate_formats(formats, ty, strings, count) {
@@ -298,7 +298,7 @@ impl CandidateRefiner<'_> {
 /// `EliminateCandidateFormats`: whether some format (tried from the back) parses every
 /// string.
 fn eliminate_candidate_formats(
-    formats: &[rustdb_functions::strtime::StrpTimeFormat],
+    formats: &[roastedduck_functions::strtime::StrpTimeFormat],
     ty: LogicalTypeId,
     strings: &Vector,
     count: usize,

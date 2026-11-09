@@ -1,9 +1,9 @@
 //! Single-column predicates factored out of an OR (DuckDB's `PredicateFactoringRule`):
 //! `(x = 1 AND y = 2) OR (x = 3 AND z = 4)` gains the pushable `x = 1 OR x = 3`.
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::Result;
-use rustdb_planner::{ColumnBinding, Expression, ExpressionKind, LogicalOperatorType};
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::Result;
+use roastedduck_planner::{ColumnBinding, Expression, ExpressionKind, LogicalOperatorType};
 
 use super::RuleOutcome;
 use crate::expression_rewriter::RuleContext;

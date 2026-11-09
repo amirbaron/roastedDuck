@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::kernels::scatter;
-use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::kernels::scatter;
+use roastedduck_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Vector};
 
 use crate::scalar::executor::addressable;
 use crate::scalar::nested::{all_constant, list_child_type};
@@ -26,16 +26,16 @@ pub(crate) fn list_value(args: &DataChunk, result: &mut Vector) -> Result<()> {
             if input.logical_type() == &child_type || input.logical_type().id() == LogicalTypeId::SqlNull {
                 input
             } else {
-                let mut params = rustdb_function::cast::CastParameters::new();
-                cast = rustdb_function::cast::cast_vector(
-                    &rustdb_function::cast::CastFunctionSet::new(),
+                let mut params = roastedduck_function::cast::CastParameters::new();
+                cast = roastedduck_function::cast::cast_vector(
+                    &roastedduck_function::cast::CastFunctionSet::new(),
                     input,
                     &child_type,
                     args.len(),
                     &mut params,
                 )
                 .map_err(|error| {
-                    if error.kind() == rustdb_common::ErrorKind::Conversion {
+                    if error.kind() == roastedduck_common::ErrorKind::Conversion {
                         Error::invalid_input(format!("Failed to cast value: {}", error.raw_message()))
                     } else {
                         error
@@ -112,7 +112,7 @@ pub fn unpivot_list_functions() -> ScalarFunctionSet {
     let mut function = ScalarFunction::new(
         "unpivot_list",
         Vec::new(),
-        LogicalType::simple(rustdb_types::LogicalTypeId::List),
+        LogicalType::simple(roastedduck_types::LogicalTypeId::List),
         |args, _, result| list_value(args, result),
     )
     .with_bind(bind_unpivot);

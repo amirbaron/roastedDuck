@@ -1,4 +1,4 @@
-//! `bench compare`: a markdown report of rustdb against C++ DuckDB, with per-benchmark
+//! `bench compare`: a markdown report of roastedduck against C++ DuckDB, with per-benchmark
 //! speedups and memory ratios, per-suite geometric means and individual query outliers.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -89,7 +89,7 @@ pub fn compare(cpp: &Results, rust: &Results, cpp_label: &str, rust_label: &str)
         })
         .collect();
     let mut out = String::new();
-    out.push_str("# rustdb vs C++ DuckDB: benchmark comparison\n\n");
+    out.push_str("# roastedduck vs C++ DuckDB: benchmark comparison\n\n");
     write_runs(&mut out, cpp, rust, cpp_label, rust_label);
     write_performance_policy(&mut out, &pairs);
     write_suites(&mut out, &pairs);
@@ -280,7 +280,7 @@ fn write_suites(out: &mut String, pairs: &[Pair<'_>]) {
                 .map_or_else(|| "–".to_owned(), |b| format_bytes(b as u64)),
         );
     }
-    out.push_str("\n\"Rust other\" counts benchmarks that were not run on rustdb or ended in error, timeout, crash or skip.\n\n");
+    out.push_str("\n\"Rust other\" counts benchmarks that were not run on roastedduck or ended in error, timeout, crash or skip.\n\n");
 }
 
 fn write_cross_checks(out: &mut String, pairs: &[Pair<'_>]) {

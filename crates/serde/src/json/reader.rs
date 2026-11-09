@@ -1,7 +1,7 @@
 //! A JSON parser with yyjson's value model and DuckDB's read flags
 //! (`ALLOW_INF_AND_NAN`, `ALLOW_TRAILING_COMMAS`, `BIGNUM_AS_RAW`).
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use super::JsonValue;
 

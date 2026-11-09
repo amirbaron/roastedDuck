@@ -1,4 +1,4 @@
-/* ABI smoke test: compiled against DuckDB's own duckdb.h, linked against rustdb's libduckdb. */
+/* ABI smoke test: compiled against DuckDB's own duckdb.h, linked against roastedduck's libduckdb. */
 #include "duckdb.h"
 #include <stdio.h>
 #include <string.h>

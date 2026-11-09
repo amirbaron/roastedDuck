@@ -55,13 +55,13 @@ fn expand(format: &Format) -> Result<Tokens> {
         .collect::<Vec<_>>()
         .into_iter()
         .peekable();
-    let output = format_ident!("__rustdb_byte_output", span = Span::mixed_site());
+    let output = format_ident!("__roastedduck_byte_output", span = Span::mixed_site());
     let mut literal = String::new();
     let mut body = Tokens::new();
     let mut implicit = 0usize;
     let mut used = vec![false; format.arguments.len()];
     let bindings: Vec<_> = (0..format.arguments.len())
-        .map(|i| format_ident!("__rustdb_byte_argument_{i}", span = Span::mixed_site()))
+        .map(|i| format_ident!("__roastedduck_byte_argument_{i}", span = Span::mixed_site()))
         .collect();
     let flush = |literal: &mut String, body: &mut Tokens| {
         if literal.is_empty() {
@@ -131,7 +131,7 @@ fn expand(format: &Format) -> Result<Tokens> {
                     quote! { &#ident }
                 };
                 body.extend(quote! {
-                    (&::rustdb_common::byte_format::FormatArgument(#argument)).append_bytes(&mut #output);
+                    (&::roastedduck_common::byte_format::FormatArgument(#argument)).append_bytes(&mut #output);
                 });
             }
             other => literal.push(other),
@@ -148,8 +148,8 @@ fn expand(format: &Format) -> Result<Tokens> {
     Ok(quote! {
         match (#(&(#arguments),)*) {
             (#(#bindings,)*) => {
-                use ::rustdb_common::byte_format::AppendBytes as _;
-                let mut #output = ::rustdb_common::ByteString::new();
+                use ::roastedduck_common::byte_format::AppendBytes as _;
+                let mut #output = ::roastedduck_common::ByteString::new();
                 #body
                 #output
             }

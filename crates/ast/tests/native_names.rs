@@ -1,11 +1,11 @@
 //! Golden data from DuckDB 1.5.6 native `BinarySerializer` + native byte renderers.
 //! Includes invalid UTF-8, NUL, case-insensitive keys and parsed query-name positions.
 //! Generator/evidence: .context/artifacts/identifier-bytes-20261023/native-name-oracle.cpp.
-use rustdb_ast::SelectStatement;
-use rustdb_common::{ByteString, CaseInsensitiveMap};
-use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
-use rustdb_serde::{Deserialize, Deserializer, SerializationOptions, Serialize, Serializer};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_ast::SelectStatement;
+use roastedduck_common::{ByteString, CaseInsensitiveMap};
+use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
+use roastedduck_serde::{Deserialize, Deserializer, SerializationOptions, Serialize, Serializer};
+use roastedduck_types::{LogicalType, Value};
 
 fn decode(hex: &str) -> Vec<u8> {
     hex.as_bytes()
@@ -26,16 +26,14 @@ fn compare<T: Deserialize + Serialize>(
     encoded: &[u8],
     expected: &[u8],
     render: impl FnOnce(&T) -> ByteString,
-) -> rustdb_common::Result<()> {
+) -> roastedduck_common::Result<()> {
     let mut reader = BinaryDeserializer::new(encoded);
     reader.begin()?;
-    let value: T = (&mut reader as &mut dyn Deserializer)
-        .read_property(100, "payload")?;
+    let value: T = (&mut reader as &mut dyn Deserializer).read_property(100, "payload")?;
     reader.end()?;
     let mut writer = BinarySerializer::new(SerializationOptions::default());
     writer.begin();
-    (&mut writer as &mut dyn Serializer)
-        .write_property(100, "payload", &value)?;
+    (&mut writer as &mut dyn Serializer).write_property(100, "payload", &value)?;
     writer.end();
     assert_eq!(writer.bytes(), encoded);
     assert_eq!(render(&value).as_bytes(), expected);
@@ -43,7 +41,7 @@ fn compare<T: Deserialize + Serialize>(
 }
 
 #[test]
-fn native_name_wires_and_sql_match_frozen_cpp() -> rustdb_common::Result<()> {
+fn native_name_wires_and_sql_match_frozen_cpp() -> roastedduck_common::Result<()> {
     let mut count = 0;
     for line in include_str!("data/native-names-1.5.6.tsv").lines() {
         let fields: Vec<_> = line.split('\t').collect();

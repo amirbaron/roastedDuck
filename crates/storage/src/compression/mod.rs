@@ -31,8 +31,8 @@ use std::fmt;
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, PhysicalType, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, PhysicalType, Vector};
 
 use crate::checkpoint::column_checkpointer::SegmentSink;
 use crate::data_table::TableIoManager;

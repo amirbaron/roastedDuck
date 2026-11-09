@@ -10,9 +10,9 @@
 //! `aggregate_function`) provides the same phases as [`WindowExecutor`]: `global_state`,
 //! `local_state`, `sink`, `finalize` and `evaluate`.
 
-use rustdb_common::{Error, Result};
-use rustdb_planner::ExpressionType;
-use rustdb_types::{DataChunk, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::ExpressionType;
+use roastedduck_types::{DataChunk, Vector};
 
 use super::WindowExpression;
 use super::aggregate_function::{AggregateExecutor, AggregateGlobalState, AggregateLocalState};

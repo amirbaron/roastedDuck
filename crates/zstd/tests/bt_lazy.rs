@@ -30,7 +30,7 @@ fn check(state: &str) {
     // Goldens are filled only from the independent frozen C++ oracle.
     let fixtures = include_str!("data/bt_lazy_1.5.6.tsv");
     let originals: std::collections::BTreeMap<_, _> = common::inputs().into_iter().collect();
-    let mut compressor = rustdb_zstd::Compressor::new(3);
+    let mut compressor = roastedduck_zstd::Compressor::new(3);
     let mut checked = 0;
     for line in fixtures.lines().filter(|line| !line.starts_with('#')) {
         let fields: Vec<_> = line.split('\t').collect();
@@ -51,7 +51,7 @@ fn check(state: &str) {
             &originals[fields[1]][..size]
         };
         if state == "fresh" {
-            compressor = rustdb_zstd::Compressor::new(level);
+            compressor = roastedduck_zstd::Compressor::new(level);
         }
         compressor.set_level(level);
         let frame = if chunk == 0 {
@@ -68,7 +68,7 @@ fn check(state: &str) {
         );
         let mut decoded = vec![0; size];
         assert_eq!(
-            rustdb_zstd::decompress(&mut decoded, &frame).expect("decode"),
+            roastedduck_zstd::decompress(&mut decoded, &frame).expect("decode"),
             size
         );
         assert_eq!(decoded, data, "{line}");

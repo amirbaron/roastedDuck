@@ -8,7 +8,7 @@
 //! Conversions reproduce DuckDB's quirks, e.g. the floating-point byte counting of
 //! integer casts (`2^56::BIGNUM` is `0` in DuckDB).
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 /// Size of the header.
 pub const HEADER_SIZE: usize = 3;
@@ -235,7 +235,7 @@ fn encode(digits_text: &[u8], negative: bool) -> Vec<u8> {
 /// `Bignum::BignumToVarchar`.
 pub fn to_text(bignum: &[u8]) -> Result<String> {
     let mut out = Vec::new();
-    rustdb_types::bignum::write_text(bignum, &mut out).map_err(Error::invalid_input)?;
+    roastedduck_types::bignum::write_text(bignum, &mut out).map_err(Error::invalid_input)?;
     Ok(String::from_utf8_lossy(&out).into_owned())
 }
 

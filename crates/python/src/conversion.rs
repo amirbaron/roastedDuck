@@ -5,14 +5,14 @@ use pyo3::prelude::*;
 use pyo3::types::{
     PyBool, PyByteArray, PyBytes, PyDict, PyFloat, PyInt, PyList, PyMemoryView, PyString, PyTuple,
 };
-use rustdb_function::cast::ValueCast;
-use rustdb_types::{Date, Interval, LogicalType, LogicalTypeId as L, Time, Timestamp, Uuid, Value};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_types::{Date, Interval, LogicalType, LogicalTypeId as L, Time, Timestamp, Uuid, Value};
 pub fn text(py: Python<'_>, bytes: &[u8]) -> PyResult<Py<PyAny>> {
     Ok(PyBytes::new(py, bytes)
         .call_method1("decode", ("utf-8", "strict"))?
         .unbind())
 }
-fn native_error(py: Python<'_>, error: &rustdb_common::Error) -> PyErr {
+fn native_error(py: Python<'_>, error: &roastedduck_common::Error) -> PyErr {
     crate::error::native(py, error)
 }
 fn map_key_hashable(kind: &LogicalType) -> bool {
@@ -41,7 +41,7 @@ fn sequence(py: Python<'_>, object: &Bound<'_, PyAny>) -> PyResult<Value> {
 }
 // Python's CastToTarget intentionally resolves duplicate UNION member types.
 // SQL CAST retains the engine's ambiguity errors; only Python value boundaries use this.
-pub(super) fn cast_target(value: Value, target: &LogicalType) -> rustdb_common::Result<Value> {
+pub(super) fn cast_target(value: Value, target: &LogicalType) -> roastedduck_common::Result<Value> {
     if value.is_null() {
         return Ok(Value::null(target.clone()));
     }
@@ -59,11 +59,13 @@ pub(super) fn cast_target(value: Value, target: &LogicalType) -> rustdb_common::
                 return Ok(Value::union_value(target.clone(), index as u8, candidate));
             }
         }
-        return Err(rustdb_common::Error::conversion(rustdb_common::byte_format!(
-            "Could not convert value of type {} to {}",
-            value.logical_type().to_bytes(),
-            target.to_bytes()
-        )));
+        return Err(roastedduck_common::Error::conversion(
+            roastedduck_common::byte_format!(
+                "Could not convert value of type {} to {}",
+                value.logical_type().to_bytes(),
+                target.to_bytes()
+            ),
+        ));
     }
     if value.logical_type().id() == L::Struct && target.id() == L::Struct {
         let source_fields = value.logical_type().struct_children().unwrap_or_default();
@@ -94,7 +96,7 @@ pub(super) fn to_target(object: &Bound<'_, PyAny>, target: &LogicalType) -> PyRe
     if target.id() == L::Decimal && object.is_instance_of::<PyFloat>() {
         return Err(native_error(
             py,
-            &rustdb_common::Error::conversion(rustdb_common::byte_format!(
+            &roastedduck_common::Error::conversion(roastedduck_common::byte_format!(
                 "Can't losslessly convert from object of float to type {}",
                 target.to_bytes()
             )),
@@ -112,15 +114,15 @@ pub(super) fn to_target(object: &Bound<'_, PyAny>, target: &LogicalType) -> PyRe
             if let Some(&bad) = bytes.iter().find(|&&byte| byte != b'0' && byte != b'1') {
                 return Err(native_error(
                     py,
-                    &rustdb_common::Error::conversion(rustdb_common::byte_format!(
+                    &roastedduck_common::Error::conversion(roastedduck_common::byte_format!(
                         "Invalid character encountered in string -> bit conversion: '{}'",
                         &[bad][..]
                     )),
                 ));
             }
             let mut packed = Vec::new();
-            rustdb_types::bit::parse_text(&bytes, &mut packed)
-                .map_err(|e| native_error(py, &rustdb_common::Error::conversion(e)))?;
+            roastedduck_types::bit::parse_text(&bytes, &mut packed)
+                .map_err(|e| native_error(py, &roastedduck_common::Error::conversion(e)))?;
             return Ok(Value::bytes(target.clone(), &packed));
         }
     }
@@ -130,7 +132,7 @@ pub(super) fn to_target(object: &Bound<'_, PyAny>, target: &LogicalType) -> PyRe
     {
         return Err(native_error(
             py,
-            &rustdb_common::Error::not_implemented(rustdb_common::byte_format!(
+            &roastedduck_common::Error::not_implemented(roastedduck_common::byte_format!(
                 "Conversion from 'datetime' to type {} is not implemented yet",
                 target.to_bytes()
             )),
@@ -141,7 +143,7 @@ pub(super) fn to_target(object: &Bound<'_, PyAny>, target: &LogicalType) -> PyRe
         if object.len()? != fields.len() {
             return Err(native_error(
                 py,
-                &rustdb_common::Error::invalid_input(format!(
+                &roastedduck_common::Error::invalid_input(format!(
                     "Tried to create a STRUCT value from a tuple containing {} elements, but the STRUCT consists of {} children",
                     object.len()?,
                     fields.len()
@@ -158,7 +160,7 @@ pub(super) fn to_target(object: &Bound<'_, PyAny>, target: &LogicalType) -> PyRe
     if object.is_instance_of::<PyTuple>() && !matches!(target.id(), L::List | L::Array) {
         return Err(native_error(
             py,
-            &rustdb_common::Error::invalid_input(rustdb_common::byte_format!(
+            &roastedduck_common::Error::invalid_input(roastedduck_common::byte_format!(
                 "Can't convert tuple to a Value of type {}",
                 target.to_bytes()
             )),
@@ -170,7 +172,7 @@ pub(super) fn to_target(object: &Bound<'_, PyAny>, target: &LogicalType) -> PyRe
             if dict.len() != fields.len() {
                 return Err(native_error(
                     py,
-                    &rustdb_common::Error::invalid_input(rustdb_common::byte_format!(
+                    &roastedduck_common::Error::invalid_input(roastedduck_common::byte_format!(
                         "We could not convert the object {} to the desired target type ({})",
                         object.str()?.extract::<String>()?.as_bytes(),
                         target.to_bytes()
@@ -230,13 +232,13 @@ pub(super) fn to_target(object: &Bound<'_, PyAny>, target: &LogicalType) -> PyRe
                 if key.is_null() {
                     return Err(native_error(
                         py,
-                        &rustdb_common::Error::invalid_input("Map keys can not be NULL"),
+                        &roastedduck_common::Error::invalid_input("Map keys can not be NULL"),
                     ));
                 }
                 if !seen.insert(key) {
                     return Err(native_error(
                         py,
-                        &rustdb_common::Error::invalid_input("Map keys must be unique"),
+                        &roastedduck_common::Error::invalid_input("Map keys must be unique"),
                     ));
                 }
             }
@@ -351,7 +353,7 @@ pub fn from_python(object: &Bound<'_, PyAny>) -> PyResult<Value> {
             ) {
                 return Err(native_error(
                     py,
-                    &rustdb_common::Error::conversion(rustdb_common::byte_format!(
+                    &roastedduck_common::Error::conversion(roastedduck_common::byte_format!(
                         "Could not convert 'datetime' to type {}",
                         kind.native.to_bytes()
                     )),
@@ -394,7 +396,10 @@ pub fn from_python(object: &Bound<'_, PyAny>) -> PyResult<Value> {
         if !offset.is_none() {
             let seconds = offset.getattr("days")?.extract::<i32>()? * 86400
                 + offset.getattr("seconds")?.extract::<i32>()?;
-            return Ok(Value::time_tz(rustdb_types::TimeTz::new(Time(micros), seconds)));
+            return Ok(Value::time_tz(roastedduck_types::TimeTz::new(
+                Time(micros),
+                seconds,
+            )));
         }
         return Ok(Value::time(Time(micros)));
     }
@@ -563,7 +568,7 @@ pub fn to_python(py: Python<'_>, value: &Value, timezone: &str) -> PyResult<Py<P
             let raw = value
                 .as_i64()
                 .ok_or_else(|| crate::error::InternalException::new_err("Invalid TIME WITH TIME ZONE"))?;
-            let time = rustdb_types::TimeTz(raw as u64);
+            let time = roastedduck_types::TimeTz(raw as u64);
             let (h, m, s, micros) = time.time().to_hms_micros();
             let datetime = py.import("datetime")?;
             let kwargs = PyDict::new(py);
@@ -651,7 +656,7 @@ pub fn to_python(py: Python<'_>, value: &Value, timezone: &str) -> PyResult<Py<P
             .map_err(|e| native_error(py, &e))?
             .into_py_any(py),
         L::Variant => {
-            let decoded = rustdb_types::variant::VariantData::from_value(value)
+            let decoded = roastedduck_types::variant::VariantData::from_value(value)
                 .and_then(|value| value.map(|value| value.to_sql_value(0)).transpose())
                 .map_err(|e| native_error(py, &e))?;
             if let Some(decoded) = decoded {
@@ -662,7 +667,7 @@ pub fn to_python(py: Python<'_>, value: &Value, timezone: &str) -> PyResult<Py<P
         }
         _ => Err(native_error(
             py,
-            &rustdb_common::Error::not_implemented(rustdb_common::byte_format!(
+            &roastedduck_common::Error::not_implemented(roastedduck_common::byte_format!(
                 "Unsupported type: \"{}\"",
                 kind.to_bytes()
             )),

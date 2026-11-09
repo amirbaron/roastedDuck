@@ -3,9 +3,9 @@
 
 use std::collections::BTreeSet;
 
-use rustdb_common::{Error, Result};
-use rustdb_serde::Serializer;
-use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo, Value};
+use roastedduck_common::{Error, Result};
+use roastedduck_serde::Serializer;
+use roastedduck_types::{LogicalType, LogicalTypeId, TypeInfo, Value};
 
 use crate::{ParsedExpression, ParsedExpressionKind, PivotColumn, PivotColumnEntry};
 
@@ -98,7 +98,7 @@ pub fn retain_external_replacement_list(
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PivotValueElement {
     pub values: Vec<Value>,
-    pub name: rustdb_common::ByteString,
+    pub name: roastedduck_common::ByteString,
 }
 
 /// What the binder records on a pivot it rewrote into the LIST-based plan, for binding the
@@ -106,8 +106,8 @@ pub struct PivotValueElement {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BoundPivotSpec {
     pub pivot_values: Vec<PivotValueElement>,
-    pub group_names: Vec<rustdb_common::ByteString>,
-    pub aggregate_names: Vec<rustdb_common::ByteString>,
+    pub group_names: Vec<roastedduck_common::ByteString>,
+    pub aggregate_names: Vec<roastedduck_common::ByteString>,
 }
 
 /// From this version on, PIVOT entries may hold arbitrary expressions.

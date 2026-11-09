@@ -4,7 +4,7 @@
 
 use std::ffi::{CStr, c_char, c_void};
 
-use rustdb_types::{LogicalType, LogicalTypeId};
+use roastedduck_types::{LogicalType, LogicalTypeId};
 
 use crate::logical_types::contains_type;
 

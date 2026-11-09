@@ -1,8 +1,8 @@
 //! Constant segments (DuckDB's `numeric_constant.cpp` and empty validity): the values are
 //! fully described by the segment statistics, so no block is stored.
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalTypeId, ValidityMask, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalTypeId, ValidityMask, Vector};
 
 use super::{CompressionType, Compressor};
 use crate::checkpoint::column_checkpointer::{FinishedSegment, SegmentSink};

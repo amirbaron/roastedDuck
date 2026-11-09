@@ -1,8 +1,8 @@
 //! `substring`/`substr` and `substring_grapheme` (DuckDB's `substring.cpp`).
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, LogicalType, StringT, Vector, VectorKind};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, LogicalType, StringT, Vector, VectorKind};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::scalar::executor::{Str, StrOut, binary, ternary};

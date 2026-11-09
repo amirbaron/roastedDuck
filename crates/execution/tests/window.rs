@@ -1,29 +1,29 @@
 //! Window aggregates through hand-built plans, with test aggregates (the SQL tests in
-//! `crates/rustdb/tests/query.rs` cover the non-aggregate functions).
+//! `crates/roastedduck/tests/query.rs` cover the non-aggregate functions).
 #![allow(clippy::unwrap_used, clippy::float_cmp, clippy::cast_precision_loss)]
 // The test aggregate's states are allocated with its `u64` layout.
 #![allow(clippy::cast_ptr_alignment)]
 
 use std::sync::{Arc, Mutex};
 
-use rustdb_ast::{OrderByNullType, OrderType, WindowBoundary, WindowExcludeMode};
-use rustdb_common::Result;
-use rustdb_execution::operators::{CollectedResult, PhysicalResultCollector};
-use rustdb_execution::{Executor, PhysicalRef, create_physical_plan};
-use rustdb_function::aggregate::{
+use roastedduck_ast::{OrderByNullType, OrderType, WindowBoundary, WindowExcludeMode};
+use roastedduck_common::Result;
+use roastedduck_execution::operators::{CollectedResult, PhysicalResultCollector};
+use roastedduck_execution::{Executor, PhysicalRef, create_physical_plan};
+use roastedduck_function::aggregate::{
     AggregateFunction, AggregateInput, OrderDependence, Unary, UnaryAggregate, WindowAggregate, WindowFrame,
     WindowPartitionInput,
 };
-use rustdb_function::{AggregateOps, StatePtr};
-use rustdb_planner::expression::{BoundOrderByNode, BoundWindowExpression};
-use rustdb_planner::{Expression, ExpressionKind, ExpressionType, LogicalKind, LogicalOperator};
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_function::{AggregateOps, StatePtr};
+use roastedduck_planner::expression::{BoundOrderByNode, BoundWindowExpression};
+use roastedduck_planner::{Expression, ExpressionKind, ExpressionType, LogicalKind, LogicalOperator};
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 
 fn run(mut plan: LogicalOperator) -> Result<Vec<Vec<Value>>> {
     plan.resolve_operator_types()?;
     let physical = create_physical_plan(plan)?;
     let root: PhysicalRef = Arc::new(PhysicalResultCollector::new(physical));
-    let state = Executor::execute(&root, rustdb_execution::ClientEnv::standalone()?)?;
+    let state = Executor::execute(&root, roastedduck_execution::ClientEnv::standalone()?)?;
     let collected = state
         .downcast_ref::<Mutex<CollectedResult>>()
         .unwrap()

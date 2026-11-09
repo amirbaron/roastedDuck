@@ -1,9 +1,9 @@
 //! `date_diff`/`datediff` (DuckDB's `date_diff.cpp`), `date_sub`/`datesub`
 //! (`date_sub.cpp`) and the two-argument `age` (`age.cpp`).
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, Date, Interval, LogicalType, NativeType, Time, Timestamp, Vector};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, Date, Interval, LogicalType, NativeType, Time, Timestamp, Vector};
 
 use super::date_part::Part;
 use crate::operator::subtract_overflow;
@@ -396,9 +396,9 @@ pub(crate) fn age(first: Timestamp, second: Timestamp) -> Interval {
 
 /// The connection whose transaction start `age(timestamp)` uses.
 #[derive(Debug)]
-struct ClientData(std::sync::Arc<rustdb_function::FunctionClient>);
+struct ClientData(std::sync::Arc<roastedduck_function::FunctionClient>);
 
-impl rustdb_function::FunctionData for ClientData {
+impl roastedduck_function::FunctionData for ClientData {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
@@ -426,10 +426,10 @@ pub fn age_functions() -> ScalarFunctionSet {
     .with_bind(|_, input| {
         Ok(Some(
             std::sync::Arc::new(ClientData(std::sync::Arc::clone(input.client)))
-                as std::sync::Arc<dyn rustdb_function::FunctionData>,
+                as std::sync::Arc<dyn roastedduck_function::FunctionData>,
         ))
     });
-    current.stability = rustdb_function::Stability::ConsistentWithinQuery;
+    current.stability = roastedduck_function::Stability::ConsistentWithinQuery;
     set.add(current);
     set.add(ScalarFunction::new(
         "age",

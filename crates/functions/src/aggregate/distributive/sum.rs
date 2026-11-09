@@ -4,10 +4,10 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::{Unary, UnaryAggregate};
-use rustdb_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
-use rustdb_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::{Unary, UnaryAggregate};
+use roastedduck_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
+use roastedduck_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType};
 
 /// `Overflow in HUGEINT addition: a + b` (DuckDB's `Hugeint::Add`).
 pub(crate) fn hugeint_add(left: i128, right: i128) -> Result<i128> {
@@ -24,7 +24,9 @@ pub(crate) fn hugeint_multiply(left: i128, right: i128) -> Result<i128> {
 /// The wrapping sum of `values` in 64 bits.
 #[inline]
 pub(crate) fn wrapping_sum_i64<I: NativeType + Into<i64>>(values: &[I]) -> i64 {
-    values.iter().fold(0i64, |sum, &value| sum.wrapping_add(value.into()))
+    values
+        .iter()
+        .fold(0i64, |sum, &value| sum.wrapping_add(value.into()))
 }
 
 /// The wrapping sum of `values` in 128 bits. Values of at most 32 bits are summed in 64
@@ -38,7 +40,9 @@ pub(crate) fn wrapping_sum_i128<I: NativeType + Into<i128>>(values: &[I]) -> i12
             total.wrapping_add(i128::from(sum))
         })
     } else {
-        values.iter().fold(0i128, |sum, &value| sum.wrapping_add(value.into()))
+        values
+            .iter()
+            .fold(0i128, |sum, &value| sum.wrapping_add(value.into()))
     }
 }
 
@@ -308,7 +312,7 @@ pub fn sum_functions() -> Result<AggregateFunctionSet> {
         "sum",
         vec![LogicalType::BIGNUM],
         LogicalType::BIGNUM,
-        rustdb_function::aggregate::Typed(BignumSum),
+        roastedduck_function::aggregate::Typed(BignumSum),
     ));
     Ok(set.renamed("sum"))
 }
@@ -334,7 +338,7 @@ fn sum_no_overflow_bind(
 /// arguments.
 #[allow(clippy::unnecessary_wraps, reason = "a serialize callback")]
 fn serialize_sum_no_overflow(
-    _: &mut dyn rustdb_serde::Serializer,
+    _: &mut dyn roastedduck_serde::Serializer,
     _: Option<&dyn FunctionData>,
     _: &AggregateFunction,
 ) -> Result<()> {
@@ -393,8 +397,8 @@ pub fn kahan_sum_functions() -> AggregateFunctionSet {
 #[derive(Debug, Clone, Copy)]
 struct BignumSum;
 
-impl rustdb_function::aggregate::Aggregate for BignumSum {
-    type State = Option<rustdb_function::bignum::Intermediate>;
+impl roastedduck_function::aggregate::Aggregate for BignumSum {
+    type State = Option<roastedduck_function::bignum::Intermediate>;
 
     fn initialize(&self) -> Self::State {
         None
@@ -402,14 +406,14 @@ impl rustdb_function::aggregate::Aggregate for BignumSum {
 
     fn update(
         &self,
-        inputs: &[rustdb_types::Vector],
-        _: rustdb_function::aggregate::AggregateInput<'_>,
-        states: &mut rustdb_function::aggregate::States<'_, Self::State>,
+        inputs: &[roastedduck_types::Vector],
+        _: roastedduck_function::aggregate::AggregateInput<'_>,
+        states: &mut roastedduck_function::aggregate::States<'_, Self::State>,
         count: usize,
     ) -> Result<()> {
-        use rustdb_function::bignum::Intermediate;
+        use roastedduck_function::bignum::Intermediate;
         let vector = &inputs[0];
-        let values = vector.unified::<rustdb_types::StringT>();
+        let values = vector.unified::<roastedduck_types::StringT>();
         for row in 0..count {
             if let Some(value) = values.get(row) {
                 let input = Intermediate::from_bignum(vector.string_value(&value));
@@ -426,11 +430,11 @@ impl rustdb_function::aggregate::Aggregate for BignumSum {
         &self,
         source: &Self::State,
         target: &mut Self::State,
-        _: rustdb_function::aggregate::AggregateInput<'_>,
+        _: roastedduck_function::aggregate::AggregateInput<'_>,
     ) -> Result<()> {
         if let Some(source) = source {
             target
-                .get_or_insert_with(rustdb_function::bignum::Intermediate::zero)
+                .get_or_insert_with(roastedduck_function::bignum::Intermediate::zero)
                 .add_in_place(source)?;
         }
         Ok(())
@@ -439,13 +443,13 @@ impl rustdb_function::aggregate::Aggregate for BignumSum {
     fn finalize(
         &self,
         state: &mut Self::State,
-        _: rustdb_function::aggregate::AggregateInput<'_>,
-        result: &mut rustdb_types::Vector,
+        _: roastedduck_function::aggregate::AggregateInput<'_>,
+        result: &mut roastedduck_types::Vector,
         row: usize,
     ) -> Result<()> {
         if let Some(value) = state {
             let string = result.add_string(&value.to_bignum());
-            result.values_mut::<rustdb_types::StringT>()[row] = string;
+            result.values_mut::<roastedduck_types::StringT>()[row] = string;
         } else {
             result.set_null(row);
         }

@@ -3,8 +3,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use rustdb_buffer::{BufferManager, BufferManagerConfig};
-use rustdb_types::LogicalType;
+use roastedduck_buffer::{BufferManager, BufferManagerConfig};
+use roastedduck_types::LogicalType;
 
 use super::node::ALLOCATOR_COUNT;
 use super::*;
@@ -208,7 +208,7 @@ fn string_keys(count: usize, rng: &mut Rng) -> Vec<Vec<u8>> {
                 bytes.push(b"ab\x00\x01xyz"[rng.below(7) as usize]);
             }
             let mut key = Vec::new();
-            key::encode_value(&rustdb_types::Value::blob(&bytes), &mut key).unwrap();
+            key::encode_value(&roastedduck_types::Value::blob(&bytes), &mut key).unwrap();
             key
         })
         .collect()
@@ -328,7 +328,7 @@ impl super::super::BufferLoader for CheckpointBuffers {
         &self,
         pointer: super::super::BufferPointer,
         allocation_size: usize,
-    ) -> rustdb_common::Result<Vec<u8>> {
+    ) -> roastedduck_common::Result<Vec<u8>> {
         self.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let buffers = self.buffers.lock().unwrap();
         let start = pointer.offset as usize;
@@ -337,8 +337,8 @@ impl super::super::BufferLoader for CheckpointBuffers {
 }
 
 fn stored_art_round_trip(deprecated: bool) {
-    use rustdb_common::CaseInsensitiveMap;
-    use rustdb_types::Value;
+    use roastedduck_common::CaseInsensitiveMap;
+    use roastedduck_types::Value;
     use std::sync::atomic::Ordering;
 
     let store = std::sync::Arc::new(CheckpointBuffers::default());
@@ -459,7 +459,7 @@ impl DeferredCheckpoint {
 }
 
 impl super::super::IndexBufferWriter for DeferredCheckpoint {
-    fn write(&mut self, data: &[u8]) -> rustdb_common::Result<super::super::BufferPointer> {
+    fn write(&mut self, data: &[u8]) -> roastedduck_common::Result<super::super::BufferPointer> {
         let id = self.store.buffers.lock().unwrap().len() + self.pending.len();
         self.pending.push(data.to_vec());
         Ok(super::super::BufferPointer {
@@ -468,11 +468,11 @@ impl super::super::IndexBufferWriter for DeferredCheckpoint {
         })
     }
 
-    fn flush(&mut self) -> rustdb_common::Result<()> {
+    fn flush(&mut self) -> roastedduck_common::Result<()> {
         self.flushes += 1;
         if self.fail_flush {
-            return Err(rustdb_common::Error::new(
-                rustdb_common::ErrorKind::Io,
+            return Err(roastedduck_common::Error::new(
+                roastedduck_common::ErrorKind::Io,
                 "injected flush failure",
             ));
         }
@@ -513,7 +513,7 @@ fn serialization_flushes_deferred_buffers_before_returning() {
     let mut writer = DeferredCheckpoint::new(store.clone());
     let info = one_key_index()
         .serialize_to_disk(
-            &rustdb_common::CaseInsensitiveMap::default(),
+            &roastedduck_common::CaseInsensitiveMap::default(),
             &mut writer,
             &mut |_| {},
         )
@@ -525,7 +525,7 @@ fn serialization_flushes_deferred_buffers_before_returning() {
 
 #[test]
 fn unbound_wal_metadata_is_not_published_before_flush_succeeds() {
-    let options = rustdb_common::CaseInsensitiveMap::default();
+    let options = roastedduck_common::CaseInsensitiveMap::default();
     let (info, buffers) = one_key_index().serialize_to_wal(&options).unwrap();
     let unbound = super::super::UnboundIndex::new(
         "idx",
@@ -548,7 +548,7 @@ fn unbound_wal_metadata_is_not_published_before_flush_succeeds() {
 
 #[test]
 fn unchanged_deprecated_checkpoint_keeps_buffers_unloaded() {
-    let options = rustdb_common::CaseInsensitiveMap::default();
+    let options = roastedduck_common::CaseInsensitiveMap::default();
     let store = std::sync::Arc::new(CheckpointBuffers::default());
     let mut writer = DeferredCheckpoint::new(store.clone());
     let info = one_key_index()
@@ -583,8 +583,8 @@ fn cold_modern_to_deprecated_conversion_still_loads_and_converts_gates() {
             None,
         )
         .unwrap();
-    let mut modern = rustdb_common::CaseInsensitiveMap::default();
-    modern.insert("v1_0_0_storage", rustdb_types::Value::boolean(false));
+    let mut modern = roastedduck_common::CaseInsensitiveMap::default();
+    modern.insert("v1_0_0_storage", roastedduck_types::Value::boolean(false));
     let info = source
         .serialize_to_disk(&modern, &mut writer, &mut |_| {})
         .unwrap();
@@ -593,7 +593,7 @@ fn cold_modern_to_deprecated_conversion_still_loads_and_converts_gates() {
     assert_eq!(store.reads.load(std::sync::atomic::Ordering::Relaxed), 0);
     let old = restored
         .serialize_to_disk(
-            &rustdb_common::CaseInsensitiveMap::default(),
+            &roastedduck_common::CaseInsensitiveMap::default(),
             &mut writer,
             &mut |_| {},
         )
@@ -613,7 +613,7 @@ fn cold_modern_to_deprecated_conversion_still_loads_and_converts_gates() {
 fn partial_persisted_mutation_converts_new_gates_and_preserves_other_keys() {
     let store = std::sync::Arc::new(CheckpointBuffers::default());
     let mut writer = DeferredCheckpoint::new(store.clone());
-    let options = rustdb_common::CaseInsensitiveMap::default();
+    let options = roastedduck_common::CaseInsensitiveMap::default();
     let mut source = art(IndexConstraintType::None, LogicalType::BIGINT);
     for i in 0..256 {
         source
@@ -665,7 +665,7 @@ fn partial_persisted_mutation_converts_new_gates_and_preserves_other_keys() {
 fn unbound_replays_keep_physical_columns_ownership_order_and_retry_state() {
     use crate::index::unbound_index::BufferedIndexReplay;
     use crate::index::{UnboundIndex, UnboundIndexStorage};
-    use rustdb_types::{DataChunk, Value, Vector};
+    use roastedduck_types::{DataChunk, Value, Vector};
 
     let unbound = UnboundIndex::new(
         "idx",

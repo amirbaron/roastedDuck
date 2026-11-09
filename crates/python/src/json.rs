@@ -3,9 +3,9 @@ use crate::connection::{PyConnection, lock};
 use crate::{conversion, error, files};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyString, PyTuple};
-use rustdb_ast::{ExternalDependency, OrdinalityType, TableFunctionRef, TableRefKind};
-use rustdb_common::{ByteString, Error};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_ast::{ExternalDependency, OrdinalityType, TableFunctionRef, TableRefKind};
+use roastedduck_common::{ByteString, Error};
+use roastedduck_types::{LogicalType, Value};
 use std::fmt::Write as _;
 use std::sync::Arc;
 const OPTIONS: &[&str] = &[
@@ -257,7 +257,7 @@ pub(super) fn read(
             paths
                 .iter()
                 .map(|p| Value::try_varchar(p))
-                .collect::<rustdb_common::Result<_>>()
+                .collect::<roastedduck_common::Result<_>>()
                 .map_err(|e| error::native(py, &e))?,
         ))
     }
@@ -268,14 +268,14 @@ pub(super) fn read(
         .unwrap_or_default()
         .to_vec()
         .into();
-    let mut children = vec![rustdb_parser::build::constant(input)];
+    let mut children = vec![roastedduck_parser::build::constant(input)];
     for (name, value) in parameters {
-        let mut value = rustdb_parser::build::constant(value);
+        let mut value = roastedduck_parser::build::constant(value);
         value.alias = name;
         children.push(value);
     }
-    let mut table = rustdb_parser::build::table_ref(TableRefKind::TableFunction(TableFunctionRef {
-        function: Box::new(rustdb_parser::build::function(
+    let mut table = roastedduck_parser::build::table_ref(TableRefKind::TableFunction(TableFunctionRef {
+        function: Box::new(roastedduck_parser::build::function(
             if auto { "read_json_auto" } else { "read_json" },
             children,
         )),

@@ -24,7 +24,7 @@ try check(dladdr(symbol, &info) != 0, "dladdr")
 let imageName = String(cString: info.dli_fname)
 #elseif os(Linux)
 let symbol = dlsym(nil, "duckdb_library_version")!
-let imageName = String(cString: rustdb_test_function_image(symbol)!)
+let imageName = String(cString: roastedduck_test_function_image(symbol)!)
 #endif
 let image = URL(fileURLWithPath: imageName).resolvingSymlinksInPath().standardizedFileURL.path
 #if canImport(Darwin)
@@ -35,8 +35,8 @@ let images = (0..<_dyld_image_count()).compactMap { index -> String? in
     return url.resolvingSymlinksInPath().standardizedFileURL.path
 }
 #elseif os(Linux)
-let images = (0..<rustdb_test_image_count()).compactMap { index -> String? in
-    guard let ptr = rustdb_test_image_name(index) else { return nil }
+let images = (0..<roastedduck_test_image_count()).compactMap { index -> String? in
+    guard let ptr = roastedduck_test_image_name(index) else { return nil }
     let url = URL(fileURLWithPath: String(cString: ptr))
     guard url.lastPathComponent == "libduckdb.so" else { return nil }
     return url.resolvingSymlinksInPath().standardizedFileURL.path

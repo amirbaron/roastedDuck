@@ -7,10 +7,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use libloading::Library;
+use roastedduck::{Database, Error, ErrorKind, Result};
+use roastedduck_common::{ByteString, byte_format};
+use roastedduck_function::cast::ValueCast;
 use rsa::{Pkcs1v15Sign, PublicKey, pkcs8::DecodePublicKey};
-use rustdb::{Database, Error, ErrorKind, Result};
-use rustdb_common::{ByteString, byte_format};
-use rustdb_function::cast::ValueCast;
 use sha2::{Digest, Sha256};
 
 use crate::extension_api::EXTENSION_API_V1;
@@ -37,7 +37,7 @@ fn setting(db: &Database, name: &str) -> bool {
                 .find(|(key, _)| key.eq_ignore_ascii_case(name))
                 .map(|(_, value)| value.clone())
         })
-        .and_then(|value| value.default_cast_as(&rustdb::LogicalType::BOOLEAN).ok())
+        .and_then(|value| value.default_cast_as(&roastedduck::LogicalType::BOOLEAN).ok())
         .and_then(|value| value.as_bool())
         .unwrap_or(name == "allow_community_extensions")
 }
@@ -134,7 +134,7 @@ fn mismatch(meta: &Metadata) -> Result<ByteString> {
             )));
         }
     }
-    let platform = rustdb::external_extensions::platform();
+    let platform = roastedduck::external_extensions::platform();
     if meta.platform != platform.as_bytes() {
         result.push_bytes(if result.is_empty() { "T" } else { " Also, t" });
         result.push_bytes(byte_format!("he file was built for the platform '{}', but we can only load extensions built for platform '{platform}'.", pretty(&meta.platform)));
@@ -291,7 +291,7 @@ fn open_library(path: &Path) -> Result<Arc<Library>> {
 }
 
 pub(crate) fn load(database: &Database, filename: &[u8], requested: &[u8], direct: bool) -> Result<()> {
-    let path = rustdb_common::native_file_path(filename)?;
+    let path = roastedduck_common::native_file_path(filename)?;
     let basename = path
         .file_stem()
         .ok_or_else(|| Error::invalid_input("Extension path has no name"))?;
@@ -311,7 +311,7 @@ pub(crate) fn load(database: &Database, filename: &[u8], requested: &[u8], direc
         && meta.abi == b"CPP"
         && meta.version == "4bc690d"
         && meta.api_version == b"v1.5.6"
-        && meta.platform == rustdb::external_extensions::platform().as_bytes();
+        && meta.platform == roastedduck::external_extensions::platform().as_bytes();
     // Loading C++ engine-internal binaries is a separate unsupported ABI.
     if !ported_httpfs && meta.magic == b"4" && matches!(meta.abi.as_slice(), b"CPP" | b"") {
         return Err(Error::not_implemented(byte_format!(
@@ -335,10 +335,10 @@ pub(crate) fn load(database: &Database, filename: &[u8], requested: &[u8], direc
     }
     if ported_httpfs {
         if !direct {
-            rustdb::external_extensions::validate_installed_metadata(filename, name, &meta.version)?;
+            roastedduck::external_extensions::validate_installed_metadata(filename, name, &meta.version)?;
         }
         database.register_http_file_system()?;
-        state.finish_load(rustdb::external_extensions::ExternalExtensionRecord {
+        state.finish_load(roastedduck::external_extensions::ExternalExtensionRecord {
             name: name.into(),
             version: meta.version,
         });
@@ -349,7 +349,7 @@ pub(crate) fn load(database: &Database, filename: &[u8], requested: &[u8], direc
     }
     let library = open_library(&path)?;
     if !direct {
-        rustdb::external_extensions::validate_installed_metadata(filename, name, &meta.version)?;
+        roastedduck::external_extensions::validate_installed_metadata(filename, name, &meta.version)?;
     }
     let symbol = CString::new(byte_format!("{name}_init_c_api").as_bytes())
         .map_err(|_| Error::invalid_input("NUL in extension entrypoint"))?;
@@ -401,7 +401,7 @@ pub(crate) fn load(database: &Database, filename: &[u8], requested: &[u8], direc
             ),
         ));
     }
-    state.finish_load(rustdb::external_extensions::ExternalExtensionRecord {
+    state.finish_load(roastedduck::external_extensions::ExternalExtensionRecord {
         name: name.into(),
         version: meta.version,
     });
@@ -411,7 +411,7 @@ pub(crate) fn load(database: &Database, filename: &[u8], requested: &[u8], direc
 /// Validate install bytes without executing any initializer or opening its code.
 pub(crate) fn validate_install(database: &Database, filename: &[u8], name: &[u8]) -> Result<ByteString> {
     let mut file =
-        File::open(rustdb_common::native_file_path(filename)?).map_err(|error| io_error(&error))?;
+        File::open(roastedduck_common::native_file_path(filename)?).map_err(|error| io_error(&error))?;
     if file.metadata().map_err(|error| io_error(&error))?.len() < 512 {
         return Err(Error::new_bytes(
             ErrorKind::Io,
@@ -475,7 +475,7 @@ mod tests {
         ];
         for (size, signature) in cases {
             let path = std::env::temp_dir().join(format!(
-                "rustdb-extension-signature-{}-{size}",
+                "roastedduck-extension-signature-{}-{size}",
                 std::process::id()
             ));
             let mut bytes = vec![b'x'; size];

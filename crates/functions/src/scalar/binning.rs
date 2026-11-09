@@ -2,10 +2,12 @@
 //! `core_functions/scalar/generic/binning.cpp`): the upper boundaries of `bin_count`
 //! equal-width bins, optionally rounded to "nice" numbers.
 
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::{CastFunctionSet, CastParameters, cast_vector};
-use rustdb_function::{BindInput, FunctionData, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, Date, Interval, LogicalType, LogicalTypeId, Time, Timestamp, Value, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::{CastFunctionSet, CastParameters, cast_vector};
+use roastedduck_function::{BindInput, FunctionData, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{
+    DataChunk, Date, Interval, LogicalType, LogicalTypeId, Time, Timestamp, Value, Vector,
+};
 
 use crate::temporal::{interval_invert, timestamp_add_interval};
 

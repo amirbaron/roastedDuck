@@ -2,8 +2,8 @@
 //! first; the recursive part (right) sees the CTE, and `recurring.<name>`, as CTE
 //! bindings producing the anchor's columns.
 
-use rustdb_ast::{QueryNode, QueryNodeKind};
-use rustdb_common::{Error, Result};
+use roastedduck_ast::{QueryNode, QueryNodeKind};
+use roastedduck_common::{Error, Result};
 
 use super::bind_node;
 use super::bind_setop_node::cast_operator_to_types;
@@ -16,8 +16,8 @@ use crate::operator::{LogicalKind, LogicalOperator};
 fn recursive_binding(
     alias: BindingAlias,
     index: u64,
-    names: &[rustdb_common::ByteString],
-    types: &[rustdb_types::LogicalType],
+    names: &[roastedduck_common::ByteString],
+    types: &[roastedduck_types::LogicalType],
 ) -> Result<Binding> {
     Binding::new(
         BindingKind::Cte {
@@ -57,7 +57,7 @@ fn warn_deprecated_using_key_union(scope: &BindScope<'_>, union_all: bool) -> Re
     }
     // `DUCKDB_LOG_WARNING(context, msg)`.
     if let Some(logger) = client.logger() {
-        use rustdb_function::logging::{LogLevel, LogScope};
+        use roastedduck_function::logging::{LogLevel, LogScope};
         if logger.should_log(LogScope::Connection, "", LogLevel::Warning) {
             logger.write_log(LogScope::Connection, "", LogLevel::Warning, MESSAGE)?;
         }

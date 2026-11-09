@@ -6,10 +6,10 @@ pub mod struct_extract;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
-use rustdb_row::sort::{NullOrder, OrderModifiers, OrderType, create_sort_keys};
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
+use roastedduck_row::sort::{NullOrder, OrderModifiers, OrderType, create_sort_keys};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
 
 use crate::scalar::executor::addressable;
 use crate::scalar::nested::{all_constant, serialize_variable_return, struct_field};
@@ -58,7 +58,7 @@ fn bind_struct_pack(
                     ));
                 }
                 if !seen.insert(lower(alias)) {
-                    return Err(Error::binder(rustdb_common::byte_format!(
+                    return Err(Error::binder(roastedduck_common::byte_format!(
                         "Duplicate struct entry name \"{alias}\""
                     )));
                 }
@@ -130,7 +130,7 @@ fn bind_struct_concat(
             return Err(crate::parameter_not_resolved());
         }
         let Some(children) = ty.struct_children().filter(|_| ty.id() == LogicalTypeId::Struct) else {
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "struct_concat: Argument at position \"{}\" is not a STRUCT",
                 index + 1
             )));
@@ -141,11 +141,11 @@ fn bind_struct_concat(
             } else {
                 if let Some(existing) = names.iter().find(|existing| lower(existing) == lower(name)) {
                     if existing == name {
-                        return Err(Error::invalid_input(rustdb_common::byte_format!(
+                        return Err(Error::invalid_input(roastedduck_common::byte_format!(
                             "struct_concat: Arguments contain duplicate STRUCT entry \"{name}\""
                         )));
                     }
-                    return Err(Error::invalid_input(rustdb_common::byte_format!(
+                    return Err(Error::invalid_input(roastedduck_common::byte_format!(
                         "struct_concat: Arguments contain case-insensitive duplicate STRUCT entry \"{name}\" and \
                          \"{existing}\""
                     )));
@@ -198,7 +198,7 @@ fn named_arguments(input: &BindInput<'_>, what: &str) -> Result<Vec<(ByteString,
     let mut named = Vec::new();
     for (ty, alias) in input.argument_types.iter().zip(input.aliases).skip(1) {
         if alias.is_empty() {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Need named argument for struct {what}, e.g., a := b"
             )));
         }
@@ -213,17 +213,17 @@ fn check_struct_argument(
     verb: &str,
 ) -> Result<Vec<(ByteString, LogicalType)>> {
     let Some(first) = input.argument_types.first() else {
-        return Err(Error::invalid_input(rustdb_common::byte_format!(
+        return Err(Error::invalid_input(roastedduck_common::byte_format!(
             "Missing required arguments for {name} function."
         )));
     };
     if first.id() != LogicalTypeId::Struct {
-        return Err(Error::invalid_input(rustdb_common::byte_format!(
+        return Err(Error::invalid_input(roastedduck_common::byte_format!(
             "The first argument to {name} must be a STRUCT"
         )));
     }
     if input.argument_types.len() < 2 {
-        return Err(Error::invalid_input(rustdb_common::byte_format!(
+        return Err(Error::invalid_input(roastedduck_common::byte_format!(
             "Can't {verb} nothing into a STRUCT"
         )));
     }
@@ -259,7 +259,7 @@ pub fn struct_insert_functions() -> ScalarFunctionSet {
         let mut seen: HashSet<ByteString> = children.iter().map(|(name, _)| lower(name)).collect();
         for (alias, ty) in named_arguments(input, "insert")? {
             if !seen.insert(lower(&alias)) {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Duplicate struct entry name \"{alias}\""
                 )));
             }
@@ -321,7 +321,7 @@ pub fn struct_update_functions() -> ScalarFunctionSet {
                 .iter()
                 .any(|(other, _)| lower(other) == lower(alias))
             {
-                return Err(Error::invalid_input(rustdb_common::byte_format!(
+                return Err(Error::invalid_input(roastedduck_common::byte_format!(
                     "Duplicate named argument provided for {alias}"
                 )));
             }
@@ -467,7 +467,7 @@ fn bind_struct_contains(
         return Err(Error::internal("Can't check for containment in an empty struct"));
     }
     if !ty.is_unnamed_struct() {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "{} can only be used on unnamed structs",
             function.name
         )));

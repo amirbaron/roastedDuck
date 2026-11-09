@@ -1,7 +1,7 @@
 //! Semantic actions for the rules in `grammar/statements/create_secret.y`.
 
 use super::prelude::*;
-use rustdb_common::ByteString;
+use roastedduck_common::ByteString;
 
 /// ```text
 /// CreateSecretStmt:

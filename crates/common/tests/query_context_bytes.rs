@@ -11,7 +11,7 @@ fn native_context_matches_cpp() {
 
 #[test]
 fn rethrow_sanitizes_nul_added_by_query_context() {
-    let error = rustdb_common::Error::parser("bad query")
+    let error = roastedduck_common::Error::parser("bad query")
         .with_position(Some(1))
         .with_query_context_bytes(b"a\0b");
     assert!(error.raw_message_bytes().contains(&0));

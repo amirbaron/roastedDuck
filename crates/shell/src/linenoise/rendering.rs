@@ -294,7 +294,7 @@ impl Linenoise<'_> {
             let is_cursor_row = rows == cursor_row;
             let prompt = super::with_prompts(|prompts| {
                 if !self.continuation_markers {
-                    rustdb_common::ByteString::new()
+                    roastedduck_common::ByteString::new()
                 } else if is_cursor_row {
                     prompts.continuation_selected.clone()
                 } else if truncate_top && rows == 2 {

@@ -1,10 +1,10 @@
 //! Page compression codecs (`ColumnReader::DecompressInternal` and the writer's
 //! `ColumnWriter::CompressPage`), all in pure Rust: snappy (our own decoder, `snap` to compress), gzip (`miniz_oxide`
-//! through `flate2`), zstd (`rustdb-zstd`), LZ4 raw blocks (`lz4_flex`) and brotli (`brotli`).
+//! through `flate2`), zstd (`roastedduck-zstd`), LZ4 raw blocks (`lz4_flex`) and brotli (`brotli`).
 
 use std::io::{Read as _, Write as _};
 
-use rustdb_common::{Error, ErrorKind, Result};
+use roastedduck_common::{Error, ErrorKind, Result};
 
 use crate::thrift::CompressionCodec;
 
@@ -17,13 +17,13 @@ const GZIP_FOOTER_SIZE: usize = 8;
 const GZIP_FLAG_UNSUPPORTED: u8 = 0x1 | 0x2 | 0x4 | 0x10 | 0xe0;
 
 /// A `std::runtime_error` of the C++ code, reported as an `Invalid Error`.
-fn runtime_error(message: impl Into<rustdb_common::ByteString>) -> Error {
+fn runtime_error(message: impl Into<roastedduck_common::ByteString>) -> Error {
     Error::new_bytes(ErrorKind::Invalid, message.into())
 }
 
 fn read_failure(file_name: &[u8], what: impl AsRef<[u8]>) -> Error {
     let what = what.as_ref();
-    Error::invalid_input(rustdb_common::byte_format!(
+    Error::invalid_input(roastedduck_common::byte_format!(
         "Failed to read file \"{file_name}\": {what}"
     ))
 }
@@ -50,7 +50,7 @@ pub fn decompress(codec: CompressionCodec, src: &[u8], dst: &mut [u8], file_name
         }),
         CompressionCodec::ZSTD => {
             let failure = || read_failure(file_name, "ZSTD Decompression failure");
-            let written = rustdb_zstd::decompress(dst, src).map_err(|_| failure())?;
+            let written = roastedduck_zstd::decompress(dst, src).map_err(|_| failure())?;
             if written != dst.len() {
                 return Err(failure());
             }
@@ -66,7 +66,7 @@ pub fn decompress(codec: CompressionCodec, src: &[u8], dst: &mut [u8], file_name
             let name = codec.name().map_or_else(|| codec.0.to_string(), str::to_owned);
             Err(read_failure(
                 file_name,
-                &rustdb_common::byte_format!(
+                &roastedduck_common::byte_format!(
                     "Unsupported compression codec \"{name}\". Supported options are uncompressed, brotli, gzip, lz4_raw, snappy or zstd"
                 ),
             ))
@@ -114,24 +114,28 @@ pub fn compress(codec: CompressionCodec, src: &[u8], level: i64, out: &mut Vec<u
             // `MiniZStream::Compress`: a minimal gzip member at miniz's default level.
             let mut encoder = flate2::write::GzEncoder::new(std::mem::take(out), flate2::Compression::new(6));
             encoder.write_all(src).map_err(|error| {
-                Error::internal(rustdb_common::byte_format!("gzip compression failed: {error}"))
+                Error::internal(roastedduck_common::byte_format!(
+                    "gzip compression failed: {error}"
+                ))
             })?;
             *out = encoder.finish().map_err(|error| {
-                Error::internal(rustdb_common::byte_format!("gzip compression failed: {error}"))
+                Error::internal(roastedduck_common::byte_format!(
+                    "gzip compression failed: {error}"
+                ))
             })?;
         }
         CompressionCodec::ZSTD => {
             // `ZSTD_compress` at the writer's level.
             let level = level.clamp(
-                i64::from(rustdb_zstd::MIN_LEVEL),
-                i64::from(rustdb_zstd::MAX_LEVEL),
+                i64::from(roastedduck_zstd::MIN_LEVEL),
+                i64::from(roastedduck_zstd::MAX_LEVEL),
             ) as i32;
-            rustdb_zstd::Compressor::new(level).compress_into(out, src);
+            roastedduck_zstd::Compressor::new(level).compress_into(out, src);
         }
         CompressionCodec::LZ4_RAW => crate::lz4::compress(src, out),
         CompressionCodec::BROTLI => brotli_compress(src, out)?,
         _ => {
-            return Err(Error::internal(rustdb_common::byte_format!(
+            return Err(Error::internal(roastedduck_common::byte_format!(
                 "Unsupported codec for Parquet Writer: {}",
                 codec.0
             )));

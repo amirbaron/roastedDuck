@@ -4,10 +4,10 @@
 //! (`format_bytes.cpp`), `parse_formatted_bytes` (`parse_formatted_bytes.cpp`) and `bar`
 //! (`bar.cpp`).
 
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::ValueCast;
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{LogicalType, Value};
 
 use crate::scalar::executor::{ScalarOutput, Str, StrOut, unary, variadic};
 
@@ -229,7 +229,7 @@ pub fn to_base_functions() -> ScalarFunctionSet {
                     .columns()
                     .get(2)
                     .map(|column| crate::scalar::executor::addressable(column, count));
-                let constant = args.columns().iter().all(rustdb_types::Vector::is_constant);
+                let constant = args.columns().iter().all(roastedduck_types::Vector::is_constant);
                 let rows = if constant { 1 } else { count };
                 let inputs = input.unified::<i64>();
                 let radixes = radix.unified::<i32>();

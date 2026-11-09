@@ -1,7 +1,7 @@
 //! Moving small constant LIMITs below projections (DuckDB's `LimitPushdown`), so that
 //! the projection only computes the rows that are returned.
 
-use rustdb_planner::{BoundLimitNode, LogicalKind, LogicalOperator, LogicalOperatorType};
+use roastedduck_planner::{BoundLimitNode, LogicalKind, LogicalOperator, LogicalOperatorType};
 
 /// Whether `op` is a LIMIT below 8192 rows over a projection that can run after it
 /// (DuckDB's `LimitPushdown::CanOptimize`).
@@ -32,7 +32,7 @@ fn can_optimize(op: &LogicalOperator) -> bool {
         && projection
             .expressions
             .iter()
-            .any(rustdb_planner::Expression::is_volatile)
+            .any(roastedduck_planner::Expression::is_volatile)
     {
         return false;
     }

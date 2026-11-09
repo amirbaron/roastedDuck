@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use rustdb_buffer::BufferHandle;
-use rustdb_common::STANDARD_VECTOR_SIZE;
+use roastedduck_buffer::BufferHandle;
+use roastedduck_common::STANDARD_VECTOR_SIZE;
 
 use crate::row::RowPtr;
 

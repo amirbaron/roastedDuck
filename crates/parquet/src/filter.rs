@@ -4,12 +4,12 @@
 
 use std::cmp::Ordering;
 
-use rustdb_common::Result;
-use rustdb_function::cast::CastFunctionSet;
-use rustdb_storage::TableFilter;
-use rustdb_storage::statistics::{BaseStatistics, FilterPropagateResult, NumericValue, StatsData};
-use rustdb_types::compare::CompareOp;
-use rustdb_types::{LogicalTypeId, Value, Vector};
+use roastedduck_common::Result;
+use roastedduck_function::cast::CastFunctionSet;
+use roastedduck_storage::TableFilter;
+use roastedduck_storage::statistics::{BaseStatistics, FilterPropagateResult, NumericValue, StatsData};
+use roastedduck_types::compare::CompareOp;
+use roastedduck_types::{LogicalTypeId, Value, Vector};
 
 use crate::metadata::{read_bloom_filter, value_hash};
 use crate::reader::ParquetReader;
@@ -104,7 +104,7 @@ fn check_string_filter(
 fn check_float_filter(
     stats: &BaseStatistics,
     filter: &TableFilter,
-    ty: &rustdb_types::LogicalType,
+    ty: &roastedduck_types::LogicalType,
 ) -> FilterPropagateResult {
     let mut nan_stats = BaseStatistics::create_unknown(ty.clone());
     let nan = if ty.id() == LogicalTypeId::Float {

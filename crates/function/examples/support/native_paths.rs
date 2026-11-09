@@ -1,6 +1,6 @@
 //! Frozen C++ native path expansion and canonicalization comparisons.
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_function::file_system::{
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_function::file_system::{
     canonicalize_local_path_bytes, canonicalize_path_bytes, expand_path_bytes,
 };
 fn unhex(text: &str) -> Result<Vec<u8>> {

@@ -1,9 +1,9 @@
 //! Casts from BOOLEAN, integer and floating point types (DuckDB's `numeric_casts.cpp`,
 //! `numeric_cast.hpp` and the `TryCastWithOverflowCheck` family).
 
-use rustdb_types::bit::{self, BitNumeric};
-use rustdb_types::format;
-use rustdb_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType, StringHeap, StringT};
+use roastedduck_types::bit::{self, BitNumeric};
+use roastedduck_types::format;
+use roastedduck_types::{LogicalType, LogicalTypeId, NativeType, PhysicalType, StringHeap, StringT};
 
 use super::BoundCastInfo;
 use super::decimal::{ToDecimal, to_decimal_kernel};

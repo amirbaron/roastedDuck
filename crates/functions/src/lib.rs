@@ -13,8 +13,8 @@ pub mod table;
 pub mod temporal;
 mod values;
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_function::{AggregateFunctionSet, ScalarFunctionSet, TableFunctionSet};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_function::{AggregateFunctionSet, ScalarFunctionSet, TableFunctionSet};
 
 /// Every builtin scalar function set, ready to be registered in the system catalog.
 pub fn builtin_scalar_functions() -> Vec<ScalarFunctionSet> {

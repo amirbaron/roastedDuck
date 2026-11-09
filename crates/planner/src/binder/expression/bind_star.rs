@@ -1,12 +1,12 @@
 //! Expansion of `*` and `COLUMNS(...)` (DuckDB's `bind_star_expression.cpp`).
 
-use rustdb_ast::{
+use roastedduck_ast::{
     ExpressionClass, ExpressionType, LambdaExpression, LambdaSyntaxType, ParsedExpression,
     ParsedExpressionKind, StarExpression,
 };
-use rustdb_common::string_util::candidates_error_message_bytes;
-use rustdb_common::{ByteString, CaseInsensitiveMap, Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_common::string_util::candidates_error_message_bytes;
+use roastedduck_common::{ByteString, CaseInsensitiveMap, Error, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::binder::BindScope;
 use crate::expression_binder::{
@@ -166,7 +166,7 @@ fn replace_columns_alias(
             continue;
         }
         let Some(code) = bytes.next() else {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Unterminated backslash in COLUMNS(*) \"{alias}\" alias. Backslashes must either be escaped or followed by a number"
             )));
         };
@@ -187,7 +187,7 @@ fn replace_columns_alias(
                 }
             }
             _ => {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Invalid backslash code in COLUMNS(*) \"{alias}\" alias. Backslashes must either be escaped or followed by a number"
                 )));
             }
@@ -241,7 +241,7 @@ fn try_transform_star_like(root: &mut ParsedExpression) -> Result<()> {
         .iter()
         .any(|name| name.as_bytes() == function.function_name.as_bytes())
     {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "Function \"{}\" cannot be applied to a star expression",
             function.function_name
         ))
@@ -294,7 +294,7 @@ fn try_transform_star_like(root: &mut ParsedExpression) -> Result<()> {
         relation_name: star.relation_name,
         exclude_list: Vec::new(),
         replace_list: CaseInsensitiveMap::default(),
-        rename_list: rustdb_common::OrderedMap::default(),
+        rename_list: roastedduck_common::OrderedMap::default(),
         columns: true,
         expr: Some(Box::new(child_expr)),
     };
@@ -309,7 +309,10 @@ fn try_transform_star_like(root: &mut ParsedExpression) -> Result<()> {
     Ok(())
 }
 
-fn function_child(root: &mut ParsedExpression, inverse: bool) -> Result<&mut rustdb_ast::FunctionExpression> {
+fn function_child(
+    root: &mut ParsedExpression,
+    inverse: bool,
+) -> Result<&mut roastedduck_ast::FunctionExpression> {
     let target = if inverse {
         match &mut root.kind {
             ParsedExpressionKind::Operator(operator) => operator.children.first_mut(),
@@ -325,7 +328,7 @@ fn function_child(root: &mut ParsedExpression, inverse: bool) -> Result<&mut rus
 }
 
 /// The column reference behind an expanded star entry (DuckDB's `GetResolvedColumnExpression`).
-pub(crate) fn resolved_column_name(expr: &ParsedExpression) -> Option<rustdb_common::ByteString> {
+pub(crate) fn resolved_column_name(expr: &ParsedExpression) -> Option<roastedduck_common::ByteString> {
     match &expr.kind {
         ParsedExpressionKind::ColumnRef(column) => column.column_names.last().cloned(),
         ParsedExpressionKind::Operator(operator)
@@ -397,12 +400,12 @@ pub fn expand_star_expression(
                     let suggestion = if candidates.is_empty() {
                         ByteString::new()
                     } else {
-                        rustdb_common::byte_format!(
+                        roastedduck_common::byte_format!(
                             "\n{}",
                             candidates_error_message_bytes(&candidates, pattern.as_bytes(), b"Did you mean")
                         )
                     };
-                    return Err(Error::binder(rustdb_common::byte_format!(
+                    return Err(Error::binder(roastedduck_common::byte_format!(
                         "No matching columns found that match regex \"{pattern}\"{suggestion}"
                     ))
                     .with_position(star_location));
@@ -445,7 +448,7 @@ pub fn expand_star_expression(
                     }
                 }
                 if let Some((name, _)) = selected.iter().find(|(_, found)| !found) {
-                    return Err(Error::binder(rustdb_common::byte_format!(
+                    return Err(Error::binder(roastedduck_common::byte_format!(
                         "Column \"{name}\" was selected but was not found in the FROM clause"
                     )));
                 }

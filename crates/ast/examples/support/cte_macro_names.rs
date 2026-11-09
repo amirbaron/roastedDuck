@@ -1,8 +1,8 @@
 //! Frozen C++ CTE, recursive CTE, macro and lambda byte-name codecs.
-use rustdb_ast::{CommonTableExpressionMap, MacroFunction, ParsedExpression, QueryNode};
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
-use rustdb_serde::{Deserialize, Deserializer, SerializationOptions, Serialize, Serializer};
+use roastedduck_ast::{CommonTableExpressionMap, MacroFunction, ParsedExpression, QueryNode};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
+use roastedduck_serde::{Deserialize, Deserializer, SerializationOptions, Serialize, Serializer};
 fn decode(hex: &str) -> Result<Vec<u8>> {
     if !hex.len().is_multiple_of(2) {
         return Err(Error::invalid_input("odd oracle hex length"));
@@ -53,7 +53,7 @@ pub fn compare(line: &str) -> Result<()> {
             Ok(key.clone())
         }),
         "lambda" => check::<ParsedExpression>(&encoded, &expected, |expr| {
-            let rustdb_ast::ParsedExpressionKind::LambdaRef(lambda) = &expr.kind else {
+            let roastedduck_ast::ParsedExpressionKind::LambdaRef(lambda) = &expr.kind else {
                 return Err(Error::invalid_input("missing lambda reference in native oracle"));
             };
             Ok(lambda.column_name.clone())

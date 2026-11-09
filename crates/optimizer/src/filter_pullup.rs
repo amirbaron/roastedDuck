@@ -2,9 +2,9 @@
 //! and set operations move up so that filter pushdown can then push them into every
 //! input they constrain (e.g. through an equality join condition to the other side).
 
-use rustdb_ast::JoinType;
-use rustdb_common::Result;
-use rustdb_planner::{
+use roastedduck_ast::JoinType;
+use roastedduck_common::Result;
+use roastedduck_planner::{
     DistinctType, Expression, ExpressionKind, LogicalKind, LogicalOperator, LogicalOperatorType,
 };
 
@@ -143,17 +143,17 @@ impl FilterPullup {
                 expressions.extend(
                     std::mem::take(&mut join.conditions)
                         .into_iter()
-                        .map(rustdb_planner::operator::JoinCondition::into_expression),
+                        .map(roastedduck_planner::operator::JoinCondition::into_expression),
                 );
             }
             LogicalKind::AnyJoin { condition, .. } => {
                 expressions.push(std::mem::replace(
                     &mut **condition,
-                    Expression::constant(rustdb_types::Value::boolean(true)),
+                    Expression::constant(roastedduck_types::Value::boolean(true)),
                 ));
             }
             _ => {
-                return Err(rustdb_common::Error::not_implemented(format!(
+                return Err(roastedduck_common::Error::not_implemented(format!(
                     "PullupInnerJoin for LogicalOperatorType::{}",
                     op.operator_type().name()
                 )));

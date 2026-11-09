@@ -3,10 +3,10 @@
 
 use std::sync::Arc;
 
-use rustdb_common::string_util::{candidates_message, top_n_jaro_winkler};
-use rustdb_common::{Error, Result};
-use rustdb_function::{ExtensionOption, TableFunction, TableFunctionBindOutput, TableFunctionSet};
-use rustdb_types::{LogicalType, Value, Vector};
+use roastedduck_common::string_util::{candidates_message, top_n_jaro_winkler};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{ExtensionOption, TableFunction, TableFunctionBindOutput, TableFunctionSet};
+use roastedduck_types::{LogicalType, Value, Vector};
 
 use crate::icu_helpers;
 use crate::icu4c::timezone::host_time_zone_id;

@@ -5,13 +5,13 @@
 
 use std::sync::{Arc, PoisonError};
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::{CaseInsensitiveMap, Error, Result};
-use rustdb_function::{
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::{CaseInsensitiveMap, Error, Result};
+use roastedduck_function::{
     AggregateFunction, AggregateFunctionSet, BindInput, FunctionData, NullHandling, ScalarFunction,
     ScalarFunctionSet, TableFunction, TableFunctionSet, named_parameters_in_map_order,
 };
-use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo, Value};
+use roastedduck_types::{LogicalType, LogicalTypeId, TypeInfo, Value};
 
 use crate::context::ClientContext;
 use crate::expression::{
@@ -244,7 +244,7 @@ pub trait FunctionSignature {
     fn arguments(&self) -> &[LogicalType];
     fn varargs(&self) -> Option<&LogicalType>;
     /// How the overload prints in error messages (DuckDB's `ToString`).
-    fn signature(&self) -> rustdb_common::ByteString;
+    fn signature(&self) -> roastedduck_common::ByteString;
 }
 
 /// `name(A, B[, [C...]])` (DuckDB's `Function::CallToString`).
@@ -263,15 +263,15 @@ pub fn call_to_bytes(
     name: impl AsRef<[u8]>,
     arguments: &[LogicalType],
     varargs: Option<&LogicalType>,
-) -> rustdb_common::ByteString {
+) -> roastedduck_common::ByteString {
     let mut parts: Vec<_> = arguments.iter().map(LogicalType::to_bytes).collect();
     if let Some(varargs) = varargs.filter(|ty| ty.id() != LogicalTypeId::Invalid) {
-        parts.push(rustdb_common::byte_format!("[{}...]", varargs.to_bytes()));
+        parts.push(roastedduck_common::byte_format!("[{}...]", varargs.to_bytes()));
     }
-    rustdb_common::byte_format!(
+    roastedduck_common::byte_format!(
         "{}({})",
         name.as_ref(),
-        rustdb_common::ByteString::join(&parts, b", ")
+        roastedduck_common::ByteString::join(&parts, b", ")
     )
 }
 
@@ -288,8 +288,8 @@ impl FunctionSignature for ScalarFunction {
         self.varargs.as_ref()
     }
 
-    fn signature(&self) -> rustdb_common::ByteString {
-        rustdb_common::byte_format!(
+    fn signature(&self) -> roastedduck_common::ByteString {
+        roastedduck_common::byte_format!(
             "{} -> {}",
             call_to_bytes(self.name.as_bytes(), &self.arguments, self.varargs.as_ref()),
             self.return_type
@@ -310,8 +310,8 @@ impl FunctionSignature for AggregateFunction {
         self.varargs.as_ref()
     }
 
-    fn signature(&self) -> rustdb_common::ByteString {
-        rustdb_common::byte_format!(
+    fn signature(&self) -> roastedduck_common::ByteString {
+        roastedduck_common::byte_format!(
             "{} -> {}",
             call_to_bytes(self.name.as_bytes(), &self.arguments, self.varargs.as_ref()),
             self.return_type
@@ -332,16 +332,16 @@ impl FunctionSignature for TableFunction {
         self.varargs.as_ref()
     }
 
-    fn signature(&self) -> rustdb_common::ByteString {
+    fn signature(&self) -> roastedduck_common::ByteString {
         let mut parts: Vec<String> = self.arguments.iter().map(ToString::to_string).collect();
         parts.extend(
             named_parameters_in_map_order(&self.named_parameters).map(|(name, ty)| format!("{name} : {ty}")),
         );
-        rustdb_common::byte_format!("{}({})", self.name.as_bytes(), parts.join(", "))
+        roastedduck_common::byte_format!("{}({})", self.name.as_bytes(), parts.join(", "))
     }
 }
 
-impl FunctionSignature for rustdb_function::PragmaFunction {
+impl FunctionSignature for roastedduck_function::PragmaFunction {
     fn name(&self) -> &[u8] {
         self.name.as_bytes()
     }
@@ -355,18 +355,18 @@ impl FunctionSignature for rustdb_function::PragmaFunction {
     }
 
     /// `PragmaFunction::ToString`.
-    fn signature(&self) -> rustdb_common::ByteString {
+    fn signature(&self) -> roastedduck_common::ByteString {
         match self.pragma_type {
-            rustdb_function::PragmaType::Statement => {
-                rustdb_common::byte_format!("PRAGMA {}", self.name.as_bytes())
+            roastedduck_function::PragmaType::Statement => {
+                roastedduck_common::byte_format!("PRAGMA {}", self.name.as_bytes())
             }
-            rustdb_function::PragmaType::Call => {
+            roastedduck_function::PragmaType::Call => {
                 let mut parts: Vec<String> = self.arguments.iter().map(ToString::to_string).collect();
                 parts.extend(
                     named_parameters_in_map_order(&self.named_parameters)
                         .map(|(name, ty)| format!("{name} : {ty}")),
                 );
-                rustdb_common::byte_format!("PRAGMA {}({})", self.name.as_bytes(), parts.join(", "))
+                roastedduck_common::byte_format!("PRAGMA {}({})", self.name.as_bytes(), parts.join(", "))
             }
         }
     }
@@ -377,7 +377,7 @@ impl FunctionSignature for rustdb_function::PragmaFunction {
 pub struct FunctionBinder<'a> {
     context: &'a ClientContext,
     /// The lambda argument of the call being bound, for lambda functions.
-    lambda: Option<rustdb_function::LambdaInput>,
+    lambda: Option<roastedduck_function::LambdaInput>,
 }
 
 impl<'a> FunctionBinder<'a> {
@@ -390,7 +390,7 @@ impl<'a> FunctionBinder<'a> {
 
     /// A binder for a lambda function call whose lambda argument is `lambda`.
     #[must_use]
-    pub fn with_lambda(mut self, lambda: rustdb_function::LambdaInput) -> Self {
+    pub fn with_lambda(mut self, lambda: roastedduck_function::LambdaInput) -> Self {
         self.lambda = Some(lambda);
         self
     }
@@ -490,17 +490,18 @@ impl<'a> FunctionBinder<'a> {
         }
         let Some(best) = best else {
             let call = call_to_bytes(name, arguments, None);
-            let signatures: Vec<rustdb_common::ByteString> =
+            let signatures: Vec<roastedduck_common::ByteString> =
                 functions.iter().map(FunctionSignature::signature).collect();
-            let list = signatures
-                .iter()
-                .fold(rustdb_common::ByteString::new(), |mut list, signature| {
-                    list.push_bytes(rustdb_common::byte_format!("\t{signature}\n"));
-                    list
-                });
+            let list =
+                signatures
+                    .iter()
+                    .fold(roastedduck_common::ByteString::new(), |mut list, signature| {
+                        list.push_bytes(roastedduck_common::byte_format!("\t{signature}\n"));
+                        list
+                    });
             // `BinderException::NoMatchingFunction`, caught into the binder's `ErrorData`;
             // every function set lives in the system catalog's main schema.
-            return Ok(Err(Error::binder(rustdb_common::byte_format!(
+            return Ok(Err(Error::binder(roastedduck_common::byte_format!(
                 "No function matches the given name and argument types '{call}'. You might need to add \
                  explicit type casts.\n\tCandidate functions:\n{list}"
             ))
@@ -509,7 +510,10 @@ impl<'a> FunctionBinder<'a> {
             .with_extra_info("catalog", "system")
             .with_extra_info("schema", "main")
             .with_extra_info("call", call)
-            .with_extra_info("candidates", rustdb_common::ByteString::join(&signatures, b","))
+            .with_extra_info(
+                "candidates",
+                roastedduck_common::ByteString::join(&signatures, b","),
+            )
             .with_extra_info_round_trip()));
         };
         candidates.push(best);
@@ -523,14 +527,14 @@ impl<'a> FunctionBinder<'a> {
             let call = call_to_bytes(name, arguments, None);
             let list = candidates
                 .iter()
-                .fold(rustdb_common::ByteString::new(), |mut list, &index| {
-                    list.push_bytes(rustdb_common::byte_format!(
+                .fold(roastedduck_common::ByteString::new(), |mut list, &index| {
+                    list.push_bytes(roastedduck_common::byte_format!(
                         "\t{}\n",
                         functions[index].signature()
                     ));
                     list
                 });
-            return Ok(Err(Error::binder(rustdb_common::byte_format!(
+            return Ok(Err(Error::binder(roastedduck_common::byte_format!(
                 "Could not choose a best candidate function for the function call \"{call}\". In order to select \
                  one, please add explicit type casts.\n\tCandidate functions:\n{list}"
             ))));
@@ -577,7 +581,7 @@ impl<'a> FunctionBinder<'a> {
                 target.id(),
                 LogicalTypeId::StringLiteral | LogicalTypeId::IntegerLiteral
             ) {
-                return Err(Error::internal(rustdb_common::byte_format!(
+                return Err(Error::internal(roastedduck_common::byte_format!(
                     "Function {name} returned a STRING_LITERAL or INTEGER_LITERAL type - return an explicit type \
                      instead"
                 )));
@@ -635,12 +639,12 @@ impl<'a> FunctionBinder<'a> {
         function: &mut ScalarFunction,
         children: Vec<Expression>,
     ) -> Result<Vec<Expression>> {
-        use rustdb_function::CollationHandling;
+        use roastedduck_function::CollationHandling;
         if function.collation_handling == CollationHandling::IgnoreCollations {
             return Ok(children);
         }
         // `ExtractCollation`.
-        let mut collation = rustdb_common::ByteString::new();
+        let mut collation = roastedduck_common::ByteString::new();
         for child in &children {
             if !requires_collation_propagation(&child.return_type) {
                 continue;
@@ -657,7 +661,7 @@ impl<'a> FunctionBinder<'a> {
         }
         let collation_type = LogicalType::with_info(
             LogicalTypeId::Varchar,
-            rustdb_types::TypeInfo::String(rustdb_types::StringTypeInfo { collation }),
+            roastedduck_types::TypeInfo::String(roastedduck_types::StringTypeInfo { collation }),
         );
         if requires_collation_propagation(&function.return_type) {
             function.return_type = collation_type.clone();
@@ -701,9 +705,9 @@ impl<'a> FunctionBinder<'a> {
         let mut bind_info: Option<Arc<dyn FunctionData>> = None;
         if let Some(bind) = function.bind.clone() {
             let (argument_types, constants) = self.bind_input(&children);
-            let aliases: Vec<rustdb_common::ByteString> =
+            let aliases: Vec<roastedduck_common::ByteString> =
                 children.iter().map(|child| child.alias.clone()).collect();
-            let names: Vec<rustdb_common::ByteString> = children.iter().map(expression_name).collect();
+            let names: Vec<roastedduck_common::ByteString> = children.iter().map(expression_name).collect();
             bind_info = bind(
                 &mut function,
                 &BindInput {
@@ -714,7 +718,7 @@ impl<'a> FunctionBinder<'a> {
                     client: &self.context.function_client,
                     binder: Some(self.context as &dyn std::any::Any),
                     arguments: Some(&children as &dyn std::any::Any),
-                    aggregates: Some(self.context as &dyn rustdb_function::AggregateResolver),
+                    aggregates: Some(self.context as &dyn roastedduck_function::AggregateResolver),
                     lambda: self.lambda.as_ref(),
                 },
             )?;
@@ -783,9 +787,9 @@ impl<'a> FunctionBinder<'a> {
         self.push_aggregate_collations(&mut function, &mut children)?;
         if let Some(bind) = function.bind.clone() {
             let (argument_types, constants) = self.bind_input(&children);
-            let aliases: Vec<rustdb_common::ByteString> =
+            let aliases: Vec<roastedduck_common::ByteString> =
                 children.iter().map(|child| child.alias.clone()).collect();
-            let names: Vec<rustdb_common::ByteString> = children.iter().map(expression_name).collect();
+            let names: Vec<roastedduck_common::ByteString> = children.iter().map(expression_name).collect();
             bind_info = bind(
                 &mut function,
                 &BindInput {
@@ -796,7 +800,7 @@ impl<'a> FunctionBinder<'a> {
                     client: &self.context.function_client,
                     binder: Some(self.context as &dyn std::any::Any),
                     arguments: Some(&children as &dyn std::any::Any),
-                    aggregates: Some(self.context as &dyn rustdb_function::AggregateResolver),
+                    aggregates: Some(self.context as &dyn roastedduck_function::AggregateResolver),
                     lambda: self.lambda.as_ref(),
                 },
             )?;
@@ -831,7 +835,7 @@ impl<'a> FunctionBinder<'a> {
     }
 
     /// The collation handling of DuckDB's aggregate binds (`BindMinMax` and
-    /// `ArgMinMaxBase::Bind`): see [`rustdb_function::AggregateCollation`].
+    /// `ArgMinMaxBase::Bind`): see [`roastedduck_function::AggregateCollation`].
     fn push_aggregate_collations(
         &self,
         function: &mut AggregateFunction,
@@ -839,10 +843,10 @@ impl<'a> FunctionBinder<'a> {
     ) -> Result<()> {
         use crate::collation_binding::{CollationType, push_collation_with};
         match function.collation {
-            rustdb_function::AggregateCollation::None => {}
-            rustdb_function::AggregateCollation::Argument(index) => {
+            roastedduck_function::AggregateCollation::None => {}
+            roastedduck_function::AggregateCollation::Argument(index) => {
                 if let Some(child) = children.get_mut(index)
-                    && child.return_type.physical_type() == rustdb_types::PhysicalType::Varchar
+                    && child.return_type.physical_type() == roastedduck_types::PhysicalType::Varchar
                 {
                     let ty = child.return_type.clone();
                     let original =
@@ -851,7 +855,7 @@ impl<'a> FunctionBinder<'a> {
                         push_collation_with(self.context, original, &ty, CollationType::AllCollations)?.0;
                 }
             }
-            rustdb_function::AggregateCollation::MinMax => {
+            roastedduck_function::AggregateCollation::MinMax => {
                 let Some(first) = children.first() else {
                     return Ok(());
                 };
@@ -876,11 +880,11 @@ impl<'a> FunctionBinder<'a> {
                 let lookup = self.context.get_entry(
                     "system",
                     "main",
-                    rustdb_catalog::CatalogType::AggregateFunction,
+                    roastedduck_catalog::CatalogType::AggregateFunction,
                     name,
                     true,
                 )?;
-                let Some(rustdb_catalog::EntryKind::AggregateFunction(functions)) =
+                let Some(roastedduck_catalog::EntryKind::AggregateFunction(functions)) =
                     lookup.as_ref().map(|lookup| &lookup.entry.kind)
                 else {
                     return Err(Error::not_implemented(format!(
@@ -992,7 +996,7 @@ type TemplateBindings = CaseInsensitiveMap<Vec<LogicalType>>;
 
 /// What a failed inference reports: the function and the argument being inferred.
 struct TemplateContext<'a> {
-    signature: &'a rustdb_common::ByteString,
+    signature: &'a roastedduck_common::ByteString,
     location: Option<u64>,
     /// `old_implicit_casting`: bindings of any two types combine.
     old_implicit_casting: bool,
@@ -1055,18 +1059,18 @@ fn infer_template(
             }
             return Ok(());
         }
-        let mut message = rustdb_common::byte_format!(
+        let mut message = roastedduck_common::byte_format!(
             "Cannot deduce template type '{name}' in function: '{}'\nType '{name}' was inferred to be:\n",
             context.signature
         );
         for index in (0..steps.len()).step_by(2) {
             if index == 0 {
-                message.push_bytes(rustdb_common::byte_format!(
+                message.push_bytes(roastedduck_common::byte_format!(
                     " - '{}', from first occurrence\n",
                     steps[index]
                 ));
             } else {
-                message.push_bytes(rustdb_common::byte_format!(
+                message.push_bytes(roastedduck_common::byte_format!(
                     " - '{}', by promoting '{}' + '{}'\n",
                     steps[index],
                     steps[index - 2],
@@ -1074,7 +1078,7 @@ fn infer_template(
                 ));
             }
         }
-        message.push_bytes(rustdb_common::byte_format!(
+        message.push_bytes(roastedduck_common::byte_format!(
             " - '{actual}', which is incompatible with previously inferred type!"
         ));
         return Err(Error::binder(message).with_position(context.location));
@@ -1159,7 +1163,7 @@ fn resolve_template_types(
     if !templated {
         return Ok(());
     }
-    let signature = rustdb_common::byte_format!(
+    let signature = roastedduck_common::byte_format!(
         "{} -> {return_type}",
         call_to_bytes(name, arguments, varargs.as_ref())
     );
@@ -1208,7 +1212,7 @@ fn check_template_types_resolved(
         .chain(std::iter::once(return_type))
     {
         if let Some(template) = unresolved_template(ty) {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Function '{name}' has a template parameter type '{template}' that could not be resolved to a \
                  concrete type"
             )));
@@ -1229,7 +1233,7 @@ fn unresolved_template(ty: &LogicalType) -> Option<String> {
 }
 
 /// DuckDB's `Expression::GetName`: the alias, or the expression's SQL text.
-fn expression_name(expression: &Expression) -> rustdb_common::ByteString {
+fn expression_name(expression: &Expression) -> roastedduck_common::ByteString {
     if expression.alias.is_empty() {
         expression.to_bytes()
     } else {
@@ -1240,22 +1244,22 @@ fn expression_name(expression: &Expression) -> rustdb_common::ByteString {
 /// Aggregate resolution for scalar functions that run an aggregate (`list_aggregate`):
 /// DuckDB's `Catalog::GetSystemCatalog(context).GetEntry<AggregateFunctionCatalogEntry>`,
 /// `FunctionBinder::BindFunction` and `FunctionBinder::BindAggregateFunction`.
-impl rustdb_function::AggregateResolver for ClientContext {
+impl roastedduck_function::AggregateResolver for ClientContext {
     fn bind_aggregate(
         &self,
         name: &str,
         arguments: &[(LogicalType, Option<Value>)],
-    ) -> Result<rustdb_function::BoundAggregateFunction> {
+    ) -> Result<roastedduck_function::BoundAggregateFunction> {
         let lookup = self
             .get_entry(
                 "system",
                 "main",
-                rustdb_catalog::CatalogType::AggregateFunction,
+                roastedduck_catalog::CatalogType::AggregateFunction,
                 name,
                 false,
             )?
             .ok_or_else(|| Error::internal("aggregate lookup returned nothing"))?;
-        let rustdb_catalog::EntryKind::AggregateFunction(functions) = &lookup.entry.kind else {
+        let roastedduck_catalog::EntryKind::AggregateFunction(functions) = &lookup.entry.kind else {
             return Err(Error::catalog(format!("{name} is not an aggregate function")));
         };
         let binder = FunctionBinder::new(self);
@@ -1280,12 +1284,14 @@ impl rustdb_function::AggregateResolver for ClientContext {
             return Err(Error::internal("aggregate binding did not produce an aggregate"));
         };
         let aggregate = (**aggregate).clone();
-        Ok(rustdb_function::BoundAggregateFunction {
+        Ok(roastedduck_function::BoundAggregateFunction {
             argument_count: aggregate.children.len(),
             display,
             function: aggregate.function,
             bind_data: aggregate.bind_info,
-            serialize: Arc::new(move |serializer| rustdb_serde::Serialize::serialize(&bound, serializer)),
+            serialize: Arc::new(move |serializer| {
+                roastedduck_serde::Serialize::serialize(&bound, serializer)
+            }),
         })
     }
 }

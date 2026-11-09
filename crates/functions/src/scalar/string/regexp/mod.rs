@@ -9,10 +9,10 @@ use std::any::Any;
 use std::sync::Arc;
 
 use regex::bytes::{CaptureLocations, Regex};
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::ValueCast;
-use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Value, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, Value, Vector};
 
 use crate::scalar::executor::{ScalarOutput, Str, StrOut, addressable, binary, ternary, unary};
 use crate::scalar::structs::build_struct;
@@ -31,7 +31,7 @@ struct RegexpBindData {
     /// `regexp_extract`'s group (`None` for a NULL group: always the empty string).
     group: Option<usize>,
     /// Group names of the STRUCT variants.
-    names: Vec<rustdb_common::ByteString>,
+    names: Vec<roastedduck_common::ByteString>,
 }
 
 impl FunctionData for RegexpBindData {
@@ -40,7 +40,7 @@ impl FunctionData for RegexpBindData {
     }
 }
 
-fn bind_data(state: &rustdb_function::FunctionState) -> Result<&RegexpBindData> {
+fn bind_data(state: &roastedduck_function::FunctionState) -> Result<&RegexpBindData> {
     state
         .bind_data
         .as_ref()
@@ -108,7 +108,7 @@ fn bind_matches(full: bool) -> impl Fn(&mut ScalarFunction, &BindInput<'_>) -> B
 
 fn matches_kernel(
     full: bool,
-) -> impl Fn(&DataChunk, &mut rustdb_function::FunctionState, &mut Vector) -> Result<()> {
+) -> impl Fn(&DataChunk, &mut roastedduck_function::FunctionState, &mut Vector) -> Result<()> {
     move |args, state, result| {
         let data = bind_data(state)?;
         if let Some(regex) = &data.constant {
@@ -227,7 +227,7 @@ fn bind_replace(_: &mut ScalarFunction, input: &BindInput<'_>) -> BindResult {
 
 fn replace_kernel(
     args: &DataChunk,
-    state: &mut rustdb_function::FunctionState,
+    state: &mut roastedduck_function::FunctionState,
     result: &mut Vector,
 ) -> Result<()> {
     let data = bind_data(state)?;
@@ -291,7 +291,7 @@ fn parse_group_names(
     argument_type: &LogicalType,
     constant: Option<&Option<Value>>,
     regex: Option<&Regex>,
-) -> Result<Vec<rustdb_common::ByteString>> {
+) -> Result<Vec<roastedduck_common::ByteString>> {
     let function_name = function_name.as_ref();
     if argument_type.id() == LogicalTypeId::Unknown {
         return Err(crate::parameter_not_resolved());
@@ -310,16 +310,16 @@ fn parse_group_names(
     if children.is_empty() {
         return Err(Error::binder("Group name list must be non-empty"));
     }
-    let mut names: Vec<rustdb_common::ByteString> = Vec::with_capacity(children.len());
+    let mut names: Vec<roastedduck_common::ByteString> = Vec::with_capacity(children.len());
     for child in children {
         if child.is_null() {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "NULL group name in {function_name}"
             )));
         }
         let name = crate::values::as_text_bytes(child)?;
         if names.iter().any(|existing| existing.eq_ignore_ascii_case(&name)) {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Duplicate group name '{name}' in {function_name}"
             )));
         }
@@ -337,7 +337,7 @@ fn parse_group_names(
     Ok(names)
 }
 
-fn struct_type(names: &[rustdb_common::ByteString]) -> LogicalType {
+fn struct_type(names: &[roastedduck_common::ByteString]) -> LogicalType {
     LogicalType::struct_type(names.iter().map(|name| (name.clone(), varchar())).collect())
 }
 
@@ -380,7 +380,7 @@ fn bind_extract(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindRes
             group = None;
         } else if value.logical_type().id() == LogicalTypeId::List {
             if constant.is_none() {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "{} with LIST of group names requires a constant pattern",
                     function.name
                 )));
@@ -415,7 +415,7 @@ fn bind_extract(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindRes
 
 fn extract_kernel(
     args: &DataChunk,
-    state: &mut rustdb_function::FunctionState,
+    state: &mut roastedduck_function::FunctionState,
     result: &mut Vector,
 ) -> Result<()> {
     let data = bind_data(state)?;
@@ -458,7 +458,7 @@ fn varchar_vector(values: &[Option<Vec<u8>>]) -> Result<Vector> {
 /// `RegexExtractStructFunction`).
 fn extract_struct_kernel(
     args: &DataChunk,
-    state: &mut rustdb_function::FunctionState,
+    state: &mut roastedduck_function::FunctionState,
     result: &mut Vector,
 ) -> Result<()> {
     let data = bind_data(state)?;
@@ -469,7 +469,7 @@ fn extract_struct_kernel(
     let strings = addressable(args.column(0), count);
     let constant = strings.is_constant();
     let rows = if constant { 1 } else { count };
-    let unified = strings.unified::<rustdb_types::StringT>();
+    let unified = strings.unified::<roastedduck_types::StringT>();
     let mut fields: Vec<Vec<Option<Vec<u8>>>> = vec![Vec::with_capacity(rows); data.names.len()];
     let mut nulls = Vec::new();
     for row in 0..rows {
@@ -601,7 +601,7 @@ fn bind_extract_all(_: &mut ScalarFunction, input: &BindInput<'_>) -> BindResult
 /// DuckDB's `RegexpExtractAll::Execute`.
 fn extract_all_kernel(
     args: &DataChunk,
-    state: &mut rustdb_function::FunctionState,
+    state: &mut roastedduck_function::FunctionState,
     result: &mut Vector,
 ) -> Result<()> {
     let data = bind_data(state)?;
@@ -613,8 +613,8 @@ fn extract_all_kernel(
         .collect();
     let constant = columns.iter().all(|column| column.is_constant());
     let rows = if constant { 1 } else { count };
-    let strings = columns[0].unified::<rustdb_types::StringT>();
-    let patterns = columns[1].unified::<rustdb_types::StringT>();
+    let strings = columns[0].unified::<roastedduck_types::StringT>();
+    let patterns = columns[1].unified::<roastedduck_types::StringT>();
     let groups = columns.get(2).map(|column| column.unified::<i32>());
     let mut cache = PatternCache::default();
     let mut lists = Vec::with_capacity(rows);
@@ -665,7 +665,7 @@ fn extract_all_kernel(
 
 fn bind_extract_all_struct(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindResult {
     let Some(pattern) = constant_pattern(input.constants.get(1)) else {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "{} with LIST requires a constant pattern",
             function.name
         )));
@@ -691,7 +691,7 @@ fn bind_extract_all_struct(function: &mut ScalarFunction, input: &BindInput<'_>)
 /// DuckDB's `RegexpExtractAllStruct::Execute`: a list of STRUCTs of the named groups.
 fn extract_all_struct_kernel(
     args: &DataChunk,
-    state: &mut rustdb_function::FunctionState,
+    state: &mut roastedduck_function::FunctionState,
     result: &mut Vector,
 ) -> Result<()> {
     let data = bind_data(state)?;
@@ -703,7 +703,7 @@ fn extract_all_struct_kernel(
     let strings = addressable(args.column(0), count);
     let constant = args.columns().iter().all(Vector::is_constant);
     let rows = if constant { 1 } else { count };
-    let unified = strings.unified::<rustdb_types::StringT>();
+    let unified = strings.unified::<roastedduck_types::StringT>();
     let mut fields: Vec<Vec<Option<Vec<u8>>>> = vec![Vec::new(); data.names.len()];
     let mut entries = Vec::with_capacity(rows);
     let mut nulls = Vec::new();
@@ -835,8 +835,8 @@ fn split_executor(
     let delimiters = addressable(args.column(1), count);
     let constant = args.columns().iter().all(Vector::is_constant);
     let rows = if constant { 1 } else { count };
-    let string_values = strings.unified::<rustdb_types::StringT>();
-    let delimiter_values = delimiters.unified::<rustdb_types::StringT>();
+    let string_values = strings.unified::<roastedduck_types::StringT>();
+    let delimiter_values = delimiters.unified::<roastedduck_types::StringT>();
     let mut lists = Vec::with_capacity(rows);
     for row in 0..rows {
         let Some(string) = string_values.get(row) else {

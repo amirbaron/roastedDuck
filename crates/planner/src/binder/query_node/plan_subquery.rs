@@ -3,11 +3,11 @@
 //! correlated ones become dependent joins, which the planner flattens afterwards
 //! ([`crate::subquery::decorrelate_independent`]).
 
-use rustdb_ast::{JoinRefType, JoinType, SubqueryType};
-use rustdb_catalog::{CatalogType, EntryKind};
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::ValueCast;
-use rustdb_types::{LogicalType, PhysicalType, Value};
+use roastedduck_ast::{JoinRefType, JoinType, SubqueryType};
+use roastedduck_catalog::{CatalogType, EntryKind};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_types::{LogicalType, PhysicalType, Value};
 
 use crate::binder::expression::push_collation;
 use crate::binder::tableref::extract_join_conditions_from;
@@ -98,7 +98,7 @@ fn replace_root(
 fn plan_uncorrelated_subquery(
     scope: &mut BindScope<'_>,
     subquery: &mut BoundSubqueryExpression,
-    name: rustdb_common::ByteString,
+    name: roastedduck_common::ByteString,
     return_type: LogicalType,
     root: &mut LogicalOperator,
     plan: LogicalOperator,
@@ -310,7 +310,7 @@ fn perform_duplicate_elimination(scope: &BindScope<'_>, correlated_columns: &mut
 fn plan_correlated_subquery(
     scope: &mut BindScope<'_>,
     subquery: &mut BoundSubqueryExpression,
-    name: rustdb_common::ByteString,
+    name: roastedduck_common::ByteString,
     return_type: LogicalType,
     root: &mut LogicalOperator,
     plan: LogicalOperator,

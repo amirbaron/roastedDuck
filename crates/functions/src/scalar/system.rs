@@ -10,11 +10,11 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::Result;
-use rustdb_function::{
+use roastedduck_common::Result;
+use roastedduck_function::{
     BindInput, FunctionClient, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet, Stability,
 };
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 
 /// The calling connection, kept from bind time for the kernel.
 #[derive(Debug)]
@@ -37,12 +37,12 @@ fn client(state: &FunctionState) -> Result<Arc<FunctionClient>> {
         .as_ref()
         .and_then(|data| data.as_any().downcast_ref::<Client>())
         .map(|client| Arc::clone(&client.0))
-        .ok_or_else(|| rustdb_common::Error::internal("system function without its connection"))
+        .ok_or_else(|| roastedduck_common::Error::internal("system function without its connection"))
 }
 
 /// The `(database, schema)` entries of the default search path (DuckDB's
 /// `CatalogSearchPath::Get`).
-fn search_path(database: &[u8]) -> Vec<(rustdb_common::ByteString, rustdb_common::ByteString)> {
+fn search_path(database: &[u8]) -> Vec<(roastedduck_common::ByteString, roastedduck_common::ByteString)> {
     vec![
         ("temp".into(), "main".into()),
         (database.into(), "main".into()),
@@ -134,7 +134,7 @@ fn current_schemas_functions() -> ScalarFunctionSet {
                     let tail = paths.split_off(1);
                     paths.extend(
                         set.into_iter()
-                            .map(|schema| (rustdb_common::ByteString::new(), schema.into())),
+                            .map(|schema| (roastedduck_common::ByteString::new(), schema.into())),
                     );
                     paths.extend(tail);
                     Value::list(
@@ -152,12 +152,12 @@ fn current_schemas_functions() -> ScalarFunctionSet {
     )
     .with_bind(|function, input| {
         if input.argument_types[0] != LogicalType::BOOLEAN {
-            return Err(rustdb_common::Error::binder(
+            return Err(roastedduck_common::Error::binder(
                 "current_schemas requires a boolean input",
             ));
         }
         if input.constants[0].is_none() {
-            return Err(rustdb_common::Error::not_implemented(
+            return Err(roastedduck_common::Error::not_implemented(
                 "current_schemas requires a constant input",
             ));
         }

@@ -4,12 +4,12 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::{
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::{
     FunctionData, InOutResult, TableFunction, TableFunctionBindInput, TableFunctionBindOutput,
     TableFunctionSet, TableScanState,
 };
-use rustdb_types::{DataChunk, Interval, LogicalType, Timestamp, Value, Vector};
+use roastedduck_types::{DataChunk, Interval, LogicalType, Timestamp, Value, Vector};
 
 use crate::icu_dateadd::add;
 use crate::icu_datefunc::{TzCalendar, create_calendar_with_cutover, session_settings};
@@ -35,7 +35,7 @@ impl FunctionData for IcuRangeBindData {
 impl IcuRangeBindData {
     /// `ICURangeBindData(ClientContext &context, const vector<Value> &inputs)`: the calendar
     /// keeps ICU's default Julian/Gregorian cutover.
-    fn new(client: &rustdb_function::FunctionClient, inputs: &[Value]) -> Self {
+    fn new(client: &roastedduck_function::FunctionClient, inputs: &[Value]) -> Self {
         let (tz_setting, cal_setting) = session_settings(client);
         let calendar = create_calendar_with_cutover(TimeZone::create(&tz_setting), &cal_setting, false);
         let mut result = Self {
@@ -231,7 +231,7 @@ fn bind(generate_series: bool) -> impl Fn(&TableFunctionBindInput<'_>) -> Result
     move |input| {
         let context = input
             .binder
-            .and_then(|binder| binder.downcast_ref::<rustdb_planner::ClientContext>())
+            .and_then(|binder| binder.downcast_ref::<roastedduck_planner::ClientContext>())
             .ok_or_else(|| Error::internal("ICU range bound without a client context"))?;
         let result = IcuRangeBindData::new(&context.function_client, input.inputs);
         Ok(TableFunctionBindOutput {
@@ -242,7 +242,8 @@ fn bind(generate_series: bool) -> impl Fn(&TableFunctionBindInput<'_>) -> Result
                 } else {
                     "range"
                 }
-                .to_owned().into(),
+                .to_owned()
+                .into(),
             ],
             bind_data: Some(Arc::new(result)),
         })

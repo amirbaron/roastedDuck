@@ -5,10 +5,10 @@
 
 use std::marker::PhantomData;
 
-use rustdb_common::Result;
-use rustdb_function::aggregate::{Aggregate, AggregateInput, States, Typed};
-use rustdb_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
-use rustdb_types::{LogicalType, Vector};
+use roastedduck_common::Result;
+use roastedduck_function::aggregate::{Aggregate, AggregateInput, States, Typed};
+use roastedduck_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
+use roastedduck_types::{LogicalType, Vector};
 
 use crate::aggregate::stored::{StoredKind, with_stored_kind};
 
@@ -152,8 +152,8 @@ fn bind_first<const LAST: bool, const SKIP_NULLS: bool>(
 fn first_set<const LAST: bool, const SKIP_NULLS: bool>(name: &str) -> AggregateFunctionSet {
     let mut set = AggregateFunctionSet::new(name);
     set.add(AggregateFunction::unbound(
-        vec![LogicalType::simple(rustdb_types::LogicalTypeId::Decimal)],
-        LogicalType::simple(rustdb_types::LogicalTypeId::Decimal),
+        vec![LogicalType::simple(roastedduck_types::LogicalTypeId::Decimal)],
+        LogicalType::simple(roastedduck_types::LogicalTypeId::Decimal),
         bind_first::<LAST, SKIP_NULLS>,
     ));
     set.add(AggregateFunction::unbound(

@@ -11,12 +11,12 @@ use std::any::Any;
 use std::ffi::{c_char, c_void};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::AggregateInput;
-use rustdb_function::{
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::AggregateInput;
+use roastedduck_function::{
     AggregateFunction, AggregateFunctionSet, AggregateOps, FunctionData, NullHandling, StatePtr,
 };
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use crate::data_chunk::{DuckdbDataChunk, DuckdbVector};
 use crate::function::{
@@ -144,7 +144,10 @@ impl CAggregateOps {
         };
         call(std::ptr::from_mut(&mut info).cast());
         match info.error {
-            Some(error) => Err(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, error)),
+            Some(error) => Err(Error::new_bytes(
+                roastedduck_common::ErrorKind::InvalidInput,
+                error,
+            )),
             None => Ok(()),
         }
     }
@@ -167,7 +170,10 @@ impl CAggregateOps {
             .unwrap_or_else(PoisonError::into_inner)
             .take()
         {
-            Some(error) => Err(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, error)),
+            Some(error) => Err(Error::new_bytes(
+                roastedduck_common::ErrorKind::InvalidInput,
+                error,
+            )),
             None => Ok(()),
         }
     }

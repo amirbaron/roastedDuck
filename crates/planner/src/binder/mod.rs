@@ -23,9 +23,9 @@ use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::{ParsedExpression, SetOperationType};
-use rustdb_common::{Error, Result};
-use rustdb_types::LogicalType;
+use roastedduck_ast::{ParsedExpression, SetOperationType};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::LogicalType;
 
 use crate::ColumnBinding;
 use crate::context::ClientContext;
@@ -42,14 +42,14 @@ pub use binding::{Binding, BindingAlias, BindingKind, CteBindState, DUMMY_NAME};
 pub struct BoundStatement {
     pub plan: LogicalOperator,
     pub types: Vec<LogicalType>,
-    pub names: Vec<rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
     pub extra_info: ExtraBoundInfo,
 }
 
 impl BoundStatement {
     pub fn new(
         plan: LogicalOperator,
-        names: Vec<rustdb_common::ByteString>,
+        names: Vec<roastedduck_common::ByteString>,
         types: Vec<LogicalType>,
     ) -> Self {
         Self {
@@ -77,7 +77,7 @@ pub struct ExtraBoundInfo {
 /// What a set operation keeps of a bound operand once its plan is taken.
 #[derive(Clone, Debug, Default)]
 pub struct BoundChildInfo {
-    pub names: Vec<rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
     pub types: Vec<LogicalType>,
     pub extra_info: ExtraBoundInfo,
 }
@@ -97,7 +97,7 @@ impl BoundChildInfo {
 pub struct CorrelatedColumnInfo {
     pub binding: ColumnBinding,
     pub logical_type: LogicalType,
-    pub name: rustdb_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     pub depth: u64,
 }
 
@@ -233,12 +233,12 @@ impl BindingMode {
 pub struct GlobalBinderState {
     bound_tables: AtomicU64,
     /// Optional relation-only capture, shared with CTE and scalar-subquery binders.
-    external_replacements: Mutex<Option<Vec<rustdb_ast::TableRef>>>,
+    external_replacements: Mutex<Option<Vec<roastedduck_ast::TableRef>>>,
     properties: Mutex<StatementProperties>,
     parameters: Mutex<Option<BoundParameterMap>>,
     mode: Mutex<BindingMode>,
     /// The tables found when extracting names (`table_names`).
-    table_names: Mutex<BTreeSet<rustdb_common::ByteString>>,
+    table_names: Mutex<BTreeSet<roastedduck_common::ByteString>>,
 }
 
 /// The binder of one query level (DuckDB's `Binder` members).
@@ -249,7 +249,7 @@ pub struct Binder {
     pub bind_context: BindContext,
     pub correlated_columns: CorrelatedColumns,
     /// The alias of the subquery being bound, if any.
-    pub alias: rustdb_common::ByteString,
+    pub alias: roastedduck_common::ByteString,
     /// Macro parameters in scope.
     pub macro_binding: Option<Binding>,
     pub binder_type: BinderType,
@@ -263,7 +263,7 @@ pub struct Binder {
     depth: u64,
     /// The views being bound by this binder and its parents (DuckDB's `bound_views` up
     /// the parent chain), to detect a view that references itself.
-    pub(crate) bound_views: Vec<Arc<rustdb_catalog::CatalogEntry>>,
+    pub(crate) bound_views: Vec<Arc<roastedduck_catalog::CatalogEntry>>,
 }
 
 impl Binder {
@@ -275,7 +275,7 @@ impl Binder {
             .unwrap_or_else(PoisonError::into_inner) = Some(Vec::new());
     }
 
-    pub(crate) fn retain_external_replacement(&self, table: &rustdb_ast::TableRef) {
+    pub(crate) fn retain_external_replacement(&self, table: &roastedduck_ast::TableRef) {
         if let Some(replacements) = self
             .global
             .external_replacements
@@ -287,7 +287,7 @@ impl Binder {
         }
     }
 
-    pub(crate) fn take_external_replacements(&self) -> Vec<rustdb_ast::TableRef> {
+    pub(crate) fn take_external_replacements(&self) -> Vec<roastedduck_ast::TableRef> {
         self.global
             .external_replacements
             .lock()
@@ -303,7 +303,7 @@ impl Binder {
             global: Arc::default(),
             bind_context: BindContext::default(),
             correlated_columns: CorrelatedColumns::default(),
-            alias: rustdb_common::ByteString::new(),
+            alias: roastedduck_common::ByteString::new(),
             macro_binding: None,
             binder_type: BinderType::Regular,
             has_unplanned_dependent_joins: false,
@@ -329,7 +329,7 @@ impl Binder {
             global: Arc::clone(&self.global),
             bind_context: BindContext::default(),
             correlated_columns: CorrelatedColumns::default(),
-            alias: rustdb_common::ByteString::new(),
+            alias: roastedduck_common::ByteString::new(),
             macro_binding: self.macro_binding.clone(),
             binder_type,
             has_unplanned_dependent_joins: false,
@@ -345,9 +345,9 @@ impl Binder {
 
     /// Records that this binder binds `view`; fails if a parent binder is already binding
     /// it (`Binder::AddBoundView`).
-    pub(crate) fn add_bound_view(&mut self, view: &Arc<rustdb_catalog::CatalogEntry>) -> Result<()> {
+    pub(crate) fn add_bound_view(&mut self, view: &Arc<roastedduck_catalog::CatalogEntry>) -> Result<()> {
         if self.bound_views.iter().any(|bound| Arc::ptr_eq(bound, view)) {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "infinite recursion detected: attempting to recursively bind view \"{}\"",
                 view.name()
             )));
@@ -398,7 +398,7 @@ impl Binder {
     }
 
     /// Records a table the statement uses (`AddTableName`).
-    pub fn add_table_name(&self, name: rustdb_common::ByteString) {
+    pub fn add_table_name(&self, name: roastedduck_common::ByteString) {
         self.global
             .table_names
             .lock()
@@ -407,7 +407,7 @@ impl Binder {
     }
 
     /// The tables recorded while extracting names (`GetTableNames`).
-    pub fn take_table_names(&self) -> BTreeSet<rustdb_common::ByteString> {
+    pub fn take_table_names(&self) -> BTreeSet<roastedduck_common::ByteString> {
         std::mem::take(
             &mut *self
                 .global
@@ -456,13 +456,13 @@ impl Binder {
     }
 
     /// The next name for an unnamed subquery (`unnamed_subquery`, `unnamed_subquery2`, ...).
-    pub fn next_unnamed_subquery_name(&mut self) -> rustdb_common::ByteString {
+    pub fn next_unnamed_subquery_name(&mut self) -> roastedduck_common::ByteString {
         let index = self.unnamed_subquery_index;
         self.unnamed_subquery_index += 1;
         if index == 1 {
             "unnamed_subquery".into()
         } else {
-            rustdb_common::byte_format!("unnamed_subquery{index}")
+            roastedduck_common::byte_format!("unnamed_subquery{index}")
         }
     }
 

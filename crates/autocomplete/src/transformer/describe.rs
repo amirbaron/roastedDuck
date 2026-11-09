@@ -1,7 +1,7 @@
 //! The transform functions of DuckDB's `transform_describe.cpp`: `SHOW`, `DESCRIBE` and
 //! `SUMMARIZE`, which select `*` from a `ShowRef`.
 
-use rustdb_parser::build;
+use roastedduck_parser::build;
 
 use super::prelude::*;
 

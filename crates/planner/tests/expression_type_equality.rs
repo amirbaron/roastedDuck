@@ -1,6 +1,6 @@
 //! Native C++ bound-reference equality includes the logical return type.
-use rustdb_planner::Expression;
-use rustdb_types::LogicalType as L;
+use roastedduck_planner::Expression;
+use roastedduck_types::LogicalType as L;
 
 #[test]
 fn bound_reference_logical_types_match_frozen_cpp() {

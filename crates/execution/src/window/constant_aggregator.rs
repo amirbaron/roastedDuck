@@ -1,9 +1,9 @@
 //! Aggregates whose frame is the whole partition (DuckDB's
 //! `window_constant_aggregator.cpp`): one aggregate per partition, computed while sinking.
 
-use rustdb_ast::{WindowBoundary, WindowExcludeMode};
-use rustdb_common::Result;
-use rustdb_types::{DataChunk, SelectionVector, Vector};
+use roastedduck_ast::{WindowBoundary, WindowExcludeMode};
+use roastedduck_common::Result;
+use roastedduck_types::{DataChunk, SelectionVector, Vector};
 
 use super::WindowExpression;
 use super::aggregate_states::WindowAggregateStates;
@@ -177,7 +177,7 @@ impl ConstantGlobalState {
         let results = self
             .results
             .as_ref()
-            .ok_or_else(|| rustdb_common::Error::internal("constant window aggregate not finalized"))?;
+            .ok_or_else(|| roastedduck_common::Error::internal("constant window aggregate not finalized"))?;
         let begins = &bounds[WindowBound::FrameBegin];
         let mut rows = Vec::with_capacity(count);
         for &begin in &begins[..count] {

@@ -3,9 +3,9 @@
 //! its entries, or else a new entry appended to it. The result is a constant that names
 //! the position; types are filled in once the select list is bound.
 
-use rustdb_ast::{ExpressionClass, ParsedExpression, ParsedExpressionKind};
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_types::Value;
+use roastedduck_ast::{ExpressionClass, ParsedExpression, ParsedExpressionKind};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_types::Value;
 
 use super::base_select_binder::SelectBindState;
 use super::{is_potential_alias, qualify_column_names};

@@ -1,6 +1,6 @@
 //! The `web_sales` table and its child `web_returns` (`w_web_sales.c`, `w_web_returns.c`).
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use super::Output;
 use super::build_support::{get_permutation_entry, make_permutation};

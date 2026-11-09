@@ -8,11 +8,11 @@
 use std::borrow::Cow;
 use std::ops::{Index, IndexMut};
 
-use rustdb_ast::{OrderType, WindowBoundary, WindowExcludeMode};
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_planner::ExpressionType;
-use rustdb_types::compare::SqlOrd;
-use rustdb_types::{DataChunk, Interval, NativeType, PhysicalType, Vector, VectorKind};
+use roastedduck_ast::{OrderType, WindowBoundary, WindowExcludeMode};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_planner::ExpressionType;
+use roastedduck_types::compare::SqlOrd;
+use roastedduck_types::{DataChunk, Interval, NativeType, PhysicalType, Vector, VectorKind};
 
 use super::WindowExpression;
 use super::mask::{WindowMask, find_next_start, find_prev_start};

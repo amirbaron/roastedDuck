@@ -1,8 +1,8 @@
 //! `md5`, `md5_number` (DuckDB's `md5.cpp`), `sha1` (`sha1.cpp`) and `sha256`
 //! (`sha256.cpp`).
 
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::LogicalType;
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::LogicalType;
 
 use crate::digest::{md5, push_hex, sha1, sha256};
 use crate::scalar::executor::{Str, StrOut, unary};

@@ -5,9 +5,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::CastFunctionSet;
-use rustdb_types::LogicalType;
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::CastFunctionSet;
+use roastedduck_types::LogicalType;
 
 use crate::buffer::CsvBufferManager;
 use crate::error::CsvErrorHandler;
@@ -74,14 +74,14 @@ impl CsvValidator {
 /// (DuckDB's `CSVFileScan`).
 #[derive(Debug)]
 pub struct CsvFileScan {
-    pub file_path: rustdb_common::ByteString,
+    pub file_path: roastedduck_common::ByteString,
     pub file_idx: u64,
     pub options: CsvReaderOptions,
     pub buffer_manager: Arc<CsvBufferManager>,
     pub state_machine: Arc<CsvStateMachine>,
     pub error_handler: Arc<CsvErrorHandler>,
     /// The names and types of the file's columns.
-    pub names: Vec<rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
     pub types: Vec<LogicalType>,
     /// The types the projected columns are read as, in file column order.
     pub file_types: Vec<LogicalType>,
@@ -112,7 +112,7 @@ impl CsvFileScan {
         file_idx: u64,
         mut options: CsvReaderOptions,
         file_options: &MultiFileOptionsView,
-        names: &[rustdb_common::ByteString],
+        names: &[roastedduck_common::ByteString],
         types: &[LogicalType],
         file_schema: &CsvSchema,
         buffer_manager: Option<Arc<CsvBufferManager>>,
@@ -210,7 +210,7 @@ impl CsvFileScan {
         file_path: &[u8],
         file_idx: u64,
         mut options: CsvReaderOptions,
-        names: Vec<rustdb_common::ByteString>,
+        names: Vec<roastedduck_common::ByteString>,
         types: Vec<LogicalType>,
         buffer_manager: Arc<CsvBufferManager>,
         error_handler: Arc<CsvErrorHandler>,

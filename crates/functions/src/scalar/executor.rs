@@ -8,8 +8,8 @@
 
 use std::borrow::Cow;
 
-use rustdb_common::Result;
-use rustdb_types::{DataChunk, NativeType, Sel, StringHeap, StringT, Unified, Vector, VectorKind};
+use roastedduck_common::Result;
+use roastedduck_types::{DataChunk, NativeType, Sel, StringHeap, StringT, Unified, Vector, VectorKind};
 
 /// How a kernel argument of some physical type is presented to the kernel.
 pub trait ScalarArg: 'static {
@@ -133,8 +133,8 @@ impl<T: NativeType> ScalarOutput for T {
 const MAX_STRING_SIZE: u64 = u32::MAX as u64;
 
 /// The error for a string result longer than DuckDB supports (`StringHeap::EmptyString`).
-pub fn string_too_large(size: u64) -> rustdb_common::Error {
-    rustdb_common::Error::out_of_range(format!(
+pub fn string_too_large(size: u64) -> roastedduck_common::Error {
+    roastedduck_common::Error::out_of_range(format!(
         "Cannot create a string of size: '{size}', the maximum supported string size is: '{MAX_STRING_SIZE}'"
     ))
 }

@@ -300,8 +300,8 @@ pub struct DuckdbBignum {
     pub is_negative: bool,
 }
 
-/// `duckdb_string_t`: DuckDB's 16-byte `string_t` (see [`rustdb_types::StringT`]).
-pub type DuckdbStringT = rustdb_types::StringT;
+/// `duckdb_string_t`: DuckDB's 16-byte `string_t` (see [`roastedduck_types::StringT`]).
+pub type DuckdbStringT = roastedduck_types::StringT;
 
 /// `struct duckdb_column` (deprecated fields kept for layout compatibility).
 #[repr(C)]

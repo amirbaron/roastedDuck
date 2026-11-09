@@ -9,7 +9,7 @@ Linux binary translation can replace argv[0] with the executable path. Anything 
 that legitimately varies between two runs (timings) is
 masked by the case's own `normalize` rules.
 
-Usage: scripts/shell-diff.py --binary RUSTDB --reference DUCKDB [-k SUBSTRING] [--show]
+Usage: scripts/shell-diff.py --binary ROASTEDDUCK --reference DUCKDB [-k SUBSTRING] [--show]
                              [--jobs N] [--work DIR] [CASES.toml ...]
 
 Cases live in TOML files (default: scripts/shell-diff/*.toml), one `[[case]]` table each:

@@ -1,6 +1,6 @@
 //! Enums: written by name in JSON, by number in the binary format.
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::{Deserializer, Serializer};
 

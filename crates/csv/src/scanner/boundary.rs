@@ -81,7 +81,7 @@ impl CsvIterator {
         &mut self,
         buffer_manager: &CsvBufferManager,
         options: &CsvReaderOptions,
-    ) -> rustdb_common::Result<bool> {
+    ) -> roastedduck_common::Result<bool> {
         if !self.is_set {
             return Ok(false);
         }

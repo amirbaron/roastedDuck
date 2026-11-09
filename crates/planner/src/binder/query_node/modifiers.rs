@@ -1,10 +1,10 @@
 //! DISTINCT, ORDER BY and LIMIT of query nodes (DuckDB's `PrepareModifiers`,
 //! `BindModifiers`, `BindLimitValue` and `VisitQueryNode`).
 
-use rustdb_ast::{ExpressionType, ParsedExpression, ParsedExpressionKind, ResultModifier};
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::{CastParameters, ValueCast};
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_ast::{ExpressionType, ParsedExpression, ParsedExpressionKind, ResultModifier};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::{CastParameters, ValueCast};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use super::BoundResultModifier;
 use crate::ColumnBinding;
@@ -262,7 +262,7 @@ fn bind_limit_value(
 /// A reference to result column `index` (DuckDB's `CreateOrderExpression`).
 fn create_order_expression(
     expr: &Expression,
-    names: &[rustdb_common::ByteString],
+    names: &[roastedduck_common::ByteString],
     types: &[LogicalType],
     table_index: u64,
     index: usize,
@@ -291,7 +291,7 @@ fn create_order_expression(
 fn finalize_order_expression(
     expr: &Expression,
     table_index: u64,
-    names: &[rustdb_common::ByteString],
+    names: &[roastedduck_common::ByteString],
     types: &[LogicalType],
     bind_state: &SelectBindState,
 ) -> Result<Option<Expression>> {
@@ -317,7 +317,7 @@ fn finalize_order_expression(
                     }
                     result.return_type = LogicalType::with_info(
                         LogicalTypeId::Varchar,
-                        rustdb_types::TypeInfo::String(rustdb_types::StringTypeInfo { collation }),
+                        roastedduck_types::TypeInfo::String(roastedduck_types::StringTypeInfo { collation }),
                     );
                 }
             }
@@ -332,7 +332,7 @@ pub fn bind_modifiers(
     context: &ClientContext,
     modifiers: &mut [BoundResultModifier],
     table_index: u64,
-    names: &[rustdb_common::ByteString],
+    names: &[roastedduck_common::ByteString],
     types: &[LogicalType],
     bind_state: &SelectBindState,
 ) -> Result<()> {

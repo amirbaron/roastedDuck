@@ -1,9 +1,9 @@
 //! `array_value` (DuckDB's `array_value.cpp`).
 
-use rustdb_common::Error;
-use rustdb_function::{NullHandling, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::kernels::scatter;
-use rustdb_types::{LogicalType, LogicalTypeId, Vector};
+use roastedduck_common::Error;
+use roastedduck_function::{NullHandling, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::kernels::scatter;
+use roastedduck_types::{LogicalType, LogicalTypeId, Vector};
 
 use crate::scalar::executor::addressable;
 use crate::scalar::nested::all_constant;

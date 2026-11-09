@@ -19,10 +19,10 @@ mod operator;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use rustdb_common::Result;
-use rustdb_planner::{ColumnBinding, LogicalOperator};
-use rustdb_storage::statistics::{BaseStatistics, FilterPropagateResult, NumericValue};
-use rustdb_types::Value;
+use roastedduck_common::Result;
+use roastedduck_planner::{ColumnBinding, LogicalOperator};
+use roastedduck_storage::statistics::{BaseStatistics, FilterPropagateResult, NumericValue};
+use roastedduck_types::Value;
 
 use crate::optimizer::Optimizer;
 
@@ -114,7 +114,7 @@ fn numeric_max(stats: &BaseStatistics) -> Option<NumericValue> {
 fn has_min_max(stats: &BaseStatistics) -> bool {
     stats
         .numeric()
-        .is_some_and(rustdb_storage::statistics::NumericStats::has_min_max)
+        .is_some_and(roastedduck_storage::statistics::NumericStats::has_min_max)
 }
 
 /// Sets the minimum of numeric statistics (DuckDB's `NumericStats::SetMin`); a NULL value

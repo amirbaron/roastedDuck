@@ -3,10 +3,10 @@ use std::io::{self, Read};
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
-use rustdb_common::{ByteString, Error, ErrorKind, Result};
-use rustdb_function::ExtensionOption;
-use rustdb_function::registered_files::{FileHandle, FileSystem};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::{ByteString, Error, ErrorKind, Result};
+use roastedduck_function::ExtensionOption;
+use roastedduck_function::registered_files::{FileHandle, FileSystem};
+use roastedduck_types::{LogicalType, Value};
 use ureq::unversioned::transport::{Connector as _, TcpConnector};
 
 mod body;
@@ -34,7 +34,7 @@ pub trait ResolveHttpSecret: std::fmt::Debug + Send + Sync {
     fn resolve(&self, url: &str) -> Result<Option<HttpSecret>>;
 }
 
-pub const HTTP_SECRET_RESOLVER_KEY: &str = "rustdb.http_secret_resolver";
+pub const HTTP_SECRET_RESOLVER_KEY: &str = "roastedduck.http_secret_resolver";
 
 #[derive(Debug)]
 pub struct HttpSecretResolver(pub Arc<dyn ResolveHttpSecret>);
@@ -141,7 +141,7 @@ pub fn options() -> Vec<ExtensionOption> {
         ),
     ];
     entries.into_iter().map(|(name, description, input_type, default_value)| {
-        let set_function: Option<rustdb_function::ExtensionOptionSet> = match name {
+        let set_function: Option<roastedduck_function::ExtensionOptionSet> = match name {
             "httpfs_client_implementation" => Some(Arc::new(|value| {
                 if !matches!(value.to_varchar()?.as_str(), "default" | "curl" | "httplib") {
                     return Err(Error::invalid_input("Unsupported option for httpfs_client_implementation, only `curl`, `httplib` and `default` are currently supported"));
@@ -151,7 +151,7 @@ pub fn options() -> Vec<ExtensionOption> {
             "ca_cert_file" => Some(Arc::new(|value| {
                 if value.is_null() { return Err(Error::invalid_input("NULL it's not a valid option for ca_cert_file")); }
                 let path = value.to_varchar_bytes()?;
-                if !path.is_empty() { *value = Value::try_varchar(&rustdb_function::file_system::canonicalize_local_path_bytes(&path))?; }
+                if !path.is_empty() { *value = Value::try_varchar(&roastedduck_function::file_system::canonicalize_local_path_bytes(&path))?; }
                 Ok(())
             })),
             _ => None,
@@ -206,7 +206,7 @@ impl Parameters {
     }
 
     fn current_with_http_secret(url: &str, enable_http_secret: bool, enable_bearer: bool) -> Result<Self> {
-        let source = rustdb_function::file_system::opener().and_then(|client| client.settings());
+        let source = roastedduck_function::file_system::opener().and_then(|client| client.settings());
         let text = |name: &str, fallback: &str| {
             source
                 .as_ref()
@@ -244,7 +244,7 @@ impl Parameters {
             headers: Vec::new(),
         };
         if enable_http_secret
-            && let Some(resolver) = rustdb_function::file_system::opener()
+            && let Some(resolver) = roastedduck_function::file_system::opener()
                 .and_then(|c| c.object_cache())
                 .and_then(|cache| cache.get::<HttpSecretResolver>(HTTP_SECRET_RESOLVER_KEY))
             && let Some(secret) = resolver.0.resolve(url)?
@@ -285,7 +285,7 @@ impl Parameters {
         resolver: impl ureq::unversioned::resolver::Resolver,
     ) -> Result<ureq::Agent> {
         if !self.ca.is_empty() {
-            rustdb_function::file_system::verify_can_access_file(&self.ca)?;
+            roastedduck_function::file_system::verify_can_access_file(&self.ca)?;
         }
         let mut config = ureq::Agent::config_builder()
             .http_status_as_error(false)
@@ -331,7 +331,7 @@ struct HttpFile {
     agent: ureq::Agent,
     signing: Option<s3::RequestSigning>,
     logger: Option<logging::HttpLogger>,
-    client: Option<std::sync::Weak<rustdb_function::FunctionClient>>,
+    client: Option<std::sync::Weak<roastedduck_function::FunctionClient>>,
 }
 
 fn status_error(method: &str, url: &str, status: u16) -> Error {
@@ -484,7 +484,7 @@ pub fn extension_get(url: &str, etag: Option<&[u8]>) -> std::result::Result<Exte
         let etag = std::str::from_utf8(etag).map_err(|_| "Invalid extension ETag".to_owned())?;
         request = request.header("If-None-Match", etag);
     }
-    let client = rustdb_function::file_system::opener();
+    let client = roastedduck_function::file_system::opener();
     if let Some(client) = &client {
         client.record_http_request("GET", 0);
     }
@@ -580,7 +580,7 @@ impl HttpFile {
                 }
                 let start_time = std::time::SystemTime::now();
                 let start = std::time::Instant::now();
-                let client = rustdb_function::file_system::opener()
+                let client = roastedduck_function::file_system::opener()
                     .or_else(|| self.client.as_ref().and_then(std::sync::Weak::upgrade));
                 if let Some(client) = &client {
                     client.record_http_request(request_method, request_payload.len() as u64);
@@ -668,7 +668,7 @@ impl HttpFile {
                             && location_url.is_none()
                             && let Some(attempted) = &signing
                             && let Some(source) = &self.signing
-                            && rustdb_function::file_system::opener()
+                            && roastedduck_function::file_system::opener()
                                 .and_then(|client| client.settings())
                                 .and_then(|settings| {
                                     settings.current_setting("httpfs_enable_credential_refresh").ok()
@@ -798,7 +798,7 @@ impl HttpFile {
             agent,
             signing,
             logger: logging::HttpLogger::current(),
-            client: rustdb_function::file_system::opener()
+            client: roastedduck_function::file_system::opener()
                 .as_ref()
                 .map(Arc::downgrade),
         })
@@ -1049,7 +1049,7 @@ impl FileSystem for HttpFileSystem {
         HttpFile::open(path).map(|file| Arc::new(file) as Arc<dyn FileHandle>)
     }
     fn glob(&self, path: &[u8]) -> Result<Vec<ByteString>> {
-        let allow = rustdb_function::file_system::opener()
+        let allow = roastedduck_function::file_system::opener()
             .and_then(|c| c.settings())
             .and_then(|s| s.current_setting("allow_asterisks_in_http_paths").ok())
             .and_then(|v| v.as_bool())

@@ -2,8 +2,8 @@
 //! model for any (nested) type, and conversions between it and vectors.
 #![allow(dead_code, clippy::unwrap_used, clippy::panic)]
 
-use rustdb_buffer::{BufferManager, BufferManagerConfig};
-use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, StringT, TypeInfo, Vector};
+use roastedduck_buffer::{BufferManager, BufferManagerConfig};
+use roastedduck_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, StringT, TypeInfo, Vector};
 
 /// `SplitMix64`.
 pub struct Rng(u64);
@@ -45,7 +45,7 @@ pub enum TestValue {
 pub fn struct_type(fields: &[(&str, LogicalType)]) -> LogicalType {
     LogicalType::with_info(
         LogicalTypeId::Struct,
-        TypeInfo::Struct(rustdb_types::StructTypeInfo {
+        TypeInfo::Struct(roastedduck_types::StructTypeInfo {
             child_types: fields
                 .iter()
                 .map(|(name, ty)| ((*name).into(), ty.clone()))
@@ -57,7 +57,7 @@ pub fn struct_type(fields: &[(&str, LogicalType)]) -> LogicalType {
 pub fn array_type(child: LogicalType, size: u32) -> LogicalType {
     LogicalType::with_info(
         LogicalTypeId::Array,
-        TypeInfo::Array(rustdb_types::ArrayTypeInfo {
+        TypeInfo::Array(roastedduck_types::ArrayTypeInfo {
             child_type: child,
             size,
         }),
@@ -67,7 +67,7 @@ pub fn array_type(child: LogicalType, size: u32) -> LogicalType {
 pub fn map_type(key: LogicalType, value: LogicalType) -> LogicalType {
     LogicalType::with_info(
         LogicalTypeId::Map,
-        TypeInfo::List(rustdb_types::ListTypeInfo {
+        TypeInfo::List(roastedduck_types::ListTypeInfo {
             child_type: struct_type(&[("key", key), ("value", value)]),
         }),
     )
@@ -75,7 +75,7 @@ pub fn map_type(key: LogicalType, value: LogicalType) -> LogicalType {
 
 fn struct_fields(ty: &LogicalType) -> Vec<LogicalType> {
     match ty.info() {
-        Some(TypeInfo::Struct(rustdb_types::StructTypeInfo {
+        Some(TypeInfo::Struct(roastedduck_types::StructTypeInfo {
             child_types: children,
         })) => children.iter().map(|(_, ty)| ty.clone()).collect(),
         _ => panic!("not a struct: {ty}"),
@@ -84,8 +84,8 @@ fn struct_fields(ty: &LogicalType) -> Vec<LogicalType> {
 
 fn element_type(ty: &LogicalType) -> (LogicalType, Option<usize>) {
     match ty.info() {
-        Some(TypeInfo::List(rustdb_types::ListTypeInfo { child_type: child })) => (child.clone(), None),
-        Some(TypeInfo::Array(rustdb_types::ArrayTypeInfo {
+        Some(TypeInfo::List(roastedduck_types::ListTypeInfo { child_type: child })) => (child.clone(), None),
+        Some(TypeInfo::Array(roastedduck_types::ArrayTypeInfo {
             child_type: child,
             size,
         })) => (child.clone(), Some(*size as usize)),
@@ -95,7 +95,7 @@ fn element_type(ty: &LogicalType) -> (LogicalType, Option<usize>) {
 
 /// A random value of `ty`; NULL with probability `null_percent`%.
 pub fn random_value(ty: &LogicalType, rng: &mut Rng, null_percent: u64) -> TestValue {
-    use rustdb_types::PhysicalType as P;
+    use roastedduck_types::PhysicalType as P;
     if rng.chance(null_percent) {
         return TestValue::Null;
     }
@@ -134,7 +134,7 @@ pub fn random_values(ty: &LogicalType, count: usize, rng: &mut Rng, null_percent
 }
 
 fn write_value(vector: &mut Vector, row: usize, value: &TestValue) {
-    use rustdb_types::PhysicalType as P;
+    use roastedduck_types::PhysicalType as P;
     let ty = vector.logical_type().clone();
     if matches!(value, TestValue::Null) {
         let capacity = vector.row_capacity().max(row + 1);
@@ -197,7 +197,7 @@ pub fn build_vector(ty: &LogicalType, values: &[TestValue]) -> Vector {
 
 /// The value of logical row `row` of `vector` (any representation).
 pub fn read_value(vector: &Vector, row: usize) -> TestValue {
-    use rustdb_types::PhysicalType as P;
+    use roastedduck_types::PhysicalType as P;
     let ty = vector.logical_type();
     let slot = vector.sel().slot(row);
     if !vector.validity().is_valid(slot) {
@@ -291,7 +291,7 @@ pub fn temp_dir(name: &str) -> std::path::PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    std::env::temp_dir().join(format!("rustdb-row-{name}-{}-{nanos}", std::process::id()))
+    std::env::temp_dir().join(format!("roastedduck-row-{name}-{}-{nanos}", std::process::id()))
 }
 
 /// A buffer manager limited to `limit` bytes that spills to a fresh temp directory.

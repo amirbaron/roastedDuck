@@ -3,8 +3,8 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{DataChunk, LogicalType, SelectionVector, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{DataChunk, LogicalType, SelectionVector, Vector};
 
 use super::PerColumnMetadataBlocks;
 use super::chunk_info::{DeletedRows, DeletedScanType, InsertedScanType, ScanOptions, UpdateScanType};

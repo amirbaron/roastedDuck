@@ -4,7 +4,7 @@
 //! DuckDB's grammar has no `error` productions and `yyerror` always throws, so the
 //! first syntax error ends the parse; error recovery is not needed.
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use crate::actions::RULE_ACTIONS;
 use crate::error::internal;

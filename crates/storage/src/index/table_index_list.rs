@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
-use rustdb_common::{ByteString, Result};
-use rustdb_types::DataChunk;
+use roastedduck_common::{ByteString, Result};
+use roastedduck_types::DataChunk;
 
 use super::Art;
 use super::unbound_index::{BufferedIndexReplay, UnboundIndex};

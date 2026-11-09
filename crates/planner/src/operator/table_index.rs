@@ -1,6 +1,6 @@
 //! The table indexes an operator introduces (DuckDB's `LogicalOperator::GetTableIndex`).
 
-use rustdb_ast::JoinType;
+use roastedduck_ast::JoinType;
 
 use super::{LogicalKind, LogicalOperator};
 

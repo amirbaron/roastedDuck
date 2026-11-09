@@ -3,10 +3,10 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::variant::{VariantData, VariantLogicalType, VariantPathComponent};
-use rustdb_types::{LogicalType, LogicalTypeId, Value, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::variant::{VariantData, VariantLogicalType, VariantPathComponent};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value, Vector};
 
 /// The path step of a `variant_extract` call (DuckDB's `VariantExtractBindData`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,7 +89,7 @@ fn extract_overload(path: LogicalType) -> ScalarFunction {
                 .as_ref()
                 .and_then(|data| data.as_any().downcast_ref::<ExtractPath>())
                 .ok_or_else(|| Error::internal("variant_extract without bind data"))?;
-            *result = rustdb_types::variant_vector::extract(
+            *result = roastedduck_types::variant_vector::extract(
                 args.column(0),
                 std::slice::from_ref(&path.0),
                 args.len(),

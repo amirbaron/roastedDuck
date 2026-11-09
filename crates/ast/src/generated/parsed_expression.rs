@@ -4,10 +4,10 @@ use crate::{
     CaseCheck, ExpressionClass, ExpressionType, LambdaSyntaxType, OrderByNode, OrderModifier, ResultModifier,
     ResultModifierType, SelectStatement, StarExpression, SubqueryType, WindowBoundary, WindowExcludeMode,
 };
-use rustdb_serde::{
+use roastedduck_serde::{
     DeserializeObject, Deserializer, Error, OptionalIdx, Result, SerializeObject, Serializer, required,
 };
-use rustdb_types::{LogicalType, Value};
+use roastedduck_types::{LogicalType, Value};
 
 /// DuckDB's `ParsedExpression`: the members shared by all subclasses, with the subclass in `kind`.
 #[derive(Clone, Debug, PartialEq)]
@@ -15,7 +15,7 @@ pub struct ParsedExpression {
     /// `type` (property 101).
     pub expression_type: ExpressionType,
     /// `alias` (property 102).
-    pub alias: rustdb_common::ByteString,
+    pub alias: roastedduck_common::ByteString,
     /// `query_location` (property 103).
     pub query_location: Option<u64>,
     /// The subclass, serialized as `class` (property 100).
@@ -146,7 +146,7 @@ impl DeserializeObject for ParsedExpression {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
         let expression_class: ExpressionClass = deserializer.read_property(100, "class")?;
         let mut expression_type: ExpressionType = deserializer.read_property(101, "type")?;
-        let alias: rustdb_common::ByteString = deserializer.read_property_with_default(102, "alias")?;
+        let alias: roastedduck_common::ByteString = deserializer.read_property_with_default(102, "alias")?;
         let query_location: Option<u64> = deserializer
             .read_property_with_explicit_default(103, "query_location", OptionalIdx(None))?
             .0;
@@ -242,7 +242,7 @@ impl DeserializeObject for ParsedExpression {
     }
 }
 
-rustdb_serde::impl_pointee_serde!(ParsedExpression);
+roastedduck_serde::impl_pointee_serde!(ParsedExpression);
 
 /// DuckDB's `BetweenExpression`.
 #[derive(Clone, Debug, PartialEq)]
@@ -360,7 +360,7 @@ pub struct CollateExpression {
     /// `child` (property 200).
     pub child: Box<ParsedExpression>,
     /// `collation` (property 201).
-    pub collation: rustdb_common::ByteString,
+    pub collation: roastedduck_common::ByteString,
 }
 
 impl SerializeObject for CollateExpression {
@@ -378,7 +378,7 @@ impl DeserializeObject for CollateExpression {
             "CollateExpression",
             "child",
         )?;
-        let collation: rustdb_common::ByteString =
+        let collation: roastedduck_common::ByteString =
             deserializer.read_property_with_default(201, "collation")?;
         Ok(Self { child, collation })
     }
@@ -388,7 +388,7 @@ impl DeserializeObject for CollateExpression {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ColumnRefExpression {
     /// `column_names` (property 200).
-    pub column_names: Vec<rustdb_common::ByteString>,
+    pub column_names: Vec<roastedduck_common::ByteString>,
 }
 
 impl SerializeObject for ColumnRefExpression {
@@ -400,7 +400,7 @@ impl SerializeObject for ColumnRefExpression {
 
 impl DeserializeObject for ColumnRefExpression {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let column_names: Vec<rustdb_common::ByteString> =
+        let column_names: Vec<roastedduck_common::ByteString> =
             deserializer.read_property_with_default(200, "column_names")?;
         Ok(Self { column_names })
     }
@@ -412,7 +412,7 @@ pub struct LambdaRefExpression {
     /// `lambda_idx` (property 200).
     pub lambda_idx: u64,
     /// `column_name` (property 201).
-    pub column_name: rustdb_common::ByteString,
+    pub column_name: roastedduck_common::ByteString,
 }
 
 impl SerializeObject for LambdaRefExpression {
@@ -426,7 +426,7 @@ impl SerializeObject for LambdaRefExpression {
 impl DeserializeObject for LambdaRefExpression {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
         let lambda_idx: u64 = deserializer.read_property_with_default(200, "lambda_idx")?;
-        let column_name: rustdb_common::ByteString =
+        let column_name: roastedduck_common::ByteString =
             deserializer.read_property_with_default(201, "column_name")?;
         Ok(Self {
             lambda_idx,
@@ -514,9 +514,9 @@ impl DeserializeObject for ConstantExpression {
 #[derive(Clone, Debug, PartialEq)]
 pub struct FunctionExpression {
     /// `function_name` (property 200).
-    pub function_name: rustdb_common::ByteString,
+    pub function_name: roastedduck_common::ByteString,
     /// `schema` (property 201).
-    pub schema: rustdb_common::ByteString,
+    pub schema: roastedduck_common::ByteString,
     /// `children` (property 202).
     pub children: Vec<ParsedExpression>,
     /// `filter` (property 203).
@@ -530,7 +530,7 @@ pub struct FunctionExpression {
     /// `export_state` (property 207).
     pub export_state: bool,
     /// `catalog` (property 208).
-    pub catalog: rustdb_common::ByteString,
+    pub catalog: roastedduck_common::ByteString,
 }
 
 impl SerializeObject for FunctionExpression {
@@ -558,9 +558,10 @@ impl SerializeObject for FunctionExpression {
 
 impl DeserializeObject for FunctionExpression {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let function_name: rustdb_common::ByteString =
+        let function_name: roastedduck_common::ByteString =
             deserializer.read_property_with_default(200, "function_name")?;
-        let schema: rustdb_common::ByteString = deserializer.read_property_with_default(201, "schema")?;
+        let schema: roastedduck_common::ByteString =
+            deserializer.read_property_with_default(201, "schema")?;
         let children: Vec<ParsedExpression> = deserializer.read_property_with_default(202, "children")?;
         let filter: Option<Box<ParsedExpression>> = deserializer.read_property_with_default(203, "filter")?;
         let order_bys: OrderModifier = match *required::<Box<ResultModifier>>(
@@ -578,7 +579,8 @@ impl DeserializeObject for FunctionExpression {
         let distinct: bool = deserializer.read_property_with_default(205, "distinct")?;
         let is_operator: bool = deserializer.read_property_with_default(206, "is_operator")?;
         let export_state: bool = deserializer.read_property_with_default(207, "export_state")?;
-        let catalog: rustdb_common::ByteString = deserializer.read_property_with_default(208, "catalog")?;
+        let catalog: roastedduck_common::ByteString =
+            deserializer.read_property_with_default(208, "catalog")?;
         Ok(Self {
             function_name,
             schema,
@@ -670,7 +672,7 @@ impl DeserializeObject for OperatorExpression {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParameterExpression {
     /// `identifier` (property 200).
-    pub identifier: rustdb_common::ByteString,
+    pub identifier: roastedduck_common::ByteString,
 }
 
 impl SerializeObject for ParameterExpression {
@@ -682,7 +684,7 @@ impl SerializeObject for ParameterExpression {
 
 impl DeserializeObject for ParameterExpression {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let identifier: rustdb_common::ByteString =
+        let identifier: roastedduck_common::ByteString =
             deserializer.read_property_with_default(200, "identifier")?;
         Ok(Self { identifier })
     }
@@ -755,11 +757,11 @@ impl DeserializeObject for SubqueryExpression {
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowExpression {
     /// `function_name` (property 200).
-    pub function_name: rustdb_common::ByteString,
+    pub function_name: roastedduck_common::ByteString,
     /// `schema` (property 201).
-    pub schema: rustdb_common::ByteString,
+    pub schema: roastedduck_common::ByteString,
     /// `catalog` (property 202).
-    pub catalog: rustdb_common::ByteString,
+    pub catalog: roastedduck_common::ByteString,
     /// `children` (property 203).
     pub children: Vec<ParsedExpression>,
     /// `partitions` (property 204).
@@ -820,10 +822,12 @@ impl SerializeObject for WindowExpression {
 
 impl DeserializeObject for WindowExpression {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let function_name: rustdb_common::ByteString =
+        let function_name: roastedduck_common::ByteString =
             deserializer.read_property_with_default(200, "function_name")?;
-        let schema: rustdb_common::ByteString = deserializer.read_property_with_default(201, "schema")?;
-        let catalog: rustdb_common::ByteString = deserializer.read_property_with_default(202, "catalog")?;
+        let schema: roastedduck_common::ByteString =
+            deserializer.read_property_with_default(201, "schema")?;
+        let catalog: roastedduck_common::ByteString =
+            deserializer.read_property_with_default(202, "catalog")?;
         let children: Vec<ParsedExpression> = deserializer.read_property_with_default(203, "children")?;
         let partitions: Vec<ParsedExpression> = deserializer.read_property_with_default(204, "partitions")?;
         let orders: Vec<OrderByNode> = deserializer.read_property_with_default(205, "orders")?;
@@ -873,11 +877,11 @@ impl DeserializeObject for WindowExpression {
 #[derive(Clone, Debug, PartialEq)]
 pub struct TypeExpression {
     /// `catalog` (property 200).
-    pub catalog: rustdb_common::ByteString,
+    pub catalog: roastedduck_common::ByteString,
     /// `schema` (property 201).
-    pub schema: rustdb_common::ByteString,
+    pub schema: roastedduck_common::ByteString,
     /// `type_name` (property 202).
-    pub type_name: rustdb_common::ByteString,
+    pub type_name: roastedduck_common::ByteString,
     /// `children` (property 203).
     pub children: Vec<ParsedExpression>,
 }
@@ -894,9 +898,11 @@ impl SerializeObject for TypeExpression {
 
 impl DeserializeObject for TypeExpression {
     fn deserialize_fields(deserializer: &mut dyn Deserializer) -> Result<Self> {
-        let catalog: rustdb_common::ByteString = deserializer.read_property_with_default(200, "catalog")?;
-        let schema: rustdb_common::ByteString = deserializer.read_property_with_default(201, "schema")?;
-        let type_name: rustdb_common::ByteString =
+        let catalog: roastedduck_common::ByteString =
+            deserializer.read_property_with_default(200, "catalog")?;
+        let schema: roastedduck_common::ByteString =
+            deserializer.read_property_with_default(201, "schema")?;
+        let type_name: roastedduck_common::ByteString =
             deserializer.read_property_with_default(202, "type_name")?;
         let children: Vec<ParsedExpression> = deserializer.read_property_with_default(203, "children")?;
         Ok(Self {

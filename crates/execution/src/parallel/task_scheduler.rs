@@ -148,7 +148,7 @@ impl TaskScheduler {
             let shared = Arc::clone(&self.shared);
             let thread_marker = Arc::clone(&marker);
             let spawned = std::thread::Builder::new()
-                .name("rustdb-worker".to_owned())
+                .name("roastedduck-worker".to_owned())
                 .spawn(move || execute_forever(&shared, &thread_marker));
             match spawned {
                 Ok(handle) => workers.push(WorkerThread { marker, handle }),

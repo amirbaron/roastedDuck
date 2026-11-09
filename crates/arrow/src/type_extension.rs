@@ -3,14 +3,14 @@
 //! extension name, and imported back from it.
 //!
 //! DuckDB keeps the registered extensions in its `DBConfig`; the set is the one
-//! `ArrowTypeExtensionSet::Initialize` registers, as no rustdb extension adds any, so it
+//! `ArrowTypeExtensionSet::Initialize` registers, as no roastedduck extension adds any, so it
 //! is built once and shared.
 
 use std::sync::{Arc, OnceLock};
 
-use rustdb_common::{Error, Result};
-use rustdb_types::geometry::{Crs, CrsType};
-use rustdb_types::{LogicalType, StringT, TypeInfo, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::geometry::{Crs, CrsType};
+use roastedduck_types::{LogicalType, StringT, TypeInfo, Vector};
 
 use crate::client_properties::{ArrowFormatVersion, ArrowOffsetSize, ClientProperties};
 use crate::converter::{SchemaField, binary_format};
@@ -239,13 +239,13 @@ impl ArrowTypeExtensionSet {
     pub fn for_type(&self, ty: &LogicalType) -> Option<&ArrowTypeExtension> {
         let alias = ty
             .alias()
-            .map_or(b"".as_slice(), rustdb_common::ByteString::as_bytes);
+            .map_or(b"".as_slice(), roastedduck_common::ByteString::as_bytes);
         self.type_extensions.iter().find(|extension| {
             let duckdb_type = &extension.type_extension.duckdb_type;
             duckdb_type.id() == ty.id()
                 && duckdb_type
                     .alias()
-                    .map_or(b"".as_slice(), rustdb_common::ByteString::as_bytes)
+                    .map_or(b"".as_slice(), roastedduck_common::ByteString::as_bytes)
                     == alias
         })
     }
@@ -474,9 +474,11 @@ fn geometry_get_type(format: &str, metadata: &ArrowSchemaMetadata) -> Result<Arr
             return Err(Error::not_implemented("Can't import non-planar edges"));
         }
         crs = match object.get("crs") {
-            Some(serde_json::Value::String(definition)) => rustdb_types::geometry::try_identify(definition)?,
+            Some(serde_json::Value::String(definition)) => {
+                roastedduck_types::geometry::try_identify(definition)?
+            }
             Some(definition @ serde_json::Value::Object(_)) => {
-                rustdb_types::geometry::try_identify(&definition.to_string())?
+                roastedduck_types::geometry::try_identify(&definition.to_string())?
             }
             _ => None,
         };
@@ -503,13 +505,13 @@ fn geometry_crs_json(crs: &Crs) -> Result<String> {
         CrsType::AuthCode,
         CrsType::Srid,
     ] {
-        converted = rustdb_types::geometry::try_convert(crs, target)?;
+        converted = roastedduck_types::geometry::try_convert(crs, target)?;
         if converted.is_some() {
             break;
         }
     }
     let crs = converted.as_ref().unwrap_or(crs);
-    let quote = rustdb_common::string_util::json_quote;
+    let quote = roastedduck_common::string_util::json_quote;
     let (crs_type, value) = match crs.crs_type {
         CrsType::Projjson => {
             let document: serde_json::Value = serde_json::from_str(&crs.definition)
@@ -554,7 +556,8 @@ fn geometry_arrow_to_duck(source: &Vector, result: &mut Vector, count: usize) ->
         if !result.validity().is_valid(row) {
             continue;
         }
-        let wkb = rustdb_types::geometry::from_binary(source.string_bytes(row), true)?.unwrap_or_default();
+        let wkb =
+            roastedduck_types::geometry::from_binary(source.string_bytes(row), true)?.unwrap_or_default();
         let geometry: StringT = result.add_string(&wkb);
         result.values_mut::<StringT>()[row] = geometry;
     }

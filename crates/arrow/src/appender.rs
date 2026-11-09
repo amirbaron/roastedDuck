@@ -11,8 +11,8 @@ use std::borrow::Cow;
 use std::ffi::c_void;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::{
     Interval, ListEntry, LogicalType, LogicalTypeId, NativeType, PhysicalType, Sel, SelectionVector, StringT,
     TimeTz, Uuid, ValidityMask, Vector, VectorKind,
 };
@@ -290,7 +290,7 @@ impl ArrowAppender {
     /// Appends rows `from..to` of `input`, a chunk of `input_size` rows (`Append`).
     pub fn append(
         &mut self,
-        input: &rustdb_types::DataChunk,
+        input: &roastedduck_types::DataChunk,
         from: usize,
         to: usize,
         input_size: usize,
@@ -475,7 +475,7 @@ fn append_kind(ty: &LogicalType, options: &ClientProperties) -> Result<AppendKin
 fn nested_children<'a>(
     ty: &'a LogicalType,
     what: &str,
-) -> Result<&'a [(rustdb_common::ByteString, LogicalType)]> {
+) -> Result<&'a [(roastedduck_common::ByteString, LogicalType)]> {
     match ty.id() {
         LogicalTypeId::Union => ty.union_members(),
         _ => ty.struct_children(),
@@ -920,7 +920,7 @@ impl ArrowAppendData {
 
     /// `ArrowEnumData::EnumAppendVector`: the enum's values as the strings of the
     /// dictionary.
-    fn append_enum_values(&mut self, values: &[rustdb_common::ByteString]) {
+    fn append_enum_values(&mut self, values: &[roastedduck_common::ByteString]) {
         let size = values.len();
         let row_count = self.row_count;
         Self::resize_bitmap(self.validity(), row_count + size);
@@ -977,7 +977,7 @@ impl ArrowAppendData {
             for (index, (child, ty)) in child_vectors.iter_mut().zip(&member_types).enumerate() {
                 match &member {
                     Some(member) if index == tag => child.set_value(row, member)?,
-                    _ => child.set_value(row, &rustdb_types::Value::null(ty.clone()))?,
+                    _ => child.set_value(row, &roastedduck_types::Value::null(ty.clone()))?,
                 }
             }
             self.main_buffer().push(tag as u8);
@@ -1016,7 +1016,7 @@ impl ArrowAppendData {
     /// rows of their elements in `child_sel`.
     fn append_offsets<O: OffsetType>(
         &mut self,
-        entries: &rustdb_types::Unified<'_, ListEntry>,
+        entries: &roastedduck_types::Unified<'_, ListEntry>,
         from: usize,
         to: usize,
         child_sel: &mut Vec<u32>,

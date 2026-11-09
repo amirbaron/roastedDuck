@@ -148,11 +148,11 @@ name = "bindcheck"
 version = "1.5.6"
 dependencies = [
  "corpus",
- "rustdb",
- "rustdb-ast",
- "rustdb-common",
- "rustdb-planner",
- "rustdb-serde",
+ "roastedduck",
+ "roastedduck-ast",
+ "roastedduck-common",
+ "roastedduck-planner",
+ "roastedduck-serde",
  "serde",
  "serde_json",
 ]
@@ -335,9 +335,9 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 name = "corpus"
 version = "1.5.6"
 dependencies = [
- "rustdb-ast",
- "rustdb-common",
- "rustdb-serde",
+ "roastedduck-ast",
+ "roastedduck-common",
+ "roastedduck-serde",
  "serde",
  "serde_json",
 ]
@@ -1073,22 +1073,460 @@ dependencies = [
 ]
 
 [[package]]
+name = "roastedduck"
+version = "1.5.6"
+dependencies = [
+ "flate2",
+ "roastedduck-arrow",
+ "roastedduck-ast",
+ "roastedduck-autocomplete",
+ "roastedduck-buffer",
+ "roastedduck-catalog",
+ "roastedduck-common",
+ "roastedduck-crypto",
+ "roastedduck-csv",
+ "roastedduck-execution",
+ "roastedduck-function",
+ "roastedduck-functions",
+ "roastedduck-httpfs",
+ "roastedduck-icu",
+ "roastedduck-json",
+ "roastedduck-optimizer",
+ "roastedduck-parquet",
+ "roastedduck-parser",
+ "roastedduck-planner",
+ "roastedduck-row",
+ "roastedduck-serde",
+ "roastedduck-storage",
+ "roastedduck-tpcds",
+ "roastedduck-tpch",
+ "roastedduck-types",
+ "serde_json",
+]
+
+[[package]]
+name = "roastedduck-arrow"
+version = "1.5.6"
+dependencies = [
+ "roastedduck-common",
+ "roastedduck-function",
+ "roastedduck-planner",
+ "roastedduck-serde",
+ "roastedduck-storage",
+ "roastedduck-types",
+ "serde_json",
+]
+
+[[package]]
+name = "roastedduck-ast"
+version = "1.5.6"
+dependencies = [
+ "roastedduck-common",
+ "roastedduck-serde",
+ "roastedduck-types",
+]
+
+[[package]]
+name = "roastedduck-autocomplete"
+version = "1.5.6"
+dependencies = [
+ "roastedduck-ast",
+ "roastedduck-catalog",
+ "roastedduck-common",
+ "roastedduck-function",
+ "roastedduck-parser",
+ "roastedduck-pg-parser",
+ "roastedduck-planner",
+ "roastedduck-serde",
+ "roastedduck-types",
+]
+
+[[package]]
+name = "roastedduck-bench"
+version = "1.5.6"
+dependencies = [
+ "clap",
+ "libc",
+ "regex",
+ "roastedduck",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "roastedduck-buffer"
+version = "1.5.6"
+dependencies = [
+ "libc",
+ "roastedduck-common",
+ "roastedduck-crypto",
+ "roastedduck-zstd",
+]
+
+[[package]]
+name = "roastedduck-byte-format"
+version = "1.5.6"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.9",
+]
+
+[[package]]
+name = "roastedduck-capi"
+version = "1.5.6"
+dependencies = [
+ "libc",
+ "libloading",
+ "roastedduck",
+ "roastedduck-arrow",
+ "roastedduck-ast",
+ "roastedduck-catalog",
+ "roastedduck-common",
+ "roastedduck-function",
+ "roastedduck-planner",
+ "roastedduck-types",
+ "rsa",
+ "sha2",
+]
+
+[[package]]
+name = "roastedduck-catalog"
+version = "1.5.6"
+dependencies = [
+ "roastedduck-ast",
+ "roastedduck-buffer",
+ "roastedduck-common",
+ "roastedduck-function",
+ "roastedduck-serde",
+ "roastedduck-storage",
+ "roastedduck-types",
+]
+
+[[package]]
 name = "roastedduck-cli"
 version = "1.5.6"
 dependencies = [
  "libc",
- "rustdb",
- "rustdb-ast",
- "rustdb-capi",
- "rustdb-common",
- "rustdb-function",
- "rustdb-functions",
- "rustdb-parser",
- "rustdb-planner",
- "rustdb-serde",
- "rustdb-types",
+ "roastedduck",
+ "roastedduck-ast",
+ "roastedduck-capi",
+ "roastedduck-common",
+ "roastedduck-function",
+ "roastedduck-functions",
+ "roastedduck-parser",
+ "roastedduck-planner",
+ "roastedduck-serde",
+ "roastedduck-types",
  "unicode-segmentation",
  "unicode-width",
+]
+
+[[package]]
+name = "roastedduck-common"
+version = "1.5.6"
+dependencies = [
+ "roastedduck-byte-format",
+ "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
+name = "roastedduck-crypto"
+version = "1.5.6"
+dependencies = [
+ "aes",
+ "aes-gcm",
+ "ctr",
+ "getrandom 0.4.3",
+ "libc",
+ "roastedduck-common",
+ "sha2",
+ "zeroize",
+]
+
+[[package]]
+name = "roastedduck-csv"
+version = "1.5.6"
+dependencies = [
+ "flate2",
+ "roastedduck-ast",
+ "roastedduck-catalog",
+ "roastedduck-common",
+ "roastedduck-function",
+ "roastedduck-functions",
+ "roastedduck-parser",
+ "roastedduck-planner",
+ "roastedduck-serde",
+ "roastedduck-types",
+ "roastedduck-zstd",
+ "unicode-normalization",
+]
+
+[[package]]
+name = "roastedduck-execution"
+version = "1.5.6"
+dependencies = [
+ "roastedduck-ast",
+ "roastedduck-buffer",
+ "roastedduck-catalog",
+ "roastedduck-common",
+ "roastedduck-function",
+ "roastedduck-functions",
+ "roastedduck-optimizer",
+ "roastedduck-planner",
+ "roastedduck-row",
+ "roastedduck-storage",
+ "roastedduck-types",
+]
+
+[[package]]
+name = "roastedduck-function"
+version = "1.5.6"
+dependencies = [
+ "roastedduck-ast",
+ "roastedduck-buffer",
+ "roastedduck-common",
+ "roastedduck-serde",
+ "roastedduck-types",
+]
+
+[[package]]
+name = "roastedduck-functions"
+version = "1.5.6"
+dependencies = [
+ "md-5",
+ "memchr",
+ "regex",
+ "regex-syntax",
+ "roastedduck-buffer",
+ "roastedduck-common",
+ "roastedduck-function",
+ "roastedduck-parser",
+ "roastedduck-row",
+ "roastedduck-serde",
+ "roastedduck-types",
+ "unicode-normalization",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "roastedduck-httpfs"
+version = "1.5.6"
+dependencies = [
+ "httpdate",
+ "md-5",
+ "openssl",
+ "ring",
+ "roastedduck-buffer",
+ "roastedduck-common",
+ "roastedduck-function",
+ "roastedduck-types",
+ "security-framework",
+ "ureq",
+ "ureq-proto",
+]
+
+[[package]]
+name = "roastedduck-icu"
+version = "1.5.6"
+dependencies = [
+ "jiff",
+ "roastedduck-common",
+ "roastedduck-function",
+ "roastedduck-functions",
+ "roastedduck-planner",
+ "roastedduck-serde",
+ "roastedduck-types",
+]
+
+[[package]]
+name = "roastedduck-json"
+version = "1.5.6"
+dependencies = [
+ "flate2",
+ "memchr",
+ "roastedduck-ast",
+ "roastedduck-catalog",
+ "roastedduck-common",
+ "roastedduck-csv",
+ "roastedduck-function",
+ "roastedduck-functions",
+ "roastedduck-optimizer",
+ "roastedduck-parser",
+ "roastedduck-planner",
+ "roastedduck-serde",
+ "roastedduck-types",
+ "roastedduck-zstd",
+ "zmij",
+]
+
+[[package]]
+name = "roastedduck-optimizer"
+version = "1.5.6"
+dependencies = [
+ "regex-syntax",
+ "roastedduck-ast",
+ "roastedduck-catalog",
+ "roastedduck-common",
+ "roastedduck-function",
+ "roastedduck-planner",
+ "roastedduck-row",
+ "roastedduck-storage",
+ "roastedduck-types",
+]
+
+[[package]]
+name = "roastedduck-parquet"
+version = "1.5.6"
+dependencies = [
+ "brotli",
+ "flate2",
+ "lz4_flex",
+ "roastedduck-buffer",
+ "roastedduck-common",
+ "roastedduck-crypto",
+ "roastedduck-csv",
+ "roastedduck-function",
+ "roastedduck-functions",
+ "roastedduck-planner",
+ "roastedduck-serde",
+ "roastedduck-storage",
+ "roastedduck-types",
+ "roastedduck-zstd",
+ "serde_json",
+ "snap",
+ "twox-hash",
+]
+
+[[package]]
+name = "roastedduck-parser"
+version = "1.5.6"
+dependencies = [
+ "roastedduck-ast",
+ "roastedduck-common",
+ "roastedduck-function",
+ "roastedduck-pg-parser",
+ "roastedduck-serde",
+ "roastedduck-types",
+]
+
+[[package]]
+name = "roastedduck-pg-parser"
+version = "1.5.6"
+dependencies = [
+ "roastedduck-common",
+]
+
+[[package]]
+name = "roastedduck-planner"
+version = "1.5.6"
+dependencies = [
+ "regex",
+ "roastedduck-ast",
+ "roastedduck-buffer",
+ "roastedduck-catalog",
+ "roastedduck-common",
+ "roastedduck-function",
+ "roastedduck-parser",
+ "roastedduck-serde",
+ "roastedduck-storage",
+ "roastedduck-types",
+]
+
+[[package]]
+name = "roastedduck-python"
+version = "1.5.6"
+dependencies = [
+ "pyo3",
+ "roastedduck",
+ "roastedduck-arrow",
+ "roastedduck-ast",
+ "roastedduck-capi",
+ "roastedduck-cli",
+ "roastedduck-common",
+ "roastedduck-function",
+ "roastedduck-parser",
+ "roastedduck-planner",
+ "roastedduck-types",
+]
+
+[[package]]
+name = "roastedduck-row"
+version = "1.5.6"
+dependencies = [
+ "libc",
+ "roastedduck-buffer",
+ "roastedduck-common",
+ "roastedduck-function",
+ "roastedduck-types",
+]
+
+[[package]]
+name = "roastedduck-serde"
+version = "1.5.6"
+dependencies = [
+ "roastedduck-common",
+]
+
+[[package]]
+name = "roastedduck-storage"
+version = "1.5.6"
+dependencies = [
+ "libc",
+ "roastedduck-buffer",
+ "roastedduck-common",
+ "roastedduck-crypto",
+ "roastedduck-function",
+ "roastedduck-row",
+ "roastedduck-serde",
+ "roastedduck-types",
+ "roastedduck-zstd",
+]
+
+[[package]]
+name = "roastedduck-tpcds"
+version = "1.5.6"
+dependencies = [
+ "roastedduck-ast",
+ "roastedduck-buffer",
+ "roastedduck-catalog",
+ "roastedduck-common",
+ "roastedduck-execution",
+ "roastedduck-function",
+ "roastedduck-planner",
+ "roastedduck-storage",
+ "roastedduck-types",
+]
+
+[[package]]
+name = "roastedduck-tpch"
+version = "1.5.6"
+dependencies = [
+ "roastedduck-ast",
+ "roastedduck-buffer",
+ "roastedduck-catalog",
+ "roastedduck-common",
+ "roastedduck-execution",
+ "roastedduck-function",
+ "roastedduck-planner",
+ "roastedduck-storage",
+ "roastedduck-types",
+]
+
+[[package]]
+name = "roastedduck-types"
+version = "1.5.6"
+dependencies = [
+ "roastedduck-common",
+ "roastedduck-serde",
+]
+
+[[package]]
+name = "roastedduck-zstd"
+version = "1.5.6"
+dependencies = [
+ "ruzstd",
 ]
 
 [[package]]
@@ -1110,444 +1548,6 @@ dependencies = [
  "signature",
  "spki",
  "zeroize",
-]
-
-[[package]]
-name = "rustdb"
-version = "1.5.6"
-dependencies = [
- "flate2",
- "rustdb-arrow",
- "rustdb-ast",
- "rustdb-autocomplete",
- "rustdb-buffer",
- "rustdb-catalog",
- "rustdb-common",
- "rustdb-crypto",
- "rustdb-csv",
- "rustdb-execution",
- "rustdb-function",
- "rustdb-functions",
- "rustdb-httpfs",
- "rustdb-icu",
- "rustdb-json",
- "rustdb-optimizer",
- "rustdb-parquet",
- "rustdb-parser",
- "rustdb-planner",
- "rustdb-row",
- "rustdb-serde",
- "rustdb-storage",
- "rustdb-tpcds",
- "rustdb-tpch",
- "rustdb-types",
- "serde_json",
-]
-
-[[package]]
-name = "rustdb-arrow"
-version = "1.5.6"
-dependencies = [
- "rustdb-common",
- "rustdb-function",
- "rustdb-planner",
- "rustdb-serde",
- "rustdb-storage",
- "rustdb-types",
- "serde_json",
-]
-
-[[package]]
-name = "rustdb-ast"
-version = "1.5.6"
-dependencies = [
- "rustdb-common",
- "rustdb-serde",
- "rustdb-types",
-]
-
-[[package]]
-name = "rustdb-autocomplete"
-version = "1.5.6"
-dependencies = [
- "rustdb-ast",
- "rustdb-catalog",
- "rustdb-common",
- "rustdb-function",
- "rustdb-parser",
- "rustdb-pg-parser",
- "rustdb-planner",
- "rustdb-serde",
- "rustdb-types",
-]
-
-[[package]]
-name = "rustdb-bench"
-version = "1.5.6"
-dependencies = [
- "clap",
- "libc",
- "regex",
- "rustdb",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "rustdb-buffer"
-version = "1.5.6"
-dependencies = [
- "libc",
- "rustdb-common",
- "rustdb-crypto",
- "rustdb-zstd",
-]
-
-[[package]]
-name = "rustdb-byte-format"
-version = "1.5.6"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.9",
-]
-
-[[package]]
-name = "rustdb-capi"
-version = "1.5.6"
-dependencies = [
- "libc",
- "libloading",
- "rsa",
- "rustdb",
- "rustdb-arrow",
- "rustdb-ast",
- "rustdb-catalog",
- "rustdb-common",
- "rustdb-function",
- "rustdb-planner",
- "rustdb-types",
- "sha2",
-]
-
-[[package]]
-name = "rustdb-catalog"
-version = "1.5.6"
-dependencies = [
- "rustdb-ast",
- "rustdb-buffer",
- "rustdb-common",
- "rustdb-function",
- "rustdb-serde",
- "rustdb-storage",
- "rustdb-types",
-]
-
-[[package]]
-name = "rustdb-common"
-version = "1.5.6"
-dependencies = [
- "rustdb-byte-format",
- "unicode-segmentation",
- "unicode-width",
-]
-
-[[package]]
-name = "rustdb-crypto"
-version = "1.5.6"
-dependencies = [
- "aes",
- "aes-gcm",
- "ctr",
- "getrandom 0.4.3",
- "libc",
- "rustdb-common",
- "sha2",
- "zeroize",
-]
-
-[[package]]
-name = "rustdb-csv"
-version = "1.5.6"
-dependencies = [
- "flate2",
- "rustdb-ast",
- "rustdb-catalog",
- "rustdb-common",
- "rustdb-function",
- "rustdb-functions",
- "rustdb-parser",
- "rustdb-planner",
- "rustdb-serde",
- "rustdb-types",
- "rustdb-zstd",
- "unicode-normalization",
-]
-
-[[package]]
-name = "rustdb-execution"
-version = "1.5.6"
-dependencies = [
- "rustdb-ast",
- "rustdb-buffer",
- "rustdb-catalog",
- "rustdb-common",
- "rustdb-function",
- "rustdb-functions",
- "rustdb-optimizer",
- "rustdb-planner",
- "rustdb-row",
- "rustdb-storage",
- "rustdb-types",
-]
-
-[[package]]
-name = "rustdb-function"
-version = "1.5.6"
-dependencies = [
- "rustdb-ast",
- "rustdb-buffer",
- "rustdb-common",
- "rustdb-serde",
- "rustdb-types",
-]
-
-[[package]]
-name = "rustdb-functions"
-version = "1.5.6"
-dependencies = [
- "md-5",
- "memchr",
- "regex",
- "regex-syntax",
- "rustdb-buffer",
- "rustdb-common",
- "rustdb-function",
- "rustdb-parser",
- "rustdb-row",
- "rustdb-serde",
- "rustdb-types",
- "unicode-normalization",
- "unicode-segmentation",
-]
-
-[[package]]
-name = "rustdb-httpfs"
-version = "1.5.6"
-dependencies = [
- "httpdate",
- "md-5",
- "openssl",
- "ring",
- "rustdb-buffer",
- "rustdb-common",
- "rustdb-function",
- "rustdb-types",
- "security-framework",
- "ureq",
- "ureq-proto",
-]
-
-[[package]]
-name = "rustdb-icu"
-version = "1.5.6"
-dependencies = [
- "jiff",
- "rustdb-common",
- "rustdb-function",
- "rustdb-functions",
- "rustdb-planner",
- "rustdb-serde",
- "rustdb-types",
-]
-
-[[package]]
-name = "rustdb-json"
-version = "1.5.6"
-dependencies = [
- "flate2",
- "memchr",
- "rustdb-ast",
- "rustdb-catalog",
- "rustdb-common",
- "rustdb-csv",
- "rustdb-function",
- "rustdb-functions",
- "rustdb-optimizer",
- "rustdb-parser",
- "rustdb-planner",
- "rustdb-serde",
- "rustdb-types",
- "rustdb-zstd",
- "zmij",
-]
-
-[[package]]
-name = "rustdb-optimizer"
-version = "1.5.6"
-dependencies = [
- "regex-syntax",
- "rustdb-ast",
- "rustdb-catalog",
- "rustdb-common",
- "rustdb-function",
- "rustdb-planner",
- "rustdb-row",
- "rustdb-storage",
- "rustdb-types",
-]
-
-[[package]]
-name = "rustdb-parquet"
-version = "1.5.6"
-dependencies = [
- "brotli",
- "flate2",
- "lz4_flex",
- "rustdb-buffer",
- "rustdb-common",
- "rustdb-crypto",
- "rustdb-csv",
- "rustdb-function",
- "rustdb-functions",
- "rustdb-planner",
- "rustdb-serde",
- "rustdb-storage",
- "rustdb-types",
- "rustdb-zstd",
- "serde_json",
- "snap",
- "twox-hash",
-]
-
-[[package]]
-name = "rustdb-parser"
-version = "1.5.6"
-dependencies = [
- "rustdb-ast",
- "rustdb-common",
- "rustdb-function",
- "rustdb-pg-parser",
- "rustdb-serde",
- "rustdb-types",
-]
-
-[[package]]
-name = "rustdb-pg-parser"
-version = "1.5.6"
-dependencies = [
- "rustdb-common",
-]
-
-[[package]]
-name = "rustdb-planner"
-version = "1.5.6"
-dependencies = [
- "regex",
- "rustdb-ast",
- "rustdb-buffer",
- "rustdb-catalog",
- "rustdb-common",
- "rustdb-function",
- "rustdb-parser",
- "rustdb-serde",
- "rustdb-storage",
- "rustdb-types",
-]
-
-[[package]]
-name = "rustdb-python"
-version = "1.5.6"
-dependencies = [
- "pyo3",
- "roastedduck-cli",
- "rustdb",
- "rustdb-arrow",
- "rustdb-ast",
- "rustdb-capi",
- "rustdb-common",
- "rustdb-function",
- "rustdb-parser",
- "rustdb-planner",
- "rustdb-types",
-]
-
-[[package]]
-name = "rustdb-row"
-version = "1.5.6"
-dependencies = [
- "libc",
- "rustdb-buffer",
- "rustdb-common",
- "rustdb-function",
- "rustdb-types",
-]
-
-[[package]]
-name = "rustdb-serde"
-version = "1.5.6"
-dependencies = [
- "rustdb-common",
-]
-
-[[package]]
-name = "rustdb-storage"
-version = "1.5.6"
-dependencies = [
- "libc",
- "rustdb-buffer",
- "rustdb-common",
- "rustdb-crypto",
- "rustdb-function",
- "rustdb-row",
- "rustdb-serde",
- "rustdb-types",
- "rustdb-zstd",
-]
-
-[[package]]
-name = "rustdb-tpcds"
-version = "1.5.6"
-dependencies = [
- "rustdb-ast",
- "rustdb-buffer",
- "rustdb-catalog",
- "rustdb-common",
- "rustdb-execution",
- "rustdb-function",
- "rustdb-planner",
- "rustdb-storage",
- "rustdb-types",
-]
-
-[[package]]
-name = "rustdb-tpch"
-version = "1.5.6"
-dependencies = [
- "rustdb-ast",
- "rustdb-buffer",
- "rustdb-catalog",
- "rustdb-common",
- "rustdb-execution",
- "rustdb-function",
- "rustdb-planner",
- "rustdb-storage",
- "rustdb-types",
-]
-
-[[package]]
-name = "rustdb-types"
-version = "1.5.6"
-dependencies = [
- "rustdb-common",
- "rustdb-serde",
-]
-
-[[package]]
-name = "rustdb-zstd"
-version = "1.5.6"
-dependencies = [
- "ruzstd",
 ]
 
 [[package]]
@@ -1701,8 +1701,8 @@ dependencies = [
  "libloading",
  "md-5",
  "regex",
- "rustdb",
- "rustdb-capi",
+ "roastedduck",
+ "roastedduck-capi",
  "serde",
  "serde_json",
  "uuid",

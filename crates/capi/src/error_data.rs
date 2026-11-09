@@ -2,7 +2,7 @@
 
 use std::ffi::{CString, c_char};
 
-use rustdb_common::Error;
+use roastedduck_common::Error;
 
 use crate::helper::{error_type_from_c, error_type_to_c, lossy_str};
 use crate::types::{DUCKDB_ERROR_INVALID_TYPE, DuckdbErrorType};

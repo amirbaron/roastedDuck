@@ -3,8 +3,8 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use super::null_columns;
 use super::range_join::MaterializedRows;

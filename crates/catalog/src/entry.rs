@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
-use rustdb_ast::{MacroFunction, ParsedExpression, SelectStatement};
-use rustdb_function::{AggregateFunctionSet, ScalarFunctionSet, TableFunctionSet};
-use rustdb_types::LogicalType;
+use roastedduck_ast::{MacroFunction, ParsedExpression, SelectStatement};
+use roastedduck_function::{AggregateFunctionSet, ScalarFunctionSet, TableFunctionSet};
+use roastedduck_types::LogicalType;
 
 use crate::CatalogSet;
 
@@ -27,8 +27,8 @@ pub enum CatalogType {
 
 impl CatalogType {
     /// The serialized catalog type (DuckDB's `CatalogType` enum).
-    pub const fn to_ast(self) -> rustdb_ast::CatalogType {
-        use rustdb_ast::CatalogType as A;
+    pub const fn to_ast(self) -> roastedduck_ast::CatalogType {
+        use roastedduck_ast::CatalogType as A;
         match self {
             Self::Schema => A::SchemaEntry,
             Self::Table => A::TableEntry,
@@ -48,8 +48,8 @@ impl CatalogType {
     }
 
     /// The catalog type of a serialized one (`None` for types without entries here).
-    pub const fn from_ast(ty: rustdb_ast::CatalogType) -> Option<Self> {
-        use rustdb_ast::CatalogType as A;
+    pub const fn from_ast(ty: roastedduck_ast::CatalogType) -> Option<Self> {
+        use roastedduck_ast::CatalogType as A;
         Some(match ty {
             A::SchemaEntry => Self::Schema,
             A::TableEntry => Self::Table,
@@ -128,23 +128,23 @@ impl SchemaEntry {
 /// One column of a table (DuckDB's `ColumnDefinition`, catalog part).
 #[derive(Clone, Debug)]
 pub struct TableColumn {
-    pub name: rustdb_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     pub logical_type: LogicalType,
     /// `DEFAULT expr`.
     pub default_value: Option<ParsedExpression>,
     /// `GENERATED ALWAYS AS (expr)`: the column is computed, not stored.
     pub generated: Option<ParsedExpression>,
     /// `COMMENT ON COLUMN` (NULL without one).
-    pub comment: rustdb_types::Value,
+    pub comment: roastedduck_types::Value,
     /// `USING COMPRESSION` (`ColumnDefinition::compression_type`).
-    pub compression_type: rustdb_ast::CompressionType,
+    pub compression_type: roastedduck_ast::CompressionType,
 }
 
 impl TableColumn {
     /// The storage compression the column was declared with.
-    pub fn storage_compression(&self) -> rustdb_storage::compression::CompressionType {
-        rustdb_storage::compression::CompressionType::from_u8(self.compression_type as u8)
-            .unwrap_or(rustdb_storage::compression::CompressionType::Auto)
+    pub fn storage_compression(&self) -> roastedduck_storage::compression::CompressionType {
+        roastedduck_storage::compression::CompressionType::from_u8(self.compression_type as u8)
+            .unwrap_or(roastedduck_storage::compression::CompressionType::Auto)
     }
 }
 
@@ -158,20 +158,20 @@ pub struct TableEntry {
     pub not_null_columns: Vec<usize>,
     /// The constraints as written (with column indexes resolved), DuckDB's
     /// `TableCatalogEntry::constraints`.
-    pub constraints: Vec<rustdb_ast::Constraint>,
+    pub constraints: Vec<roastedduck_ast::Constraint>,
     /// The table's data (`DuckTableEntry::storage`); `None` for tables of other catalogs.
-    pub storage: Option<Arc<rustdb_storage::DataTable>>,
+    pub storage: Option<Arc<roastedduck_storage::DataTable>>,
 }
 
 impl TableEntry {
     /// The definition of a `CREATE TABLE` (without storage).
-    pub fn from_create_info(info: &rustdb_ast::CreateTableInfo) -> Self {
+    pub fn from_create_info(info: &roastedduck_ast::CreateTableInfo) -> Self {
         let columns = info
             .columns
             .columns
             .iter()
             .map(|column| {
-                let generated = column.category == rustdb_ast::TableColumnType::Generated;
+                let generated = column.category == roastedduck_ast::TableColumnType::Generated;
                 let expression = column.expression.as_deref().cloned();
                 TableColumn {
                     name: column.name.clone(),
@@ -187,7 +187,7 @@ impl TableEntry {
             .constraints
             .iter()
             .filter_map(|constraint| match constraint {
-                rustdb_ast::Constraint::NotNull(not_null) => Some(not_null.index.0 as usize),
+                roastedduck_ast::Constraint::NotNull(not_null) => Some(not_null.index.0 as usize),
                 _ => None,
             })
             .collect();
@@ -250,11 +250,11 @@ impl TableEntry {
 #[derive(Clone, Debug)]
 pub struct IndexEntry {
     /// The `CREATE INDEX` definition; `column_ids` are physical column indexes.
-    pub info: rustdb_ast::CreateIndexInfo,
+    pub info: roastedduck_ast::CreateIndexInfo,
     /// The schema of the indexed table.
-    pub schema: rustdb_common::ByteString,
+    pub schema: roastedduck_common::ByteString,
     /// The indexed table's storage info (`IndexDataTableInfo`).
-    pub storage: Option<Arc<rustdb_storage::DataTableInfo>>,
+    pub storage: Option<Arc<roastedduck_storage::DataTableInfo>>,
 }
 
 /// The state of a sequence (DuckDB's `SequenceData`).
@@ -281,7 +281,7 @@ pub struct SequenceEntry {
 }
 
 impl SequenceEntry {
-    pub fn new(info: &rustdb_ast::CreateSequenceInfo) -> Self {
+    pub fn new(info: &roastedduck_ast::CreateSequenceInfo) -> Self {
         Self {
             data: Arc::new(std::sync::Mutex::new(SequenceData {
                 usage_count: info.usage_count,
@@ -308,7 +308,7 @@ impl SequenceEntry {
     }
 
     /// `SequenceCatalogEntry::NextValue` of the sequence called `name`.
-    pub fn next_value(&self, name: impl AsRef<[u8]>) -> rustdb_common::Result<i64> {
+    pub fn next_value(&self, name: impl AsRef<[u8]>) -> roastedduck_common::Result<i64> {
         let name = name.as_ref();
         let mut data = self.lock();
         let result = data.counter;
@@ -328,13 +328,13 @@ impl SequenceEntry {
             }
         } else {
             if result < data.min_value || (overflow && data.increment < 0) {
-                return Err(sequence_error(rustdb_common::byte_format!(
+                return Err(sequence_error(roastedduck_common::byte_format!(
                     "nextval: reached minimum value of sequence \"{name}\" ({})",
                     data.min_value
                 )));
             }
             if result > data.max_value || overflow {
-                return Err(sequence_error(rustdb_common::byte_format!(
+                return Err(sequence_error(roastedduck_common::byte_format!(
                     "nextval: reached maximum value of sequence \"{name}\" ({})",
                     data.max_value
                 )));
@@ -361,7 +361,7 @@ impl SequenceEntry {
     }
 
     /// `SequenceCatalogEntry::CurrentValue`.
-    pub fn current_value(&self) -> rustdb_common::Result<i64> {
+    pub fn current_value(&self) -> roastedduck_common::Result<i64> {
         let data = self.lock();
         if data.usage_count == 0 {
             return Err(sequence_error(
@@ -372,8 +372,11 @@ impl SequenceEntry {
     }
 }
 
-fn sequence_error(message: impl Into<rustdb_common::ByteString>) -> rustdb_common::Error {
-    rustdb_common::Error::new_bytes(rustdb_common::ErrorKind::Sequence, message.into().into_bytes())
+fn sequence_error(message: impl Into<roastedduck_common::ByteString>) -> roastedduck_common::Error {
+    roastedduck_common::Error::new_bytes(
+        roastedduck_common::ErrorKind::Sequence,
+        message.into().into_bytes(),
+    )
 }
 
 /// A view: a stored query (DuckDB's `ViewCatalogEntry`).
@@ -381,12 +384,13 @@ fn sequence_error(message: impl Into<rustdb_common::ByteString>) -> rustdb_commo
 pub struct ViewEntry {
     pub query: SelectStatement,
     /// Column names given in `CREATE VIEW v(a, b)`.
-    pub aliases: Vec<rustdb_common::ByteString>,
+    pub aliases: Vec<roastedduck_common::ByteString>,
     /// The result types and names of the query when the view was created.
     pub types: Vec<LogicalType>,
-    pub names: Vec<rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
     /// `COMMENT ON COLUMN` values, by column name.
-    pub column_comments: rustdb_common::OrderedMap<rustdb_common::ByteString, rustdb_types::Value>,
+    pub column_comments:
+        roastedduck_common::OrderedMap<roastedduck_common::ByteString, roastedduck_types::Value>,
 }
 
 /// A user-defined type (DuckDB's `TypeCatalogEntry`): `CREATE TYPE name AS ...`.
@@ -412,9 +416,9 @@ pub enum EntryKind {
     AggregateFunction(AggregateFunctionSet),
     TableFunction(TableFunctionSet),
     /// A COPY file format (`CopyFunctionCatalogEntry`).
-    CopyFunction(Box<rustdb_function::CopyFunction>),
+    CopyFunction(Box<roastedduck_function::CopyFunction>),
     /// A pragma (`PragmaFunctionCatalogEntry`).
-    PragmaFunction(rustdb_function::PragmaFunctionSet),
+    PragmaFunction(roastedduck_function::PragmaFunctionSet),
     Table(TableEntry),
     View(ViewEntry),
     Index(IndexEntry),
@@ -461,7 +465,7 @@ impl EntryKind {
 /// value of a string.
 #[derive(Clone, Debug)]
 pub struct CollationEntry {
-    pub function: rustdb_function::ScalarFunction,
+    pub function: roastedduck_function::ScalarFunction,
     /// Whether the collation can be combined with other collations.
     pub combinable: bool,
     /// Whether equality comparisons can skip the collation.
@@ -499,7 +503,7 @@ pub fn next_oid() -> u64 {
 /// A named object in the catalog.
 #[derive(Debug)]
 pub struct CatalogEntry {
-    name: rustdb_common::ByteString,
+    name: roastedduck_common::ByteString,
     /// The object id (`CatalogEntry::oid`).
     pub oid: u64,
     /// Built-in objects that users cannot drop.
@@ -508,23 +512,23 @@ pub struct CatalogEntry {
     pub kind: EntryKind,
     /// The entries this one depends on (DuckDB's dependency manager subjects); dropping
     /// one of them requires CASCADE.
-    pub dependencies: Vec<rustdb_ast::LogicalDependency>,
+    pub dependencies: Vec<roastedduck_ast::LogicalDependency>,
     /// The table or sequence that owns this entry (`ALTER SEQUENCE ... OWNED BY`), which
     /// drops it along with itself. The link is part of the owned entry's version, as
     /// DuckDB keeps it in a dependency entry of its own: giving an entry an owner does
     /// not write a new version of the owner.
-    pub owned_by: Option<rustdb_ast::CatalogEntryInfo>,
+    pub owned_by: Option<roastedduck_ast::CatalogEntryInfo>,
     /// `COMMENT ON` (NULL without one).
-    pub comment: rustdb_types::Value,
+    pub comment: roastedduck_types::Value,
 }
 
 impl CatalogEntry {
-    pub fn new(name: impl Into<rustdb_common::ByteString>, kind: EntryKind) -> Self {
+    pub fn new(name: impl Into<roastedduck_common::ByteString>, kind: EntryKind) -> Self {
         Self::with_oid(name, kind, next_oid())
     }
 
     /// An entry constructed by its owning catalog's allocator.
-    pub fn with_oid(name: impl Into<rustdb_common::ByteString>, kind: EntryKind, oid: u64) -> Self {
+    pub fn with_oid(name: impl Into<roastedduck_common::ByteString>, kind: EntryKind, oid: u64) -> Self {
         Self {
             name: name.into(),
             oid,
@@ -533,7 +537,7 @@ impl CatalogEntry {
             kind,
             dependencies: Vec::new(),
             owned_by: None,
-            comment: rustdb_types::Value::default(),
+            comment: roastedduck_types::Value::default(),
         }
     }
 
@@ -570,8 +574,8 @@ impl CatalogEntry {
     }
 
     /// This entry of `schema` as the subject of a dependency.
-    pub fn info(&self, schema: impl AsRef<[u8]>) -> rustdb_ast::CatalogEntryInfo {
-        rustdb_ast::CatalogEntryInfo {
+    pub fn info(&self, schema: impl AsRef<[u8]>) -> roastedduck_ast::CatalogEntryInfo {
+        roastedduck_ast::CatalogEntryInfo {
             catalog_type: self.dependency_type(),
             schema: schema.as_ref().into(),
             name: self.name.clone(),
@@ -579,13 +583,17 @@ impl CatalogEntry {
     }
 
     /// Whether `info` names this entry of `schema`.
-    pub fn is_described_by(&self, schema: impl AsRef<[u8]>, info: &rustdb_ast::CatalogEntryInfo) -> bool {
+    pub fn is_described_by(
+        &self,
+        schema: impl AsRef<[u8]>,
+        info: &roastedduck_ast::CatalogEntryInfo,
+    ) -> bool {
         info.catalog_type == self.dependency_type()
             && info.schema.eq_ignore_ascii_case(schema.as_ref())
             && info.name.eq_ignore_ascii_case(&self.name)
     }
 
-    pub fn name(&self) -> &rustdb_common::ByteString {
+    pub fn name(&self) -> &roastedduck_common::ByteString {
         &self.name
     }
 
@@ -609,7 +617,7 @@ impl CatalogEntry {
     }
 
     /// The type a dependency on this entry records (`CatalogEntryInfo::type`).
-    pub fn dependency_type(&self) -> rustdb_ast::CatalogType {
+    pub fn dependency_type(&self) -> roastedduck_ast::CatalogType {
         self.catalog_type().to_ast()
     }
 
@@ -622,7 +630,10 @@ impl CatalogEntry {
 }
 
 /// Whether `a` and `b` name the same entry.
-pub(crate) fn same_entry(a: &rustdb_ast::CatalogEntryInfo, b: &rustdb_ast::CatalogEntryInfo) -> bool {
+pub(crate) fn same_entry(
+    a: &roastedduck_ast::CatalogEntryInfo,
+    b: &roastedduck_ast::CatalogEntryInfo,
+) -> bool {
     a.catalog_type == b.catalog_type
         && a.schema.eq_ignore_ascii_case(&b.schema)
         && a.name.eq_ignore_ascii_case(&b.name)

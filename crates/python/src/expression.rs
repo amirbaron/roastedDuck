@@ -3,13 +3,13 @@ use crate::{conversion, datatype::PyType, error};
 use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple};
-use rustdb_ast::{
+use roastedduck_ast::{
     BetweenExpression, CaseCheck, CaseExpression, CollateExpression, ExpressionType as E, LambdaExpression,
     LambdaSyntaxType, OrderByNullType, OrderType, ParsedExpression, ParsedExpressionKind as K,
     QualifiedColumnName,
 };
-use rustdb_common::Error;
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::Error;
+use roastedduck_types::{LogicalType, Value};
 
 #[pyclass(module = "_duckdb", name = "Expression", frozen)]
 #[derive(Clone, Debug)]
@@ -68,14 +68,14 @@ impl PyExpression {
         for value in args.iter() {
             children.push(Self::from_object(&value)?.native);
         }
-        Ok(Self::new(rustdb_parser::build::operator(
+        Ok(Self::new(roastedduck_parser::build::operator(
             if not { E::CompareNotIn } else { E::CompareIn },
             children,
         )))
     }
 }
 fn operator_function(name: &str, children: Vec<ParsedExpression>) -> ParsedExpression {
-    let mut expression = rustdb_parser::build::function(name, children);
+    let mut expression = roastedduck_parser::build::function(name, children);
     if let K::Function(function) = &mut expression.kind {
         function.is_operator = true;
     }
@@ -84,7 +84,7 @@ fn operator_function(name: &str, children: Vec<ParsedExpression>) -> ParsedExpre
 fn column_parts(py: Python<'_>, parts: Vec<String>) -> PyResult<PyExpression> {
     let names = if parts.len() == 1 {
         if parts[0] == "*" {
-            return Ok(PyExpression::new(rustdb_parser::build::star()));
+            return Ok(PyExpression::new(roastedduck_parser::build::star()));
         }
         let [catalog, schema, name] = crate::relation::qualified_name(py, &parts[0])?;
         let mut names = Vec::new();
@@ -99,10 +99,10 @@ fn column_parts(py: Python<'_>, parts: Vec<String>) -> PyResult<PyExpression> {
     } else {
         parts.into_iter().map(Into::into).collect()
     };
-    Ok(PyExpression::new(rustdb_parser::build::column_ref(names)))
+    Ok(PyExpression::new(roastedduck_parser::build::column_ref(names)))
 }
 pub(super) fn parse_list(py: Python<'_>, sql: &str) -> PyResult<Vec<ParsedExpression>> {
-    rustdb_parser::parse_expression_list(sql, &rustdb_parser::ParserOptions::default())
+    roastedduck_parser::parse_expression_list(sql, &roastedduck_parser::ParserOptions::default())
         .map_err(|e| error::native(py, &e))
 }
 #[pymethods]
@@ -149,7 +149,7 @@ impl PyExpression {
             };
             PyType::parse(py, &name)?.native
         };
-        Ok(Self::new(rustdb_parser::build::cast(
+        Ok(Self::new(roastedduck_parser::build::cast(
             kind,
             self.native.clone(),
             false,
@@ -164,7 +164,7 @@ impl PyExpression {
             CompareOp::Gt => E::CompareGreaterthan,
             CompareOp::Ge => E::CompareGreaterthanorequalto,
         };
-        Ok(Self::new(rustdb_parser::build::comparison(
+        Ok(Self::new(roastedduck_parser::build::comparison(
             kind,
             self.native.clone(),
             Self::from_object(other)?.native,
@@ -174,19 +174,19 @@ impl PyExpression {
         Self::new(operator_function("-", vec![self.native.clone()]))
     }
     fn __invert__(&self) -> Self {
-        Self::new(rustdb_parser::build::operator(
+        Self::new(roastedduck_parser::build::operator(
             E::OperatorNot,
             vec![self.native.clone()],
         ))
     }
     fn isnull(&self) -> Self {
-        Self::new(rustdb_parser::build::operator(
+        Self::new(roastedduck_parser::build::operator(
             E::OperatorIsNull,
             vec![self.native.clone()],
         ))
     }
     fn isnotnull(&self) -> Self {
-        Self::new(rustdb_parser::build::operator(
+        Self::new(roastedduck_parser::build::operator(
             E::OperatorIsNotNull,
             vec![self.native.clone()],
         ))
@@ -300,28 +300,28 @@ impl PyExpression {
         self.binary(other, "**", true)
     }
     fn __and__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        Ok(Self::new(rustdb_parser::build::conjunction(
+        Ok(Self::new(roastedduck_parser::build::conjunction(
             E::ConjunctionAnd,
             self.native.clone(),
             Self::from_object(other)?.native,
         )))
     }
     fn __rand__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        Ok(Self::new(rustdb_parser::build::conjunction(
+        Ok(Self::new(roastedduck_parser::build::conjunction(
             E::ConjunctionAnd,
             Self::from_object(other)?.native,
             self.native.clone(),
         )))
     }
     fn __or__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        Ok(Self::new(rustdb_parser::build::conjunction(
+        Ok(Self::new(roastedduck_parser::build::conjunction(
             E::ConjunctionOr,
             self.native.clone(),
             Self::from_object(other)?.native,
         )))
     }
     fn __ror__(&self, other: &Bound<'_, PyAny>) -> PyResult<Self> {
-        Ok(Self::new(rustdb_parser::build::conjunction(
+        Ok(Self::new(roastedduck_parser::build::conjunction(
             E::ConjunctionOr,
             Self::from_object(other)?.native,
             self.native.clone(),
@@ -405,7 +405,7 @@ fn function_expression(
         .skip(usize::from(!args.is_empty()))
         .map(|a| PyExpression::from_object(&a).map(|e| e.native))
         .collect::<PyResult<Vec<_>>>()?;
-    Ok(PyExpression::new(rustdb_parser::build::function(
+    Ok(PyExpression::new(roastedduck_parser::build::function(
         function_name,
         children,
     )))
@@ -418,7 +418,7 @@ fn coalesce_operator(args: &Bound<'_, PyTuple>) -> PyResult<PyExpression> {
             &Error::invalid_input("Please provide at least one argument"),
         ));
     }
-    Ok(PyExpression::new(rustdb_parser::build::operator(
+    Ok(PyExpression::new(roastedduck_parser::build::operator(
         E::OperatorCoalesce,
         args.iter()
             .map(|a| PyExpression::from_object(&a).map(|e| e.native))
@@ -440,7 +440,7 @@ fn case_expression(condition: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> Py
 }
 #[pyfunction(name="StarExpression",signature=(*,exclude=None))]
 fn star_expression(exclude: Option<&Bound<'_, PyAny>>) -> PyResult<PyExpression> {
-    let mut native = rustdb_parser::build::star();
+    let mut native = roastedduck_parser::build::star();
     let K::Star(star) = &mut native.kind else {
         unreachable!()
     };
@@ -485,7 +485,7 @@ fn lambda_expression(lhs: &Bound<'_, PyAny>, rhs: &Bound<'_, PyAny>) -> PyResult
             }
             children.push(expression.native);
         }
-        rustdb_parser::build::function("row", children)
+        roastedduck_parser::build::function("row", children)
     } else if lhs.is_instance_of::<PyString>() {
         let expression = PyExpression::from_object(lhs)?;
         if !matches!(expression.native.kind, K::ColumnRef(_)) {

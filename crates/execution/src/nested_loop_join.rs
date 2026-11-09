@@ -5,11 +5,11 @@
 //! for `[NOT] DISTINCT FROM`. Every (type, comparison) pair gets its own monomorphised
 //! loop.
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_planner::operator::JoinCondition;
-use rustdb_types::compare::SqlOrd;
-use rustdb_types::{DataChunk, Interval, PhysicalType, SelectionVector, StringT, Unified, Vector};
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_planner::operator::JoinCondition;
+use roastedduck_types::compare::SqlOrd;
+use roastedduck_types::{DataChunk, Interval, PhysicalType, SelectionVector, StringT, Unified, Vector};
 
 use crate::expression_executor::compare_vectors;
 

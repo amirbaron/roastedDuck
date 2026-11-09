@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Parser;
-use rustdb_bench::driver::{Job, execute};
-use rustdb_bench::engine::{CppEngine, Engine, EngineKind, RustEngine};
+use roastedduck_bench::driver::{Job, execute};
+use roastedduck_bench::engine::{CppEngine, Engine, EngineKind, RustEngine};
 
 #[derive(Debug, Parser)]
 #[command(

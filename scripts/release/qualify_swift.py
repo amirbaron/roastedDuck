@@ -37,8 +37,8 @@ for path in directories.values():
     path.mkdir()
 env = dict(os.environ, TMPDIR=str(directories["tmp"]), TZ="UTC",
            CLANG_MODULE_CACHE_PATH=str(directories["module-cache"]), SWIFTPM_MODULECACHE_OVERRIDE=str(directories["module-cache"]),
-           RUSTDB_SWIFT_TEST_DIRECTORY=str(directories["fixtures"]), RUSTDB_SWIFT_EXPECTED_LIBRARY=str(args.library),
-           RUSTDB_SWIFT_IDENTITY_REPORT=str(args.out / "identity.json"))
+           ROASTEDDUCK_SWIFT_TEST_DIRECTORY=str(directories["fixtures"]), ROASTEDDUCK_SWIFT_EXPECTED_LIBRARY=str(args.library),
+           ROASTEDDUCK_SWIFT_IDENTITY_REPORT=str(args.out / "identity.json"))
 env.pop("LD_LIBRARY_PATH", None)
 common = ["--package-path", str(package), "--scratch-path", str(directories["build"]),
           "--cache-path", str(directories["cache"]), "--config-path", str(directories["config"]),

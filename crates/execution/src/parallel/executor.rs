@@ -12,7 +12,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use super::event::{Event, EventKind};
 use super::interrupt::InterruptState;
@@ -127,7 +127,7 @@ impl QueryExecution {
     pub fn new(root: PhysicalRef, env: Arc<ClientEnv>, options: &QueryOptions) -> Result<Self> {
         let graph = PipelineBuilder::build(&root, options.preserve_insertion_order)?;
         let producer = env.scheduler.create_producer();
-        let opener = rustdb_function::file_system::opener();
+        let opener = roastedduck_function::file_system::opener();
         let client = Arc::new(QueryClient {
             force_external: options.force_external,
             logger: opener.as_ref().and_then(|opener| opener.logger()),
@@ -426,7 +426,7 @@ pub(crate) struct ExecutorShared {
     client_interrupted: Option<Arc<AtomicBool>>,
     /// The connection's function state the query runs with: worker threads see it as
     /// the thread that started the query does, e.g. to log (the tasks' `ClientContext`).
-    opener: Option<Arc<rustdb_function::client::FunctionClient>>,
+    opener: Option<Arc<roastedduck_function::client::FunctionClient>>,
     producer: ProducerToken,
     pipelines: Vec<Arc<Pipeline>>,
     /// Set on the first error: tasks stop at their next chunk.
@@ -1121,7 +1121,7 @@ impl Task for ExecutorTask {
             return TaskExecutionResult::Error;
         }
         // The thread records into the query's metrics while it works on the query.
-        let _metrics = rustdb_common::profiling::activate(
+        let _metrics = roastedduck_common::profiling::activate(
             self.executor
                 .profiler
                 .as_ref()
@@ -1131,7 +1131,7 @@ impl Task for ExecutorTask {
             .executor
             .opener
             .clone()
-            .map(rustdb_function::file_system::activate_opener);
+            .map(roastedduck_function::file_system::activate_opener);
         match catch_unwind(AssertUnwindSafe(|| self.execute_task(mode))) {
             Ok(Ok(result)) => result,
             Ok(Err(error)) => {
@@ -1169,9 +1169,9 @@ impl Drop for ExecutorTask {
 mod streaming_wait_tests {
     use super::*;
     use crate::operators::PhysicalResultCollector;
-    use rustdb_buffer::{BufferManager, BufferManagerConfig};
-    use rustdb_planner::{LogicalKind, LogicalOperator};
-    use rustdb_types::{DataChunk, LogicalType, Vector};
+    use roastedduck_buffer::{BufferManager, BufferManagerConfig};
+    use roastedduck_planner::{LogicalKind, LogicalOperator};
+    use roastedduck_types::{DataChunk, LogicalType, Vector};
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 

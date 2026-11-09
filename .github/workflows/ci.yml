@@ -22,7 +22,7 @@ jobs:
       - name: Install pinned Rust
         run: rustup show
       - name: Core regression tests
-        run: cargo test --locked -p rustdb-common -p rustdb-types -j 1
+        run: cargo test --locked -p roastedduck-common -p roastedduck-types -j 1
       - name: Shell source check
         run: cargo check --locked -p roastedduck-cli -j 1
   packaging:

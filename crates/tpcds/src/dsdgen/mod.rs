@@ -49,15 +49,15 @@ use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
-use rustdb_ast::{
+use roastedduck_ast::{
     ColumnDefinition, ColumnList, CompressionType, Constraint, CreateInfo, CreateInfoKind, CreateTableInfo,
     LogicalDependencyList, NotNullConstraint, OnCreateConflict, TableColumnType, UniqueConstraint,
 };
-use rustdb_catalog::{Catalog, CatalogType, EntryKind, Transaction};
-use rustdb_common::{CaseInsensitiveMap, Error, LogicalIndex, OrderedMap, Result};
-use rustdb_execution::operators::{CatalogTableCreator, TableCreator};
-use rustdb_storage::{DataTable, LocalAppendState, TableConstraints};
-use rustdb_types::{DataChunk, Value};
+use roastedduck_catalog::{Catalog, CatalogType, EntryKind, Transaction};
+use roastedduck_common::{CaseInsensitiveMap, Error, LogicalIndex, OrderedMap, Result};
+use roastedduck_execution::operators::{CatalogTableCreator, TableCreator};
+use roastedduck_storage::{DataTable, LocalAppendState, TableConstraints};
+use roastedduck_types::{DataChunk, Value};
 
 use self::append_info::{ChunkSink, RowAppender};
 use self::columns::{CD_NULLS, INV_NULLS, INV_QUANTITY_ON_HAND};
@@ -93,7 +93,7 @@ pub(crate) struct TableInfo {
 #[derive(Debug, Clone)]
 pub(crate) struct DsdgenTarget {
     pub(crate) catalog: Arc<Catalog>,
-    pub(crate) schema: rustdb_common::ByteString,
+    pub(crate) schema: roastedduck_common::ByteString,
     pub(crate) transaction: Arc<Transaction>,
 }
 
@@ -144,12 +144,12 @@ fn create_tpcds_table(
         } else {
             OnCreateConflict::ErrorOnConflict
         },
-        sql: rustdb_common::ByteString::new(),
+        sql: roastedduck_common::ByteString::new(),
         comment: Value::default(),
         tags: CaseInsensitiveMap::default(),
         dependencies: LogicalDependencyList::default(),
         kind: CreateInfoKind::Table(Box::new(CreateTableInfo {
-            table: rustdb_common::byte_format!("{}{suffix}", table.name),
+            table: roastedduck_common::byte_format!("{}{suffix}", table.name),
             columns: ColumnList { columns },
             constraints,
             query: None,
@@ -214,17 +214,17 @@ impl TableWriter {
     fn all(target: &DsdgenTarget, suffix: &[u8]) -> Result<Vec<Self>> {
         let mut writers = Vec::new();
         for table in CALL_CENTER..DBGEN_VERSION {
-            let name = rustdb_common::byte_format!("{}{suffix}", get_simple_tdefs_by_number(table).name);
+            let name = roastedduck_common::byte_format!("{}{suffix}", get_simple_tdefs_by_number(table).name);
             let entry = target
                 .catalog
                 .get_entry(&target.transaction, CatalogType::Table, &target.schema, &name)
                 .ok_or_else(|| {
-                    Error::catalog(rustdb_common::byte_format!(
+                    Error::catalog(roastedduck_common::byte_format!(
                         "Table with name {name} does not exist!"
                     ))
                 })?;
             let EntryKind::Table(table_entry) = &entry.kind else {
-                return Err(Error::catalog(rustdb_common::byte_format!(
+                return Err(Error::catalog(roastedduck_common::byte_format!(
                     "{name} is not a table"
                 )));
             };

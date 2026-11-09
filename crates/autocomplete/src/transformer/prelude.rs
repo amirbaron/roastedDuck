@@ -3,11 +3,11 @@
 
 #![allow(unused_imports, reason = "a prelude: not every module uses every item")]
 
-pub(crate) use rustdb_ast::*;
-pub(crate) use rustdb_common::{
+pub(crate) use roastedduck_ast::*;
+pub(crate) use roastedduck_common::{
     ByteString, CaseInsensitiveMap, Error, ErrorKind, OrderedMap, Result, byte_format,
 };
-pub(crate) use rustdb_types::{LogicalType, LogicalTypeId, Value};
+pub(crate) use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 pub(crate) use super::nodes::{
     AddColumnEntry, AnalyzeTarget, BaseTable, ColumnElements, ConstraintColumnDefinition, CreatePivotEntry,

@@ -12,12 +12,12 @@
 use std::fmt::Display;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::ValueCast;
-use rustdb_function::{
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_function::{
     BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet, ScalarKernel,
 };
-use rustdb_types::{
+use roastedduck_types::{
     DataChunk, Date, LogicalType, LogicalTypeId, NativeType, PhysicalType, Timestamp, Value, Vector,
 };
 
@@ -463,7 +463,7 @@ fn bind_decimal_precision(
             return Err(crate::parameter_not_resolved());
         }
         let unsupported = || {
-            Error::not_implemented(rustdb_common::byte_format!(
+            Error::not_implemented(roastedduck_common::byte_format!(
                 "{}(DECIMAL, INTEGER) with non-constant precision is not supported",
                 function.name.to_ascii_uppercase()
             ))

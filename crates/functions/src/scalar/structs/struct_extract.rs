@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use rustdb_common::string_util::{candidates_message_bytes, top_n_jaro_winkler};
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_function::{BindInput, FunctionData, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{LogicalType, LogicalTypeId};
+use roastedduck_common::string_util::{candidates_message_bytes, top_n_jaro_winkler};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_function::{BindInput, FunctionData, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{LogicalType, LogicalTypeId};
 
 use crate::scalar::nested::struct_field;
 use crate::values::as_bigint;
@@ -66,7 +66,7 @@ fn bind_key(function: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Opti
     else {
         let names: Vec<ByteString> = children.iter().map(|(name, _)| name.clone()).collect();
         let message = candidates_message_bytes(&top_n_jaro_winkler(&names, &key), b"Candidate Entries");
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "Could not find key \"{key}\" in struct\n{message}"
         )));
     };
@@ -96,7 +96,7 @@ fn bind_index(
         };
         let index = as_bigint(key)?;
         if index <= 0 || index as u64 > children.len() as u64 {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Key index {index} for struct_extract out of range - expected an index between 1 and {}",
                 children.len()
             )));

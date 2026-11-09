@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Builds zstd_ref, the reference zstd encoder (DuckDB's vendored zstd 1.5.6, linked from the
-# DuckDB 1.5.6 release build) that rustdb-zstd's frames are compared with.
+# DuckDB 1.5.6 release build) that roastedduck-zstd's frames are compared with.
 #
 # Usage: tools/zstd-ref/build.sh [duckdb-source-dir] [duckdb-build-dir]
 #   duckdb-source-dir defaults to $DUCKDB_REF, then to the shared checkout under .context.

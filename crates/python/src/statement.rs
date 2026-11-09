@@ -3,8 +3,8 @@ use crate::{conversion, error};
 use pyo3::IntoPyObjectExt;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PySet, PyString, PyTuple};
-use rustdb_ast::{SqlStatement, StatementType as S};
-use rustdb_common::{Error, Result};
+use roastedduck_ast::{SqlStatement, StatementType as S};
+use roastedduck_common::{Error, Result};
 
 const STATEMENTS: &[(&str, u8)] = &[
     ("INVALID", 0),
@@ -264,10 +264,10 @@ fn tokenize(args: &Bound<'_, PyTuple>, kwargs: Option<&Bound<'_, PyDict>>) -> Py
     let Some(bytes) = crate::type_creation::string_bytes(&value)? else {
         return Err(bad()?);
     };
-    let tokens = py.detach(|| rustdb_parser::tokenize_bytes(&bytes));
+    let tokens = py.detach(|| roastedduck_parser::tokenize_bytes(&bytes));
     let mut result = Vec::with_capacity(tokens.len());
     for token in tokens {
-        use rustdb_parser::SimplifiedTokenType as T;
+        use roastedduck_parser::SimplifiedTokenType as T;
         let value = match token.kind {
             T::Identifier => 0,
             T::NumericConstant => 1,
@@ -374,7 +374,7 @@ pub(super) enum Query<'a> {
     Parsed(Box<SqlStatement>),
 }
 impl Query<'_> {
-    pub(super) fn statements(self, connection: &mut rustdb::Connection) -> Result<Vec<SqlStatement>> {
+    pub(super) fn statements(self, connection: &mut roastedduck::Connection) -> Result<Vec<SqlStatement>> {
         match self {
             Self::Text(text) => connection.parse_statements_bytes(text),
             Self::Parsed(statement) => {

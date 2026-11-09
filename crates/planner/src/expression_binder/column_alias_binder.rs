@@ -3,8 +3,8 @@
 
 use std::collections::HashSet;
 
-use rustdb_ast::{ParsedExpression, ParsedExpressionKind};
-use rustdb_common::Result;
+use roastedduck_ast::{ParsedExpression, ParsedExpressionKind};
+use roastedduck_common::Result;
 
 use super::base_select_binder::SelectBindState;
 use super::is_potential_alias;
@@ -22,7 +22,7 @@ impl ColumnAliasBinder {
     /// Whether `names` refers to a select-list alias (DuckDB's `DoesColumnAliasExist`).
     pub fn does_column_alias_exist(
         bind_state: &SelectBindState,
-        names: &[rustdb_common::ByteString],
+        names: &[roastedduck_common::ByteString],
     ) -> bool {
         is_potential_alias(names)
             && names

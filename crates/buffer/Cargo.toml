@@ -1,5 +1,5 @@
 [package]
-name = "rustdb-buffer"
+name = "roastedduck-buffer"
 description = "Buffer management: block handles, pinning, memory limits, eviction and spilling."
 version.workspace = true
 edition.workspace = true
@@ -7,10 +7,10 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-rustdb-common.workspace = true
-rustdb-crypto = { path = "../crypto" }
+roastedduck-common.workspace = true
+roastedduck-crypto = { path = "../crypto" }
 libc = "0.2"
-rustdb-zstd = { path = "../zstd" }
+roastedduck-zstd = { path = "../zstd" }
 
 [lints]
 workspace = true

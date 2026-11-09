@@ -1,10 +1,10 @@
 //! Linear regression aggregates `regr_*(y, x)` (DuckDB's `core_functions/aggregate/
 //! regression`).
 
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::BinaryAggregate;
-use rustdb_function::{AggregateFunctionSet, NullHandling};
-use rustdb_types::LogicalType;
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::BinaryAggregate;
+use roastedduck_function::{AggregateFunctionSet, NullHandling};
+use roastedduck_types::LogicalType;
 
 use crate::aggregate::algebraic::stddev::{CorrState, CovarState, StddevState, binary_double};
 

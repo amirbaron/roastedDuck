@@ -1,9 +1,9 @@
 //! Arithmetic with neutral or absorbing constants: `x + 0`, `x * 1`, `x * 0`, `x // 1`,
 //! `x // 0` (DuckDB's `ArithmeticSimplificationRule`).
 
-use rustdb_common::Result;
-use rustdb_planner::{Expression, ExpressionKind};
-use rustdb_types::Value;
+use roastedduck_common::Result;
+use roastedduck_planner::{Expression, ExpressionKind};
+use roastedduck_types::Value;
 
 use super::RuleOutcome;
 use crate::expression_rewriter::RuleContext;
@@ -15,8 +15,8 @@ fn integral(value: &Value) -> Option<i128> {
 }
 
 /// `0` of an integral type (DuckDB's `Value::Numeric(type, 0)`).
-fn zero_of(ty: &rustdb_types::LogicalType) -> Result<Value> {
-    use rustdb_function::cast::ValueCast;
+fn zero_of(ty: &roastedduck_types::LogicalType) -> Result<Value> {
+    use roastedduck_function::cast::ValueCast;
     Value::integer(0).default_cast_as(ty)
 }
 

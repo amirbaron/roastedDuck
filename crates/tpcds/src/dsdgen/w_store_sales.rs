@@ -1,7 +1,7 @@
 //! The `store_sales` table and its child `store_returns` (`w_store_sales.c`,
 //! `w_store_returns.c`).
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use super::Output;
 use super::build_support::{get_permutation_entry, make_permutation};

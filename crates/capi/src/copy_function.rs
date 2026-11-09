@@ -8,11 +8,11 @@ use std::any::Any;
 use std::ffi::{CString, c_char, c_void};
 use std::sync::{Arc, PoisonError, RwLock};
 
-use rustdb_common::{CaseInsensitiveMap, Error, Result};
-use rustdb_function::copy::{CopyFromBindInput, CopyFunctionBindInput, CopyGlobalState};
-use rustdb_function::{CopyFunction, FunctionClient, FunctionData};
-use rustdb_planner::ClientContext as BinderContext;
-use rustdb_types::{DataChunk, LogicalType, Value};
+use roastedduck_common::{CaseInsensitiveMap, Error, Result};
+use roastedduck_function::copy::{CopyFromBindInput, CopyFunctionBindInput, CopyGlobalState};
+use roastedduck_function::{CopyFunction, FunctionClient, FunctionData};
+use roastedduck_planner::ClientContext as BinderContext;
+use roastedduck_types::{DataChunk, LogicalType, Value};
 
 use crate::data_chunk::DuckdbDataChunk;
 use crate::function::{DuckdbDeleteCallback, UserData, error_bytes};
@@ -135,7 +135,7 @@ struct CCopyToGlobalState {
 /// `CCopyFunctionToInternalBindInfo`).
 struct CCopyToInternalBindInfo<'a> {
     client: Option<&'a Arc<FunctionClient>>,
-    options: &'a CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteString>,
+    options: &'a CaseInsensitiveMap<Vec<Value>, roastedduck_common::ByteString>,
     types: &'a [LogicalType],
     extra_info: *mut c_void,
     bind_data: UserData,
@@ -184,7 +184,7 @@ fn binder_client(binder: Option<&dyn Any>) -> Option<&Arc<FunctionClient>> {
 /// `MakeValueFromCopyOptions`: the options as a STRUCT with upper-case names, NULL without
 /// options. An option without values is NULL, one value is itself, values of one type a
 /// LIST, others an unnamed STRUCT.
-fn options_value(options: &CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteString>) -> Value {
+fn options_value(options: &CaseInsensitiveMap<Vec<Value>, roastedduck_common::ByteString>) -> Value {
     if options.is_empty() {
         return Value::default();
     }
@@ -204,7 +204,7 @@ fn options_value(options: &CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteStr
                 _ => Value::struct_value(
                     values
                         .iter()
-                        .map(|value| (rustdb_common::ByteString::new(), value.clone()))
+                        .map(|value| (roastedduck_common::ByteString::new(), value.clone()))
                         .collect(),
                 ),
             };
@@ -236,7 +236,7 @@ fn c_copy_to_bind(
         unsafe { bind_to(std::ptr::from_mut(&mut bind_info).cast()) };
         bind_data = bind_info.bind_data;
         if let Some(error) = bind_info.error {
-            return Err(Error::new_bytes(rustdb_common::ErrorKind::Binder, error));
+            return Err(Error::new_bytes(roastedduck_common::ErrorKind::Binder, error));
         }
     }
     Ok(Arc::new(CCopyToBindData {
@@ -262,7 +262,10 @@ fn c_copy_to_global_init(bind_data: &dyn FunctionData, path: &[u8]) -> Result<Co
         unsafe { global_init(std::ptr::from_mut(&mut init_info).cast()) };
         global_state = init_info.global_state;
         if let Some(error) = init_info.error {
-            return Err(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, error));
+            return Err(Error::new_bytes(
+                roastedduck_common::ErrorKind::InvalidInput,
+                error,
+            ));
         }
     }
     Ok(Box::new(CCopyToGlobalState { global_state }))
@@ -294,7 +297,10 @@ fn c_copy_to_sink(
     // call.
     unsafe { sink(std::ptr::from_mut(&mut sink_info).cast(), &raw mut input) };
     match sink_info.error {
-        Some(error) => Err(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, error)),
+        Some(error) => Err(Error::new_bytes(
+            roastedduck_common::ErrorKind::InvalidInput,
+            error,
+        )),
         None => Ok(()),
     }
 }
@@ -315,7 +321,10 @@ fn c_copy_to_finalize(bind_data: &dyn FunctionData, global_state: &CopyGlobalSta
     // SAFETY: the client's callback receives the finalize info, valid for the call.
     unsafe { finalize(std::ptr::from_mut(&mut finalize_info).cast()) };
     match finalize_info.error {
-        Some(error) => Err(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, error)),
+        Some(error) => Err(Error::new_bytes(
+            roastedduck_common::ErrorKind::InvalidInput,
+            error,
+        )),
         None => Ok(()),
     }
 }
@@ -325,13 +334,13 @@ fn c_copy_to_finalize(bind_data: &dyn FunctionData, global_state: &CopyGlobalSta
 fn c_copy_from_bind(
     function: &CTableFunction,
     input: &CopyFromBindInput<'_>,
-    names: &[rustdb_common::ByteString],
+    names: &[roastedduck_common::ByteString],
     types: &[LogicalType],
 ) -> Result<Arc<dyn FunctionData>> {
     let mut named_parameters = CaseInsensitiveMap::default();
     for (name, values) in input.options.iter() {
         if function.named_parameter(name).is_none() {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "'{name}' is not a supported option for copy function '{}'",
                 function.name
             )));
@@ -344,7 +353,7 @@ fn c_copy_from_bind(
                     .iter()
                     .any(|value| value.logical_type() != first.logical_type())
                 {
-                    return Err(Error::binder(rustdb_common::byte_format!(
+                    return Err(Error::binder(roastedduck_common::byte_format!(
                         "Cannot pass multiple values of different types for copy option '{name}'"
                     )));
                 }

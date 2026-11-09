@@ -1,11 +1,11 @@
 //! Casts from and to `DATE`, `TIME`, `TIME_NS`, `TIME WITH TIME ZONE`, `TIMESTAMP` (all units and
 //! WITH TIME ZONE) and INTERVAL (DuckDB's `time_casts.cpp` and the temporal operators of
-//! `cast_operators.cpp`). The calendar arithmetic lives in `rustdb_types`.
+//! `cast_operators.cpp`). The calendar arithmetic lives in `roastedduck_types`.
 
-use rustdb_common::{Error, Result};
-use rustdb_types::interval::IntervalParseError;
-use rustdb_types::timestamp::{self as ts, TimestampParseError};
-use rustdb_types::{
+use roastedduck_common::{Error, Result};
+use roastedduck_types::interval::IntervalParseError;
+use roastedduck_types::timestamp::{self as ts, TimestampParseError};
+use roastedduck_types::{
     Date, Interval, LogicalType, LogicalTypeId, NativeType, PhysicalType, Time, TimeNs, TimeTz, Timestamp,
 };
 

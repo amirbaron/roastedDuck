@@ -1,9 +1,9 @@
-//! Foundations shared by every rustdb crate.
+//! Foundations shared by every roastedduck crate.
 //!
 //! The error model mirrors DuckDB's `ExceptionType` + `ErrorData` so that user-visible
 //! error text is byte-identical to the reference engine.
 
-extern crate self as rustdb_common;
+extern crate self as roastedduck_common;
 
 pub mod blob;
 pub mod byte_format;
@@ -27,7 +27,7 @@ pub use byte_string::ByteString;
 pub use collections::{CaseInsensitiveMap, CaseInsensitiveSet, OrderedMap};
 pub use error::{Error, ErrorKind, Result, os_error_text};
 pub use index::{LogicalIndex, PhysicalIndex};
-pub use rustdb_byte_format::{byte_format, byte_write};
+pub use roastedduck_byte_format::{byte_format, byte_write};
 
 /// DuckDB's `idx_t`: the index/count type used throughout the engine.
 pub type Idx = u64;

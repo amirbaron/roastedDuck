@@ -5,11 +5,11 @@ use std::any::Any;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use rustdb_common::Result;
-use rustdb_row::hash::{hash_fixed, hash_selected, hash_vector};
-use rustdb_storage::statistics::{BaseStatistics, FilterPropagateResult, NumericValue, StatsData};
-use rustdb_storage::table_filter::ExpressionFilter;
-use rustdb_types::{LogicalType, Vector, VectorKind};
+use roastedduck_common::Result;
+use roastedduck_row::hash::{hash_fixed, hash_selected, hash_vector};
+use roastedduck_storage::statistics::{BaseStatistics, FilterPropagateResult, NumericValue, StatsData};
+use roastedduck_storage::table_filter::ExpressionFilter;
+use roastedduck_types::{LogicalType, Vector, VectorKind};
 
 /// At most this many 64-bit sectors (`MAX_NUM_SECTORS`).
 const MAX_NUM_SECTORS: u64 = 1 << 26;
@@ -105,11 +105,11 @@ thread_local! {
 pub struct BloomTableFilter {
     filter: Arc<BloomFilter>,
     /// The build key, as `EXPLAIN` shows it.
-    key_column_name: rustdb_common::ByteString,
+    key_column_name: roastedduck_common::ByteString,
 }
 
 impl BloomTableFilter {
-    pub fn new(filter: Arc<BloomFilter>, key_column_name: rustdb_common::ByteString) -> Self {
+    pub fn new(filter: Arc<BloomFilter>, key_column_name: roastedduck_common::ByteString) -> Self {
         Self {
             filter,
             key_column_name,
@@ -151,7 +151,7 @@ fn check_integer_range(filter: &BloomFilter, min: NumericValue, max: NumericValu
             }
         }};
     }
-    use rustdb_types::PhysicalType as P;
+    use roastedduck_types::PhysicalType as P;
     match (min, max) {
         (NumericValue::I8(min), NumericValue::I8(max)) => range!(min, max, P::Int8),
         (NumericValue::I16(min), NumericValue::I16(max)) => range!(min, max, P::Int16),
@@ -204,8 +204,8 @@ impl ExpressionFilter for BloomTableFilter {
         }
     }
 
-    fn to_sql(&self, column_name: &[u8]) -> rustdb_common::ByteString {
-        rustdb_common::byte_format!("{column_name} IN BF({})", self.key_column_name)
+    fn to_sql(&self, column_name: &[u8]) -> roastedduck_common::ByteString {
+        roastedduck_common::byte_format!("{column_name} IN BF({})", self.key_column_name)
     }
 
     fn as_any(&self) -> &dyn Any {

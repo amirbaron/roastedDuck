@@ -5,13 +5,13 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
-use rustdb_functions::scalar::date::calendar::{DAY_NAMES, MONTH_NAMES};
-use rustdb_functions::scalar::date::date_part::Part;
-use rustdb_functions::scalar::executor::{Str, StrOut, addressable, binary, unary};
-use rustdb_functions::scalar::structs::build_struct;
-use rustdb_types::{DataChunk, Date, LogicalType, LogicalTypeId, NativeType, Timestamp, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
+use roastedduck_functions::scalar::date::calendar::{DAY_NAMES, MONTH_NAMES};
+use roastedduck_functions::scalar::date::date_part::Part;
+use roastedduck_functions::scalar::executor::{Str, StrOut, addressable, binary, unary};
+use roastedduck_functions::scalar::structs::build_struct;
+use roastedduck_types::{DataChunk, Date, LogicalType, LogicalTypeId, NativeType, Timestamp, Vector};
 
 use crate::icu_datefunc::{self, BindData, CalendarPtr, MICROS_PER_MSEC, extract_field, set_time};
 use crate::icu4c::calendar::{Calendar, Status, field};
@@ -449,7 +449,7 @@ impl FunctionData for BindStructData {
 
 /// `ICUDatePart::SerializeStructFunction`.
 fn serialize_struct(
-    serializer: &mut dyn rustdb_serde::Serializer,
+    serializer: &mut dyn roastedduck_serde::Serializer,
     bind_data: Option<&dyn FunctionData>,
     _: &ScalarFunction,
 ) -> Result<()> {
@@ -547,10 +547,10 @@ fn bind_struct(
     input: &BindInput<'_>,
 ) -> Result<Option<Arc<dyn FunctionData>>> {
     if input.argument_types[0].id() == LogicalTypeId::Unknown {
-        return Err(rustdb_functions::parameter_not_resolved());
+        return Err(roastedduck_functions::parameter_not_resolved());
     }
     let not_constant = || {
-        Error::binder(rustdb_common::byte_format!(
+        Error::binder(roastedduck_common::byte_format!(
             "{} can only take constant lists of part names",
             function.name
         ))
@@ -563,7 +563,7 @@ fn bind_struct(
     }
     let list_children = parts_list.children().unwrap_or_default();
     if list_children.is_empty() {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "{} requires non-empty lists of part names",
             function.name
         )));
@@ -573,7 +573,7 @@ fn bind_struct(
     let mut struct_children = Vec::with_capacity(list_children.len());
     for part_value in list_children {
         if part_value.is_null() {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "NULL struct entry name in {}",
                 function.name
             )));
@@ -581,7 +581,7 @@ fn bind_struct(
         let part_name = part_value.to_varchar()?;
         let part_code = Part::parse(&part_name)?;
         if names.iter().any(|name| name.eq_ignore_ascii_case(&part_name)) {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Duplicate struct entry name \"{part_name}\" in {}",
                 function.name
             )));

@@ -2,10 +2,10 @@
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 
-use rustdb_common::{ByteString, Result};
-use rustdb_function::FunctionClient;
-use rustdb_function::logging::{ClientLogger, FileSystemLogger, LogLevel, LogScope, LogTypeInfo};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::{ByteString, Result};
+use roastedduck_function::FunctionClient;
+use roastedduck_function::logging::{ClientLogger, FileSystemLogger, LogLevel, LogScope, LogTypeInfo};
+use roastedduck_types::{LogicalType, Value};
 
 #[derive(Debug, Default)]
 struct Capture(Mutex<Vec<ByteString>>);
@@ -30,7 +30,7 @@ impl ClientLogger for Capture {
 fn unhex(text: &str) -> Result<Vec<u8>> {
     let (pairs, rest) = text.as_bytes().as_chunks::<2>();
     if !rest.is_empty() {
-        return Err(rustdb_common::Error::invalid_input("odd oracle hex length"));
+        return Err(roastedduck_common::Error::invalid_input("odd oracle hex length"));
     }
     pairs
         .iter()
@@ -39,7 +39,9 @@ fn unhex(text: &str) -> Result<Vec<u8>> {
                 match byte {
                     b'0'..=b'9' => Ok(byte - b'0'),
                     b'a'..=b'f' => Ok(byte - b'a' + 10),
-                    _ => Err(rustdb_common::Error::invalid_input("invalid oracle hex digit")),
+                    _ => Err(roastedduck_common::Error::invalid_input(
+                        "invalid oracle hex digit",
+                    )),
                 }
             };
             Ok(digit(pair[0])? * 16 + digit(pair[1])?)
@@ -48,7 +50,7 @@ fn unhex(text: &str) -> Result<Vec<u8>> {
 }
 #[test]
 fn native_file_handle_messages_and_checked_profile_map_match_cpp() {
-    let input = std::env::var_os("RUSTDB_FILE_LOGGING_ORACLE").map_or_else(
+    let input = std::env::var_os("ROASTEDDUCK_FILE_LOGGING_ORACLE").map_or_else(
         || include_str!("data/native_file_logging_1.5.6.tsv").to_owned(),
         |path| std::fs::read_to_string(path).unwrap(),
     );

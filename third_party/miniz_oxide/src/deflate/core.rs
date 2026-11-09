@@ -1834,7 +1834,7 @@ pub(crate) fn flush_block(
             // As a static block will have an overhead of at most 1 bit per byte
             // (as literals are either 8 or 9 bytes), a raw block will
             // never take up less space if the number of input bytes are less than 32.
-            // rustdb: C miniz's condition (`tdefl_flush_block`), which DuckDB's gzip and
+            // roastedDuck: C miniz's condition (`tdefl_flush_block`), which DuckDB's gzip and
             // Parquet GZIP output is made with: any block that does not shrink is stored.
             let expanded = (d.lz.total_bytes > 0)
                 && (output.inner_pos - saved_buffer.pos + 1 >= (d.lz.total_bytes as usize))

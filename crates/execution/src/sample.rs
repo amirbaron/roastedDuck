@@ -10,9 +10,9 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
-use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::random::RandomEngine;
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_common::{Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::random::RandomEngine;
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 /// The sample size that switches fast sampling to reservoir sampling, as a number of
 /// rows seen divided by [`FIXED_SAMPLE_SIZE`] (`FAST_TO_SLOW_THRESHOLD`).
@@ -380,7 +380,7 @@ impl ReservoirSample {
         }
         if consumed != 0 {
             let rest: Vec<u32> = (consumed..chunk.len()).map(|row| row as u32).collect();
-            let sel = rustdb_types::SelectionVector::new(rest);
+            let sel = roastedduck_types::SelectionVector::new(rest);
             let slice = DataChunk::new(
                 chunk.columns().iter().map(|column| column.slice(&sel)).collect(),
                 chunk.len() - consumed,
@@ -435,7 +435,7 @@ impl ReservoirSample {
             };
             self.sel_size -= 1;
         }
-        let sel = rustdb_types::SelectionVector::new(selection);
+        let sel = roastedduck_types::SelectionVector::new(selection);
         Some(DataChunk::new(
             reservoir.iter().map(|column| column.slice(&sel)).collect(),
             size,
@@ -491,7 +491,7 @@ impl ReservoirSamplePercentage {
         let to_current = RESERVOIR_THRESHOLD - self.current_count;
         let to_next = input.len() - to_current;
         let slice = |from: usize, len: usize| {
-            let sel = rustdb_types::SelectionVector::new(
+            let sel = roastedduck_types::SelectionVector::new(
                 (from..from + len).map(|row| row as u32).collect::<Vec<_>>(),
             );
             DataChunk::new(

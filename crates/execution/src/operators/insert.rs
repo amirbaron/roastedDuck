@@ -2,9 +2,11 @@ use std::fmt;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::{Error, Result};
-use rustdb_storage::{DataTable, OptimisticCollection, OptimisticDataWriter, TableConstraints, Transaction};
-use rustdb_types::{DataChunk, LogicalType};
+use roastedduck_common::{Error, Result};
+use roastedduck_storage::{
+    DataTable, OptimisticCollection, OptimisticDataWriter, TableConstraints, Transaction,
+};
+use roastedduck_types::{DataChunk, LogicalType};
 
 use super::modify::{ModifyResult, SharedAppend, count_types};
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};

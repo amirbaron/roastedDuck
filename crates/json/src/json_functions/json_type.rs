@@ -1,8 +1,8 @@
 //! `json_type` (DuckDB's `json_type.cpp`).
 
-use rustdb_common::Result;
-use rustdb_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_common::Result;
+use roastedduck_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use super::{input_types, read_bind, read_many_bind};
 use crate::json_common::val_type_to_string;

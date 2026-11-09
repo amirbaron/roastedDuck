@@ -8,8 +8,8 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, StringT, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, StringT, Vector};
 
 use super::bitpacking_primitives::{
     GROUP_SIZE, minimum_bit_width_unsigned, pack_buffer_u64, required_size, round_up_to_group,
@@ -24,7 +24,7 @@ use crate::statistics::BaseStatistics;
 use crate::table::ColumnSegment;
 use crate::table::column_segment::PersistentData;
 use crate::table_filter::TableFilter;
-use rustdb_types::compare::CompareOp;
+use roastedduck_types::compare::CompareOp;
 
 /// The size of `fsst_compression_header_t`.
 pub(crate) const FSST_HEADER_SIZE: usize = 16;
@@ -99,7 +99,7 @@ impl SegmentScan for FsstScanState {
 
     /// `= ''` and `<> ''` are decided by the compressed lengths alone (an empty string,
     /// and only an empty string, has no codes), so only the selected strings are decoded.
-    /// rustdb-specific: DuckDB decompresses every string to compare it.
+    /// roastedduck-specific: DuckDB decompresses every string to compare it.
     fn filter(
         &mut self,
         _segment: &ColumnSegment,
@@ -249,7 +249,7 @@ const MINIMUM_COMPRESSION_RATIO: f64 = 1.2;
 const ANALYSIS_SAMPLE_SIZE: f64 = 0.25;
 
 /// A PCG32 generator (DuckDB's `RandomEngine`, which DuckDB seeds randomly; a fixed seed
-/// keeps rustdb's sampling reproducible).
+/// keeps roastedduck's sampling reproducible).
 #[derive(Debug)]
 pub(crate) struct RandomEngine {
     state: u64,

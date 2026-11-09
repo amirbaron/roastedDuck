@@ -139,7 +139,7 @@ jobs:
         run: |
           rustup show
           rustup target add ${{ matrix.target }}
-          cargo build --locked --release -j 1 --target ${{ matrix.target }} -p roastedduck-cli -p rustdb-capi -p slt
+          cargo build --locked --release -j 1 --target ${{ matrix.target }} -p roastedduck-cli -p roastedduck-capi -p slt
           python scripts/release/compile_harnesses.py --target ${{ matrix.target }} --out compiled-harnesses
           python scripts/release/compile_adbc_bridge.py --target ${{ matrix.target }} --out compiled-harnesses/adbc
       - name: Build five normal Python ABI wheels
@@ -154,7 +154,7 @@ jobs:
           before-script-linux: |
             yum install -y perl-IPC-Cmd perl-Time-Piece
             (
-              cargo build --locked --release -j 1 --target ${{ matrix.target }} -p roastedduck-cli -p rustdb-capi -p slt
+              cargo build --locked --release -j 1 --target ${{ matrix.target }} -p roastedduck-cli -p roastedduck-capi -p slt
               python3 scripts/release/compile_harnesses.py --target ${{ matrix.target }} --out compiled-harnesses
               python3 scripts/release/compile_adbc_bridge.py --target ${{ matrix.target }} --out compiled-harnesses/adbc
             )
@@ -354,6 +354,7 @@ jobs:
             native-qualification/
             qualification/summary.json
             qualification/validation-provenance.json
+            qualification/release.json
             qualification/*/*/*.json
             qualification/*/*/*.jsonl
             qualification/*/*/*.xml
@@ -384,6 +385,12 @@ jobs:
       - run: python -m pip install packaging==26.3 twine==7.0.0
       - run: python scripts/release/assemble_python_candidate.py --input incoming --out accepted-python
       - run: python scripts/release/verify_qualification.py --inputs incoming --manifest accepted-python/python-distributions.json --commit "$(git rev-parse HEAD)" --out accepted-python/qualification-verification.json
+      - name: Audit all resolved qualification environments
+        run: |
+          curl -fL https://github.com/google/osv-scanner/releases/download/v2.7.1/osv-scanner_linux_amd64 -o "$RUNNER_TEMP/osv-scanner"
+          echo 'fb7dab19a8bd9bbe5c3189f09d4b7ee1820c9553a23bac202648a56efd2f6ee8' " $RUNNER_TEMP/osv-scanner" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/osv-scanner"
+          python scripts/release/audit_validation_environments.py --inputs incoming --cargo-lock Cargo.lock --scanner "$RUNNER_TEMP/osv-scanner" --out accepted-python/resolved-environments.json
       - run: python -m twine check --strict accepted-python/*.whl accepted-python/*.tar.gz
       - uses: actions/upload-artifact@v4
         with:
@@ -398,5 +405,6 @@ jobs:
             accepted-python/python-distributions.json
             accepted-python/SHA256SUMS
             accepted-python/qualification-verification.json
+            accepted-python/resolved-environments*.json
           if-no-files-found: error
           retention-days: 30

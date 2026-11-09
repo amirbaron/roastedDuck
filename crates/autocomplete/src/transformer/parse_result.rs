@@ -1,9 +1,9 @@
 //! The parse tree the matcher builds for the transformer (DuckDB's `ParseResult`
 //! hierarchy, `transformer/parse_result.hpp`).
 
-use rustdb_ast::ParsedExpression;
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_ast::ParsedExpression;
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, Value};
 
 use crate::matcher::SpecialStringCharacter;
 

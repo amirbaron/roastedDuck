@@ -2,7 +2,7 @@
 use pyo3::exceptions::{PyException, PyRuntimeError, PyUnicodeDecodeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyInt, PyString};
-use rustdb_common::{Error as NativeError, ErrorKind};
+use roastedduck_common::{Error as NativeError, ErrorKind};
 use std::fmt::Write as _;
 macro_rules! exception {
     ($name:ident,$base:ty) => {
@@ -151,7 +151,8 @@ pub fn native(py: Python<'_>, error: &NativeError) -> PyErr {
     // Native JSON errors omit the display prefix; Python's typed exception
     // constructor retains it before the unchanged JSON object.
     if bytes.first() == Some(&b'{') {
-        bytes = rustdb_common::byte_format!("{} Error: {}", kind.display_name(), &bytes[..]).into_bytes();
+        bytes =
+            roastedduck_common::byte_format!("{} Error: {}", kind.display_name(), &bytes[..]).into_bytes();
     }
     let message = match crate::conversion::text(py, &bytes) {
         Ok(message) => message,

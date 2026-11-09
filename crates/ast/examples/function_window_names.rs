@@ -1,12 +1,12 @@
 //! Exact native function/window/collation/LOAD metadata and SQL against C++ 1.5.6.
-use rustdb_ast::{
+use roastedduck_ast::{
     CollateExpression, ExpressionType, FunctionExpression, LoadInfo, LoadType, OrderModifier, ParseInfo,
     ParsedExpression, ParsedExpressionKind, WindowBoundary, WindowExcludeMode, WindowExpression,
 };
-use rustdb_common::{ByteString, Error, Result, byte_format};
-use rustdb_serde::binary::BinarySerializer;
-use rustdb_serde::{SerializationOptions, Serialize, Serializer};
-use rustdb_types::{LogicalType, LogicalTypeId, StringTypeInfo, TypeInfo, Value};
+use roastedduck_common::{ByteString, Error, Result, byte_format};
+use roastedduck_serde::binary::BinarySerializer;
+use roastedduck_serde::{SerializationOptions, Serialize, Serializer};
+use roastedduck_types::{LogicalType, LogicalTypeId, StringTypeInfo, TypeInfo, Value};
 use std::io::{self, BufRead};
 fn decode(hex: &str) -> Result<Vec<u8>> {
     let (pairs, rest) = hex.as_bytes().as_chunks::<2>();

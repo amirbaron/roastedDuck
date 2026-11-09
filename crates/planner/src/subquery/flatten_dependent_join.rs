@@ -5,10 +5,10 @@
 
 use std::collections::HashMap;
 
-use rustdb_ast::{JoinType, SubqueryType, WindowBoundary, WindowExcludeMode};
-use rustdb_catalog::{CatalogType, EntryKind};
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_ast::{JoinType, SubqueryType, WindowBoundary, WindowExcludeMode};
+use roastedduck_catalog::{CatalogType, EntryKind};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, Value};
 
 use super::rewrite::{
     CorrelatedMap, CteScanRewriteMode, has_correlated_expressions, rewrite_correlated_expressions,
@@ -81,7 +81,7 @@ fn comparison_join(
 pub(crate) fn row_number(
     partitions: Vec<Expression>,
     orders: Vec<BoundOrderByNode>,
-    alias: impl Into<rustdb_common::ByteString>,
+    alias: impl Into<roastedduck_common::ByteString>,
 ) -> Expression {
     Expression::new(
         ExpressionType::WindowRowNumber,

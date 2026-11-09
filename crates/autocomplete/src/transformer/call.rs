@@ -1,6 +1,6 @@
 //! The transform functions of DuckDB's `transform_call.cpp`.
 
-use rustdb_parser::build;
+use roastedduck_parser::build;
 
 use super::prelude::*;
 

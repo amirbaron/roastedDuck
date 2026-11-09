@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex, PoisonError};
 
-use rustdb_parser::highlight::{HighlightToken, HighlightTokenType, tokenize_error};
+use roastedduck_parser::highlight::{HighlightToken, HighlightTokenType, tokenize_error};
 
 use crate::output::{Output, PrintOutput};
 
@@ -536,7 +536,7 @@ pub fn set_highlighting(enabled: bool) {
 /// error listing the names.
 pub fn try_get_highlight_element(
     name: impl AsRef<[u8]>,
-) -> Result<HighlightElementType, rustdb_common::ByteString> {
+) -> Result<HighlightElementType, roastedduck_common::ByteString> {
     let name = name.as_ref();
     if let Some(index) = DEFAULT_ELEMENTS
         .iter()
@@ -545,7 +545,7 @@ pub fn try_get_highlight_element(
         return Ok(ELEMENT_TYPES[index]);
     }
     let supported_options: Vec<&str> = DEFAULT_ELEMENTS.iter().map(|element| element.name).collect();
-    Err(rustdb_common::byte_format!(
+    Err(roastedduck_common::byte_format!(
         "Unknown element '{name}', supported options: {}\n",
         supported_options.join(", ")
     ))
@@ -553,7 +553,7 @@ pub fn try_get_highlight_element(
 
 /// `ShellHighlight::TryGetPrintColor`: the color named `name` (any case), or the error
 /// with the closest names.
-pub fn try_get_print_color(name: impl AsRef<[u8]>) -> Result<PrintColor, rustdb_common::ByteString> {
+pub fn try_get_print_color(name: impl AsRef<[u8]>) -> Result<PrintColor, roastedduck_common::ByteString> {
     let name = name.as_ref();
     if let Some(code) = COLOR_INFO
         .iter()
@@ -563,8 +563,8 @@ pub fn try_get_print_color(name: impl AsRef<[u8]>) -> Result<PrintColor, rustdb_
     }
     let color_names: Vec<String> = COLOR_INFO.iter().map(|info| info.color_name.to_owned()).collect();
     let candidates =
-        rustdb_common::string_util::candidates_error_message_bytes(&color_names, name, b"Did you mean");
-    Err(rustdb_common::byte_format!(
+        roastedduck_common::string_util::candidates_error_message_bytes(&color_names, name, b"Did you mean");
+    Err(roastedduck_common::byte_format!(
         "Unknown highlighting color '{name}'\n{candidates}\nRun '.display_colors' for a list of available colors.\n"
     ))
 }
@@ -711,7 +711,7 @@ impl<'a> ShellHighlight<'a> {
         } else {
             self.out.print(
                 output,
-                rustdb_common::byte_format!("{code}{text}{RESET_TERMINAL_CODE}"),
+                roastedduck_common::byte_format!("{code}{text}{RESET_TERMINAL_CODE}"),
             );
         }
     }

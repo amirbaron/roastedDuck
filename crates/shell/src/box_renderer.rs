@@ -2,12 +2,12 @@
 //! table of unicode boxes, shortened to the terminal width and to `.maxrows` rows, with a
 //! footer that counts the rows and columns.
 
-use rustdb_common::ByteString;
+use roastedduck_common::ByteString;
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use rustdb::{LogicalType, LogicalTypeId, MaterializedResult, Result};
+use roastedduck::{LogicalType, LogicalTypeId, MaterializedResult, Result};
 
 use crate::printer;
 use crate::render_context::RenderContext;
@@ -322,7 +322,7 @@ impl BoxRendererState {
             self.footer.column_count_str.push(b's');
         }
         self.footer.row_count_str =
-            rustdb_common::byte_format!("{} rows", self.format_number(&row_count.to_string()));
+            roastedduck_common::byte_format!("{} rows", self.format_number(&row_count.to_string()));
         let has_limited_rows = self.config.limit > 0 && row_count == self.config.limit;
         if has_limited_rows {
             self.footer.row_count_str = "? rows".into();
@@ -331,17 +331,17 @@ impl BoxRendererState {
             let readable_str = self.try_format_large_number(row_count.to_string());
             if !readable_str.is_empty() {
                 self.footer.readable_rows_str = format!("{row_count} total").into();
-                self.footer.row_count_str = rustdb_common::byte_format!("{readable_str} rows");
+                self.footer.row_count_str = roastedduck_common::byte_format!("{readable_str} rows");
             }
         }
         self.footer.has_hidden_rows = rendered_rows < row_count;
         if self.footer.has_hidden_rows {
             if has_limited_rows {
                 let limit = self.format_number(&(self.config.limit - 1).to_string());
-                self.footer.shown_str += rustdb_common::byte_format!(">{limit} rows, ");
+                self.footer.shown_str += roastedduck_common::byte_format!(">{limit} rows, ");
             }
             let shown = self.format_number(&rendered_rows.to_string());
-            self.footer.shown_str += rustdb_common::byte_format!("{shown} shown");
+            self.footer.shown_str += roastedduck_common::byte_format!("{shown} shown");
         }
         self.footer.must_show_footer = has_limited_rows || self.footer.has_hidden_rows || row_count == 0;
         self.footer.render_length = self
@@ -541,7 +541,7 @@ impl BoxRendererState {
     fn convert_chunk(
         &self,
         context: &dyn RenderContext,
-        chunk: &rustdb::DataChunk,
+        chunk: &roastedduck::DataChunk,
         offset: usize,
         count: usize,
     ) -> Result<Vec<Vec<RenderCell>>> {
@@ -609,7 +609,7 @@ impl BoxRendererState {
                         all_readable = false;
                         break;
                     }
-                    readable_numbers.push(rustdb_common::byte_format!("({readable})"));
+                    readable_numbers.push(roastedduck_common::byte_format!("({readable})"));
                 }
                 if all_readable {
                     top_collection.push(
@@ -660,7 +660,7 @@ impl BoxRendererState {
             fetched_row_count += result.chunk_len(first_chunk);
         }
         if fetched_row_count < self.bottom_rows {
-            return Err(rustdb::Error::internal("Failed to fetch enough rows"));
+            return Err(roastedduck::Error::internal("Failed to fetch enough rows"));
         }
         for index in first_chunk..result.chunk_count() {
             let chunk = result.chunk(index)?;
@@ -706,7 +706,7 @@ impl BoxRendererState {
                 RenderCell {
                     render_length: crate::utf8::terminal_render_width(column_name),
                     text: Some(
-                        rustdb_types::Value::try_varchar(column_name)?
+                        roastedduck_types::Value::try_varchar(column_name)?
                             .to_varchar()?
                             .into(),
                     ),
@@ -1459,9 +1459,9 @@ impl BoxRendererState {
         let shown_size =
             readable_rows_str.len() + shown_str.len() + if readable_rows_str.is_empty() { 3 } else { 5 };
         if has_hidden_rows && padding >= shown_size {
-            extra_render_str = rustdb_common::byte_format!(" ({shown_str}");
+            extra_render_str = roastedduck_common::byte_format!(" ({shown_str}");
             if !readable_rows_str.is_empty() {
-                extra_render_str += rustdb_common::byte_format!(", {readable_rows_str}");
+                extra_render_str += roastedduck_common::byte_format!(", {readable_rows_str}");
             }
             extra_render_str.push(b')');
             padding -= shown_size;
@@ -1524,7 +1524,7 @@ impl BoxRendererState {
             }
             Self::render_value(
                 ss,
-                rustdb_common::byte_format!("({text})").as_bytes(),
+                roastedduck_common::byte_format!("({text})").as_bytes(),
                 total - 4,
                 ResultRenderType::Footer,
                 &[],

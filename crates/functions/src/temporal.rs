@@ -2,8 +2,8 @@
 //! `Interval`, `Date`, `Time` and `Timestamp` classes and the temporal `AddOperator`/
 //! `SubtractOperator`/`MultiplyOperator` specialisations).
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{Date, Interval, Time, TimeTz, Timestamp};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{Date, Interval, Time, TimeTz, Timestamp};
 
 /// Microseconds in a day.
 pub const MICROS_PER_DAY: i64 = Interval::MICROS_PER_DAY;

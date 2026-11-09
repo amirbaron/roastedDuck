@@ -4,8 +4,8 @@
 
 use std::collections::HashSet;
 
-use rustdb_common::{Error, Result};
-use rustdb_planner::{
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::{
     ColumnBinding, DistinctType, Expression, ExpressionType, LogicalKind, LogicalOperator,
     LogicalOperatorType,
 };

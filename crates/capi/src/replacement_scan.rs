@@ -4,13 +4,13 @@
 use std::ffi::{c_char, c_void};
 use std::sync::Arc;
 
-use rustdb_ast::{
+use roastedduck_ast::{
     ExpressionType, FunctionExpression, OrderModifier, OrdinalityType, ParsedExpression,
     ParsedExpressionKind, TableFunctionRef, TableRef, TableRefKind,
 };
-use rustdb_common::{Error, Result};
-use rustdb_planner::{ReplacementScan, ReplacementScanInput};
-use rustdb_types::Value;
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::{ReplacementScan, ReplacementScanInput};
+use roastedduck_types::Value;
 
 use crate::function::{DuckdbDeleteCallback, error_bytes};
 use crate::helper::to_cstring;
@@ -50,7 +50,7 @@ impl Drop for CReplacementScanData {
 /// What a `duckdb_replacement_scan_info` points to (DuckDB's `CAPIReplacementScanInfo`).
 #[derive(Debug, Default)]
 struct CReplacementScanInfo {
-    function_name: rustdb_common::ByteString,
+    function_name: roastedduck_common::ByteString,
     parameters: Vec<Value>,
     error: Option<Vec<u8>>,
 }
@@ -76,14 +76,14 @@ fn capi_replacement_callback(
         let mut message = b"Error in replacement scan: ".to_vec();
         message.extend_from_slice(&error);
         message.push(b'\n');
-        return Err(Error::new_bytes(rustdb_common::ErrorKind::Binder, message));
+        return Err(Error::new_bytes(roastedduck_common::ErrorKind::Binder, message));
     }
     if info.function_name.is_empty() {
         return Ok(None);
     }
     let function = FunctionExpression {
         function_name: info.function_name,
-        schema: rustdb_common::ByteString::new(),
+        schema: roastedduck_common::ByteString::new(),
         children: info
             .parameters
             .into_iter()
@@ -94,11 +94,11 @@ fn capi_replacement_callback(
         distinct: false,
         is_operator: false,
         export_state: false,
-        catalog: rustdb_common::ByteString::new(),
+        catalog: roastedduck_common::ByteString::new(),
     };
     Ok(Some(TableRef {
-        external_dependency: rustdb_ast::ExternalDependency::default(),
-        alias: rustdb_common::ByteString::new(),
+        external_dependency: roastedduck_ast::ExternalDependency::default(),
+        alias: roastedduck_common::ByteString::new(),
         sample: None,
         query_location: None,
         kind: TableRefKind::TableFunction(TableFunctionRef {

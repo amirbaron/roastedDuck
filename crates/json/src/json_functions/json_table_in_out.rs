@@ -5,13 +5,13 @@
 use std::any::Any;
 use std::sync::{Arc, OnceLock};
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::cast::{CastFunctionSet, CastParameters, cast_vector};
-use rustdb_function::{
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::cast::{CastFunctionSet, CastParameters, cast_vector};
+use roastedduck_function::{
     FunctionData, InOutResult, TableFunction, TableFunctionBindInput, TableFunctionBindOutput,
     TableFunctionSet, TableScanState,
 };
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
 
 use crate::json_common::{JsonPathType, get_unsafe, read_document, val_type_to_string};
 use crate::json_executors::{ColumnBuilder, NativeBuilder, StrBuilder, StrInput};
@@ -33,7 +33,7 @@ const ROOT_COLUMN: u64 = (1 << 63) + 1;
 const EMPTY_COLUMN: u64 = u64::MAX - 1;
 const ROW_ID_COLUMN: u64 = u64::MAX;
 
-fn virtual_columns(_: Option<&dyn FunctionData>) -> Vec<(u64, rustdb_common::ByteString, LogicalType)> {
+fn virtual_columns(_: Option<&dyn FunctionData>) -> Vec<(u64, roastedduck_common::ByteString, LogicalType)> {
     vec![
         (JSON_COLUMN, "json".to_owned().into(), json_type()),
         (ROOT_COLUMN, "root".to_owned().into(), LogicalType::VARCHAR),

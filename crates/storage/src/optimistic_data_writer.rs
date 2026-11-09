@@ -18,7 +18,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::checkpoint::table_writer::{AppendBlocks, BlockWriter, write_row_groups_to_disk};
 use crate::data_table::DataTable;

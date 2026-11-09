@@ -1,9 +1,9 @@
 //! `json_serialize_sql`: the JSON form of the SELECT statements of a query, or of the
 //! error parsing it.
 
-use rustdb_ast::json::{JsonSerializeOptions, serialize_error, serialize_statements};
-use rustdb_ast::{SelectStatement, SqlStatementKind};
-use rustdb_common::{Error, Result};
+use roastedduck_ast::json::{JsonSerializeOptions, serialize_error, serialize_statements};
+use roastedduck_ast::{SelectStatement, SqlStatementKind};
+use roastedduck_common::{Error, Result};
 
 /// DuckDB's `json_serialize_sql(sql, ...)`: `{"error":false,"statements":[...]}`, or
 /// `{"error":true,"error_type":...,"error_message":...,...}` when the query does not

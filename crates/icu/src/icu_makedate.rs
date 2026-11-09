@@ -4,13 +4,13 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::executor::{RowError, addressable, cast_rows};
-use rustdb_function::cast::numeric::{CastNumber, TryCastTo};
-use rustdb_function::cast::{BoundCastInfo, CastFunctionSet};
-use rustdb_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
-use rustdb_functions::scalar::executor::{str_at, unary};
-use rustdb_types::{DataChunk, Date, LogicalType, StringT, Timestamp, Vector, VectorKind};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::executor::{RowError, addressable, cast_rows};
+use roastedduck_function::cast::numeric::{CastNumber, TryCastTo};
+use roastedduck_function::cast::{BoundCastInfo, CastFunctionSet};
+use roastedduck_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
+use roastedduck_functions::scalar::executor::{str_at, unary};
+use roastedduck_types::{DataChunk, Date, LogicalType, StringT, Timestamp, Vector, VectorKind};
 
 use crate::icu_datefunc::{
     self, BindData, CalendarPtr, MICROS_PER_MSEC, extract_field, get_time, set_time, set_time_zone,
@@ -35,7 +35,7 @@ pub(crate) fn make_date(calendar: &mut Calendar, instant: Timestamp) -> Result<D
 }
 
 /// `ICUMakeDate::ToDate`: the local date of `instant` in the session's time zone.
-pub(crate) fn to_date(client: &rustdb_function::FunctionClient, instant: Timestamp) -> Result<Date> {
+pub(crate) fn to_date(client: &roastedduck_function::FunctionClient, instant: Timestamp) -> Result<Date> {
     let mut data = BindData::from_client(client);
     make_date(&mut data.calendar, instant)
 }

@@ -1,6 +1,6 @@
 //! The reading half of the framework (DuckDB's `Deserializer`).
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::{DefaultValue, FieldId};
 

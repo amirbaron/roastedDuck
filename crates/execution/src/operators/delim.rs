@@ -1,17 +1,17 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 
-use rustdb_common::Result;
-use rustdb_planner::Expression;
-use rustdb_row::hash::hash_columns;
-use rustdb_row::{AppendState, PartitionedTupleData, PinProperties, TupleDataCollection};
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_common::Result;
+use roastedduck_planner::Expression;
+use roastedduck_row::hash::hash_columns;
+use roastedduck_row::{AppendState, PartitionedTupleData, PinProperties, TupleDataCollection};
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::aggregate_hashtable::{GroupedAggregateHashTable, initial_capacity};
 use crate::column_data_collection::ColumnDataCollection;
 use crate::operators::hash_aggregate::{finalize_capacity, repartitioned, table_data};
 use crate::operators::radix_sink::initial_radix_bits;
-use rustdb_common::tree_renderer::RenderParams;
+use roastedduck_common::tree_renderer::RenderParams;
 
 use crate::operator::{
     ErasedSink, ErasedSource, OrderPreservationType, PhysicalOperator, PhysicalRef, SinkData, SinkState,
@@ -297,7 +297,7 @@ impl Sink for PhysicalDelimJoin {
     /// Deduplicates one partition of the threads' distinct values.
     fn execute_finalize_task(&self, ctx: &ExecutionContext, global: &DelimGlobal, task: usize) -> Result<()> {
         let (Some(partition), Some(result)) = (global.partitions.get(task), global.distinct.get(task)) else {
-            return Err(rustdb_common::Error::internal(
+            return Err(roastedduck_common::Error::internal(
                 "delim join finalize task out of range",
             ));
         };

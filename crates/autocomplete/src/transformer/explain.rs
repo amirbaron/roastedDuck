@@ -1,7 +1,7 @@
 //! The transform functions of DuckDB's `transform_explain.cpp`: `EXPLAIN [ANALYZE]
 //! [(options)] statement`.
 
-use rustdb_parser::hash_order::CiHashMap;
+use roastedduck_parser::hash_order::CiHashMap;
 
 use super::prelude::*;
 

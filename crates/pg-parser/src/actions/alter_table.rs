@@ -158,7 +158,7 @@ pub(super) fn alter_identity_column_option<'a>(
                 || seq_opt_elem.defname.as_deref() == Some(b"owned_by")
             {
                 return Err(rhs.error_at(
-                    rustdb_common::byte_format!(
+                    roastedduck_common::byte_format!(
                         "sequence option \"{}\" not supported here",
                         c_str(seq_opt_elem.defname.as_deref())
                     ),

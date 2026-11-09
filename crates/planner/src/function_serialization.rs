@@ -1,17 +1,17 @@
 //! Functions in serialized plans (DuckDB's `FunctionSerializer::Serialize`): the
 //! function's name, arguments and catalog entry, and its bind data when it can write it.
 
-use rustdb_common::Result;
-use rustdb_function::{AggregateFunction, FunctionData, ScalarFunction, TableFunction};
-use rustdb_serde::Serializer;
-use rustdb_types::LogicalType;
+use roastedduck_common::Result;
+use roastedduck_function::{AggregateFunction, FunctionData, ScalarFunction, TableFunction};
+use roastedduck_serde::Serializer;
+use roastedduck_types::LogicalType;
 
 /// Writes the bind data of a function (`function_data`).
 pub(crate) type FunctionDataWriter<'a> = &'a dyn Fn(&mut dyn Serializer) -> Result<()>;
 
 /// The properties of a function call that identify the function.
 pub(crate) struct FunctionProperties<'a> {
-    pub name: rustdb_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     pub arguments: &'a [LogicalType],
     pub original_arguments: &'a [LogicalType],
     pub catalog_name: &'a [u8],
@@ -68,7 +68,7 @@ pub(crate) fn serialize_scalar_function(
 }
 
 /// `FunctionSerializer::Serialize` of a scalar function whose bind data `function_data`
-/// writes (a lambda function's, whose lambda rustdb keeps on the expression).
+/// writes (a lambda function's, whose lambda roastedduck keeps on the expression).
 pub(crate) fn serialize_scalar_function_with(
     serializer: &mut dyn Serializer,
     function: &ScalarFunction,
@@ -105,7 +105,7 @@ pub(crate) fn serialize_aggregate_function(
 }
 
 /// `FunctionSerializer::Serialize` of a table function; `function_data` overrides the
-/// function's own bind data writer (the table scan's, whose table rustdb keeps in the
+/// function's own bind data writer (the table scan's, whose table roastedduck keeps in the
 /// `LogicalGet`).
 pub(crate) fn serialize_table_function(
     serializer: &mut dyn Serializer,

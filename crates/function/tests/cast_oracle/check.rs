@@ -1,4 +1,4 @@
-//! Runs the cases through rustdb's casts and compares with DuckDB's results.
+//! Runs the cases through roastedduck's casts and compares with DuckDB's results.
 //!
 //! Every case is cast as a constant (`ValueCast::cast_with`) under `CAST` and `TRY_CAST`.
 //! In addition, the rows of each (source, target) pair are cast together as one flat
@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use rustdb_function::cast::{CastFunctionSet, CastParameters, ValueCast, cast_vector};
-use rustdb_types::{LogicalType, LogicalTypeId, Value, Vector};
+use roastedduck_function::cast::{CastFunctionSet, CastParameters, ValueCast, cast_vector};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value, Vector};
 
 use super::oracle::{Case, Outcome, Record};
 use super::types::{self, Family, GridType};
@@ -17,12 +17,12 @@ use super::types::{self, Family, GridType};
 /// Mismatch examples kept per pair.
 const EXAMPLES_PER_PAIR: usize = 4;
 
-/// Whether rustdb's error says the cast (or a part of it) is not implemented yet.
+/// Whether roastedduck's error says the cast (or a part of it) is not implemented yet.
 pub fn is_unimplemented(message: &str) -> bool {
     message.contains("Unimplemented type for cast") || message.starts_with("Not implemented Error")
 }
 
-/// What rustdb produced for one statement.
+/// What roastedduck produced for one statement.
 enum Actual {
     Outcome(Outcome),
     /// The cast succeeded but the result cannot be rendered as VARCHAR yet.
@@ -110,11 +110,11 @@ fn compare(expected: &Outcome, actual: Actual) -> Comparison {
     }
 }
 
-/// A case whose rustdb result differs from DuckDB's.
+/// A case whose roastedduck result differs from DuckDB's.
 #[derive(Debug)]
 pub struct Mismatch {
     pub case: Case,
-    /// rustdb reported the cast as not implemented.
+    /// roastedduck reported the cast as not implemented.
     pub unimplemented: bool,
     pub detail: String,
 }
@@ -157,7 +157,7 @@ fn pair_key(case: &Case) -> (usize, usize) {
     (grid_position(case.source), grid_position(case.target))
 }
 
-/// Checks `records` against rustdb's default casts.
+/// Checks `records` against roastedduck's default casts.
 pub fn check(records: &[Record]) -> Report {
     let set = CastFunctionSet::new();
     // DuckDB's rendering of each typed source value (the VARCHAR -> T records).
@@ -267,7 +267,7 @@ pub fn check(records: &[Record]) -> Report {
     report
 }
 
-/// Verifies that rustdb built the same source value as DuckDB (when it can render it).
+/// Verifies that roastedduck built the same source value as DuckDB (when it can render it).
 fn check_source(
     set: &CastFunctionSet,
     case: &Case,
@@ -306,7 +306,7 @@ fn check_vector(set: &CastFunctionSet, rows: &[(Value, &Record)]) -> Vec<(usize,
         for (row, (value, _)) in rows.iter().enumerate() {
             vector.set_value(row, value)?;
         }
-        Ok::<_, rustdb_common::Error>(vector)
+        Ok::<_, roastedduck_common::Error>(vector)
     });
     let vector = match built {
         Ok(Ok(vector)) => vector,
@@ -348,12 +348,12 @@ fn check_vector(set: &CastFunctionSet, rows: &[(Value, &Record)]) -> Vec<(usize,
 /// How a (source, target) pair is judged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Category {
-    /// Implemented in rustdb: every mismatch is a bug.
+    /// Implemented in roastedduck: every mismatch is a bug.
     Implemented,
     /// Involves TIMESTAMP WITH TIME ZONE, whose casts the oracle's statically loaded ICU
     /// extension partly replaces: mismatches are reported but allowed.
     IcuDependent,
-    /// Not implemented in rustdb yet: mismatches are reported but allowed.
+    /// Not implemented in roastedduck yet: mismatches are reported but allowed.
     Pending,
 }
 
@@ -383,7 +383,7 @@ impl Report {
         };
         let total = |f: fn(&PairStats) -> usize| self.pairs.values().map(f).sum::<usize>();
         let mut out = String::new();
-        let _ = writeln!(out, "rustdb cast oracle report (DuckDB 1.5.6 differential)");
+        let _ = writeln!(out, "roastedduck cast oracle report (DuckDB 1.5.6 differential)");
         let _ = writeln!(
             out,
             "pairs: {}  cases: {}  (each case runs as CAST and TRY_CAST; vector path rows: {})",
@@ -393,7 +393,7 @@ impl Report {
         );
         let _ = writeln!(
             out,
-            "matched: {}  mismatched: {} (rustdb unimplemented: {}, wrong: {}, vector path: {})  blocked: {}",
+            "matched: {}  mismatched: {} (roastedduck unimplemented: {}, wrong: {}, vector path: {})  blocked: {}",
             total(|s| s.matched),
             total(|s| s.unimplemented + s.wrong),
             total(|s| s.unimplemented),
@@ -422,7 +422,7 @@ impl Report {
             );
         }
         out.push_str(
-            "\nblocked = rustdb cannot build/verify the source value from its literal, or cannot render\n\
+            "\nblocked = roastedduck cannot build/verify the source value from its literal, or cannot render\n\
              the result as VARCHAR (not a mismatch of the pair itself).\n",
         );
         for cat in Category::ALL {

@@ -1,8 +1,8 @@
 //! Nested, ENUM, BLOB, BIT and UUID casts, with expectations taken from DuckDB 1.5.6.
 #![allow(clippy::unwrap_used)] // Test helpers unwrap like the tests themselves.
 
-use rustdb_function::cast::{CastFunctionSet, CastParameters, ValueCast};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_function::cast::{CastFunctionSet, CastParameters, ValueCast};
+use roastedduck_types::{LogicalType, Value};
 
 /// The VARCHAR text of `value` cast to `target`, or the error message.
 fn cast(value: &Value, target: &LogicalType, try_cast: bool) -> String {
@@ -174,8 +174,8 @@ fn struct_and_map_casts() {
         "Binder Error: STRUCT to STRUCT cast must have at least one matching member"
     );
     let unnamed_type = LogicalType::struct_type(vec![
-        (rustdb_common::ByteString::new(), LogicalType::INTEGER),
-        (rustdb_common::ByteString::new(), LogicalType::VARCHAR),
+        (roastedduck_common::ByteString::new(), LogicalType::INTEGER),
+        (roastedduck_common::ByteString::new(), LogicalType::VARCHAR),
     ]);
     let unnamed = Value::from_children(unnamed_type, vec![Value::integer(1), text("x")]);
     let named = LogicalType::struct_type(vec![
@@ -191,8 +191,8 @@ fn struct_and_map_casts() {
     assert_eq!(cast(&numbers, &map, false), "{a=1, b=2}");
     let unnamed_numbers = Value::from_children(
         LogicalType::struct_type(vec![
-            (rustdb_common::ByteString::new(), LogicalType::INTEGER),
-            (rustdb_common::ByteString::new(), LogicalType::INTEGER),
+            (roastedduck_common::ByteString::new(), LogicalType::INTEGER),
+            (roastedduck_common::ByteString::new(), LogicalType::INTEGER),
         ]),
         vec![Value::integer(1), Value::integer(2)],
     );

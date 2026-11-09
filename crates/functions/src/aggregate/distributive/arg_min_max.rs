@@ -8,10 +8,10 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use rustdb_common::Result;
-use rustdb_function::aggregate::{Aggregate, AggregateInput, AggregateOps, States, Typed};
-use rustdb_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
-use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Vector};
+use roastedduck_common::Result;
+use roastedduck_function::aggregate::{Aggregate, AggregateInput, AggregateOps, States, Typed};
+use roastedduck_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
+use roastedduck_types::{LogicalType, LogicalTypeId, PhysicalType, Vector};
 
 use crate::aggregate::distributive::minmax::check_top_n;
 use crate::aggregate::heap::TopN;
@@ -247,7 +247,7 @@ fn bind_decimal<const MAX: bool>(
             // DuckDB keeps the last implicitly castable key type.
             if let Some(ty) = by_types()
                 .into_iter()
-                .rfind(|ty| rustdb_types::implicit_cast_cost(&by_type, ty) >= 0)
+                .rfind(|ty| roastedduck_types::implicit_cast_cost(&by_type, ty) >= 0)
             {
                 by_type = ty;
             }
@@ -267,7 +267,7 @@ fn add_arg_min_max<const MAX: bool>(set: &mut AggregateFunctionSet, null_handlin
     // `ArgMinMaxBase::Bind` / `VectorArgMinMaxBase::Bind`: a VARCHAR ordering argument is
     // compared collated.
     for function in &mut set.functions[first..] {
-        function.collation = rustdb_function::AggregateCollation::Argument(1);
+        function.collation = roastedduck_function::AggregateCollation::Argument(1);
     }
 }
 
@@ -289,7 +289,7 @@ fn add_arg_min_max_overloads<const MAX: bool>(set: &mut AggregateFunctionSet, nu
                     "",
                     vec![arg.clone(), by.clone()],
                     arg.clone(),
-                    rustdb_function::aggregate::Unbound,
+                    roastedduck_function::aggregate::Unbound,
                 )
                 .with_bind(bind_typed(null_handling)),
             );
@@ -309,7 +309,7 @@ fn add_arg_min_max_overloads<const MAX: bool>(set: &mut AggregateFunctionSet, nu
             "",
             vec![LogicalType::ANY, by.clone()],
             LogicalType::ANY,
-            rustdb_function::aggregate::Unbound,
+            roastedduck_function::aggregate::Unbound,
         )
         .with_bind(bind_typed(null_handling));
         function.ops = arg_min_max_ops::<MAX>(None, &by);
@@ -319,7 +319,7 @@ fn add_arg_min_max_overloads<const MAX: bool>(set: &mut AggregateFunctionSet, nu
         "",
         vec![LogicalType::ANY, LogicalType::ANY],
         LogicalType::ANY,
-        rustdb_function::aggregate::Unbound,
+        roastedduck_function::aggregate::Unbound,
     )
     .with_bind(move |function, input| {
         let ty = input.argument_types[0].clone();
@@ -469,7 +469,7 @@ impl<A: StoredKind, B: StoredKind, const MAX: bool> Aggregate for ArgMinMaxN<A, 
 /// bytes for VARCHAR, as ascending sort keys otherwise (which order like the values).
 macro_rules! with_top_n_kind {
     ($ty:expr, $K:ident => $body:expr) => {{
-        use rustdb_types::PhysicalType as P;
+        use roastedduck_types::PhysicalType as P;
         match $ty.physical_type() {
             P::Int32 => {
                 type $K = Fixed<i32>;

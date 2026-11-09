@@ -20,7 +20,7 @@ pub enum Status {
     Ok,
     /// A result check failed.
     Incorrect,
-    /// The engine reported a `Not implemented` error (expected for rustdb today).
+    /// The engine reported a `Not implemented` error (expected for roastedduck today).
     Unsupported,
     /// The engine reported another error (setup or run).
     Error,
@@ -85,7 +85,7 @@ pub struct MachineInfo {
     pub memory_bytes: Option<u64>,
     /// 1/5/15-minute load averages when the run started: other load makes timings noisy.
     pub load_average: Option<[f64; 3]>,
-    /// `git rev-parse HEAD` of the rustdb checkout.
+    /// `git rev-parse HEAD` of the roastedduck checkout.
     pub git_commit: Option<String>,
     pub engine: String,
     pub engine_version: String,
@@ -234,7 +234,7 @@ mod tests {
 
     #[test]
     fn lines_round_trip_and_later_records_win() {
-        let dir = std::env::temp_dir().join(format!("rustdb-bench-record-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("roastedduck-bench-record-{}", std::process::id()));
         let path = dir.join("r.jsonl");
         let mut writer = Writer::create(&path, false).unwrap();
         writer.write(&Line::Machine(MachineInfo::default())).unwrap();

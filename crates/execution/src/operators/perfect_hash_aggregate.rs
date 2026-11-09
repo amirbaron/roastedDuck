@@ -8,15 +8,15 @@ use std::alloc::{Layout, alloc_zeroed, dealloc, handle_alloc_error};
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::tree_renderer::RenderParams;
-use rustdb_common::{Error, Result};
-use rustdb_planner::Expression;
-use rustdb_planner::expression::BoundAggregateExpression;
-use rustdb_row::{
+use roastedduck_common::tree_renderer::RenderParams;
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::Expression;
+use roastedduck_planner::expression::BoundAggregateExpression;
+use roastedduck_row::{
     GroupedUpdate, RowAggregate, RowOperationsState, RowPtr, TupleDataLayout, combine_states, destroy_states,
     finalize_states, initialize_states, supports_update_selection, update_states,
 };
-use rustdb_types::{
+use roastedduck_types::{
     DataChunk, LogicalType, PhysicalType, STANDARD_VECTOR_SIZE, SelectionVector, Value, Vector,
 };
 
@@ -302,17 +302,17 @@ fn compute_group_location(
             if values.validity.is_all_valid() {
                 // Without NULLs: the selection resolved outside the loop.
                 match values.sel {
-                    rustdb_types::Sel::Identity => {
+                    roastedduck_types::Sel::Identity => {
                         for (slot, &value) in slots[..count].iter_mut().zip(&values.values[..count]) {
                             *slot += location(value);
                         }
                     }
-                    rustdb_types::Sel::Indices(indices) => {
+                    roastedduck_types::Sel::Indices(indices) => {
                         for (slot, &index) in slots[..count].iter_mut().zip(&indices[..count]) {
                             *slot += location(values.values[index as usize]);
                         }
                     }
-                    rustdb_types::Sel::Constant => {
+                    roastedduck_types::Sel::Constant => {
                         let constant = location(values.values[0]);
                         for slot in &mut slots[..count] {
                             *slot += constant;
@@ -321,7 +321,7 @@ fn compute_group_location(
                 }
                 return Ok(());
             }
-            if let (rustdb_types::Sel::Identity, Some(words)) = (values.sel, values.validity.words()) {
+            if let (roastedduck_types::Sel::Identity, Some(words)) = (values.sel, values.validity.words()) {
                 // Flat with NULLs: NULL rows keep offset 0; the valid rows of each
                 // validity word are added without a per-row lookup.
                 for (block, (slots, values)) in slots[..count]
@@ -504,10 +504,10 @@ impl PhysicalOperator for PhysicalPerfectHashAggregate {
     /// DuckDB's `PhysicalPerfectHashAggregate::ParamsToString` (no cardinality).
     fn params_to_string(&self, _: u64) -> RenderParams {
         let mut result = RenderParams::new();
-        let groups: Vec<rustdb_common::ByteString> = self.groups.iter().map(Expression::name).collect();
+        let groups: Vec<roastedduck_common::ByteString> = self.groups.iter().map(Expression::name).collect();
         result.insert(
             "Groups".to_owned(),
-            rustdb_common::ByteString::join(&groups, b"\n"),
+            roastedduck_common::ByteString::join(&groups, b"\n"),
         );
         result.insert("Aggregates".to_owned(), aggregate_names(&self.aggregates));
         result

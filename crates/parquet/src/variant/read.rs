@@ -4,8 +4,8 @@
 
 use std::collections::BTreeMap;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{ListEntry, LogicalType, LogicalTypeId, PhysicalType, Value, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{ListEntry, LogicalType, LogicalTypeId, PhysicalType, Value, Vector};
 
 use super::{VariantMetadata, VariantValue, decode, to_variant};
 
@@ -36,7 +36,7 @@ fn group_of(vector: &Vector) -> Result<Group<'_>> {
             b"value" => value = Some(child),
             b"typed_value" => typed_value = Some(child),
             other => {
-                return Err(Error::invalid_input(rustdb_common::byte_format!(
+                return Err(Error::invalid_input(roastedduck_common::byte_format!(
                     "Variant group can only contain 'value'/'typed_value', not: {other}"
                 )));
             }

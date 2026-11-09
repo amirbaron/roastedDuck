@@ -1,8 +1,8 @@
 //! `contains` (DuckDB's `contains.cpp`), `prefix` (`prefix.cpp`), `suffix`/`ends_with`
 //! (`suffix.cpp`) and `starts_with`/`^@` (`starts_with.cpp`).
 
-use rustdb_function::{CollationHandling, FunctionState, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, LogicalType, Vector, VectorKind};
+use roastedduck_function::{CollationHandling, FunctionState, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, LogicalType, Vector, VectorKind};
 
 use crate::scalar::executor::{Str, binary, str_at, unary};
 

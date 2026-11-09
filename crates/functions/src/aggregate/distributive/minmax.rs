@@ -4,12 +4,12 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::{
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::{
     Aggregate, AggregateInput, AggregateOps, States, Typed, Unary, UnaryAggregate,
 };
-use rustdb_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
-use rustdb_types::{ListEntry, LogicalType, LogicalTypeId, Vector};
+use roastedduck_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
+use roastedduck_types::{ListEntry, LogicalType, LogicalTypeId, Vector};
 
 use crate::aggregate::heap::{MIN_MAX_N_MAX_VALUE, TopN, comparator};
 use crate::aggregate::stored::{Bytes, Fixed, FixedOrd, SortKey, StoredKind};
@@ -130,7 +130,7 @@ impl<K: StoredKind, const GREATER: bool> Aggregate for StoredMinMax<K, GREATER> 
 
 /// The `min` (or `max`) aggregate over `ty` (DuckDB's `GetMinMaxOperator`).
 pub fn min_max_function<const MAX: bool>(ty: &LogicalType) -> AggregateFunction {
-    use rustdb_types::PhysicalType as P;
+    use roastedduck_types::PhysicalType as P;
     let name = if MAX { "max" } else { "min" };
     let args = vec![ty.clone()];
     let ret = ty.clone();
@@ -140,7 +140,9 @@ pub fn min_max_function<const MAX: bool>(ty: &LogicalType) -> AggregateFunction 
             name,
             args,
             ret,
-            Typed(StoredMinMax::<Fixed<rustdb_types::Interval>, MAX>(PhantomData)),
+            Typed(StoredMinMax::<Fixed<roastedduck_types::Interval>, MAX>(
+                PhantomData,
+            )),
         ),
         physical => with_numeric_type!(physical, T => AggregateFunction::new(
             name,
@@ -332,7 +334,7 @@ pub(crate) fn append_to_list(result: &mut Vector, row: usize, elements: &Vector,
             child.resize((offset + len).max(child.capacity() * 2));
         }
         let positions: Vec<u32> = (offset..offset + len).map(|position| position as u32).collect();
-        rustdb_types::kernels::scatter(elements, child, &positions)?;
+        roastedduck_types::kernels::scatter(elements, child, &positions)?;
     }
     result.set_list_size(offset + len);
     result.values_mut::<ListEntry>()[row] = ListEntry::new(offset, len);
@@ -344,7 +346,7 @@ fn bind_min_max_n<const MAX: bool>(
     function: &mut AggregateFunction,
     input: &BindInput<'_>,
 ) -> Result<Option<Arc<dyn FunctionData>>> {
-    use rustdb_types::PhysicalType as P;
+    use roastedduck_types::PhysicalType as P;
     if input
         .argument_types
         .iter()
@@ -371,7 +373,7 @@ fn min_max_set<const MAX: bool>(name: &str) -> AggregateFunctionSet {
     let mut set = AggregateFunctionSet::new(name);
     let mut function =
         AggregateFunction::unbound(vec![LogicalType::ANY], LogicalType::ANY, bind_min_max::<MAX>);
-    function.collation = rustdb_function::AggregateCollation::MinMax;
+    function.collation = roastedduck_function::AggregateCollation::MinMax;
     set.add(function);
     set.add(AggregateFunction::unbound(
         vec![LogicalType::ANY, LogicalType::BIGINT],

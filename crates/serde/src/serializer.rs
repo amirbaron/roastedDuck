@@ -1,6 +1,6 @@
 //! The writing half of the framework (DuckDB's `Serializer`).
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use crate::{DefaultValue, FieldId, SerializationOptions};
 

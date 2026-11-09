@@ -18,7 +18,7 @@
 //! | `Leaf` (old)   | count u8, pad, row_ids[4] (offset 8), next (offset 40)      |
 //! | `Prefix`       | data[prefix_count], count u8, child (unaligned)             |
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::index::IndexPointer;
 

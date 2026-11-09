@@ -1,11 +1,11 @@
 //! Common table expressions (`transform_cte.cpp`).
 
-use rustdb_ast::{
+use roastedduck_ast::{
     CommonTableExpressionInfo, CommonTableExpressionMap, CteMaterialize, ParsedExpression, QueryNodeKind,
     RecursiveCteNode, SelectStatement,
 };
-use rustdb_common::{Error, Result};
-use rustdb_pg_parser::nodes::{
+use roastedduck_common::{Error, Result};
+use roastedduck_pg_parser::nodes::{
     CommonTableExpr, CteMaterialize as PgCteMaterialize, Node, SetOperation, WithClause,
 };
 
@@ -69,7 +69,7 @@ impl<'a> Transformer<'a> {
             };
             let cte_name = cte.ctename.clone().unwrap_or_default();
             if cte_map.map.contains_key(&cte_name) {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Duplicate CTE name \"{cte_name}\""
                 )));
             }
@@ -99,11 +99,11 @@ impl<'a> Transformer<'a> {
     fn transform_recursive_cte(
         &mut self,
         cte: &'a CommonTableExpr,
-        aliases: &[rustdb_common::ByteString],
+        aliases: &[roastedduck_common::ByteString],
         key_targets: &[ParsedExpression],
     ) -> Result<SelectStatement> {
         let query = required(cte.ctequery.as_ref(), "CTE query")?;
-        let stmt = cast_node::<rustdb_pg_parser::nodes::SelectStmt>(query)?;
+        let stmt = cast_node::<roastedduck_pg_parser::nodes::SelectStmt>(query)?;
         if stmt.op != SetOperation::Union {
             let node = self.transform_select_node(query, true)?;
             return Ok(build::select_statement(node));

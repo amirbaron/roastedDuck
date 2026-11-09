@@ -8,9 +8,9 @@ pub(crate) mod bind_star;
 mod bind_subquery;
 mod bind_type;
 
-use rustdb_ast::{ExpressionType, ParsedExpression, ParsedExpressionKind};
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_ast::{ExpressionType, ParsedExpression, ParsedExpressionKind};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::expression::{
     BoundBetweenExpression, BoundCaseCheck, BoundCaseExpression, Expression, ExpressionKind,
@@ -32,7 +32,7 @@ pub fn bind_unsupported_expression<B: ExpressionBinder + ?Sized>(
     binder: &mut B,
     expr: &mut ParsedExpression,
     depth: u64,
-    message: impl Into<rustdb_common::ByteString>,
+    message: impl Into<roastedduck_common::ByteString>,
 ) -> Result<BindResult> {
     let mut error = None;
     let location = expr.query_location;
@@ -92,7 +92,7 @@ fn bind_expression_kind<B: ExpressionBinder + ?Sized>(
         ParsedExpressionKind::Lambda(lambda) => {
             // DuckDB's `BindExpression(LambdaExpression &)` outside a lambda function: the
             // `lambda` keyword is invalid, `->` is the JSON arrow operator.
-            if lambda.syntax_type == rustdb_ast::LambdaSyntaxType::LambdaKeyword {
+            if lambda.syntax_type == roastedduck_ast::LambdaSyntaxType::LambdaKeyword {
                 return Ok(BindResult::error("invalid lambda expression"));
             }
             // The PEG parser produces `A -> (B ->> C)` where the Postgres parser
@@ -106,7 +106,7 @@ fn bind_expression_kind<B: ExpressionBinder + ?Sized>(
                 return Err(Error::internal("expected a lambda expression"));
             };
             let placeholder = || {
-                Box::new(ParsedExpression::constant(rustdb_types::Value::null(
+                Box::new(ParsedExpression::constant(roastedduck_types::Value::null(
                     LogicalType::SQLNULL,
                 )))
             };
@@ -114,7 +114,7 @@ fn bind_expression_kind<B: ExpressionBinder + ?Sized>(
             let body = std::mem::replace(&mut lambda.expr, placeholder());
             let mut arrow = ParsedExpression::new(
                 ExpressionType::Arrow,
-                ParsedExpressionKind::Operator(rustdb_ast::OperatorExpression {
+                ParsedExpressionKind::Operator(roastedduck_ast::OperatorExpression {
                     children: vec![*lhs, *body],
                 }),
             );
@@ -171,11 +171,11 @@ fn is_double_arrow_rhs(expr: &ParsedExpression) -> bool {
 
 /// DuckDB's `RestructureArrowChain`: `A -> (B ->> C)` becomes `(A -> B) ->> C`.
 fn restructure_arrow_chain(expr: &mut ParsedExpression) -> Result<()> {
-    let placeholder = ParsedExpression::constant(rustdb_types::Value::null(LogicalType::SQLNULL));
+    let placeholder = ParsedExpression::constant(roastedduck_types::Value::null(LogicalType::SQLNULL));
     let ParsedExpressionKind::Lambda(lambda) = std::mem::replace(&mut expr.kind, placeholder.kind) else {
         return Err(Error::internal("expected a lambda expression"));
     };
-    let rustdb_ast::LambdaExpression {
+    let roastedduck_ast::LambdaExpression {
         lhs,
         expr: body,
         syntax_type,
@@ -189,7 +189,7 @@ fn restructure_arrow_chain(expr: &mut ParsedExpression) -> Result<()> {
     };
     let inner_lambda = ParsedExpression::new(
         ExpressionType::Lambda,
-        ParsedExpressionKind::Lambda(rustdb_ast::LambdaExpression {
+        ParsedExpressionKind::Lambda(roastedduck_ast::LambdaExpression {
             lhs,
             expr: Box::new(middle),
             syntax_type,
@@ -197,12 +197,12 @@ fn restructure_arrow_chain(expr: &mut ParsedExpression) -> Result<()> {
     );
     *expr = ParsedExpression::new(
         ExpressionType::Function,
-        ParsedExpressionKind::Function(Box::new(rustdb_ast::FunctionExpression {
+        ParsedExpressionKind::Function(Box::new(roastedduck_ast::FunctionExpression {
             function_name: "->>".to_owned().into(),
             schema: String::new().into(),
             children: vec![inner_lambda, right],
             filter: None,
-            order_bys: rustdb_ast::OrderModifier { orders: Vec::new() },
+            order_bys: roastedduck_ast::OrderModifier { orders: Vec::new() },
             distinct: false,
             is_operator: true,
             export_state: false,
@@ -576,7 +576,7 @@ fn bind_collate<B: ExpressionBinder + ?Sized>(
     }
     let collation_type = LogicalType::with_info(
         LogicalTypeId::Varchar,
-        rustdb_types::TypeInfo::String(rustdb_types::StringTypeInfo {
+        roastedduck_types::TypeInfo::String(roastedduck_types::StringTypeInfo {
             collation: collate.collation.clone(),
         }),
     );
@@ -584,7 +584,7 @@ fn bind_collate<B: ExpressionBinder + ?Sized>(
     let context = binder.binder_ref().context.clone();
     push_collation(
         &context,
-        Expression::constant(rustdb_types::Value::varchar("")),
+        Expression::constant(roastedduck_types::Value::varchar("")),
         &collation_type,
     )?;
     child.return_type = collation_type;
@@ -595,7 +595,7 @@ fn bind_collate<B: ExpressionBinder + ?Sized>(
 /// `BindExpression(OperatorExpression &)`): a numeric constant index becomes UINTEGER,
 /// a constant field name its VARCHAR text.
 fn variant_path_constant(path: &mut ParsedExpression, index: bool) -> Result<()> {
-    use rustdb_function::cast::ValueCast;
+    use roastedduck_function::cast::ValueCast;
     let Some(value) = crate::expression_binder::peek_bound(path)
         .and_then(Expression::as_constant)
         .filter(|value| !value.is_null())
@@ -610,7 +610,7 @@ fn variant_path_constant(path: &mut ParsedExpression, index: bool) -> Result<()>
         }
         value.default_cast_as(&LogicalType::UINTEGER)?
     } else {
-        rustdb_types::Value::varchar(value.to_varchar()?)
+        roastedduck_types::Value::varchar(value.to_varchar()?)
     };
     crate::expression_binder::set_bound(path, Expression::constant(value));
     Ok(())
@@ -628,7 +628,7 @@ fn json_path_constant(
     path: &mut ParsedExpression,
     array: bool,
 ) -> Result<()> {
-    use rustdb_function::cast::ValueCast;
+    use roastedduck_function::cast::ValueCast;
     let Some(value) = crate::expression_binder::peek_bound(path)
         .and_then(Expression::as_constant)
         .filter(|value| !value.is_null())
@@ -651,7 +651,7 @@ fn json_path_constant(
     };
     crate::expression_binder::set_bound(
         path,
-        Expression::constant(rustdb_types::Value::varchar(path_text)),
+        Expression::constant(roastedduck_types::Value::varchar(path_text)),
     );
     Ok(())
 }

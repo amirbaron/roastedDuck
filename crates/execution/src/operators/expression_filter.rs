@@ -3,11 +3,11 @@
 
 use std::sync::Arc;
 
-use rustdb_common::Result;
-use rustdb_planner::operator::ExpressionTableFilter;
-use rustdb_storage::TableFilter;
-use rustdb_storage::table_filter::ExpressionFilter;
-use rustdb_types::{DataChunk, SelectionVector, Vector};
+use roastedduck_common::Result;
+use roastedduck_planner::operator::ExpressionTableFilter;
+use roastedduck_storage::TableFilter;
+use roastedduck_storage::table_filter::ExpressionFilter;
+use roastedduck_types::{DataChunk, SelectionVector, Vector};
 
 use crate::ExpressionExecutor;
 
@@ -19,7 +19,7 @@ pub struct ExecutableExpressionFilter {
 
 impl ExecutableExpressionFilter {
     /// The predicate, reading the column as `BOUND_REF #0`.
-    pub(crate) fn expression(&self) -> &rustdb_planner::Expression {
+    pub(crate) fn expression(&self) -> &roastedduck_planner::Expression {
         &self.filter.expression
     }
 }
@@ -45,12 +45,12 @@ impl ExpressionFilter for ExecutableExpressionFilter {
 
     fn check_statistics(
         &self,
-        stats: &rustdb_storage::statistics::BaseStatistics,
-    ) -> rustdb_storage::statistics::FilterPropagateResult {
+        stats: &roastedduck_storage::statistics::BaseStatistics,
+    ) -> roastedduck_storage::statistics::FilterPropagateResult {
         self.filter.check_statistics(stats)
     }
 
-    fn to_sql(&self, column_name: &[u8]) -> rustdb_common::ByteString {
+    fn to_sql(&self, column_name: &[u8]) -> roastedduck_common::ByteString {
         self.filter.to_sql(column_name)
     }
 

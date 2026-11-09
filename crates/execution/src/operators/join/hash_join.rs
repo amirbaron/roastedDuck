@@ -2,7 +2,7 @@
 //! is built into a [`JoinHashTable`], the left input probes it, and RIGHT/FULL joins scan
 //! the table for unmatched rows afterwards.
 
-use rustdb_common::tree_renderer::RenderParams;
+use roastedduck_common::tree_renderer::RenderParams;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -13,15 +13,15 @@ pub use source::{HashJoinGlobalSourceState, HashJoinLocalSourceState};
 
 use super::probe_spill::{LocalProbeSpill, ProbeSpill};
 
-use rustdb_ast::JoinType;
-use rustdb_buffer::{TemporaryMemoryContext, TemporaryMemoryState};
-use rustdb_common::{Error, Result};
-use rustdb_planner::operator::JoinCondition;
-use rustdb_planner::{Expression, ExpressionKind};
-use rustdb_row::{
+use roastedduck_ast::JoinType;
+use roastedduck_buffer::{TemporaryMemoryContext, TemporaryMemoryState};
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::operator::JoinCondition;
+use roastedduck_planner::{Expression, ExpressionKind};
+use roastedduck_row::{
     PartitionedAppendState, RadixPartitioning, TupleDataCollection, TupleDataLayout, ValidityType,
 };
-use rustdb_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE, Vector};
+use roastedduck_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE, Vector};
 
 use super::join_filter::{
     JoinFilterInput, KeyMinMax, clear_join_filters, push_bloom_filter, set_join_filters,
@@ -59,7 +59,7 @@ pub struct PhysicalHashJoin {
     /// Whether the join may use a perfect hash table, depending on its build keys.
     perfect_hash_candidate: bool,
     /// The run-time filters set on the probe side's scans from the build keys.
-    join_filters: Vec<rustdb_planner::operator::JoinFilter>,
+    join_filters: Vec<roastedduck_planner::operator::JoinFilter>,
     /// `dynamic_or_filter_threshold`.
     dynamic_or_filter_threshold: u64,
     /// The probe side's estimated cardinality, which decides on bloom filters.
@@ -156,7 +156,7 @@ impl PhysicalHashJoin {
     #[must_use]
     pub fn with_join_filters(
         mut self,
-        join_filters: Vec<rustdb_planner::operator::JoinFilter>,
+        join_filters: Vec<roastedduck_planner::operator::JoinFilter>,
         dynamic_or_filter_threshold: u64,
         probe_cardinality: u64,
     ) -> Self {
@@ -292,11 +292,11 @@ pub struct HashJoinGlobalSinkState {
     /// Probe rows of partitions not built yet, for external joins (`probe_spill`).
     probe_spill: OnceLock<ProbeSpill>,
     /// Logs the join's events, if the query logs them.
-    logger: Option<rustdb_function::logging::OperatorLogger>,
+    logger: Option<roastedduck_function::logging::OperatorLogger>,
     /// Logs the probe matches when the state goes away, as DuckDB's destructor does: by
     /// then the operator's virtual `ParamsToString` is its base class's, without
     /// parameters.
-    drop_logger: Option<rustdb_function::logging::OperatorLogger>,
+    drop_logger: Option<roastedduck_function::logging::OperatorLogger>,
 }
 
 impl Drop for HashJoinGlobalSinkState {
@@ -365,8 +365,11 @@ impl Sink for PhysicalHashJoin {
             ctx.force_external(),
         );
         let logger = ctx.operator_logger(self);
-        let drop_logger =
-            rustdb_function::logging::OperatorLogger::new(ctx.client.logger.clone(), self.name(), Vec::new);
+        let drop_logger = roastedduck_function::logging::OperatorLogger::new(
+            ctx.client.logger.clone(),
+            self.name(),
+            Vec::new,
+        );
         let mut hash_table = self.initialize_hash_table(ctx)?;
         hash_table.set_logger(logger.clone());
         Ok(HashJoinGlobalSinkState {
@@ -842,7 +845,7 @@ impl PhysicalHashJoin {
             })
         };
         let slice = |chunk: &DataChunk, rows: &[u32]| {
-            let sel = rustdb_types::SelectionVector::new(rows.to_vec());
+            let sel = roastedduck_types::SelectionVector::new(rows.to_vec());
             DataChunk::new(Vector::slice_all(chunk.columns(), &sel), rows.len())
         };
         if !spill_rows.is_empty() {
@@ -856,7 +859,7 @@ impl PhysicalHashJoin {
         }
         let probe_input = slice(input, &probe_now);
         state.join_keys = slice(&state.join_keys, &probe_now);
-        let probe_hashes = hashes.slice(&rustdb_types::SelectionVector::new(probe_now));
+        let probe_hashes = hashes.slice(&roastedduck_types::SelectionVector::new(probe_now));
         table.probe(
             &mut state.scan_structure,
             &state.join_keys,

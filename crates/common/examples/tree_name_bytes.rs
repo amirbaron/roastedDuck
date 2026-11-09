@@ -1,6 +1,6 @@
 //! Compare native renderer outputs with frozen C++ reference TSV records.
-use rustdb_common::ByteString;
-use rustdb_common::tree_renderer::{RenderParams, RenderTree, RenderTreeNode, RendererKind, render};
+use roastedduck_common::ByteString;
+use roastedduck_common::tree_renderer::{RenderParams, RenderTree, RenderTreeNode, RendererKind, render};
 fn unhex(text: &str) -> Result<Vec<u8>, &'static str> {
     fn digit(byte: u8) -> Result<u8, &'static str> {
         match byte {

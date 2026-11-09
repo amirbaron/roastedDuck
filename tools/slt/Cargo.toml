@@ -1,6 +1,6 @@
 [package]
 name = "slt"
-description = "DuckDB-dialect sqllogictest runner driving rustdb and the C++ DuckDB oracle."
+description = "DuckDB-dialect sqllogictest runner driving roastedduck and the C++ DuckDB oracle."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,8 +12,8 @@ name = "slt"
 path = "src/main.rs"
 
 [dependencies]
-rustdb_capi = { package = "rustdb-capi", path = "../../crates/capi" }
-rustdb.workspace = true
+roastedduck_capi = { package = "roastedduck-capi", path = "../../crates/capi" }
+roastedduck.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
 flate2 = "1"
 libc = "0.2"

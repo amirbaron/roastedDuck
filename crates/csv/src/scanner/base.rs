@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use super::boundary::{CsvIterator, LinePosition};
 use crate::buffer::{CsvBufferHandle, CsvBufferManager};

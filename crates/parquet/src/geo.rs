@@ -2,9 +2,9 @@
 //! statistics of written geometries, the `GeoParquet` `geo` metadata and the coordinate
 //! reference systems they carry.
 
-use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
-use rustdb_types::geometry::{self, GeometryExtent};
-use rustdb_types::{CoordinateReferenceSystem, GeoTypeInfo, LogicalType, LogicalTypeId, TypeInfo};
+use roastedduck_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
+use roastedduck_types::geometry::{self, GeometryExtent};
+use roastedduck_types::{CoordinateReferenceSystem, GeoTypeInfo, LogicalType, LogicalTypeId, TypeInfo};
 
 use crate::thrift::{BoundingBox, FileMetaData, GeospatialStatistics};
 
@@ -275,8 +275,8 @@ pub struct GeoColumn {
 /// The `GeoParquet` `geo` metadata of a file (`GeoParquetFileMetadata`).
 #[derive(Clone, Debug, Default)]
 pub struct GeoParquetMetadata {
-    columns: CaseInsensitiveMap<GeoColumn, rustdb_common::ByteString>,
-    order: Vec<rustdb_common::ByteString>,
+    columns: CaseInsensitiveMap<GeoColumn, roastedduck_common::ByteString>,
+    order: Vec<roastedduck_common::ByteString>,
 }
 
 impl GeoParquetMetadata {
@@ -403,7 +403,7 @@ impl GeoParquetMetadata {
             if crs.trim_start().starts_with('{') || version == GeoParquetVersion::V2 {
                 crs.clone_into(&mut projjson);
             } else {
-                return Err(Error::invalid_input(rustdb_common::byte_format!(
+                return Err(Error::invalid_input(roastedduck_common::byte_format!(
                     "Cannot write GeoParquet V1 metadata for column '{name}': GeoParquet V1 only supports PROJJSON CRS definitions"
                 )));
             }
@@ -423,7 +423,7 @@ impl GeoParquetMetadata {
     pub fn to_json(&self, version: GeoParquetVersion) -> Result<Option<String>> {
         use serde_json::{Map, Value, json};
         // GeoParquet has no M coordinates: such columns are left out.
-        let columns: Vec<(&rustdb_common::ByteString, &GeoColumn)> = self
+        let columns: Vec<(&roastedduck_common::ByteString, &GeoColumn)> = self
             .order
             .iter()
             .filter_map(|name| self.columns.get(name.as_ref()).map(|column| (name, column)))
@@ -482,7 +482,9 @@ impl GeoParquetMetadata {
                     Err(_) => {
                         return Err(Error::new_bytes(
                             ErrorKind::Serialization,
-                            rustdb_common::byte_format!("Failed to parse CRS PROJJSON for column '{name}'"),
+                            roastedduck_common::byte_format!(
+                                "Failed to parse CRS PROJJSON for column '{name}'"
+                            ),
                         ));
                     }
                 }

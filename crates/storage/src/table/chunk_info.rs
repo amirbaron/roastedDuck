@@ -4,7 +4,7 @@
 //! arrays only when rows diverge. Partially deleted vectors whose deletes are committed
 //! by one transaction collapse into a bitmask.
 
-use rustdb_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
 
 use crate::transaction::{NOT_DELETED_ID, TRANSACTION_ID_START, TransactionData};
 

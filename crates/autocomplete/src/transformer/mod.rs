@@ -61,9 +61,9 @@ mod update;
 mod use_statement;
 mod vacuum;
 
-use rustdb_ast::{CommonTableExpressionMap, ParsedExpression, SqlStatement, SqlStatementKind, TableRef};
-use rustdb_common::{CaseInsensitiveMap, Error, Result};
-use rustdb_parser::{ParserOptions, SYNTAX_ERROR};
+use roastedduck_ast::{CommonTableExpressionMap, ParsedExpression, SqlStatement, SqlStatementKind, TableRef};
+use roastedduck_common::{CaseInsensitiveMap, Error, Result};
+use roastedduck_parser::{ParserOptions, SYNTAX_ERROR};
 
 use crate::matcher::{Grammar, MatchContext, MatchState};
 use crate::tokenizer::{MatcherToken, TokenizeState, TokenizerCallbacks, tokenize_input};
@@ -90,12 +90,12 @@ pub(crate) struct PegTransformer {
     pub options: ParserOptions,
     /// Parameter names (and numbers) seen so far, with their indexes, in DuckDB's
     /// iteration order (`named_parameter_map`).
-    pub named_parameter_map: rustdb_parser::hash_order::CiHashMap<u64>,
+    pub named_parameter_map: roastedduck_parser::hash_order::CiHashMap<u64>,
     /// The highest parameter index used so far (`prepared_statement_parameter_index`).
     pub prepared_statement_parameter_index: u64,
     pub last_param_type: PreparedParamType,
     /// `WINDOW name AS (...)` definitions (`window_clauses`).
-    pub window_clauses: CaseInsensitiveMap<WindowExpr, rustdb_common::ByteString>,
+    pub window_clauses: CaseInsensitiveMap<WindowExpr, roastedduck_common::ByteString>,
     /// The enum types `PIVOT`s without `IN` lists need (`pivot_entries`).
     pub pivot_entries: Vec<CreatePivotEntry>,
     /// The CTEs of the enclosing `WITH` clauses, outermost first (`stored_cte_map`).
@@ -148,7 +148,7 @@ impl PegTransformer {
     pub fn new(options: ParserOptions) -> Self {
         Self {
             options,
-            named_parameter_map: rustdb_parser::hash_order::CiHashMap::new(),
+            named_parameter_map: roastedduck_parser::hash_order::CiHashMap::new(),
             prepared_statement_parameter_index: 0,
             last_param_type: PreparedParamType::Invalid,
             window_clauses: CaseInsensitiveMap::default(),
@@ -294,10 +294,10 @@ impl PegTransformer {
         let list = parse_result.list()?;
         let mut statement: SqlStatement = self.transform(list.choice(0)?)?;
         if !self.named_parameter_map.is_empty() {
-            let map: CaseInsensitiveMap<u64, rustdb_common::ByteString> = self
+            let map: CaseInsensitiveMap<u64, roastedduck_common::ByteString> = self
                 .named_parameter_map
                 .iter()
-                .map(|(name, index)| (rustdb_common::ByteString::from(name.as_bytes()), *index))
+                .map(|(name, index)| (roastedduck_common::ByteString::from(name.as_bytes()), *index))
                 .collect();
             if let SqlStatementKind::Select(select) = &mut statement.kind {
                 select.named_param_map = map.clone();
@@ -400,7 +400,7 @@ pub fn parse_query(query: &str, options: ParserOptions) -> Result<Vec<SqlStateme
 
 // PEG token strings are Unicode text today. Encode them when a rule feeds a native
 // AST name field; catalog names must never pass through this text-only transformer.
-impl TransformResult for rustdb_common::ByteString {
+impl TransformResult for roastedduck_common::ByteString {
     fn transform_function(rule: &str) -> Option<TransformFunction<Self>> {
         if rule == "VersionNumber" {
             Some(PegTransformer::transform_version_number)
@@ -412,10 +412,10 @@ impl TransformResult for rustdb_common::ByteString {
 fn encode_token_name(
     transformer: &mut PegTransformer,
     result: &ParseResult,
-) -> Result<rustdb_common::ByteString> {
+) -> Result<roastedduck_common::ByteString> {
     transformer.transform::<String>(result).map(Into::into)
 }
-impl TransformResult for Vec<rustdb_common::ByteString> {
+impl TransformResult for Vec<roastedduck_common::ByteString> {
     fn transform_function(rule: &str) -> Option<TransformFunction<Self>> {
         Vec::<String>::transform_function(rule).map(|_| encode_token_names as TransformFunction<Self>)
     }
@@ -423,7 +423,7 @@ impl TransformResult for Vec<rustdb_common::ByteString> {
 fn encode_token_names(
     transformer: &mut PegTransformer,
     result: &ParseResult,
-) -> Result<Vec<rustdb_common::ByteString>> {
+) -> Result<Vec<roastedduck_common::ByteString>> {
     transformer
         .transform::<Vec<String>>(result)
         .map(|names| names.into_iter().map(Into::into).collect())

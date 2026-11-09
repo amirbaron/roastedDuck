@@ -32,7 +32,7 @@ pub use enums::{read_enum, write_enum};
 pub use impls::{IndexVector, OptionalIdx};
 pub use options::{SerializationCompatibility, SerializationOptions};
 pub use pointee::{DeserializePointee, Pointee, deserialize_present, required, serialize_present};
-pub use rustdb_common::{Error, Result};
+pub use roastedduck_common::{Error, Result};
 pub use serializer::{Serialize, SerializeObject, Serializer};
 
 /// Numeric id of a property within an object (DuckDB's `field_id_t`).

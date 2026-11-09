@@ -2,11 +2,11 @@
 //! `common/types/hyperloglog.cpp`), bit-exact: 64 registers indexed by the low 6 bits of
 //! DuckDB's hash, estimated with Ertl's improved estimator.
 
-use rustdb_common::Result;
-use rustdb_function::aggregate::{Aggregate, AggregateInput, States, Typed};
-use rustdb_function::{AggregateFunction, AggregateFunctionSet, NullHandling};
-use rustdb_row::hash::hash_vector;
-use rustdb_types::{LogicalType, Vector};
+use roastedduck_common::Result;
+use roastedduck_function::aggregate::{Aggregate, AggregateInput, States, Typed};
+use roastedduck_function::{AggregateFunction, AggregateFunctionSet, NullHandling};
+use roastedduck_row::hash::hash_vector;
+use roastedduck_types::{LogicalType, Vector};
 
 /// DuckDB's `HyperLogLog` (format `HLL_V2`): `M = 2^P` one-byte registers.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -185,7 +185,7 @@ mod tests {
     fn empty_sketch_counts_zero() {
         assert_eq!(HyperLogLog::default().count(), 0);
         let mut sketch = HyperLogLog::default();
-        sketch.insert_hash(rustdb_row::hash::murmur_hash64(42));
+        sketch.insert_hash(roastedduck_row::hash::murmur_hash64(42));
         assert_eq!(sketch.count(), 1);
     }
 }

@@ -5,12 +5,12 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{
     BindInput, FunctionClient, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet,
 };
-use rustdb_functions::scalar::executor::{binary, unary};
-use rustdb_types::{DataChunk, Date, Interval, LogicalType, Timestamp, Vector};
+use roastedduck_functions::scalar::executor::{binary, unary};
+use roastedduck_types::{DataChunk, Date, Interval, LogicalType, Timestamp, Vector};
 
 use crate::icu_datefunc::{self, BindData, MICROS_PER_MSEC, TzCalendar, get_time, set_time, subtract_field};
 use crate::icu_datetrunc::current_midnight;

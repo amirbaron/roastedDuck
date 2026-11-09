@@ -13,7 +13,7 @@ use aes::Aes256;
 use aes_gcm::aead::consts::{U12, U16};
 use aes_gcm::{AeadInOut, AesGcm, KeyInit};
 use ctr::cipher::{KeyIvInit, StreamCipher};
-use rustdb_common::{Error, ErrorKind, Result};
+use roastedduck_common::{Error, ErrorKind, Result};
 
 use crate::{
     AES_IV_LEN, AES_NONCE_LEN, AES_NONCE_LEN_DEPRECATED, AES_TAG_LEN, CipherType,

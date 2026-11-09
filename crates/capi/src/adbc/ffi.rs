@@ -19,7 +19,7 @@
 // ADBC C interface declarations derived from the frozen Apache Arrow ADBC header.
 // Licensed under the Apache License, Version 2.0; see the upstream header and NOTICE.
 #![allow(non_snake_case)]
-use rustdb_arrow::ffi::{ArrowArray, ArrowArrayStream, ArrowSchema};
+use roastedduck_arrow::ffi::{ArrowArray, ArrowArrayStream, ArrowSchema};
 use std::ffi::{c_char, c_int, c_void};
 #[repr(C)]
 #[derive(Debug, Default)]

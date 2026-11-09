@@ -1,8 +1,8 @@
 //! Frozen C++ SELECT binary AST/original SQL and processed `ErrorData` JSON.
-use rustdb_ast::SqlStatementKind;
-use rustdb_common::{Error, Result};
-use rustdb_serde::binary::BinarySerializer;
-use rustdb_serde::{SerializationOptions, Serializer};
+use roastedduck_ast::SqlStatementKind;
+use roastedduck_common::{Error, Result};
+use roastedduck_serde::binary::BinarySerializer;
+use roastedduck_serde::{SerializationOptions, Serializer};
 fn unhex(text: &str) -> Result<Vec<u8>> {
     let (pairs, rest) = text.as_bytes().as_chunks::<2>();
     if !rest.is_empty() {
@@ -26,7 +26,7 @@ pub fn compare(line: &str) -> Result<()> {
         return Err(Error::invalid_input("invalid query oracle record"));
     }
     let bytes = unhex(fields[1])?;
-    let parsed = rustdb_parser::parse_bytes(&bytes);
+    let parsed = roastedduck_parser::parse_bytes(&bytes);
     if fields[2] == "ERROR" {
         let error = parsed
             .err()

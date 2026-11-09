@@ -4,10 +4,10 @@
 use std::marker::PhantomData;
 use std::ops::{BitAnd, BitOr, BitXor};
 
-use rustdb_common::Result;
-use rustdb_function::aggregate::{Aggregate, AggregateInput, States, Typed, Unary, UnaryAggregate};
-use rustdb_function::{AggregateFunction, AggregateFunctionSet};
-use rustdb_types::{LogicalType, NativeType, StringT, Vector};
+use roastedduck_common::Result;
+use roastedduck_function::aggregate::{Aggregate, AggregateInput, States, Typed, Unary, UnaryAggregate};
+use roastedduck_function::{AggregateFunction, AggregateFunctionSet};
+use roastedduck_types::{LogicalType, NativeType, StringT, Vector};
 
 use crate::bitstring::{BitwiseOp, bitwise_in_place};
 

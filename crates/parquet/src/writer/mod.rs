@@ -13,8 +13,8 @@ pub mod written_stats;
 use std::fs::File;
 use std::io::{BufWriter, Write as _};
 
-use rustdb_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, PhysicalType, Vector};
+use roastedduck_common::{CaseInsensitiveMap, Error, ErrorKind, Result};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, PhysicalType, Vector};
 
 use self::column::{
     ColumnWriter, FinishedColumn, ListWriter, PrimitiveWriter, StructWriter, VariantWriter, WriterSchema,
@@ -46,7 +46,7 @@ pub const MAX_UNCOMPRESSED_DICT_PAGE_SIZE: usize = 1_073_741_824;
 #[derive(Clone, Debug, Default)]
 pub struct FieldId {
     pub field_id: Option<i32>,
-    pub children: CaseInsensitiveMap<FieldId, rustdb_common::ByteString>,
+    pub children: CaseInsensitiveMap<FieldId, roastedduck_common::ByteString>,
 }
 
 /// The options of a Parquet write (`ParquetWriteBindData`).
@@ -59,15 +59,15 @@ pub struct WriterOptions {
     pub row_group_size: usize,
     pub row_group_size_bytes: usize,
     pub row_groups_per_file: Option<u64>,
-    pub kv_metadata: Vec<(rustdb_common::ByteString, Vec<u8>)>,
-    pub field_ids: CaseInsensitiveMap<FieldId, rustdb_common::ByteString>,
+    pub kv_metadata: Vec<(roastedduck_common::ByteString, Vec<u8>)>,
+    pub field_ids: CaseInsensitiveMap<FieldId, roastedduck_common::ByteString>,
     pub dictionary_size_limit: Option<usize>,
     pub string_dictionary_page_size_limit: usize,
     pub enable_bloom_filters: bool,
     pub bloom_filter_false_positive_ratio: f64,
     pub version: ParquetVersion,
     /// The shredding types of VARIANT columns (`SHREDDING`), by column name.
-    pub shredding: Vec<(rustdb_common::ByteString, LogicalType)>,
+    pub shredding: Vec<(roastedduck_common::ByteString, LogicalType)>,
     /// The `GeoParquet` metadata and geometry types written (`GEOPARQUET_VERSION`).
     pub geoparquet_version: crate::geo::GeoParquetVersion,
     /// Whether `GeoParquet` metadata is written at all (`enable_geoparquet_conversion`).
@@ -100,25 +100,29 @@ impl Default for WriterOptions {
 /// The output file with the number of bytes written (`BufferedFileWriter`).
 #[derive(Debug)]
 pub struct FileSink {
-    out: BufWriter<rustdb_function::registered_files::Output>,
+    out: BufWriter<roastedduck_function::registered_files::Output>,
     written: u64,
-    path: rustdb_common::ByteString,
+    path: roastedduck_common::ByteString,
     encryption: Option<crate::crypto::FooterKey>,
 }
 
 impl FileSink {
     fn create(path: &[u8]) -> Result<Self> {
-        rustdb_function::file_system::verify_can_write(path)?;
-        let file = if rustdb_function::registered_files::lookup(path).is_some() {
-            rustdb_function::registered_files::Output::create(path)?
+        roastedduck_function::file_system::verify_can_write(path)?;
+        let file = if roastedduck_function::registered_files::lookup(path).is_some() {
+            roastedduck_function::registered_files::Output::create(path)?
         } else {
-            let file = File::create(rustdb_function::file_system::native_path(path)?).map_err(|error| {
-                Error::new_bytes(
-                    ErrorKind::Io,
-                    rustdb_common::byte_format!("Cannot open file \"{path}\": {}", io_reason(&error)),
-                )
-            })?;
-            rustdb_function::registered_files::Output::Local(file)
+            let file =
+                File::create(roastedduck_function::file_system::native_path(path)?).map_err(|error| {
+                    Error::new_bytes(
+                        ErrorKind::Io,
+                        roastedduck_common::byte_format!(
+                            "Cannot open file \"{path}\": {}",
+                            io_reason(&error)
+                        ),
+                    )
+                })?;
+            roastedduck_function::registered_files::Output::Local(file)
         };
         Ok(Self {
             out: BufWriter::with_capacity(1 << 20, file),
@@ -135,10 +139,10 @@ impl FileSink {
 
     pub fn write_all(&mut self, bytes: &[u8]) -> Result<()> {
         self.out.write_all(bytes).map_err(|error| {
-            rustdb_function::registered_files::callback_error(&error).unwrap_or_else(|| {
+            roastedduck_function::registered_files::callback_error(&error).unwrap_or_else(|| {
                 Error::new_bytes(
                     ErrorKind::Io,
-                    rustdb_common::byte_format!(
+                    roastedduck_common::byte_format!(
                         "Could not write file \"{}\": {}",
                         self.path,
                         io_reason(&error)
@@ -173,10 +177,10 @@ impl FileSink {
             .flush()
             .and_then(|()| self.out.get_mut().close())
             .map_err(|error| {
-                rustdb_function::registered_files::callback_error(&error).unwrap_or_else(|| {
+                roastedduck_function::registered_files::callback_error(&error).unwrap_or_else(|| {
                     Error::new_bytes(
                         ErrorKind::Io,
-                        rustdb_common::byte_format!(
+                        roastedduck_common::byte_format!(
                             "Could not write file \"{}\": {}",
                             self.path,
                             io_reason(&error)
@@ -199,7 +203,7 @@ fn io_reason(error: &std::io::Error) -> String {
 pub fn created_by() -> String {
     format!(
         "DuckDB version v1.5.6 (build {})",
-        rustdb_storage::storage_info::SOURCE_ID
+        roastedduck_storage::storage_info::SOURCE_ID
     )
 }
 
@@ -216,7 +220,7 @@ struct PendingBloomFilter {
 pub struct ParquetWriter {
     sink: Option<FileSink>,
     options: WriterOptions,
-    names: Vec<rustdb_common::ByteString>,
+    names: Vec<roastedduck_common::ByteString>,
     types: Vec<LogicalType>,
     columns: Vec<ColumnWriter>,
     metadata: FileMetaData,
@@ -235,7 +239,7 @@ pub struct ParquetWriter {
 /// batches at once (`ParquetWritePrepareBatch`).
 #[derive(Debug, Clone)]
 pub struct RowGroupPreparer {
-    names: Vec<rustdb_common::ByteString>,
+    names: Vec<roastedduck_common::ByteString>,
     types: Vec<LogicalType>,
     options: WriterOptions,
 }
@@ -243,7 +247,10 @@ pub struct RowGroupPreparer {
 impl RowGroupPreparer {
     /// Encode a buffer-managed batch column by column, replaying it for each
     /// writer phase instead of flattening the complete batch into heap vectors.
-    pub fn prepare_batch(&self, batch: &dyn rustdb_function::copy::CopyBatch) -> Result<PreparedRowGroup> {
+    pub fn prepare_batch(
+        &self,
+        batch: &dyn roastedduck_function::copy::CopyBatch,
+    ) -> Result<PreparedRowGroup> {
         let num_rows = batch.count();
         let mut columns = self.fresh_columns()?;
         let mut row_group = RowGroup {
@@ -320,10 +327,10 @@ pub struct PreparedRowGroup {
 
 /// `ColumnWriter::CreateWriterRecursive`.
 fn create_writer(
-    path: &[rustdb_common::ByteString],
+    path: &[roastedduck_common::ByteString],
     ty: &LogicalType,
     name: impl AsRef<[u8]>,
-    field_ids: Option<&CaseInsensitiveMap<FieldId, rustdb_common::ByteString>>,
+    field_ids: Option<&CaseInsensitiveMap<FieldId, roastedduck_common::ByteString>>,
     max_repeat: u16,
     mut max_define: u16,
     can_have_nulls: bool,
@@ -472,7 +479,7 @@ fn build_variant_children(writer: &mut VariantWriter, shredding: Option<&Logical
     let schema = &writer.schema;
     let path = schema.path.clone();
     let parent_path = &path[..path.len().saturating_sub(1)];
-    let column_path: Vec<rustdb_common::ByteString> = path.clone();
+    let column_path: Vec<roastedduck_common::ByteString> = path.clone();
     let _ = parent_path;
     let typed = shredding
         .filter(|ty| !matches!(ty.id(), LogicalTypeId::Any | LogicalTypeId::Variant))
@@ -532,7 +539,7 @@ fn transform_variant_columns(
     columns: &mut [ColumnWriter],
     chunks: &mut [(Vec<Vector>, usize)],
 ) -> Result<()> {
-    use rustdb_types::variant::VariantData;
+    use roastedduck_types::variant::VariantData;
     for (index, column) in columns.iter_mut().enumerate() {
         if !column.has_transform()? {
             continue;
@@ -580,7 +587,7 @@ fn transform_variant_columns(
 /// Applies the `SHREDDING` types of the top-level VARIANT columns.
 fn apply_shredding(
     columns: &mut [ColumnWriter],
-    names: &[rustdb_common::ByteString],
+    names: &[roastedduck_common::ByteString],
     options: &WriterOptions,
 ) -> Result<()> {
     for (column, name) in columns.iter_mut().zip(names) {
@@ -646,7 +653,7 @@ fn primitive_values(ty: &LogicalType) -> Result<Box<dyn ValueWriter>> {
         L::Interval => standard::<IntervalType>(false),
         L::Enum => Box::new(EnumWriter::new(ty.enum_values().unwrap_or_default().to_vec())),
         _ => {
-            return Err(Error::internal(rustdb_common::byte_format!(
+            return Err(Error::internal(roastedduck_common::byte_format!(
                 "Unsupported type \"{ty}\" in Parquet writer"
             )));
         }
@@ -657,7 +664,7 @@ impl ParquetWriter {
     /// Creates `path` and prepares the column writers (`ParquetWriter::ParquetWriter`).
     pub fn new(
         path: &[u8],
-        names: &[rustdb_common::ByteString],
+        names: &[roastedduck_common::ByteString],
         types: &[LogicalType],
         mut options: WriterOptions,
     ) -> Result<Self> {
@@ -734,7 +741,7 @@ impl ParquetWriter {
     }
 
     /// What `RETURN_STATS` reports about the finalized file (`GatherWrittenStatistics`).
-    pub fn written_statistics(&self) -> rustdb_function::copy::CopyFunctionFileStatistics {
+    pub fn written_statistics(&self) -> roastedduck_function::copy::CopyFunctionFileStatistics {
         written_stats::gather(
             &self.columns,
             &self.metadata,

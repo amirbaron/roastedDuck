@@ -6,7 +6,7 @@ use crate::{
     AnyTypeInfo, ArrayTypeInfo, DecimalTypeInfo, EnumTypeInfo, ExtraTypeInfo, IntegerLiteralTypeInfo,
     ListTypeInfo, LogicalTypeId, PhysicalType, StructTypeInfo, TypeInfo, Value,
 };
-use rustdb_common::{ByteString, byte_write as write};
+use roastedduck_common::{ByteString, byte_write as write};
 
 /// A SQL type: an id plus optional parameters, cheap to clone.
 ///
@@ -242,7 +242,7 @@ impl LogicalType {
     /// `GEOMETRY(crs)` (`LogicalType::GEOMETRY(const string &)`): the definition is kept in
     /// the normalized form `CoordinateReferenceSystem` parses it to; an empty one gives
     /// plain GEOMETRY. Fails on malformed WKT.
-    pub fn geometry_with_crs(definition: impl Into<String>) -> rustdb_common::Result<Self> {
+    pub fn geometry_with_crs(definition: impl Into<String>) -> roastedduck_common::Result<Self> {
         let definition = definition.into();
         if definition.is_empty() {
             return Ok(Self::GEOMETRY);
@@ -743,7 +743,7 @@ impl LogicalType {
         out
     }
 }
-impl rustdb_common::byte_format::NativeByteFormat for LogicalType {
+impl roastedduck_common::byte_format::NativeByteFormat for LogicalType {
     fn append_native_bytes(&self, output: &mut ByteString) {
         let _ = self.write_type_bytes(output);
     }

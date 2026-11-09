@@ -12,14 +12,14 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use rustdb_common::libcxx::{UnorderedOrder, string_hash};
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_types::variant::{
+use roastedduck_common::libcxx::{UnorderedOrder, string_hash};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_types::variant::{
     VariantData, VariantLogicalType as V, VariantNormalizer, VariantPathComponent, unshredded_type,
 };
-use rustdb_types::variant_value::{VariantValue, to_variant_data};
-use rustdb_types::variant_vector::VariantVectorBuilder;
-use rustdb_types::{ListEntry, LogicalType, LogicalTypeId, PhysicalType, Value, Vector};
+use roastedduck_types::variant_value::{VariantValue, to_variant_data};
+use roastedduck_types::variant_vector::VariantVectorBuilder;
+use roastedduck_types::{ListEntry, LogicalType, LogicalTypeId, PhysicalType, Value, Vector};
 
 use crate::statistics::{TYPED_VALUE_INDEX, UNTYPED_VALUE_INDEX};
 
@@ -928,8 +928,8 @@ impl<'a> ShreddedObject<'a> {
         builder.push_value(V::Object)?;
         let count = self.fields.len();
         let data = builder.data_mut();
-        rustdb_types::variant::varint_encode(count as u64, data);
-        rustdb_types::variant::varint_encode(0, data);
+        roastedduck_types::variant::varint_encode(count as u64, data);
+        roastedduck_types::variant::varint_encode(0, data);
         for (index, (name, _, _)) in self.fields.iter().enumerate() {
             builder.push_key(name.as_bytes());
             builder.push_child(Some(index as u32), index as u32 + 1);
@@ -1019,8 +1019,8 @@ fn write_primitive(
                 .ok_or_else(|| Error::internal("DECIMAL without width and scale"))?;
             builder.push_value(V::Decimal)?;
             let data = builder.data_mut();
-            rustdb_types::variant::varint_encode(u64::from(width), data);
-            rustdb_types::variant::varint_encode(u64::from(scale), data);
+            roastedduck_types::variant::varint_encode(u64::from(width), data);
+            roastedduck_types::variant::varint_encode(u64::from(scale), data);
             match ty.physical_type() {
                 PhysicalType::Int16 => data.extend_from_slice(&vector.values::<i16>()[slot].to_le_bytes()),
                 PhysicalType::Int32 => data.extend_from_slice(&vector.values::<i32>()[slot].to_le_bytes()),
@@ -1029,11 +1029,11 @@ fn write_primitive(
             }
         }
         V::Varchar | V::Blob => {
-            let value = &vector.values::<rustdb_types::StringT>()[slot];
+            let value = &vector.values::<roastedduck_types::StringT>()[slot];
             let bytes = vector.string_value(value);
             builder.push_value(type_id)?;
             let data = builder.data_mut();
-            rustdb_types::variant::varint_encode(bytes.len() as u64, data);
+            roastedduck_types::variant::varint_encode(bytes.len() as u64, data);
             data.extend_from_slice(bytes);
         }
         other => {
@@ -1061,7 +1061,7 @@ pub(crate) fn extract_path<S: AsRef<[u8]>>(input: &Vector, path: &[S], count: us
         .iter()
         .map(|key| VariantPathComponent::Key(ByteString::from(key.as_ref())))
         .collect();
-    rustdb_types::variant_vector::extract(input, &components, count)
+    roastedduck_types::variant_vector::extract(input, &components, count)
 }
 
 /// `Unshred` for row `row` of a shredded level.
@@ -1181,7 +1181,7 @@ fn unshredded_value(variant: Option<&VariantData>, values_index: u32) -> Result<
 
 #[cfg(test)]
 mod tests {
-    use rustdb_types::variant::encode_value;
+    use roastedduck_types::variant::encode_value;
 
     use super::*;
 

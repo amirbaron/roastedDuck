@@ -1,8 +1,8 @@
 //! Independent C++ bound-parameter metadata and native text.
-use rustdb_common::{Error, Result};
-use rustdb_planner::expression::ExpressionKind;
-use rustdb_planner::prepared::BoundParameterMap;
-use rustdb_serde::{SerializationOptions, Serializer, binary::BinarySerializer};
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::expression::ExpressionKind;
+use roastedduck_planner::prepared::BoundParameterMap;
+use roastedduck_serde::{SerializationOptions, Serializer, binary::BinarySerializer};
 fn unhex(text: &str) -> Result<Vec<u8>> {
     let (pairs, rest) = text.as_bytes().as_chunks::<2>();
     if !rest.is_empty() {

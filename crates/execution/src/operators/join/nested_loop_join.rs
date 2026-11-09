@@ -2,16 +2,16 @@
 //! without an equality by comparing every left row with every right row, right rows of a
 //! right chunk outer and left rows inner.
 
-use rustdb_common::tree_renderer::RenderParams;
+use roastedduck_common::tree_renderer::RenderParams;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::JoinType;
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_planner::Expression;
-use rustdb_planner::operator::JoinCondition;
-use rustdb_row::AppendState;
-use rustdb_types::{DataChunk, LogicalType, PhysicalType};
+use roastedduck_ast::JoinType;
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_planner::Expression;
+use roastedduck_planner::operator::JoinCondition;
+use roastedduck_row::AppendState;
+use roastedduck_types::{DataChunk, LogicalType, PhysicalType};
 
 use super::{
     OuterJoinMarker, construct_empty_join_result, construct_mark_join_result,

@@ -2,10 +2,10 @@
 //! child of a hash join is materialized in the hash table, so the children are swapped
 //! when the left one is cheaper to build on.
 
-use rustdb_ast::JoinType;
-use rustdb_common::Result;
-use rustdb_planner::{ColumnBinding, ExpressionType, LogicalKind, LogicalOperator, LogicalOperatorType};
-use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType};
+use roastedduck_ast::JoinType;
+use roastedduck_common::Result;
+use roastedduck_planner::{ColumnBinding, ExpressionType, LogicalKind, LogicalOperator, LogicalOperatorType};
+use roastedduck_types::{LogicalType, LogicalTypeId, PhysicalType};
 
 use crate::expression_util::flip_comparison;
 
@@ -37,7 +37,7 @@ fn row_id_bindings(op: &LogicalOperator, bindings: &mut Vec<ColumnBinding>) {
         && get
             .column_ids
             .iter()
-            .any(rustdb_planner::operator::ColumnIndex::is_row_id_column)
+            .any(roastedduck_planner::operator::ColumnIndex::is_row_id_column)
     {
         bindings.extend(op.column_bindings());
     }

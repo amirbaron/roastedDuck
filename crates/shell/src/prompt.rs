@@ -2,8 +2,8 @@
 //! `{setting:...}`, `{sql:...}`, `{color:...}` and `{highlight_element:...}` components,
 //! e.g. `{max_length:40}{color:green}{setting:current_database_and_schema}{color:reset} D `.
 
-use rustdb::{Error, Result};
-use rustdb_common::{ByteString, ErrorKind};
+use roastedduck::{Error, Result};
+use roastedduck_common::{ByteString, ErrorKind};
 
 use crate::highlight::{
     self, HighlightElementType, PrintColor, PrintIntensity, RESET_TERMINAL_CODE, ShellHighlight,
@@ -49,7 +49,7 @@ impl PromptComponent {
 /// `Prompt::ExecuteSQL` with `Prompt::GetConnection`).
 pub trait PromptContext {
     /// The value of `{setting:name}`.
-    fn setting(&mut self, name: &[u8]) -> Result<rustdb_common::ByteString>;
+    fn setting(&mut self, name: &[u8]) -> Result<roastedduck_common::ByteString>;
     /// The single value `query` returns, or a `#...#` marker for other results.
     fn execute_sql(&mut self, query: &[u8]) -> ByteString;
 }
@@ -127,7 +127,8 @@ pub fn parse_optional_index(text: &[u8]) -> Result<usize> {
     }
     let mut value = 0_u64;
     for &digit in digits.iter().take_while(|c| c.is_ascii_digit()) {
-        value = value.checked_mul(10)
+        value = value
+            .checked_mul(10)
             .and_then(|value| value.checked_add(u64::from(digit - b'0')))
             .ok_or_else(|| unsigned_conversion_error("stoull: out of range"))?;
     }
@@ -135,7 +136,9 @@ pub fn parse_optional_index(text: &[u8]) -> Result<usize> {
         value = 0_u64.wrapping_sub(value);
     }
     if value == u64::MAX {
-        return Err(Error::internal("optional_idx cannot be initialized with an invalid index"));
+        return Err(Error::internal(
+            "optional_idx cannot be initialized with an invalid index",
+        ));
     }
     usize::try_from(value).map_err(|_| unsigned_conversion_error("stoull: out of range"))
 }
@@ -183,15 +186,22 @@ impl Prompt {
         bracket_type: &[u8],
         value: &[u8],
     ) -> Result<()> {
-        let requires_parameter = || Error::invalid_input(rustdb_common::byte_format!("{bracket_type} requires a parameter"));
+        let requires_parameter = || {
+            Error::invalid_input(roastedduck_common::byte_format!(
+                "{bracket_type} requires a parameter"
+            ))
+        };
         let component = match bracket_type {
             b"setting" => {
                 if value.is_empty() {
                     return Err(requires_parameter());
                 }
                 let supported_settings = options.supported_settings();
-                if !supported_settings.iter().any(|setting| setting.as_bytes() == value) {
-                    return Err(Error::invalid_input(rustdb_common::byte_format!(
+                if !supported_settings
+                    .iter()
+                    .any(|setting| setting.as_bytes() == value)
+                {
+                    return Err(Error::invalid_input(roastedduck_common::byte_format!(
                         "unsupported setting \"{value}\" for setting, supported values: {}",
                         supported_settings.join(", ")
                     )));
@@ -244,7 +254,7 @@ impl Prompt {
                 if options.parse_setting(self, bracket_type, value)? {
                     return Ok(());
                 }
-                return Err(Error::invalid_input(rustdb_common::byte_format!(
+                return Err(Error::invalid_input(roastedduck_common::byte_format!(
                     "Unknown bracket type {bracket_type}"
                 )));
             }
@@ -313,7 +323,7 @@ impl Prompt {
             }
         }
         if parse_state != PromptParseState::Standard {
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "Failed to parse prompt \"{text}\" - unterminated bracket or escape"
             )));
         }
@@ -362,7 +372,7 @@ impl Prompt {
         // Render the characters that fit.
         let bytes = text;
         let mut start_pos = 0;
-        let mut truncated_text = rustdb_common::ByteString::new();
+        let mut truncated_text = roastedduck_common::ByteString::new();
         for i in 1..=bytes.len() {
             if i < bytes.len() && !ShellState::is_character(bytes[i]) {
                 continue;
@@ -382,8 +392,8 @@ impl Prompt {
     }
 
     /// `GeneratePrompt`: the prompt with terminal color codes.
-    pub fn generate_prompt(&self, context: &mut dyn PromptContext) -> Result<rustdb_common::ByteString> {
-        let mut prompt = rustdb_common::ByteString::new();
+    pub fn generate_prompt(&self, context: &mut dyn PromptContext) -> Result<roastedduck_common::ByteString> {
+        let mut prompt = roastedduck_common::ByteString::new();
         let mut length = 0;
         for component in &self.components {
             match component.kind {

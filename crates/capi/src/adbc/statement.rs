@@ -369,7 +369,7 @@ unsafe fn execute_bound(state: &mut StatementState, result: *mut DuckdbResult, e
         let Some(get_next) = state.input.get_next else {
             return fail(error, INVALID_ARGUMENT, b"Invalid input stream");
         };
-        let mut schema = rustdb_arrow::ffi::ArrowSchemaWrapper::default();
+        let mut schema = roastedduck_arrow::ffi::ArrowSchemaWrapper::default();
         get_schema(&raw mut state.input, &raw mut schema.arrow_schema);
         let mut converted = ConvertedSchema(std::ptr::null_mut());
         let code = conversion_status(
@@ -380,7 +380,7 @@ unsafe fn execute_bound(state: &mut StatementState, result: *mut DuckdbResult, e
             return code;
         }
         loop {
-            let mut array = rustdb_arrow::ffi::ArrowArrayWrapper::default();
+            let mut array = roastedduck_arrow::ffi::ArrowArrayWrapper::default();
             get_next(&raw mut state.input, &raw mut array.arrow_array);
             if array.arrow_array.release.is_none() {
                 break;

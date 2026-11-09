@@ -2,11 +2,11 @@
 
 #[test]
 fn original_size_boundary_retains_final_eof_read() {
-    use rustdb_csv::buffer::CsvFileHandle;
-    use rustdb_csv::options::CsvReaderOptions;
+    use roastedduck_csv::buffer::CsvFileHandle;
+    use roastedduck_csv::options::CsvReaderOptions;
     use std::io::Write as _;
 
-    let directory = std::env::temp_dir().join(format!("rustdb-csv-boundary-{}", std::process::id()));
+    let directory = std::env::temp_dir().join(format!("roastedduck-csv-boundary-{}", std::process::id()));
     std::fs::create_dir(&directory).expect("unique test directory");
     let path = directory.join("input.csv");
     std::fs::write(&path, b"a\n1\n").expect("initial CSV");

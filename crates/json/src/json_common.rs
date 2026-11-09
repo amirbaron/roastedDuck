@@ -4,8 +4,8 @@
 
 use std::borrow::Cow;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::LogicalTypeId;
+use roastedduck_common::{Error, Result};
+use roastedduck_types::LogicalTypeId;
 
 use crate::yyjson::{Doc, JsonArena, ReadError, ReadResult, ValId, ptr_get, tag, write_val};
 

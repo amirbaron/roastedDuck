@@ -9,14 +9,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use super::batch_memory_manager::BatchMemoryManager;
-use rustdb_buffer::{BufferManager, MemoryTag};
-use rustdb_common::{ByteString, Error, ErrorKind, Result};
-use rustdb_function::copy::{CopyFunctionFileStatistics, CopyGlobalState};
-use rustdb_function::file_system::native_path;
-use rustdb_function::{CopyFunction, FunctionData};
-use rustdb_planner::operator::{CopyFunctionReturnType, CopyOverwriteMode, FilenamePattern};
-use rustdb_row::{ColumnDataAppendState, ColumnDataCollection};
-use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
+use roastedduck_buffer::{BufferManager, MemoryTag};
+use roastedduck_common::{ByteString, Error, ErrorKind, Result};
+use roastedduck_function::copy::{CopyFunctionFileStatistics, CopyGlobalState};
+use roastedduck_function::file_system::native_path;
+use roastedduck_function::{CopyFunction, FunctionData};
+use roastedduck_planner::operator::{CopyFunctionReturnType, CopyOverwriteMode, FilenamePattern};
+use roastedduck_row::{ColumnDataAppendState, ColumnDataCollection};
+use roastedduck_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
 
 use crate::operator::{
     ErasedSink, ErasedSource, OperatorPartitionInfo, PartitionInfo, PhysicalOperator, PhysicalRef, SinkState,
@@ -45,7 +45,7 @@ pub struct CopyToFileOptions {
     pub write_empty_file: bool,
     pub hive_file_pattern: bool,
     pub return_type: CopyFunctionReturnType,
-    pub names: Vec<rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
     pub expected_types: Vec<LogicalType>,
 }
 
@@ -103,7 +103,7 @@ impl PhysicalCopyToFile {
     fn initialize_global(
         &self,
         path: &[u8],
-        logger: Option<&rustdb_function::logging::OperatorLogger>,
+        logger: Option<&roastedduck_function::logging::OperatorLogger>,
     ) -> Result<CopyGlobalState> {
         let initialize = self
             .function
@@ -209,7 +209,7 @@ impl PhysicalCopyToFile {
                     } else {
                         url_encode(value.to_varchar_bytes()?)
                     };
-                    path = rustdb_common::byte_format!("{path}/{}={value}", url_encode(name));
+                    path = roastedduck_common::byte_format!("{path}/{}={value}", url_encode(name));
                     create_dir(&mut inner.created_directories, &path)?;
                 }
             }
@@ -311,7 +311,7 @@ impl PhysicalCopyToFile {
 
     /// Prepares the output directory (`GetGlobalSinkState` for directory outputs).
     fn prepare_directory(&self) -> Result<()> {
-        if let Some(fs) = rustdb_function::registered_files::lookup(&self.options.file_path) {
+        if let Some(fs) = roastedduck_function::registered_files::lookup(&self.options.file_path) {
             if !fs.is_remote() && fs.is_file(&self.options.file_path)? {
                 if self.options.overwrite_mode == CopyOverwriteMode::Overwrite {
                     fs.remove(&self.options.file_path)?;
@@ -330,13 +330,13 @@ impl PhysicalCopyToFile {
         if path.is_file() {
             if self.options.overwrite_mode == CopyOverwriteMode::Overwrite {
                 std::fs::remove_file(&path).map_err(|error| {
-                    io_error(rustdb_common::byte_format!(
+                    io_error(roastedduck_common::byte_format!(
                         "Could not remove file \"{}\": {error}",
                         self.options.file_path
                     ))
                 })?;
             } else {
-                return Err(io_error(rustdb_common::byte_format!(
+                return Err(io_error(roastedduck_common::byte_format!(
                     "Cannot write to \"{}\" - it exists and is a file, not a directory! Enable OVERWRITE option to overwrite the file",
                     self.options.file_path
                 )));
@@ -346,7 +346,7 @@ impl PhysicalCopyToFile {
             check_directory(&self.options.file_path, self.options.overwrite_mode)
         } else {
             std::fs::create_dir_all(&path).map_err(|error| {
-                io_error(rustdb_common::byte_format!(
+                io_error(roastedduck_common::byte_format!(
                     "Failed to create directory \"{}\": {error}",
                     self.options.file_path
                 ))
@@ -372,7 +372,7 @@ impl PhysicalCopyToFile {
         offset: &AtomicUsize,
     ) -> Result<SourceResult> {
         let start = offset.load(std::sync::atomic::Ordering::Relaxed);
-        let end = (start + rustdb_common::STANDARD_VECTOR_SIZE).min(inner.written_files.len());
+        let end = (start + roastedduck_common::STANDARD_VECTOR_SIZE).min(inner.written_files.len());
         let stats_map_type = LogicalType::map(LogicalType::VARCHAR, LogicalType::VARCHAR);
         let mut columns: Vec<Vector> = self
             .types
@@ -383,7 +383,7 @@ impl PhysicalCopyToFile {
             let default = CopyFunctionFileStatistics::default();
             let stats = file.stats.as_ref().unwrap_or(&default);
             // `CreateColumnStatistics`: columns and statistics in name order.
-            let mut column_stats: Vec<&(rustdb_common::ByteString, Vec<(String, Value)>)> =
+            let mut column_stats: Vec<&(roastedduck_common::ByteString, Vec<(String, Value)>)> =
                 stats.column_statistics.iter().collect();
             column_stats.sort_by(|a, b| a.0.cmp(&b.0));
             let mut entries = Vec::with_capacity(column_stats.len());
@@ -442,7 +442,7 @@ impl PhysicalCopyToFile {
             None => (b"".as_slice(), path),
         };
         let base = base.strip_prefix(b"tmp_").unwrap_or(base);
-        rustdb_common::byte_format!("{directory}{base}")
+        roastedduck_common::byte_format!("{directory}{base}")
     }
 }
 
@@ -497,7 +497,7 @@ fn url_encode(input: impl AsRef<[u8]>) -> String {
 }
 
 fn create_dir(created: &mut Vec<ByteString>, path: &[u8]) -> Result<()> {
-    if let Some(fs) = rustdb_function::registered_files::lookup(path) {
+    if let Some(fs) = roastedduck_function::registered_files::lookup(path) {
         if !created.iter().any(|p| p.as_bytes() == path) {
             if !fs.is_dir(path)? {
                 fs.mkdir(path)?;
@@ -511,7 +511,7 @@ fn create_dir(created: &mut Vec<ByteString>, path: &[u8]) -> Result<()> {
     }
     if !native_path(path)?.is_dir() {
         std::fs::create_dir_all(native_path(path)?).map_err(|error| {
-            io_error(rustdb_common::byte_format!(
+            io_error(roastedduck_common::byte_format!(
                 "Failed to create directory \"{path}\": {error}"
             ))
         })?;
@@ -522,7 +522,7 @@ fn create_dir(created: &mut Vec<ByteString>, path: &[u8]) -> Result<()> {
 
 /// `CheckDirectory`: an existing output directory must be empty unless overwriting.
 fn check_directory(path: &[u8], overwrite_mode: CopyOverwriteMode) -> Result<()> {
-    if let Some(fs) = rustdb_function::registered_files::lookup(path) {
+    if let Some(fs) = roastedduck_function::registered_files::lookup(path) {
         if matches!(
             overwrite_mode,
             CopyOverwriteMode::OverwriteOrIgnore | CopyOverwriteMode::Append
@@ -536,7 +536,7 @@ fn check_directory(path: &[u8], overwrite_mode: CopyOverwriteMode) -> Result<()>
         if overwrite_mode == CopyOverwriteMode::Overwrite {
             return fs.remove_files(&files);
         }
-        return Err(io_error(rustdb_common::byte_format!(
+        return Err(io_error(roastedduck_common::byte_format!(
             "Directory \"{path}\" is not empty! Enable OVERWRITE option to overwrite files"
         )));
     }
@@ -570,7 +570,7 @@ fn check_directory(path: &[u8], overwrite_mode: CopyOverwriteMode) -> Result<()>
         }
         return Ok(());
     }
-    Err(io_error(rustdb_common::byte_format!(
+    Err(io_error(roastedduck_common::byte_format!(
         "Directory \"{path}\" is not empty! Enable OVERWRITE option to overwrite files"
     )))
 }
@@ -614,7 +614,7 @@ struct CopyInner {
     partitions: HashMap<PartitionKey, OpenFile>,
     partition_order: Vec<PartitionKey>,
     /// The operator's logger, if the query logs it; the files' writers log with it.
-    logger: Option<rustdb_function::logging::OperatorLogger>,
+    logger: Option<roastedduck_function::logging::OperatorLogger>,
 }
 
 impl CopyInner {
@@ -667,7 +667,7 @@ impl RawBatch {
     }
 }
 
-impl rustdb_function::copy::CopyBatch for RawBatch {
+impl roastedduck_function::copy::CopyBatch for RawBatch {
     fn count(&self) -> usize {
         self.count()
     }
@@ -702,7 +702,7 @@ struct BatchState {
     raw_batches: BTreeMap<u64, RawBatch>,
     tasks: VecDeque<BatchTask>,
     /// Prepared batches ready to be written, by their index in the output.
-    prepared: BTreeMap<u64, (u64, rustdb_function::copy::PreparedBatch)>,
+    prepared: BTreeMap<u64, (u64, roastedduck_function::copy::PreparedBatch)>,
     scheduled_batch_index: u64,
     flushed_batch_index: u64,
     /// Whether a thread has finished sinking (`any_finished`).
@@ -736,7 +736,7 @@ struct BatchCopy {
 pub struct CopyLocal {
     file: Option<OpenFile>,
     /// The function's state of this thread (parallel writes).
-    function_local: Option<rustdb_function::copy::CopyLocalState>,
+    function_local: Option<roastedduck_function::copy::CopyLocalState>,
     batch_index: u64,
     min_batch_index: u64,
     batch: Option<RawBatch>,
@@ -748,7 +748,7 @@ pub struct CopyLocal {
 
 /// `CorrectSizeForBatch`: within a vector of the desired size.
 fn correct_size_for_batch(count: usize, desired: usize) -> bool {
-    desired == 0 || count.abs_diff(desired) < rustdb_common::STANDARD_VECTOR_SIZE
+    desired == 0 || count.abs_diff(desired) < roastedduck_common::STANDARD_VECTOR_SIZE
 }
 
 impl PhysicalCopyToFile {
@@ -889,7 +889,7 @@ impl PhysicalCopyToFile {
                     .insert(batch_index, (memory_usage, prepared))
                     .is_some()
                 {
-                    return Err(Error::internal(rustdb_common::byte_format!(
+                    return Err(Error::internal(roastedduck_common::byte_format!(
                         "Duplicate batch index {batch_index} encountered in PhysicalFixedBatchCopy"
                     )));
                 }
@@ -953,7 +953,7 @@ impl PhysicalCopyToFile {
         {
             let mut state = global.batch.state.lock().unwrap_or_else(PoisonError::into_inner);
             if state.raw_batches.insert(local.batch_index, batch).is_some() {
-                return Err(Error::internal(rustdb_common::byte_format!(
+                return Err(Error::internal(roastedduck_common::byte_format!(
                     "Duplicate batch index {} encountered in PhysicalFixedBatchCopy",
                     local.batch_index
                 )));
@@ -1017,12 +1017,12 @@ impl PhysicalCopyToFile {
             drop(file);
             if options.use_tmp_file {
                 let target = Self::non_tmp_file(&options.file_path);
-                if let Some(fs) = rustdb_function::registered_files::lookup(&options.file_path) {
+                if let Some(fs) = roastedduck_function::registered_files::lookup(&options.file_path) {
                     fs.rename(&options.file_path, &target)?;
                 } else {
                     std::fs::rename(native_path(&options.file_path)?, native_path(&target)?).map_err(
                         |error| {
-                            io_error(rustdb_common::byte_format!(
+                            io_error(roastedduck_common::byte_format!(
                                 "Could not rename \"{}\" to \"{target}\": {error}",
                                 options.file_path
                             ))

@@ -6,8 +6,8 @@
 //! prefix) and terminated by `\x00`. Compound keys concatenate their column keys; a key
 //! with a NULL column is empty and never inserted.
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_types::{DataChunk, LogicalType, PhysicalType, StringT, Value, Vector, VectorKind};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_types::{DataChunk, LogicalType, PhysicalType, StringT, Value, Vector, VectorKind};
 
 /// An encoded key.
 pub type ArtKey = Vec<u8>;

@@ -1,9 +1,9 @@
 //! C++-recorded hive parsing, URL decoding and typed partition values.
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_csv::multi_file::{hive_parse, hive_value, url_decode};
-use rustdb_function::cast::CastFunctionSet;
-use rustdb_serde::{SerializationOptions, Serializer, binary::BinarySerializer};
-use rustdb_types::LogicalType;
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_csv::multi_file::{hive_parse, hive_value, url_decode};
+use roastedduck_function::cast::CastFunctionSet;
+use roastedduck_serde::{SerializationOptions, Serializer, binary::BinarySerializer};
+use roastedduck_types::LogicalType;
 fn unhex(text: &str) -> Result<Vec<u8>> {
     let (pairs, rest) = text.as_bytes().as_chunks::<2>();
     if !rest.is_empty() {
@@ -30,9 +30,9 @@ pub fn compare(line: &str) -> Result<()> {
     let actual: Result<ByteString> = (|| match f[0] {
         "0" | "1" => {
             let path = if f[0] == "0" {
-                rustdb_common::byte_format!("root/{name}=v/part={name}/file.csv")
+                roastedduck_common::byte_format!("root/{name}=v/part={name}/file.csv")
             } else {
-                rustdb_common::byte_format!("root/k={name}/k=other/file.csv")
+                roastedduck_common::byte_format!("root/k={name}/k=other/file.csv")
             };
             let parts = hive_parse(&path);
             let mut w = BinarySerializer::new(SerializationOptions::default());

@@ -4,11 +4,11 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::{
+use roastedduck_ast::{
     ComparisonExpression, ConjunctionExpression, ExpressionType, JoinRef, JoinRefType, JoinType,
     ParsedExpression, ParsedExpressionKind,
 };
-use rustdb_common::{ByteString, CaseInsensitiveSet, Error, Result};
+use roastedduck_common::{ByteString, CaseInsensitiveSet, Error, Result};
 
 use super::bind_table_ref;
 use super::plan_joinref::{BoundJoinRef, create_join_plan};
@@ -68,7 +68,7 @@ fn try_find_binding(binder: &Binder, using_column: &[u8], join_side: &str) -> Re
     let mut result: Option<BindingAlias> = None;
     for binding in &bindings {
         if result.is_some() {
-            let mut error = rustdb_common::byte_format!(
+            let mut error = roastedduck_common::byte_format!(
                 "Column name \"{using_column}\" is ambiguous: it exists more than once on {join_side} side of \
                  join.\nCandidates:"
             );
@@ -92,7 +92,7 @@ fn try_find_binding(binder: &Binder, using_column: &[u8], join_side: &str) -> Re
 /// DuckDB's `FindBinding`.
 fn find_binding(binder: &Binder, using_column: &[u8], join_side: &str) -> Result<BindingAlias> {
     try_find_binding(binder, using_column, join_side)?.ok_or_else(|| {
-        Error::binder(rustdb_common::byte_format!(
+        Error::binder(roastedduck_common::byte_format!(
             "Column \"{using_column}\" does not exist on {join_side} side of join!"
         ))
     })
@@ -177,12 +177,15 @@ fn natural_join_columns(left: &Binder, right: &Binder, location: Option<u64>) ->
             let mut list = Vec::new();
             for binding in binder.bind_context.bindings() {
                 for name in &binding.names {
-                    list.push(rustdb_common::byte_format!("{}.{name}", binding.alias_name()));
+                    list.push(roastedduck_common::byte_format!(
+                        "{}.{name}",
+                        binding.alias_name()
+                    ));
                 }
             }
             ByteString::join(&list, ", ")
         };
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "No columns found to join on in NATURAL JOIN.\nUse CROSS JOIN if you intended for this to be a \
              cross-product.\n   Left candidates: {}\n   Right candidates: {}",
             candidates(left),
@@ -199,7 +202,7 @@ fn bind_join_side(
     binder: &mut Binder,
     parent_index: &mut u64,
     outer: &mut dyn Scope,
-    table_ref: &mut rustdb_ast::TableRef,
+    table_ref: &mut roastedduck_ast::TableRef,
 ) -> Result<BoundStatement> {
     binder.unnamed_subquery_index = *parent_index;
     let result = {
@@ -404,12 +407,12 @@ pub fn bind_bound_join(
         scope.binder.bind_context.remove_context(&right_aliases);
         if join_type == JoinType::Mark {
             mark_index = scope.binder.generate_table_index();
-            let alias = rustdb_common::byte_format!("__internal_mark_join_ref{mark_index}");
+            let alias = roastedduck_common::byte_format!("__internal_mark_join_ref{mark_index}");
             scope.binder.bind_context.add_generic_binding(
                 mark_index,
                 &alias,
                 vec!["__mark_index_column".into()],
-                vec![rustdb_types::LogicalType::BOOLEAN],
+                vec![roastedduck_types::LogicalType::BOOLEAN],
             )?;
         }
     }

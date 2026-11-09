@@ -7,16 +7,16 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use rustdb_ast::{ExpressionType, JoinType, OrderByNullType, OrderType};
-use rustdb_common::{Error, Result};
-use rustdb_planner::expression::{BoundUnnestExpression, BoundWindowExpression};
-use rustdb_planner::operator::{JoinCondition, LogicalAggregate, LogicalComparisonJoin};
-use rustdb_planner::{
+use roastedduck_ast::{ExpressionType, JoinType, OrderByNullType, OrderType};
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::expression::{BoundUnnestExpression, BoundWindowExpression};
+use roastedduck_planner::operator::{JoinCondition, LogicalAggregate, LogicalComparisonJoin};
+use roastedduck_planner::{
     ColumnBinding, Expression, ExpressionClass, ExpressionKind, LogicalKind, LogicalOperator,
     LogicalOperatorType,
 };
-use rustdb_storage::statistics::BaseStatistics;
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_storage::statistics::BaseStatistics;
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::column_binding_replacer::{ColumnBindingReplacer, ReplacementBinding};
 use crate::expression_nullability::NotNullExpressionAnalyzer;
@@ -259,7 +259,7 @@ fn binding_types(op: &LogicalOperator, bindings: &[ColumnBinding], types: &mut [
 
 /// A column of the late-materialized scan (DuckDB's `LHSColumnInfo`).
 struct LhsColumnInfo {
-    name: rustdb_common::ByteString,
+    name: roastedduck_common::ByteString,
     ty: LogicalType,
     binding: ColumnBinding,
 }
@@ -286,7 +286,7 @@ fn lhs_column_info(op: &LogicalOperator, column: usize) -> Result<LhsColumnInfo>
         .get(get_binding.column_index as usize)
         .ok_or_else(missing)?;
     let name = if column_index.is_row_id_column() {
-        rustdb_common::ByteString::from(ROW_ID_NAME)
+        roastedduck_common::ByteString::from(ROW_ID_NAME)
     } else {
         get.names
             .get(column_index.index as usize)
@@ -523,7 +523,7 @@ impl TopNWindowElimination<'_> {
             grouping_sets: Vec::new(),
             grouping_functions: Vec::new(),
             group_stats,
-            distinct_validity: rustdb_planner::TupleDataValidityType::default(),
+            distinct_validity: roastedduck_planner::TupleDataValidityType::default(),
         })))
         .with_expressions(vec![aggregate_expression])
         .with_children(vec![child]);
@@ -756,7 +756,7 @@ impl TopNWindowElimination<'_> {
             if let Some(target) = types.get(index)
                 && *target != original_type
             {
-                expression = rustdb_planner::function_binder::add_cast_to_type(
+                expression = roastedduck_planner::function_binder::add_cast_to_type(
                     self.optimizer.context(),
                     expression,
                     target,
@@ -930,13 +930,13 @@ impl TopNWindowElimination<'_> {
     /// projection restoring the payload order if needed.
     fn construct_lhs(
         &self,
-        rhs: &rustdb_planner::operator::LogicalGet,
+        rhs: &roastedduck_planner::operator::LogicalGet,
         projections: &mut Vec<u64>,
     ) -> Result<LogicalOperator> {
         // DuckDB's `LateMaterializationHelper::CreateLHSGet`.
         let mut lhs_get = rhs.clone();
         lhs_get.table_index = self.optimizer.generate_table_index();
-        lhs_get.table_filters = rustdb_storage::TableFilterSet::default();
+        lhs_get.table_filters = roastedduck_storage::TableFilterSet::default();
         lhs_get.dynamic_filters = None;
         let lhs_row_id = get_or_insert_row_id(&mut lhs_get);
         if projections.is_empty() {

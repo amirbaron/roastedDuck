@@ -3,10 +3,10 @@
 
 use std::collections::HashMap;
 
-use rustdb_ast::keyword::{KeywordCategory, keyword_category};
-use rustdb_common::{ByteString, Error, Result, byte_write};
-use rustdb_function::cast::CastFunctionSet;
-use rustdb_types::LogicalType;
+use roastedduck_ast::keyword::{KeywordCategory, keyword_category};
+use roastedduck_common::{ByteString, Error, Result, byte_write};
+use roastedduck_function::cast::CastFunctionSet;
+use roastedduck_types::LogicalType;
 use unicode_normalization::UnicodeNormalization;
 
 use super::{CsvSniffer, SetColumns, can_you_cast_it};

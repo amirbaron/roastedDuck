@@ -1603,8 +1603,8 @@ pub fn add_install_hint_bytes(
     extension: &str,
     autoload: bool,
     autoinstall: bool,
-) -> rustdb_common::ByteString {
-    let mut message = rustdb_common::ByteString::from(base);
+) -> roastedduck_common::ByteString {
+    let mut message = roastedduck_common::ByteString::from(base);
     message.push_bytes(add_install_hint("", extension, autoload, autoinstall));
     message
 }
@@ -1631,8 +1631,8 @@ pub fn add_client_install_hint_bytes(
     client: &crate::FunctionClient,
     base: impl AsRef<[u8]>,
     extension: &str,
-) -> rustdb_common::ByteString {
-    let mut out = rustdb_common::ByteString::from(base.as_ref());
+) -> roastedduck_common::ByteString {
+    let mut out = roastedduck_common::ByteString::from(base.as_ref());
     out.push_bytes(add_client_install_hint(client, "", extension));
     out
 }

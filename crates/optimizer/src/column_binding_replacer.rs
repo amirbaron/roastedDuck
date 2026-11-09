@@ -1,8 +1,8 @@
 //! Rewriting column references from one binding to another throughout a plan (DuckDB's
 //! `ColumnBindingReplacer`).
 
-use rustdb_planner::{ColumnBinding, Expression, ExpressionKind, LogicalOperator};
-use rustdb_types::LogicalType;
+use roastedduck_planner::{ColumnBinding, Expression, ExpressionKind, LogicalOperator};
+use roastedduck_types::LogicalType;
 
 /// One binding to rewrite, optionally also changing the reference's type (DuckDB's
 /// `ReplacementBinding`).

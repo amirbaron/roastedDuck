@@ -32,11 +32,11 @@ pub use piecewise_merge_join::{
 };
 pub use positional_join::{PhysicalPositionalJoin, PositionalJoinGlobalState};
 
-use rustdb_ast::{ExpressionType, JoinType};
-use rustdb_common::Result;
-use rustdb_common::tree_renderer::RenderParams;
-use rustdb_planner::operator::JoinCondition;
-use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
+use roastedduck_ast::{ExpressionType, JoinType};
+use roastedduck_common::Result;
+use roastedduck_common::tree_renderer::RenderParams;
+use roastedduck_planner::operator::JoinCondition;
+use roastedduck_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
 
 /// Whether unmatched left rows are emitted with NULLs on the right (DuckDB's
 /// `IsLeftOuterJoin`).
@@ -96,7 +96,7 @@ pub fn has_null_values(chunk: &DataChunk) -> bool {
 pub(crate) fn sink_state<'a, T: 'static>(state: &'a crate::operator::SinkState, name: &str) -> Result<&'a T> {
     state
         .downcast_ref::<T>()
-        .ok_or_else(|| rustdb_common::Error::internal(format!("{name} sink state has the wrong type")))
+        .ok_or_else(|| roastedduck_common::Error::internal(format!("{name} sink state has the wrong type")))
 }
 
 /// Constant NULL columns of `types` (`ConstantVector::SetNull`, which also makes the
@@ -134,7 +134,7 @@ pub fn construct_empty_join_result(
             // No rows: every mark is false; only NULL keys: every mark is NULL.
             let mut mark = Vector::flat(LogicalType::BOOLEAN, input.len());
             if has_null {
-                mark.set_validity(rustdb_types::ValidityMask::all_invalid(input.len()));
+                mark.set_validity(roastedduck_types::ValidityMask::all_invalid(input.len()));
             }
             columns.push(mark);
         }
@@ -176,7 +176,7 @@ pub(crate) fn construct_mark_join_result(
 ) {
     let count = left.len();
     let mut mark = Vector::flat(LogicalType::BOOLEAN, count.max(1));
-    let mut validity = rustdb_types::ValidityMask::all_valid();
+    let mut validity = roastedduck_types::ValidityMask::all_valid();
     for column in join_keys.columns() {
         let keys = column.validity();
         if keys.is_all_valid() {
@@ -215,20 +215,20 @@ fn comparison_join_params(
 ) -> RenderParams {
     let mut result = RenderParams::new();
     result.insert("Join Type".to_owned(), join_type.name().to_owned());
-    let conditions: Vec<rustdb_common::ByteString> = conditions
+    let conditions: Vec<roastedduck_common::ByteString> = conditions
         .iter()
         .map(|condition| {
-            rustdb_common::byte_format!(
+            roastedduck_common::byte_format!(
                 "{} {} {}",
                 condition.left.name(),
-                rustdb_ast::expression_type_to_operator(condition.comparison),
+                roastedduck_ast::expression_type_to_operator(condition.comparison),
                 condition.right.name()
             )
         })
         .collect();
     result.insert(
         "Conditions".to_owned(),
-        rustdb_common::ByteString::join(&conditions, b"\n"),
+        roastedduck_common::ByteString::join(&conditions, b"\n"),
     );
     crate::operator::set_estimated_cardinality(&mut result, estimated_cardinality);
     result

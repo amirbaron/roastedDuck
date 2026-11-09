@@ -1,11 +1,11 @@
 //! Real PEG entry-point journeys for name-bearing grammar dispatch.
-use rustdb_ast::{ParseInfo, ParsedExpressionKind, QueryNodeKind, SqlStatementKind, TableRefKind};
-use rustdb_parser::ParserOptions;
-fn parse(sql: &str) -> rustdb_common::Result<Vec<rustdb_ast::SqlStatement>> {
-    rustdb_autocomplete::parse_query(sql, ParserOptions::default())
+use roastedduck_ast::{ParseInfo, ParsedExpressionKind, QueryNodeKind, SqlStatementKind, TableRefKind};
+use roastedduck_parser::ParserOptions;
+fn parse(sql: &str) -> roastedduck_common::Result<Vec<roastedduck_ast::SqlStatement>> {
+    roastedduck_autocomplete::parse_query(sql, ParserOptions::default())
 }
 #[test]
-fn install_version_and_repository_keep_unicode_names() -> rustdb_common::Result<()> {
+fn install_version_and_repository_keep_unicode_names() -> roastedduck_common::Result<()> {
     let statements = parse("INSTALL 'éxt' FROM 'répo' VERSION 'v-é';")?;
     let SqlStatementKind::Load(info) = &statements[0].kind else {
         panic!("not LOAD");
@@ -17,7 +17,7 @@ fn install_version_and_repository_keep_unicode_names() -> rustdb_common::Result<
     Ok(())
 }
 #[test]
-fn replacement_and_alias_names_reach_native_ast() -> rustdb_common::Result<()> {
+fn replacement_and_alias_names_reach_native_ast() -> roastedduck_common::Result<()> {
     let statements = parse("SELECT * REPLACE (2 AS \"é\") FROM (SELECT 1 AS \"é\") AS \"源\";")?;
     let SqlStatementKind::Select(statement) = &statements[0].kind else {
         panic!("not SELECT");
@@ -34,7 +34,7 @@ fn replacement_and_alias_names_reach_native_ast() -> rustdb_common::Result<()> {
     Ok(())
 }
 #[test]
-fn cte_and_named_window_names_reach_native_ast() -> rustdb_common::Result<()> {
+fn cte_and_named_window_names_reach_native_ast() -> roastedduck_common::Result<()> {
     let statements = parse(
         "WITH \"源\"(\"é\") AS (SELECT 1) SELECT sum(\"é\") OVER \"窓\" FROM \"源\" WINDOW \"窓\" AS (ORDER BY \"é\");",
     )?;

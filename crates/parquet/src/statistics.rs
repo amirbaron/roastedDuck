@@ -2,10 +2,12 @@
 //! `ParquetStatisticsUtils`): `parquet_metadata`'s min/max columns and the zone maps that
 //! prune row groups.
 
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::{CastFunctionSet, ValueCast as _};
-use rustdb_storage::statistics::{BaseStatistics, NumericValue, StatsData, wrap_shredded_levels};
-use rustdb_types::{Date, LogicalType, LogicalTypeId, PhysicalType, Time, TimeNs, TimeTz, Timestamp, Value};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::{CastFunctionSet, ValueCast as _};
+use roastedduck_storage::statistics::{BaseStatistics, NumericValue, StatsData, wrap_shredded_levels};
+use roastedduck_types::{
+    Date, LogicalType, LogicalTypeId, PhysicalType, Time, TimeNs, TimeTz, Timestamp, Value,
+};
 
 use crate::column_reader::values::{DecimalTarget, FixedConversion, float16_to_float32};
 use crate::column_reader::values::{
@@ -151,7 +153,7 @@ pub fn convert_value_internal(ty: &LogicalType, schema: &ColumnSchema, bytes: &[
         L::Uuid => {
             let raw = fixed::<16>(bytes, "UUID")?;
             let value = crate::column_reader::values::UuidConversion::convert(&raw)?;
-            Value::uuid(rustdb_types::Uuid(value))
+            Value::uuid(roastedduck_types::Uuid(value))
         }
         _ => {
             return Err(Error::internal(format!("Unsupported type for stats {ty}")));

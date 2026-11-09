@@ -2,13 +2,13 @@
 //! `transform_show.cpp`, `transform_show_select.cpp`, the VALUES list of
 //! `transform_insert.cpp`).
 
-use rustdb_ast::{
+use roastedduck_ast::{
     DistinctModifier, ExpressionListRef, LimitModifier, LimitPercentModifier, OrderModifier, QueryNode,
     QueryNodeKind, ResultModifier, SelectStatement, SetOperationNode, SetOperationType, ShowRef, ShowType,
     TableRef, TableRefKind,
 };
-use rustdb_common::{Error, Result};
-use rustdb_pg_parser::nodes::{
+use roastedduck_common::{Error, Result};
+use roastedduck_pg_parser::nodes::{
     List, Node, SelectStmt, SetOperation, VariableShowSelectStmt, VariableShowStmt, WindowDef,
 };
 
@@ -169,7 +169,7 @@ impl<'a> Transformer<'a> {
                     let window_def: &'a WindowDef = cast_node(window)?;
                     let name = window_def.name.clone().unwrap_or_default();
                     if self.frame().window_clauses.contains_key(&name) {
-                        return Err(Error::parser(rustdb_common::byte_format!(
+                        return Err(Error::parser(roastedduck_common::byte_format!(
                             "window \"{name}\" is already defined"
                         )));
                     }
@@ -213,7 +213,7 @@ impl<'a> Transformer<'a> {
             | SetOperation::Except
             | SetOperation::Intersect
             | SetOperation::UnionByName => {
-                let mut cte_map = rustdb_ast::CommonTableExpressionMap::default();
+                let mut cte_map = roastedduck_ast::CommonTableExpressionMap::default();
                 if let Some(with) = &stmt.with_clause {
                     self.transform_cte(with, &mut cte_map)?;
                 }
@@ -244,7 +244,7 @@ impl<'a> Transformer<'a> {
 
     /// `TransformValuesList`: `VALUES (...), (...)`.
     pub(crate) fn transform_values_list(&mut self, list: &'a List) -> Result<TableRef> {
-        let mut values: Vec<Vec<rustdb_ast::ParsedExpression>> = Vec::with_capacity(list.len());
+        let mut values: Vec<Vec<roastedduck_ast::ParsedExpression>> = Vec::with_capacity(list.len());
         for row in list {
             let Node::List(row) = row else {
                 return Err(Error::internal("VALUES row is not a list"));
@@ -308,7 +308,7 @@ impl<'a> Transformer<'a> {
                     table_name.as_slice(),
                     b"databases" | b"schemas" | b"tables" | b"variables"
                 ) {
-                    showref.table_name = rustdb_common::byte_format!("\"{table_name}\"");
+                    showref.table_name = roastedduck_common::byte_format!("\"{table_name}\"");
                     showref.show_type = ShowType::ShowUnqualified;
                 }
             }

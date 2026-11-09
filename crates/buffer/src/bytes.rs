@@ -1,7 +1,7 @@
 //! Byte-size formatting and parsing (DuckDB's `StringUtil::BytesToHumanReadableString`,
 //! `StringUtil::TryParseFormattedBytes` and `DBConfig::ParseMemoryLimit`).
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 /// Formats `bytes` with binary units, e.g. `256.0 KiB` (DuckDB's
 /// `BytesToHumanReadableString(bytes, 1024)`). Used in settings and error messages.

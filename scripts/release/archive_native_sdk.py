@@ -10,9 +10,20 @@ def sha(path):
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
+def expected_layout(provenance):
+    layout = provenance.get("sdk_layout", "legacy-v1")
+    if layout == "legacy-v1":
+        # Immutable historical releases retain their original executable/alias.
+        return "bin/rustdb", {"bin/roastedDuck": "rustdb"}
+    assert layout == "roastedduck-v2", "Unknown SDK layout: " + str(layout)
+    assert "sdk/bin/rustdb" not in provenance["files_sha256"]
+    return "bin/roastedDuck", {}
+
 def verify_archive(archive, provenance):
     assert sha(archive) == provenance["sdk_archive"]["sha256"]
     expected = {name.removeprefix("sdk/"): digest for name, digest in provenance["files_sha256"].items() if name.startswith("sdk/")}
+    executable, expected_links = expected_layout(provenance)
+    assert executable in expected
     assert "notices/project/crates/common/data/utf8proc-LICENSE" in expected
     actual, links = {}, {}
     with tarfile.open(archive) as source:
@@ -28,7 +39,7 @@ def verify_archive(archive, provenance):
             else:
                 assert entry.isdir(), "Unexpected SDK member: " + name
     assert actual == expected, "SDK file set/content mismatch (including CLI, static library, headers and notices)"
-    assert links == {"bin/roastedDuck": "rustdb"}
+    assert links == expected_links
     return {"passed": True, "files_verified": len(actual), "archive_sha256": sha(archive)}
 
 if __name__ == "__main__":

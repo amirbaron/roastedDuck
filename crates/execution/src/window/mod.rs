@@ -38,12 +38,12 @@ pub(crate) mod segment_tree;
 pub(crate) mod shared_expressions;
 pub(crate) mod value_function;
 
-use rustdb_ast::{OrderByNullType, OrderType};
-use rustdb_common::{Error, Result};
-use rustdb_planner::expression::{BoundOrderByNode, BoundWindowExpression};
-use rustdb_planner::{Expression, ExpressionKind, ExpressionType};
-use rustdb_row::sort::{NullOrder, OrderModifiers, OrderType as SortOrder};
-use rustdb_types::LogicalType;
+use roastedduck_ast::{OrderByNullType, OrderType};
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::expression::{BoundOrderByNode, BoundWindowExpression};
+use roastedduck_planner::{Expression, ExpressionKind, ExpressionType};
+use roastedduck_row::sort::{NullOrder, OrderModifiers, OrderType as SortOrder};
+use roastedduck_types::LogicalType;
 
 /// A window function call taken out of its [`Expression`] (DuckDB's
 /// `BoundWindowExpression`, which is itself an expression).
@@ -53,10 +53,10 @@ pub struct WindowExpression {
     pub expression_type: ExpressionType,
     pub return_type: LogicalType,
     /// The alias of the call.
-    pub alias: rustdb_common::ByteString,
+    pub alias: roastedduck_common::ByteString,
     /// The name of the call (`Expression::GetName`: its alias, else its SQL), for plan
     /// rendering.
-    pub name: rustdb_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     pub window: BoundWindowExpression,
 }
 

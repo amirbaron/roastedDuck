@@ -5,7 +5,7 @@
 extern "C" AdbcStatusCode duckdb_adbc_init(int,void *,AdbcError *);
 inline void HarnessReleaseError(AdbcError *error);
 #ifdef ADBC_RUST_TARGET
-extern "C" void rustdb_adbc_test_initialize_error(AdbcError *);
+extern "C" void roastedduck_adbc_test_initialize_error(AdbcError *);
 #else
 extern "C" void adbc_cpp_test_initialize_error(AdbcError *);
 #endif
@@ -13,7 +13,7 @@ namespace duckdb_adbc {
 inline AdbcDriver &NativeDriver(){static AdbcDriver driver=[](){AdbcDriver driver{};if(duckdb_adbc_init(ADBC_VERSION_1_1_0,&driver,nullptr)!=ADBC_STATUS_OK)throw std::runtime_error("initialize direct driver");return driver;}();return driver;}
 inline void HarnessInitializeADBCError(AdbcError *error){if(!error)return;if(error->release==HarnessReleaseError)error->release(error);
 #ifdef ADBC_RUST_TARGET
- rustdb_adbc_test_initialize_error(error);
+ roastedduck_adbc_test_initialize_error(error);
 #else
  adbc_cpp_test_initialize_error(error);
 #endif

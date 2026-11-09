@@ -6,12 +6,12 @@ use std::fs::File;
 use std::io::BufReader;
 use std::time::Instant;
 
-use rustdb::{
+use roastedduck::{
     Connection, Database, PendingExecutionResult, QueryResult, QueryResultMemoryType, Result, SqlStatement,
     StatementReturnType, Value,
 };
-use rustdb_ast::{ExpressionType, QueryNodeKind, ShowType, SqlStatementKind, TableRefKind};
-use rustdb_common::ByteString;
+use roastedduck_ast::{ExpressionType, QueryNodeKind, ShowType, SqlStatementKind, TableRefKind};
+use roastedduck_common::ByteString;
 
 use crate::highlight::HighlightElementType;
 use crate::interrupt;
@@ -95,7 +95,7 @@ pub fn execute_sql_single_value_bytes(
 pub struct ConnectionPromptContext<'a>(pub &'a mut Connection);
 
 impl PromptContext for ConnectionPromptContext<'_> {
-    fn setting(&mut self, name: &[u8]) -> Result<rustdb_common::ByteString> {
+    fn setting(&mut self, name: &[u8]) -> Result<roastedduck_common::ByteString> {
         let conn = &mut *self.0;
         let human = |bytes: u64| bytes_to_human_readable(bytes, 1000);
         let status = conn.database().memory_status();
@@ -112,9 +112,9 @@ impl PromptContext for ConnectionPromptContext<'_> {
                     b"current_database" => database,
                     b"current_schema" => schema,
                     b"current_database_and_schema" if schema == "main" => database,
-                    b"current_database_and_schema" => rustdb_common::byte_format!("{database}.{schema}"),
+                    b"current_database_and_schema" => roastedduck_common::byte_format!("{database}.{schema}"),
                     _ => {
-                        return Err(rustdb::Error::internal(rustdb_common::byte_format!(
+                        return Err(roastedduck::Error::internal(roastedduck_common::byte_format!(
                             "Unsupported setting {name}"
                         )));
                     }
@@ -425,12 +425,12 @@ impl Shell {
     /// whose in-memory fallback failed too, which is an internal error.
     pub fn conn(&mut self) -> Result<&mut Connection> {
         self.conn.as_mut().ok_or_else(|| {
-            rustdb::Error::internal_with_stack_trace("Attempted to dereference unique_ptr that is NULL!")
+            roastedduck::Error::internal_with_stack_trace("Attempted to dereference unique_ptr that is NULL!")
         })
     }
 
     /// `Connection::Query` on the connection.
-    pub fn query(&mut self, sql: impl AsRef<[u8]>) -> Result<rustdb::MaterializedResult> {
+    pub fn query(&mut self, sql: impl AsRef<[u8]>) -> Result<roastedduck::MaterializedResult> {
         self.conn()?.query(sql)
     }
 
@@ -597,7 +597,7 @@ impl Shell {
     pub fn run_schema_dump_query(&mut self, query: impl AsRef<[u8]>) -> Result<()> {
         let result = self.query(query).map_err(|error| {
             let message = error.to_bytes();
-            rustdb::Error::invalid_input(rustdb_common::byte_format!(
+            roastedduck::Error::invalid_input(roastedduck_common::byte_format!(
                 "Attempting to fetch from an unsuccessful query result\nError: {message}"
             ))
         })?;
@@ -647,7 +647,7 @@ impl Shell {
     fn send_statement(&mut self, statement: SqlStatement, materialize: bool) -> Result<QueryResult> {
         let Self { db, conn, state } = self;
         let Some(conn) = conn.as_mut() else {
-            return Err(rustdb::Error::internal_with_stack_trace(
+            return Err(roastedduck::Error::internal_with_stack_trace(
                 "Attempted to dereference unique_ptr that is NULL!",
             ));
         };
@@ -683,7 +683,7 @@ impl Shell {
 
     /// `UseDescribeRenderMode`: whether `statement` is `DESCRIBE table` or
     /// `DESCRIBE query`, with the name to show.
-    fn describe_table_name(statement: &SqlStatement) -> Option<rustdb_common::ByteString> {
+    fn describe_table_name(statement: &SqlStatement) -> Option<roastedduck_common::ByteString> {
         let SqlStatementKind::Select(select) = &statement.kind else {
             return None;
         };
@@ -797,13 +797,13 @@ impl Shell {
                 .unwrap_or_default();
             let text = &text[text.iter().take_while(|byte| is_space(**byte)).count()..];
             if self.state.has_flag(ShellFlag::Echo) {
-                self.state.print(rustdb_common::byte_format!(
+                self.state.print(roastedduck_common::byte_format!(
                     "{}\n",
                     if text.is_empty() { sql } else { text }
                 ));
             }
             self.state.c_mode = self.state.mode;
-            if statement.statement_type() == rustdb::StatementType::ExplainStatement {
+            if statement.statement_type() == roastedduck::StatementType::ExplainStatement {
                 self.state.c_mode = RenderMode::Explain;
             }
             if self.state.mode == RenderMode::Duckbox
@@ -909,7 +909,7 @@ impl Shell {
                 } else if table_name.is_empty() {
                     table_name = z.into();
                 } else {
-                    self.state.print(rustdb_common::byte_format!(
+                    self.state.print(roastedduck_common::byte_format!(
                         "ERROR: extra argument: \"{z}\".  Usage:\n"
                     ));
                     metadata_command::print_help(&self.state, Some(b"import"));
@@ -930,7 +930,7 @@ impl Shell {
             } else {
                 let name = &z[1..];
                 if i + 1 >= args.len() {
-                    self.state.print(rustdb_common::byte_format!(
+                    self.state.print(roastedduck_common::byte_format!(
                         "ERROR: expected an argument for generic parameter: \"{name}\".  Usage:\n"
                     ));
                     metadata_command::print_help(&self.state, Some(b"import"));
@@ -984,15 +984,18 @@ impl Shell {
         // `Connection::TableInfo(table_name)`: in the default schema.
         let table_exists = conn.table_info("", "main", &table_name)?.is_some();
         let mut import_query = if table_exists {
-            rustdb_common::byte_format!("INSERT INTO {} ", sql_identifier_bytes(&table_name))
+            roastedduck_common::byte_format!("INSERT INTO {} ", sql_identifier_bytes(&table_name))
         } else {
-            rustdb_common::byte_format!("CREATE TABLE {} AS ", sql_identifier_bytes(&table_name))
+            roastedduck_common::byte_format!("CREATE TABLE {} AS ", sql_identifier_bytes(&table_name))
         };
         import_query +=
-            rustdb_common::byte_format!("SELECT * FROM {function}({}", sql_string_bytes(&file_name));
+            roastedduck_common::byte_format!("SELECT * FROM {function}({}", sql_string_bytes(&file_name));
         for (name, value) in generic_parameters.iter() {
-            import_query +=
-                rustdb_common::byte_format!(", {}={}", sql_identifier_bytes(name), sql_string_bytes(value));
+            import_query += roastedduck_common::byte_format!(
+                ", {}={}",
+                sql_identifier_bytes(name),
+                sql_string_bytes(value)
+            );
         }
         import_query.push(b')');
         match self.query(&import_query) {
@@ -1006,7 +1009,7 @@ impl Shell {
                 if need_commit {
                     self.query("ROLLBACK")?;
                 }
-                self.print_database_error(rustdb_common::byte_format!(
+                self.print_database_error(roastedduck_common::byte_format!(
                     "Failed To Import Error: Failed to import from file '{file_name}'\n"
                 ));
                 self.print_database_error(error.to_bytes());
@@ -1026,14 +1029,14 @@ impl Shell {
         let mut new_flag = false;
         let mut has_sql = false;
         self.state.db_filename.clear();
-        self.state.config.access_mode = rustdb::AccessMode::ReadWrite;
+        self.state.config.access_mode = roastedduck::AccessMode::ReadWrite;
         let mut name_index = 1;
         while name_index < args.len() && args[name_index].starts_with(b"-") {
             let z = args[name_index].as_bytes();
             if option_match_bytes(z, b"new") {
                 new_flag = true;
             } else if option_match_bytes(z, b"readonly") {
-                self.state.config.access_mode = rustdb::AccessMode::ReadOnly;
+                self.state.config.access_mode = roastedduck::AccessMode::ReadOnly;
             } else if option_match_bytes(z, b"nofollow") {
                 // Accepted for compatibility.
             } else if option_match_bytes(z, b"sql") {
@@ -1049,7 +1052,7 @@ impl Shell {
                 let query = args[name_index].clone();
                 let (result, value) = execute_sql_single_value_bytes(self.conn()?, &query);
                 let error = match result {
-                    ExecuteSqlSingleValueResult::ExecutionError => Some(rustdb_common::byte_format!(
+                    ExecuteSqlSingleValueResult::ExecutionError => Some(roastedduck_common::byte_format!(
                         "Error: failed to evaluate --sql query '{query}': {value}\n"
                     )),
                     ExecuteSqlSingleValueResult::EmptyResult => {
@@ -1074,7 +1077,7 @@ impl Shell {
                 has_sql = true;
             } else {
                 self.state
-                    .print_err(rustdb_common::byte_format!("unknown option: {z}\n"));
+                    .print_err(roastedduck_common::byte_format!("unknown option: {z}\n"));
                 return Ok(false);
             }
             name_index += 1;
@@ -1090,13 +1093,13 @@ impl Shell {
         // Close the open database.
         self.close_db();
         if !new_filename.is_empty() {
-            if new_flag && let Ok(path) = rustdb_function::file_system::native_path(&new_filename) {
+            if new_flag && let Ok(path) = roastedduck_function::file_system::native_path(&new_filename) {
                 let _ = std::fs::remove_file(path);
             }
             self.state.db_filename = new_filename.clone();
             self.open_db(ShellOpenFlags::KeepAliveOnFailure)?;
             if self.db.is_none() {
-                self.state.print_err(rustdb_common::byte_format!(
+                self.state.print_err(roastedduck_common::byte_format!(
                     "Error: cannot open '{new_filename}'\n"
                 ));
             }
@@ -1116,15 +1119,16 @@ impl Shell {
             self.state.print_err(".read cannot be used in -safe mode\n");
             return false;
         }
-        let path = rustdb_function::file_system::native_path(file).ok();
+        let path = roastedduck_function::file_system::native_path(file).ok();
         let opened = path
             .as_ref()
             .and_then(|path| std::fs::metadata(path).ok())
             .filter(std::fs::Metadata::is_file)
             .and_then(|_| path.as_ref().and_then(|path| File::open(path).ok()));
         let Some(handle) = opened else {
-            self.state
-                .print_err(rustdb_common::byte_format!("Error: cannot open \"{file}\"\n"));
+            self.state.print_err(roastedduck_common::byte_format!(
+                "Error: cannot open \"{file}\"\n"
+            ));
             return false;
         };
         let saved_input = std::mem::replace(
@@ -1175,7 +1179,8 @@ impl Shell {
         }
         select += "type!='meta' AND sql IS NOT NULL ORDER BY name";
         let rc = if debug {
-            self.state.print(rustdb_common::byte_format!("SQL: {select};\n"));
+            self.state
+                .print(roastedduck_common::byte_format!("SQL: {select};\n"));
             SuccessState::Success
         } else {
             self.render_query(renderer.as_mut(), &select, PagerMode::Off)?
@@ -1196,27 +1201,27 @@ impl Shell {
         }
         let filter_pattern = args.get(1).cloned().unwrap_or_default();
         let mut schema_filter = ByteString::new();
-        let mut table_filter = rustdb_common::byte_format!("%{filter_pattern}%");
+        let mut table_filter = roastedduck_common::byte_format!("%{filter_pattern}%");
         if let Ok(components) = parse_qualified_name_components(&filter_pattern)
             && components.len() >= 2
         {
             // "schema.table" or "schema.%".
-            schema_filter = rustdb_common::byte_format!("%{}%", components[0]);
-            table_filter = rustdb_common::byte_format!("%{}%", components[1]);
+            schema_filter = roastedduck_common::byte_format!("%{}%", components[0]);
+            table_filter = roastedduck_common::byte_format!("%{}%", components[1]);
         }
-        let name_filter = rustdb_common::byte_format!(
+        let name_filter = roastedduck_common::byte_format!(
             " AND columns.table_name ILIKE {}",
             sql_string_bytes(&table_filter)
         );
         let schema_filter_str = if schema_filter.is_empty() {
             ByteString::new()
         } else {
-            rustdb_common::byte_format!(
+            roastedduck_common::byte_format!(
                 " AND columns.schema_name ILIKE {}",
                 sql_string_bytes(&schema_filter)
             )
         };
-        let query = rustdb_common::byte_format!(
+        let query = roastedduck_common::byte_format!(
             r"
 SELECT columns.database_name, columns.schema_name, columns.table_name, list(
 	struct_pack(column_name, data_type, is_primary_key := c.column_index IS NOT NULL) order by column_index),
@@ -1301,7 +1306,7 @@ GROUP BY ALL;
                     "WHERE ao.name LIKE ?2",
                 )
             };
-            let query = rustdb_common::byte_format!(
+            let query = roastedduck_common::byte_format!(
                 r"
 WITH all_objects AS (
   SELECT schema_name, table_name as name FROM duckdb_tables{schema_filter_str}
@@ -1347,8 +1352,8 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
                 return Ok(MetadataResult::Fail);
             }
         };
-        let mut values: rustdb_common::CaseInsensitiveMap<Value> =
-            rustdb_common::CaseInsensitiveMap::default();
+        let mut values: roastedduck_common::CaseInsensitiveMap<Value> =
+            roastedduck_common::CaseInsensitiveMap::default();
         for (index, value) in bind_values.into_iter().enumerate() {
             values.insert((index + 1).to_string(), Value::try_varchar(&value)?);
         }
@@ -1562,7 +1567,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
 
     /// The main prompt with its color codes (`Prompt::GeneratePrompt`); DuckDB does not
     /// catch an error of it.
-    fn generate_prompt(&mut self) -> rustdb_common::ByteString {
+    fn generate_prompt(&mut self) -> roastedduck_common::ByteString {
         let prompt = self.state.main_prompt.clone();
         let generated = self
             .conn()
@@ -1623,7 +1628,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
             if mode == InputMode::DuckdbRc && !line.starts_with(b".startup_text") {
                 if self.state.startup_text == StartupText::All {
                     self.state.print_highlighted(
-                        &rustdb_common::byte_format!(
+                        &roastedduck_common::byte_format!(
                             "-- Loading resources from {}\n",
                             self.state.duckdb_rc_path
                         ),
@@ -1700,7 +1705,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
     pub fn process_file(&mut self, file: impl AsRef<[u8]>, mode: InputMode, default_duckdb_rc: bool) -> bool {
         let file = file.as_ref();
         let saved_lineno = self.state.lineno;
-        let rc = match rustdb_function::file_system::native_path(file)
+        let rc = match roastedduck_function::file_system::native_path(file)
             .ok()
             .and_then(|path| File::open(path).ok())
         {
@@ -1714,7 +1719,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
                 rc
             }
             None if mode != InputMode::DuckdbRc || !default_duckdb_rc => {
-                self.print_database_error(rustdb_common::byte_format!(
+                self.print_database_error(roastedduck_common::byte_format!(
                     "IO Error: Failed to open file \"{file}\""
                 ));
                 1
@@ -1736,7 +1741,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
                     .print_err("-- warning: cannot find home directory; cannot read ~/.duckdbrc\n");
                 return true;
             }
-            (rustdb_common::byte_format!("{home}/.duckdbrc"), true)
+            (roastedduck_common::byte_format!("{home}/.duckdbrc"), true)
         };
         self.state.duckdb_rc_path.clone_from(&path);
         self.process_file(&path, InputMode::DuckdbRc, is_default)
@@ -1775,7 +1780,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
                 } else if output_mode != 'e' && z == b"-e" {
                     editor_mode = Some('e');
                 } else {
-                    state.print(rustdb_common::byte_format!(
+                    state.print(roastedduck_common::byte_format!(
                         "ERROR: unknown option: \"{arg}\".  Usage:\n"
                     ));
                     metadata_command::print_help(state, Some(args[0].as_bytes()));
@@ -1784,7 +1789,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
             } else if file.is_empty() {
                 file.clone_from(arg);
             } else {
-                state.print(rustdb_common::byte_format!(
+                state.print(roastedduck_common::byte_format!(
                     "ERROR: extra parameter: \"{arg}\".  Usage:\n"
                 ));
                 metadata_command::print_help(state, Some(args[0].as_bytes()));
@@ -1814,7 +1819,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
         if let Some(command) = file.strip_prefix(b"|") {
             let child = std::process::Command::new("/bin/sh")
                 .arg("-c")
-                .arg(match rustdb_function::file_system::native_path(command) {
+                .arg(match roastedduck_function::file_system::native_path(command) {
                     Ok(command) => command,
                     Err(_) => return false,
                 })
@@ -1824,7 +1829,7 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
                 let stdin = child.stdin.take()?;
                 Some((child, stdin))
             }) else {
-                state.print_err(rustdb_common::byte_format!(
+                state.print_err(roastedduck_common::byte_format!(
                     "Error: cannot open pipe \"{command}\"\n"
                 ));
                 return false;
@@ -1838,7 +1843,9 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
         } else {
             let Some(target) = state.open_output_file(&file) else {
                 if file == "off" {
-                    state.print_err(rustdb_common::byte_format!("Error: cannot write to \"{file}\"\n"));
+                    state.print_err(roastedduck_common::byte_format!(
+                        "Error: cannot write to \"{file}\"\n"
+                    ));
                 }
                 return false;
             };
@@ -1856,11 +1863,11 @@ SELECT DISTINCT display_name FROM disambiguated ORDER BY display_name
     pub fn change_directory(&mut self, path: impl AsRef<[u8]>) -> SuccessState {
         let path = path.as_ref();
         let expanded = crate::state::expand_path_bytes(path);
-        let result = rustdb_function::file_system::native_path(&expanded)
+        let result = roastedduck_function::file_system::native_path(&expanded)
             .ok()
             .and_then(|path| std::env::set_current_dir(path).ok());
         if result.is_none() {
-            self.state.print_err(rustdb_common::byte_format!(
+            self.state.print_err(roastedduck_common::byte_format!(
                 "Cannot change to directory \"{path}\"\n"
             ));
             return SuccessState::Failure;
@@ -1963,7 +1970,7 @@ fn progress_bar_wait_time(conn: &Connection) -> Option<std::time::Duration> {
 }
 
 /// An error DuckDB's shell does not catch: `main` reports it and exits with code 1.
-pub fn fatal(error: &rustdb::Error) -> ! {
+pub fn fatal(error: &roastedduck::Error) -> ! {
     crate::printer::write_stderr(format!("Exited due to error: {error}").as_bytes());
     exit(1)
 }
@@ -1972,7 +1979,7 @@ pub fn fatal(error: &rustdb::Error) -> ! {
 /// libc++'s order.
 #[derive(Debug, Default)]
 struct GenericParameters {
-    order: rustdb_common::libcxx::UnorderedOrder<ByteString>,
+    order: roastedduck_common::libcxx::UnorderedOrder<ByteString>,
     values: Vec<ByteString>,
 }
 
@@ -1981,7 +1988,7 @@ impl GenericParameters {
     fn set(&mut self, name: impl AsRef<[u8]>, value: impl AsRef<[u8]>) {
         let name = name.as_ref();
         let value = value.as_ref();
-        let hash = rustdb_common::libcxx::string_hash(name);
+        let hash = roastedduck_common::libcxx::string_hash(name);
         let (inserted, index) = self.order.insert(hash, ByteString::from(name), |a, b| a == b);
         if inserted {
             self.values.push(ByteString::from(value));
@@ -2010,7 +2017,7 @@ fn changed_row_count(conn: &Connection, value: &Value) -> Option<u64> {
     if value.is_null() {
         return None;
     }
-    let count = conn.cast_value(value, &rustdb::LogicalType::BIGINT).ok()?;
+    let count = conn.cast_value(value, &roastedduck::LogicalType::BIGINT).ok()?;
     count.as_i128().map(|count| count as u64)
 }
 
@@ -2037,7 +2044,7 @@ pub fn parse_qualified_name_components(
                 loop {
                     match bytes.next() {
                         None => {
-                            return Err(rustdb_common::byte_format!(
+                            return Err(roastedduck_common::byte_format!(
                                 "Unterminated quote in qualified name! (input: {input})"
                             ));
                         }
@@ -2050,7 +2057,7 @@ pub fn parse_qualified_name_components(
                     }
                 }
                 if !matches!(bytes.peek(), None | Some(b'.')) {
-                    return Err(rustdb_common::byte_format!(
+                    return Err(roastedduck_common::byte_format!(
                         "Expected dot or end of string after quoted name! (input: {input})"
                     ));
                 }

@@ -1,4 +1,4 @@
-//! Cast throughput: rustdb's vector casts against DuckDB 1.5.6, single-threaded.
+//! Cast throughput: roastedduck's vector casts against DuckDB 1.5.6, single-threaded.
 //!
 //! Each benchmark casts 10M pre-generated values in flat vectors of 2048 rows through a
 //! cast bound once (like an expression executor would), runs twice and reports the second
@@ -6,15 +6,15 @@
 //! (`SET threads=1`, `SELECT count(CAST(x AS T)) FROM t`, second of two runs).
 //!
 //! ```text
-//! cargo bench -p rustdb-function --bench casts               # all, plus DuckDB if found
-//! cargo bench -p rustdb-function --bench casts -- to_varchar  # name filter
+//! cargo bench -p roastedduck-function --bench casts               # all, plus DuckDB if found
+//! cargo bench -p roastedduck-function --bench casts -- to_varchar  # name filter
 //! duckdb < crates/function/benches/casts_duckdb.sql           # the C++ side alone
 //! ```
 //!
 //! The DuckDB CLI is taken from `$DUCKDB_ORACLE` (default: the oracle used by
 //! `tests/cast_oracle.rs`); set `CASTS_BENCH_DUCKDB=0` to skip it. Both wall-clock and CPU
-//! time are reported: on a loaded machine compare CPU times (thread CPU time for rustdb,
-//! `user + sys` of the query for DuckDB). Casts that rustdb does not implement yet are
+//! time are reported: on a loaded machine compare CPU times (thread CPU time for roastedduck,
+//! `user + sys` of the query for DuckDB). Casts that roastedduck does not implement yet are
 //! reported as skipped.
 
 use std::error::Error;
@@ -23,8 +23,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use rustdb_function::cast::{CastFunctionSet, CastParameters, cast_vector};
-use rustdb_types::{LogicalType, STANDARD_VECTOR_SIZE, Vector};
+use roastedduck_function::cast::{CastFunctionSet, CastParameters, cast_vector};
+use roastedduck_types::{LogicalType, STANDARD_VECTOR_SIZE, Vector};
 
 type BenchResult<T> = Result<T, Box<dyn Error>>;
 
@@ -97,7 +97,7 @@ fn doubles() -> Vec<(Vector, usize)> {
     })
 }
 
-/// The VARCHAR forms of `inputs`, rendered by rustdb's own cast.
+/// The VARCHAR forms of `inputs`, rendered by roastedduck's own cast.
 fn as_text(set: &CastFunctionSet, inputs: &[(Vector, usize)]) -> BenchResult<Vec<(Vector, usize)>> {
     inputs
         .iter()
@@ -279,11 +279,11 @@ fn main() -> BenchResult<()> {
         let timing = measure(&set, &inputs, &target);
         match &timing {
             Ok(t) => println!(
-                "rustdb {name:<22} wall {:>8} ms  cpu {:>8} ms",
+                "roastedduck {name:<22} wall {:>8} ms  cpu {:>8} ms",
                 millis(t.wall),
                 t.cpu.map_or_else(|| "-".to_owned(), millis)
             ),
-            Err(error) => println!("rustdb {name:<22} skipped: {error}"),
+            Err(error) => println!("roastedduck {name:<22} skipped: {error}"),
         }
         rust.push((name, timing.ok()));
     }
@@ -311,6 +311,6 @@ fn main() -> BenchResult<()> {
             ratio(timing.and_then(|t| t.cpu), theirs.and_then(|t| t.cpu)),
         );
     }
-    println!("(times in ms; x = DuckDB time / rustdb time, above 1 means rustdb is faster)");
+    println!("(times in ms; x = DuckDB time / roastedduck time, above 1 means roastedduck is faster)");
     Ok(())
 }

@@ -1,7 +1,7 @@
 //! Drive native pending tasks while honoring Python's main-thread signal protocol.
 use pyo3::Python;
-use rustdb::{Connection, MaterializedResult, PendingExecutionResult, PendingQuery, QueryResult};
-use rustdb_common::{Error, ErrorKind, Result};
+use roastedduck::{Connection, MaterializedResult, PendingExecutionResult, PendingQuery, QueryResult};
+use roastedduck_common::{Error, ErrorKind, Result};
 
 fn check_signals(py: Python<'_>) -> pyo3::PyResult<()> {
     py.check_signals()
@@ -11,12 +11,12 @@ pub(super) trait PythonExecution {
     fn execute_python_statement(
         &mut self,
         query: impl AsRef<[u8]>,
-        statement: rustdb_ast::SqlStatement,
+        statement: roastedduck_ast::SqlStatement,
     ) -> Result<MaterializedResult>;
     fn execute_python_prepared<K: AsRef<[u8]>>(
         &mut self,
-        prepared: &rustdb::PreparedStatement,
-        values: &rustdb_common::CaseInsensitiveMap<rustdb_types::Value, K>,
+        prepared: &roastedduck::PreparedStatement,
+        values: &roastedduck_common::CaseInsensitiveMap<roastedduck_types::Value, K>,
         allow_stream: bool,
     ) -> Result<QueryResult>;
 }
@@ -24,7 +24,7 @@ impl PythonExecution for Connection {
     fn execute_python_statement(
         &mut self,
         query: impl AsRef<[u8]>,
-        statement: rustdb_ast::SqlStatement,
+        statement: roastedduck_ast::SqlStatement,
     ) -> Result<MaterializedResult> {
         let pending = self.pending_query(query, statement, false)?;
         match complete(self, &pending)? {
@@ -36,8 +36,8 @@ impl PythonExecution for Connection {
     }
     fn execute_python_prepared<K: AsRef<[u8]>>(
         &mut self,
-        prepared: &rustdb::PreparedStatement,
-        values: &rustdb_common::CaseInsensitiveMap<rustdb_types::Value, K>,
+        prepared: &roastedduck::PreparedStatement,
+        values: &roastedduck_common::CaseInsensitiveMap<roastedduck_types::Value, K>,
         allow_stream: bool,
     ) -> Result<QueryResult> {
         let pending = self.pending_prepared(prepared, values, allow_stream)?;

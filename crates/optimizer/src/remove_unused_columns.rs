@@ -26,18 +26,18 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
-use rustdb_ast::JoinType;
-use rustdb_catalog::EntryKind;
-use rustdb_common::{Error, Result};
-use rustdb_planner::operator::{
+use roastedduck_ast::JoinType;
+use roastedduck_catalog::EntryKind;
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::operator::{
     COLUMN_IDENTIFIER_EMPTY, COLUMN_IDENTIFIER_ROW_ID, ColumnIndex, ExpressionTableFilter, LogicalGet,
 };
-use rustdb_planner::{
+use roastedduck_planner::{
     ColumnBinding, DistinctType, Expression, ExpressionKind, ExpressionType, LogicalKind, LogicalOperator,
     LogicalOperatorType,
 };
-use rustdb_storage::table_filter::TableFilter;
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_storage::table_filter::TableFilter;
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::column_binding_replacer::{ColumnBindingReplacer, ReplacementBinding};
 use crate::optimizer::{Optimizer, bind_aggregate_function};
@@ -653,7 +653,7 @@ impl<'a> RemoveUnusedColumns<'a> {
                 );
                 let mut new_extract = self.construct_struct_extract_from_path(target, extract_path)?;
                 if let Some(cast_type) = cast_type {
-                    new_extract = rustdb_planner::function_binder::add_cast_to_type(
+                    new_extract = roastedduck_planner::function_binder::add_cast_to_type(
                         self.optimizer.context(),
                         new_extract,
                         cast_type,
@@ -1052,8 +1052,9 @@ fn is_floating(expression: &Expression) -> bool {
 
 /// Drops join conditions that became duplicates once references were redirected (when
 /// the join graph is cyclic).
-fn remove_duplicate_conditions(join: &mut rustdb_planner::operator::LogicalComparisonJoin) {
-    let mut unique: Vec<rustdb_planner::operator::JoinCondition> = Vec::with_capacity(join.conditions.len());
+fn remove_duplicate_conditions(join: &mut roastedduck_planner::operator::LogicalComparisonJoin) {
+    let mut unique: Vec<roastedduck_planner::operator::JoinCondition> =
+        Vec::with_capacity(join.conditions.len());
     for condition in std::mem::take(&mut join.conditions) {
         let duplicate = unique.iter().any(|existing| {
             existing.comparison == condition.comparison

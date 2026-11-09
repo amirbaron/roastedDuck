@@ -1,7 +1,7 @@
 //! `reverse` (DuckDB's `reverse.cpp`): reverses grapheme clusters.
 
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::LogicalType;
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::LogicalType;
 
 use crate::scalar::executor::{Str, StrOut, unary};
 use crate::scalar::string::utf8::grapheme_ranges;

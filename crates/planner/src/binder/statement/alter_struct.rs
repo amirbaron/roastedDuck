@@ -3,10 +3,10 @@
 //! `ALTER COLUMN TYPE` of the top-level column to its new type, converted with
 //! `remap_struct(column, NULL::new_type, mapping, defaults)`.
 
-use rustdb_ast::{AddFieldInfo, ParsedExpression, RemoveFieldInfo, RenameFieldInfo, TableColumnType};
-use rustdb_catalog::TableEntry;
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_ast::{AddFieldInfo, ParsedExpression, RemoveFieldInfo, RenameFieldInfo, TableColumnType};
+use roastedduck_catalog::TableEntry;
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 /// The column's new type and the `remap_struct` call converting it.
 pub(super) struct FieldChange {
@@ -38,7 +38,7 @@ fn child_list(ty: &LogicalType) -> Result<Vec<(ByteString, LogicalType)>> {
             ])
         }
         LogicalTypeId::Struct => Ok(ty.struct_children().unwrap_or_default().to_vec()),
-        _ => Err(Error::binder(rustdb_common::byte_format!(
+        _ => Err(Error::binder(roastedduck_common::byte_format!(
             "Can't ConstructMapping for type '{ty}'"
         ))),
     }
@@ -56,7 +56,7 @@ fn construct_new_type(
             let value = children.remove(1).1;
             Ok(LogicalType::map(children.remove(0).1, value))
         }
-        _ => Err(Error::binder(rustdb_common::byte_format!(
+        _ => Err(Error::binder(roastedduck_common::byte_format!(
             "Type '{original}' not supported for ADD COLUMN"
         ))),
     }
@@ -107,7 +107,7 @@ fn add_field_to_struct(
     depth: usize,
 ) -> Result<std::result::Result<(LogicalType, ParsedExpression), Error>> {
     if !ty.is_nested() {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "Column '{}' is not a nested type, ADD COLUMN can only be used on nested types",
             path[depth]
         )));
@@ -117,7 +117,7 @@ fn add_field_to_struct(
     let field = &info.new_field;
     if depth + 1 == path.len() {
         if ty.id() != LogicalTypeId::Struct {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Column {current} is not a struct - ALTER TABLE can only add fields to structs"
             )));
         }
@@ -125,7 +125,7 @@ fn add_field_to_struct(
             .iter()
             .any(|(name, _)| name.eq_ignore_ascii_case(&field.name))
         {
-            return Ok(Err(Error::catalog(rustdb_common::byte_format!(
+            return Ok(Err(Error::catalog(roastedduck_common::byte_format!(
                 "Duplicate field \"{}\" - field already exists in struct {current}",
                 field.name
             ))));
@@ -142,7 +142,7 @@ fn add_field_to_struct(
     }
     let next = &path[depth + 1];
     let Some(child) = children.iter_mut().find(|(name, _)| names_child(ty, next, name)) else {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "Sub-field {next} does not exist in column {current}"
         )));
     };
@@ -182,7 +182,7 @@ fn edit_field(
             FieldEdit::Drop => "drop",
             FieldEdit::Rename(_) => "rename",
         };
-        return Err(Error::catalog(rustdb_common::byte_format!(
+        return Err(Error::catalog(roastedduck_common::byte_format!(
             "Cannot {verb} field from column \"{}\" - not a nested type",
             path[0]
         )));
@@ -201,14 +201,14 @@ fn edit_field(
                 match edit {
                     FieldEdit::Drop => {
                         if ty.id() != LogicalTypeId::Struct {
-                            return Err(Error::catalog(rustdb_common::byte_format!(
+                            return Err(Error::catalog(roastedduck_common::byte_format!(
                                 "Cannot drop field '{}' from column '{}' - it's not a struct",
                                 path[path.len() - 1],
                                 path[0]
                             )));
                         }
                         if children.len() == 1 {
-                            return Err(Error::catalog(rustdb_common::byte_format!(
+                            return Err(Error::catalog(roastedduck_common::byte_format!(
                                 "Cannot drop field {} from column {} - it is the last field of the struct",
                                 path[path.len() - 1],
                                 path[0]
@@ -218,7 +218,7 @@ fn edit_field(
                     }
                     FieldEdit::Rename(new_name) => {
                         if ty.id() != LogicalTypeId::Struct {
-                            return Err(Error::catalog(rustdb_common::byte_format!(
+                            return Err(Error::catalog(roastedduck_common::byte_format!(
                                 "Cannot rename field '{}' from column '{}' - can only rename fields inside a struct",
                                 path[path.len() - 1],
                                 path[0]
@@ -228,7 +228,7 @@ fn edit_field(
                             .iter()
                             .any(|(other, _)| other.eq_ignore_ascii_case(new_name))
                         {
-                            return Err(Error::catalog(rustdb_common::byte_format!(
+                            return Err(Error::catalog(roastedduck_common::byte_format!(
                                 "Cannot rename field {} from column {} to {new_name} - a field with this name already exists",
                                 path[path.len() - 1],
                                 path[0]
@@ -256,10 +256,10 @@ fn edit_field(
     if !found {
         let message = match edit {
             FieldEdit::Drop => {
-                rustdb_common::byte_format!("Cannot drop field \"{target}\" - it does not exist")
+                roastedduck_common::byte_format!("Cannot drop field \"{target}\" - it does not exist")
             }
             FieldEdit::Rename(_) => {
-                rustdb_common::byte_format!("Cannot rename field \"{target}\" - it does not exist")
+                roastedduck_common::byte_format!("Cannot rename field \"{target}\" - it does not exist")
             }
         };
         return Ok(Err(Error::catalog(message)));
@@ -291,7 +291,7 @@ fn remap(
 /// `DuckTableEntry::AddField`; `None` if the field exists and `IF NOT EXISTS` is given.
 pub(super) fn add_field(table: &TableEntry, info: &AddFieldInfo) -> Result<Option<FieldChange>> {
     let Some((_, column)) = table.column(&info.column_path[0]) else {
-        return Err(Error::internal(rustdb_common::byte_format!(
+        return Err(Error::internal(roastedduck_common::byte_format!(
             "Column with name \"{}\" does not exist",
             info.column_path[0]
         )));
@@ -316,7 +316,7 @@ pub(super) fn remove_field(table: &TableEntry, info: &RemoveFieldInfo) -> Result
         if info.if_column_exists {
             return Ok(None);
         }
-        return Err(Error::catalog(rustdb_common::byte_format!(
+        return Err(Error::catalog(roastedduck_common::byte_format!(
             "Cannot drop field from column \"{}\" - it does not exist",
             info.column_path[0]
         )));
@@ -342,7 +342,7 @@ pub(super) fn remove_field(table: &TableEntry, info: &RemoveFieldInfo) -> Result
 /// `DuckTableEntry::RenameField`.
 pub(super) fn rename_field(table: &TableEntry, info: &RenameFieldInfo) -> Result<FieldChange> {
     let Some((_, column)) = table.column(&info.column_path[0]) else {
-        return Err(Error::catalog(rustdb_common::byte_format!(
+        return Err(Error::catalog(roastedduck_common::byte_format!(
             "Cannot rename field from column \"{}\" - it does not exist",
             info.column_path[0]
         )));

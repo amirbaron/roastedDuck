@@ -1,4 +1,4 @@
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use super::{JsonValue, write_json};
 use crate::{DeserializeObject, Deserializer, FieldId};
@@ -281,7 +281,7 @@ impl Deserializer for JsonDeserializer<'_> {
 
     fn read_data(&mut self, len: usize) -> Result<Vec<u8>> {
         // DuckDB writes data pointers as escaped blob text (`Blob::ToString`).
-        let bytes = rustdb_common::blob::from_string(self.read_str()?.as_bytes())?;
+        let bytes = roastedduck_common::blob::from_string(self.read_str()?.as_bytes())?;
         if bytes.len() != len {
             return Err(Error::serialization(format!(
                 "Tried to read blob of {len} size, but only {} elements are available",

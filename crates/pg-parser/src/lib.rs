@@ -45,7 +45,7 @@ mod tables;
 mod tokenize;
 mod unicode_space;
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 pub use keywords::{Keyword, KeywordCategory};
 pub use nodes::{Node, RawStmt};

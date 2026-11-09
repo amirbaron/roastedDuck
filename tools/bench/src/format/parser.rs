@@ -607,7 +607,7 @@ mod tests {
         fn new(files: &[(&str, &str)]) -> Self {
             static NEXT: AtomicUsize = AtomicUsize::new(0);
             let dir = std::env::temp_dir().join(format!(
-                "rustdb-bench-parser-{}-{}",
+                "roastedduck-bench-parser-{}-{}",
                 std::process::id(),
                 NEXT.fetch_add(1, Ordering::Relaxed)
             ));

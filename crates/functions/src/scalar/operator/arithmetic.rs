@@ -5,10 +5,10 @@
 use std::fmt::Display;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{BindInput, FunctionData, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::kernels::try_binary;
-use rustdb_types::{
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{BindInput, FunctionData, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::kernels::try_binary;
+use roastedduck_types::{
     DataChunk, Date, Interval, LogicalType, LogicalTypeId, NativeType, PhysicalType, Time, TimeTz, Timestamp,
     Vector,
 };
@@ -138,12 +138,12 @@ fn decimal_multiply_checked<T: DecimalStorage>(left: T, right: T) -> Result<T> {
 }
 
 /// Bind data of DECIMAL arithmetic.
-type DecimalArithmetic = rustdb_function::DecimalArithmeticBindData;
+type DecimalArithmetic = roastedduck_function::DecimalArithmeticBindData;
 
 /// DuckDB's `SerializeDecimalArithmetic` (of `+`, `-` and `*`): the overflow check and
 /// the bound types.
 fn serialize_decimal_arithmetic(
-    serializer: &mut dyn rustdb_serde::Serializer,
+    serializer: &mut dyn roastedduck_serde::Serializer,
     bind_data: Option<&dyn FunctionData>,
     function: &ScalarFunction,
 ) -> Result<()> {
@@ -573,7 +573,7 @@ pub fn add_functions() -> ScalarFunctionSet {
 
 /// BIGNUM `+`/`-` (DuckDB's `BignumAdd` / `BignumSubtract`).
 fn bignum_binary(name: &str, subtract: bool) -> ScalarFunction {
-    use rustdb_function::bignum::Intermediate;
+    use roastedduck_function::bignum::Intermediate;
     let mut function = ScalarFunction::new(
         name,
         vec![LogicalType::BIGNUM, LogicalType::BIGNUM],
@@ -590,13 +590,13 @@ fn bignum_binary(name: &str, subtract: bool) -> ScalarFunction {
             })
         },
     );
-    function.null_handling = rustdb_function::NullHandling::Default;
+    function.null_handling = roastedduck_function::NullHandling::Default;
     function
 }
 
 /// BIGNUM negation (DuckDB's `BignumNegate`).
 fn bignum_negate() -> ScalarFunction {
-    use rustdb_function::bignum::Intermediate;
+    use roastedduck_function::bignum::Intermediate;
     ScalarFunction::new(
         "-",
         vec![LogicalType::BIGNUM],
@@ -936,8 +936,8 @@ pub fn modulo_functions() -> ScalarFunctionSet {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustdb_function::FunctionState;
-    use rustdb_types::Value;
+    use roastedduck_function::FunctionState;
+    use roastedduck_types::Value;
 
     fn call(function: &ScalarFunction, left: &Value, right: &Value) -> Result<Value> {
         let args = DataChunk::new(vec![Vector::constant(left)?, Vector::constant(right)?], 1);

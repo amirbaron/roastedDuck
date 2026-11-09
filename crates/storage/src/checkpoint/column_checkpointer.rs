@@ -12,10 +12,10 @@
 
 use std::sync::Arc;
 
-use rustdb_buffer::BlockId;
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::variant::VariantData;
-use rustdb_types::{GeometryStorageType, LogicalType, LogicalTypeId, PhysicalType, Vector, geometry};
+use roastedduck_buffer::BlockId;
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::variant::VariantData;
+use roastedduck_types::{GeometryStorageType, LogicalType, LogicalTypeId, PhysicalType, Vector, geometry};
 
 use super::pointers::{BlockPointer, DataPointer, PersistentColumnData};
 use super::table_writer::BlockWriter;
@@ -112,14 +112,14 @@ fn log_final_analyze(
     function: CompressionType,
     score: u64,
 ) {
-    use rustdb_function::logging::{LogLevel, LogScope};
-    let Some(logger) = rustdb_function::file_system::opener().and_then(|client| client.logger()) else {
+    use roastedduck_function::logging::{LogLevel, LogScope};
+    let Some(logger) = roastedduck_function::file_system::opener().and_then(|client| client.logger()) else {
         return;
     };
     if !logger.should_log(LogScope::Database, "", LogLevel::Trace) {
         return;
     }
-    let message = rustdb_common::byte_format!(
+    let message = roastedduck_common::byte_format!(
         "ColumnDataCheckpointer FinalAnalyze({}) result for {table_name}.{}({ty}): {score}",
         super::pointers::compression_enum_name(function),
         column.column_index()
@@ -202,7 +202,7 @@ fn write_shredded_data(
     let unshredded = ColumnData::new(
         Arc::clone(io),
         1,
-        rustdb_types::variant::unshredded_type(),
+        roastedduck_types::variant::unshredded_type(),
         ColumnDataType::CheckpointTarget,
     );
     let shredded = ColumnData::new(
@@ -576,7 +576,7 @@ fn checkpoint_segments<const N: usize>(
         }
         let best = best.ok_or_else(|| {
             Error::new(
-                rustdb_common::ErrorKind::Fatal,
+                roastedduck_common::ErrorKind::Fatal,
                 format!("No suitable compression/storage method found to store column of type {ty}"),
             )
         })?;

@@ -2,12 +2,12 @@ use std::alloc::{Layout, alloc_zeroed, dealloc, handle_alloc_error};
 use std::collections::HashMap;
 use std::ptr::NonNull;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::StatePtr;
-use rustdb_function::aggregate::AggregateInput;
-use rustdb_planner::ExpressionKind;
-use rustdb_planner::operator::BoundPivotInfo;
-use rustdb_types::{DataChunk, ListEntry, LogicalType, Value, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::StatePtr;
+use roastedduck_function::aggregate::AggregateInput;
+use roastedduck_planner::ExpressionKind;
+use roastedduck_planner::operator::BoundPivotInfo;
+use roastedduck_types::{DataChunk, ListEntry, LogicalType, Value, Vector};
 
 use crate::operator::{ErasedOperator, PhysicalOperator, PhysicalRef};
 use crate::{ExecutionContext, Operator, OperatorResult};
@@ -21,7 +21,7 @@ pub struct PhysicalPivot {
     types: Vec<LogicalType>,
     group_count: usize,
     /// Output column of the first aggregate of each pivot value name.
-    pivot_map: HashMap<rustdb_common::ByteString, usize>,
+    pivot_map: HashMap<roastedduck_common::ByteString, usize>,
     /// Each aggregate finalized over an empty state.
     empty_aggregates: Vec<Value>,
     children: [PhysicalRef; 1],
@@ -53,7 +53,7 @@ impl PhysicalPivot {
 }
 
 /// The aggregate's result over no rows: a fresh state, finalized.
-fn empty_aggregate(aggregate: &rustdb_planner::expression::BoundAggregateExpression) -> Result<Value> {
+fn empty_aggregate(aggregate: &roastedduck_planner::expression::BoundAggregateExpression) -> Result<Value> {
     let ops = &aggregate.function.ops;
     let layout = ops.state_layout();
     let layout = Layout::from_size_align(layout.size().max(1), layout.align())

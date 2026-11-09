@@ -3,10 +3,10 @@
 
 use std::sync::Arc;
 
-use rustdb_common::Error;
-use rustdb_csv::multi_file::{known_column_value, multi_file_parameters};
-use rustdb_function::{FileFilterPushdown, FunctionData, TableFunction, TableFunctionSet};
-use rustdb_types::LogicalType;
+use roastedduck_common::Error;
+use roastedduck_csv::multi_file::{known_column_value, multi_file_parameters};
+use roastedduck_function::{FileFilterPushdown, FunctionData, TableFunction, TableFunctionSet};
+use roastedduck_types::LogicalType;
 
 use crate::json_enums::{JsonFormat, JsonRecordType, JsonScanType};
 use crate::json_multi_file_info::{JsonScanInfo, json_bind};
@@ -104,7 +104,7 @@ pub(crate) fn json_reader_function(
     function.file_filter_pushdown = Some(json_file_filter_pushdown());
     // `JSONScan::Serialize`: DuckDB cannot serialize JSON scans.
     function.serialize = Some(Arc::new(|_, _, _| {
-        Err(rustdb_common::Error::not_implemented(
+        Err(roastedduck_common::Error::not_implemented(
             "JSONScan Serialize not implemented",
         ))
     }));

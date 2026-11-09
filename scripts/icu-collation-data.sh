@@ -2,7 +2,7 @@
 # Generates crates/icu/data/icu66_collation.bin: the collation data of DuckDB's ICU 66 (the
 # root collation data, the tailoring every bundle of the coll tree loads, and the NFC data
 # the collation code reads), exported by scripts/icu-collation-data.cpp from DuckDB's own
-# ICU sources and embedded data. The C++ is an offline tool; rustdb ships only the data.
+# ICU sources and embedded data. The C++ is an offline tool; roastedduck ships only the data.
 #
 #   REF=<duckdb-1.5.6 source> scripts/icu-collation-data.sh [build dir]
 #   JOBS=1 (default) limits compilation to one process.

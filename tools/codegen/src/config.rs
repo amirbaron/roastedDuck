@@ -5,7 +5,7 @@
 //! (`custom_implementation`-style) code. Those decisions live here.
 //!
 //! Most classes become Rust types of the same shape. The logical plan's operators and
-//! expressions do not: rustdb's are shaped for planning, so their specs become property
+//! expressions do not: roastedduck's are shaped for planning, so their specs become property
 //! structs ([`Content::Properties`]) that hand-written `Serialize` impls fill in.
 
 /// A crate receiving generated code under `src/generated/`.
@@ -13,7 +13,7 @@
 pub struct Target {
     /// Crate directory, relative to the workspace root.
     pub crate_dir: &'static str,
-    /// The crate's name in Rust paths (`rustdb_types`).
+    /// The crate's name in Rust paths (`roastedduck_types`).
     pub crate_name: &'static str,
     /// Derives on every generated struct and subclass enum (besides `Clone, Debug`).
     pub derives: &'static [&'static str],
@@ -176,14 +176,14 @@ impl FieldConfig {
 const fn byte_string(member: &'static str) -> FieldConfig {
     FieldConfig {
         member,
-        field_type: Some("rustdb_common::ByteString"),
+        field_type: Some("roastedduck_common::ByteString"),
         ..FieldConfig::DEFAULT
     }
 }
 const fn byte_strings(member: &'static str) -> FieldConfig {
     FieldConfig {
         member,
-        field_type: Some("Vec<rustdb_common::ByteString>"),
+        field_type: Some("Vec<roastedduck_common::ByteString>"),
         ..FieldConfig::DEFAULT
     }
 }
@@ -223,23 +223,27 @@ const fn property_type(member: &'static str, ty: &'static str) -> FieldConfig {
 /// Types that are not generated, with the crate that defines them (re-exported at its
 /// root) and how they are written.
 pub const EXTERNAL_TYPES: &[(&str, &str, &str)] = &[
-    ("LogicalType", "rustdb_types", "LogicalType"),
-    ("Value", "rustdb_types", "Value"),
-    ("ColumnDataCollection", "rustdb_types", "ColumnDataCollection"),
+    ("LogicalType", "roastedduck_types", "LogicalType"),
+    ("Value", "roastedduck_types", "Value"),
+    (
+        "ColumnDataCollection",
+        "roastedduck_types",
+        "ColumnDataCollection",
+    ),
     (
         "CoordinateReferenceSystem",
-        "rustdb_types",
+        "roastedduck_types",
         "CoordinateReferenceSystem",
     ),
-    ("LogicalIndex", "rustdb_common", "LogicalIndex"),
-    ("PhysicalIndex", "rustdb_common", "PhysicalIndex"),
+    ("LogicalIndex", "roastedduck_common", "LogicalIndex"),
+    ("PhysicalIndex", "roastedduck_common", "PhysicalIndex"),
 ];
 
 /// Every generated file.
 pub const TARGETS: &[Target] = &[
     Target {
         crate_dir: "crates/serde",
-        crate_name: "rustdb_serde",
+        crate_name: "roastedduck_serde",
         derives: &[],
         modules: &[Module {
             name: "version_map",
@@ -248,7 +252,7 @@ pub const TARGETS: &[Target] = &[
     },
     Target {
         crate_dir: "crates/types",
-        crate_name: "rustdb_types",
+        crate_name: "roastedduck_types",
         // Types are compared and hashed (type maps, catalog lookups).
         derives: &["PartialEq", "Eq", "Hash"],
         modules: &[
@@ -286,7 +290,7 @@ pub const TARGETS: &[Target] = &[
     },
     Target {
         crate_dir: "crates/ast",
-        crate_name: "rustdb_ast",
+        crate_name: "roastedduck_ast",
         derives: &["PartialEq"],
         modules: &[
             Module {
@@ -464,7 +468,7 @@ pub const TARGETS: &[Target] = &[
     },
     Target {
         crate_dir: "crates/storage",
-        crate_name: "rustdb_storage",
+        crate_name: "roastedduck_storage",
         derives: &[],
         modules: &[
             Module {
@@ -494,7 +498,7 @@ pub const TARGETS: &[Target] = &[
     },
     Target {
         crate_dir: "crates/planner",
-        crate_name: "rustdb_planner",
+        crate_name: "roastedduck_planner",
         derives: &["PartialEq"],
         modules: &[
             Module {
@@ -587,7 +591,7 @@ pub const CLASSES: &[ClassConfig] = &[
         class: "StructTypeInfo",
         fields: &[FieldConfig {
             member: "child_types",
-            field_type: Some("Vec<(rustdb_common::ByteString, LogicalType)>"),
+            field_type: Some("Vec<(roastedduck_common::ByteString, LogicalType)>"),
             ..FieldConfig::DEFAULT
         }],
         ..ClassConfig::DEFAULT
@@ -628,7 +632,7 @@ pub const CLASSES: &[ClassConfig] = &[
         data_type: Some("ColumnIndex"),
         fields: &[
             rename("type", "ty"),
-            property_type("field", "&'a rustdb_common::ByteString"),
+            property_type("field", "&'a roastedduck_common::ByteString"),
         ],
         ..ClassConfig::DEFAULT
     },
@@ -649,7 +653,7 @@ pub const CLASSES: &[ClassConfig] = &[
             rename("type", "expression_type"),
             FieldConfig {
                 member: "alias",
-                field_type: Some("rustdb_common::ByteString"),
+                field_type: Some("roastedduck_common::ByteString"),
                 ..FieldConfig::DEFAULT
             },
         ],
@@ -666,7 +670,7 @@ pub const CLASSES: &[ClassConfig] = &[
         class: "ColumnRefExpression",
         fields: &[FieldConfig {
             member: "column_names",
-            field_type: Some("Vec<rustdb_common::ByteString>"),
+            field_type: Some("Vec<roastedduck_common::ByteString>"),
             ..FieldConfig::DEFAULT
         }],
         ..ClassConfig::DEFAULT
@@ -817,7 +821,7 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "StructFilter",
-        fields: &[property_type("child_name", "&'a rustdb_common::ByteString")],
+        fields: &[property_type("child_name", "&'a roastedduck_common::ByteString")],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
@@ -885,7 +889,9 @@ pub const CLASSES: &[ClassConfig] = &[
             required("node"),
             FieldConfig {
                 member: "named_param_map",
-                field_type: Some("rustdb_common::CaseInsensitiveMap<u64, rustdb_common::ByteString>"),
+                field_type: Some(
+                    "roastedduck_common::CaseInsensitiveMap<u64, roastedduck_common::ByteString>",
+                ),
                 ..FieldConfig::DEFAULT
             },
         ],
@@ -913,7 +919,7 @@ pub const CLASSES: &[ClassConfig] = &[
         fields: &[FieldConfig {
             member: "map",
             field_type: Some(
-                "rustdb_common::CaseInsensitiveMap<CommonTableExpressionInfo, rustdb_common::ByteString>",
+                "roastedduck_common::CaseInsensitiveMap<CommonTableExpressionInfo, roastedduck_common::ByteString>",
             ),
             ..FieldConfig::DEFAULT
         }],
@@ -960,7 +966,7 @@ pub const CLASSES: &[ClassConfig] = &[
             rename("type", "logical_type"),
             FieldConfig {
                 member: "name",
-                field_type: Some("rustdb_common::ByteString"),
+                field_type: Some("roastedduck_common::ByteString"),
                 ..FieldConfig::DEFAULT
             },
         ],
@@ -1049,7 +1055,7 @@ pub const CLASSES: &[ClassConfig] = &[
             byte_string("table"),
             typed_field(
                 "options",
-                "rustdb_common::CaseInsensitiveMap<ParsedExpression,rustdb_common::ByteString>",
+                "roastedduck_common::CaseInsensitiveMap<ParsedExpression,roastedduck_common::ByteString>",
             ),
         ],
         ..ClassConfig::DEFAULT
@@ -1063,7 +1069,7 @@ pub const CLASSES: &[ClassConfig] = &[
             byte_string("index_type_name"),
             typed_field(
                 "options",
-                "rustdb_common::CaseInsensitiveMap<Value,rustdb_common::ByteString>",
+                "roastedduck_common::CaseInsensitiveMap<Value,roastedduck_common::ByteString>",
             ),
         ],
         ..ClassConfig::DEFAULT
@@ -1171,7 +1177,7 @@ pub const CLASSES: &[ClassConfig] = &[
         class: "SetTableOptionsInfo",
         fields: &[typed_field(
             "table_options",
-            "rustdb_common::CaseInsensitiveMap<ParsedExpression,rustdb_common::ByteString>",
+            "roastedduck_common::CaseInsensitiveMap<ParsedExpression,roastedduck_common::ByteString>",
         )],
         ..ClassConfig::DEFAULT
     },
@@ -1179,7 +1185,7 @@ pub const CLASSES: &[ClassConfig] = &[
         class: "ResetTableOptionsInfo",
         fields: &[typed_field(
             "table_options",
-            "rustdb_common::CaseInsensitiveSet<rustdb_common::ByteString>",
+            "roastedduck_common::CaseInsensitiveSet<roastedduck_common::ByteString>",
         )],
         ..ClassConfig::DEFAULT
     },
@@ -1196,14 +1202,14 @@ pub const CLASSES: &[ClassConfig] = &[
             byte_string("path"),
             typed_field(
                 "options",
-                "rustdb_common::OrderedMap<rustdb_common::ByteString, Value>",
+                "roastedduck_common::OrderedMap<roastedduck_common::ByteString, Value>",
             ),
         ],
         extra_fields: &[ExtraField {
             name: "parsed_options",
-            ty: "rustdb_common::CaseInsensitiveMap<crate::ParsedExpression, rustdb_common::ByteString>",
+            ty: "roastedduck_common::CaseInsensitiveMap<crate::ParsedExpression, roastedduck_common::ByteString>",
             doc: "`parsed_options`: the options as written, before the binder evaluates them.",
-            default: "rustdb_common::CaseInsensitiveMap::default()",
+            default: "roastedduck_common::CaseInsensitiveMap::default()",
         }],
         ..ClassConfig::DEFAULT
     },
@@ -1224,7 +1230,7 @@ pub const CLASSES: &[ClassConfig] = &[
             FieldConfig {
                 member: "named_parameters",
                 field_type: Some(
-                    "rustdb_common::CaseInsensitiveMap<ParsedExpression, rustdb_common::ByteString>",
+                    "roastedduck_common::CaseInsensitiveMap<ParsedExpression, roastedduck_common::ByteString>",
                 ),
                 ..FieldConfig::DEFAULT
             },
@@ -1243,7 +1249,7 @@ pub const CLASSES: &[ClassConfig] = &[
             byte_string("format"),
             typed_field(
                 "options",
-                "rustdb_common::CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteString>",
+                "roastedduck_common::CaseInsensitiveMap<Vec<Value>, roastedduck_common::ByteString>",
             ),
             byte_string("catalog"),
             byte_string("schema"),
@@ -1253,10 +1259,10 @@ pub const CLASSES: &[ClassConfig] = &[
         extra_fields: &[
             ExtraField {
                 name: "parsed_options",
-                ty: "rustdb_common::CaseInsensitiveMap<Option<crate::ParsedExpression>,rustdb_common::ByteString>",
+                ty: "roastedduck_common::CaseInsensitiveMap<Option<crate::ParsedExpression>,roastedduck_common::ByteString>",
                 doc: "`parsed_options`: the options as written (`None` for a bare option name), before \
                       the binder evaluates them.",
-                default: "rustdb_common::CaseInsensitiveMap::default()",
+                default: "roastedduck_common::CaseInsensitiveMap::default()",
             },
             ExtraField {
                 name: "file_path_expression",
@@ -1338,10 +1344,10 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "ConstantFilter",
-        // rustdb's filters compare with a `CompareOp`, written as its `ExpressionType`.
+        // roastedduck's filters compare with a `CompareOp`, written as its `ExpressionType`.
         fields: &[property_type(
             "comparison_type",
-            "rustdb_types::compare::CompareOp",
+            "roastedduck_types::compare::CompareOp",
         )],
         ..ClassConfig::DEFAULT
     },
@@ -1361,7 +1367,7 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "RowGroupOrderOptions",
-        // The order is the sort's (`rustdb_row::sort`), which has no serialization.
+        // The order is the sort's (`roastedduck_row::sort`), which has no serialization.
         custom: true,
         ..ClassConfig::DEFAULT
     },
@@ -1370,7 +1376,7 @@ pub const CLASSES: &[ClassConfig] = &[
         data_type: Some("table::StorageIndex"),
         fields: &[
             rename("type", "ty"),
-            property_type("field", "&'a rustdb_common::ByteString"),
+            property_type("field", "&'a roastedduck_common::ByteString"),
         ],
         ..ClassConfig::DEFAULT
     },
@@ -1443,12 +1449,12 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "LogicalSet",
-        fields: &[property_type("name", "&'a rustdb_common::ByteString")],
+        fields: &[property_type("name", "&'a roastedduck_common::ByteString")],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
         class: "LogicalReset",
-        fields: &[property_type("name", "&'a rustdb_common::ByteString")],
+        fields: &[property_type("name", "&'a roastedduck_common::ByteString")],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
@@ -1478,7 +1484,7 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "FilenamePattern",
-        fields: &[property_type("base", "&'a rustdb_common::ByteString")],
+        fields: &[property_type("base", "&'a roastedduck_common::ByteString")],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
@@ -1486,7 +1492,7 @@ pub const CLASSES: &[ClassConfig] = &[
         data_type: Some("operator::FileNameSegment"),
         fields: &[
             rename("type", "segment_type"),
-            property_type("data", "&'a rustdb_common::ByteString"),
+            property_type("data", "&'a roastedduck_common::ByteString"),
         ],
         ..ClassConfig::DEFAULT
     },
@@ -1497,17 +1503,20 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "LogicalCTERef",
-        fields: &[property_type("bound_columns", "&'a [rustdb_common::ByteString]")],
+        fields: &[property_type(
+            "bound_columns",
+            "&'a [roastedduck_common::ByteString]",
+        )],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
         class: "LogicalRecursiveCTE",
-        fields: &[property_type("ctename", "&'a rustdb_common::ByteString")],
+        fields: &[property_type("ctename", "&'a roastedduck_common::ByteString")],
         ..ClassConfig::DEFAULT
     },
     ClassConfig {
         class: "LogicalMaterializedCTE",
-        fields: &[property_type("ctename", "&'a rustdb_common::ByteString")],
+        fields: &[property_type("ctename", "&'a roastedduck_common::ByteString")],
         ..ClassConfig::DEFAULT
     },
     // expression.json (property structs of the planner's expressions)
@@ -1516,7 +1525,7 @@ pub const CLASSES: &[ClassConfig] = &[
         data_type: Some("Expression"),
         fields: &[
             rename("type", "expression_type"),
-            property_type("alias", "&'a rustdb_common::ByteString"),
+            property_type("alias", "&'a roastedduck_common::ByteString"),
         ],
         ..ClassConfig::DEFAULT
     },
@@ -1551,7 +1560,7 @@ pub const CLASSES: &[ClassConfig] = &[
             required("parameter_data"),
             FieldConfig {
                 member: "identifier",
-                property_type: Some("&'a rustdb_common::ByteString"),
+                property_type: Some("&'a roastedduck_common::ByteString"),
                 ..FieldConfig::DEFAULT
             },
         ],
@@ -1598,7 +1607,10 @@ pub const CLASSES: &[ClassConfig] = &[
     },
     ClassConfig {
         class: "BoundPivotInfo",
-        fields: &[property_type("pivot_values", "&'a [rustdb_common::ByteString]")],
+        fields: &[property_type(
+            "pivot_values",
+            "&'a [roastedduck_common::ByteString]",
+        )],
         data_type: Some("operator::BoundPivotInfo"),
         ..ClassConfig::DEFAULT
     },

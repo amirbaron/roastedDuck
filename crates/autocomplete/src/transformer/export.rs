@@ -1,7 +1,7 @@
 //! The transform functions of DuckDB's `transform_export.cpp`: `EXPORT DATABASE [db TO]
 //! 'path' [(options)]`.
 
-use rustdb_parser::hash_order::CiHashMap;
+use roastedduck_parser::hash_order::CiHashMap;
 
 use super::explain::vector_element;
 use super::prelude::*;

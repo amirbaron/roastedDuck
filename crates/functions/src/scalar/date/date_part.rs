@@ -6,9 +6,9 @@ use std::any::Any;
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_function::{BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_function::{BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{
     DataChunk, Date, Interval, LogicalType, LogicalTypeId, NativeType, Time, TimeNs, TimeTz, Timestamp,
     Vector,
 };
@@ -132,7 +132,7 @@ impl Part {
             .ok()
             .and_then(Self::try_parse)
             .ok_or_else(|| {
-                Error::conversion(rustdb_common::byte_format!(
+                Error::conversion(roastedduck_common::byte_format!(
                     "extract specifier \"{specifier}\" not recognized"
                 ))
             })
@@ -688,7 +688,7 @@ fn bind_date_part<T: Temporal>(function: &mut ScalarFunction, input: &BindInput<
         }
         Part::Epoch => {
             function.return_type = LogicalType::DOUBLE;
-            let kernel: rustdb_function::ScalarKernel = match ty {
+            let kernel: roastedduck_function::ScalarKernel = match ty {
                 LogicalTypeId::Timestamp
                 | LogicalTypeId::TimestampSec
                 | LogicalTypeId::TimestampMs
@@ -756,7 +756,7 @@ fn simplified_function_exists(part: Part, ty: &LogicalType) -> Result<()> {
     let matches = set.functions.iter().any(|function| {
         function.arguments.len() == 1
             && (function.arguments[0] == *ty
-                || rustdb_types::implicit_cast_cost(ty, &function.arguments[0]) >= 0)
+                || roastedduck_types::implicit_cast_cost(ty, &function.arguments[0]) >= 0)
     });
     if matches {
         return Ok(());
@@ -870,7 +870,7 @@ impl FunctionData for StructParts {
 
 /// `StructDatePart::SerializeFunction`.
 fn serialize_struct_date_part(
-    serializer: &mut dyn rustdb_serde::Serializer,
+    serializer: &mut dyn roastedduck_serde::Serializer,
     bind_data: Option<&dyn FunctionData>,
     _: &ScalarFunction,
 ) -> Result<()> {
@@ -888,7 +888,7 @@ fn bind_struct_date_part(function: &mut ScalarFunction, input: &BindInput<'_>) -
         return Err(crate::parameter_not_resolved());
     }
     let not_constant = || {
-        Error::binder(rustdb_common::byte_format!(
+        Error::binder(roastedduck_common::byte_format!(
             "{} can only take constant lists of part names",
             function.name
         ))
@@ -901,7 +901,7 @@ fn bind_struct_date_part(function: &mut ScalarFunction, input: &BindInput<'_>) -
     }
     let children = list.children().unwrap_or_default();
     if children.is_empty() {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "{} requires non-empty lists of part names",
             function.name
         )));
@@ -912,7 +912,7 @@ fn bind_struct_date_part(function: &mut ScalarFunction, input: &BindInput<'_>) -
     let mut fields = Vec::with_capacity(children.len());
     for child in children {
         if child.is_null() {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "NULL struct entry name in {}",
                 function.name
             )));
@@ -920,7 +920,7 @@ fn bind_struct_date_part(function: &mut ScalarFunction, input: &BindInput<'_>) -
         let name = crate::values::as_text(child)?;
         let part = struct_part(&name, ty)?;
         if names.iter().any(|existing| existing.eq_ignore_ascii_case(&name)) {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Duplicate struct entry name \"{name}\" in {}",
                 function.name
             )));

@@ -4,20 +4,20 @@
 
 use std::sync::{Arc, Mutex};
 
-use rustdb_buffer::{BufferManager, BufferManagerConfig, InMemoryBlockManager};
-use rustdb_common::Result;
-use rustdb_execution::operators::{
+use roastedduck_buffer::{BufferManager, BufferManagerConfig, InMemoryBlockManager};
+use roastedduck_common::Result;
+use roastedduck_execution::operators::{
     CollectedResult, InsertTarget, PhysicalColumnDataScan, PhysicalCreateTable, PhysicalDelete,
     PhysicalInsert, PhysicalResultCollector, PhysicalSeqScan, PhysicalUpdate, TableCreator,
 };
-use rustdb_execution::{Executor, PhysicalRef};
-use rustdb_storage::table_filter::{TableFilter, TableFilterSet};
-use rustdb_storage::{
+use roastedduck_execution::{Executor, PhysicalRef};
+use roastedduck_storage::table_filter::{TableFilter, TableFilterSet};
+use roastedduck_storage::{
     ColumnDefinition, DataTable, StorageIndex, TableConstraints, TableIoManager, Transaction,
     TransactionManager,
 };
-use rustdb_types::compare::CompareOp;
-use rustdb_types::{DataChunk, LogicalType, Value};
+use roastedduck_types::compare::CompareOp;
+use roastedduck_types::{DataChunk, LogicalType, Value};
 
 /// Creates the test table and remembers it, standing in for the catalog.
 #[derive(Debug)]
@@ -44,7 +44,7 @@ impl TableCreator for Creator {
 
 fn run(plan: PhysicalRef) -> Vec<Vec<Value>> {
     let root: PhysicalRef = Arc::new(PhysicalResultCollector::new(plan));
-    let state = Executor::execute(&root, rustdb_execution::ClientEnv::standalone().unwrap()).unwrap();
+    let state = Executor::execute(&root, roastedduck_execution::ClientEnv::standalone().unwrap()).unwrap();
     let collected = state
         .downcast_ref::<Mutex<CollectedResult>>()
         .unwrap()
@@ -227,7 +227,7 @@ fn index_scans_return_the_same_rows_as_table_scans() {
         ],
     );
     let index = table
-        .new_art("idx", rustdb_storage::index::IndexConstraintType::None, &[0])
+        .new_art("idx", roastedduck_storage::index::IndexConstraintType::None, &[0])
         .unwrap();
     table.add_index(index).unwrap();
     let manager = TransactionManager::default();

@@ -86,8 +86,9 @@ cargo build --locked --release --bin roastedDuck -j 1
 ```
 
 The repository pins Rust 1.99.0. The CLI package is `roastedduck-cli` and its
-executable is `roastedDuck`. Internal engine crate and native ABI names retain
-`rustdb`/`duckdb` for continuity and compatibility. Public release versions follow the targeted DuckDB version. Preview status
+executable is `roastedDuck`. Rust crates and modules use `roastedduck-*` and
+`roastedduck_*` names; DuckDB-compatible native APIs and Python imports remain stable.
+Public release versions follow the targeted DuckDB version. Preview status
 is recorded separately from version compatibility. See [CONTRIBUTING.md](CONTRIBUTING.md)
 for prerequisites, tests, and the existing branch workflow.
 

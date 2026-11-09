@@ -1,9 +1,9 @@
 //! Database-local filesystem callbacks. File contents remain streamed, never cached here.
 use crate::ObjectCache;
-use rustdb_common::{ByteString, Error, Result};
+use roastedduck_common::{ByteString, Error, Result};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::sync::{Arc, Mutex, PoisonError};
-const KEY: &str = "rustdb_registered_file_systems";
+const KEY: &str = "roastedduck_registered_file_systems";
 /// File access requested by database storage, including non-truncating WAL opens.
 #[derive(Clone, Copy, Debug)]
 #[allow(
@@ -85,7 +85,7 @@ pub trait FileSystem: std::fmt::Debug + Send + Sync {
         Ok(())
     }
     fn list_files_recursive(&self, path: &[u8]) -> Result<Vec<ByteString>> {
-        let pattern = rustdb_common::byte_format!("{path}/**");
+        let pattern = roastedduck_common::byte_format!("{path}/**");
         let mut files = Vec::new();
         for file in self.glob(&pattern)? {
             if self.is_file(&file)? {
@@ -226,7 +226,7 @@ impl Output {
         }
         std::fs::File::create(crate::file_system::native_path(path)?)
             .map(Self::Local)
-            .map_err(|e| Error::new(rustdb_common::ErrorKind::Io, e.to_string()))
+            .map_err(|e| Error::new(roastedduck_common::ErrorKind::Io, e.to_string()))
     }
 }
 impl Write for Output {

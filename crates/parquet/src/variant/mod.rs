@@ -5,16 +5,16 @@
 pub mod read;
 pub mod write;
 
-pub use rustdb_types::variant_value::{VariantValue, to_variant};
+pub use roastedduck_types::variant_value::{VariantValue, to_variant};
 
-use rustdb_function::{NullHandling, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{LogicalType, Vector};
+use roastedduck_function::{NullHandling, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{LogicalType, Vector};
 
 use std::collections::BTreeMap;
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_types::Value;
-use rustdb_types::variant::VariantData;
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_types::Value;
+use roastedduck_types::variant::VariantData;
 
 fn io_error(message: impl Into<String>) -> Error {
     Error::new(ErrorKind::Io, message.into())
@@ -48,7 +48,7 @@ fn read_le(length_in_bytes: usize, data: &[u8], offset: &mut usize) -> Result<us
 /// The dictionary of a variant `metadata` buffer (`VariantMetadata`).
 #[derive(Debug)]
 pub struct VariantMetadata {
-    pub strings: Vec<rustdb_common::ByteString>,
+    pub strings: Vec<roastedduck_common::ByteString>,
     /// The length of the metadata in its buffer (`total_size`).
     pub total_size: usize,
 }
@@ -119,12 +119,12 @@ fn checked_string(bytes: &[u8]) -> Result<Value> {
             "Can't decode Variant short-string, string isn't valid UTF8",
         ));
     }
-    Ok(Value::bytes(rustdb_types::LogicalType::VARCHAR, bytes))
+    Ok(Value::bytes(roastedduck_types::LogicalType::VARCHAR, bytes))
 }
 
 /// `VariantBinaryDecoder::PrimitiveTypeDecode`.
 fn decode_primitive(primitive_type: u8, data: &[u8], offset: usize) -> Result<VariantValue> {
-    use rustdb_types::{Date, Time, Timestamp, Uuid};
+    use roastedduck_types::{Date, Time, Timestamp, Uuid};
     let value = match primitive_type {
         0 => return Ok(VariantValue::null()),
         1 => Value::boolean(true),

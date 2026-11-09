@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use rustdb_buffer::{BlockHandle, BlockState, BufferManager};
+use roastedduck_buffer::{BlockHandle, BlockState, BufferManager};
 
 /// Which cached files are checked against the file before use (DuckDB's
 /// `CacheValidationMode`, the `validate_external_file_cache` setting).
@@ -110,7 +110,7 @@ pub(crate) struct CachedFileState {
 /// The cached ranges of one file (`CachedFile`).
 #[derive(Debug)]
 pub struct CachedFile {
-    pub path: rustdb_common::ByteString,
+    pub path: roastedduck_common::ByteString,
     /// The cache's generation when the file was created: a file of an older generation
     /// is replaced (the cache was disabled and enabled since).
     pub generation: u64,
@@ -157,7 +157,7 @@ impl CachedFile {
 /// One cached range as `duckdb_external_file_cache()` lists it (`CachedFileInformation`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CachedFileInformation {
-    pub path: rustdb_common::ByteString,
+    pub path: roastedduck_common::ByteString,
     pub nr_bytes: u64,
     pub location: u64,
     /// Whether the range is in memory (not evicted).
@@ -173,7 +173,7 @@ pub struct ExternalFileCache {
     /// Incremented whenever the cache is enabled or disabled.
     generation: AtomicU64,
     /// The cached files by path (the object cache entries of DuckDB's cache).
-    files: Mutex<HashMap<rustdb_common::ByteString, Arc<CachedFile>>>,
+    files: Mutex<HashMap<roastedduck_common::ByteString, Arc<CachedFile>>>,
 }
 
 impl ExternalFileCache {
@@ -187,7 +187,7 @@ impl ExternalFileCache {
         }
     }
 
-    fn files(&self) -> MutexGuard<'_, HashMap<rustdb_common::ByteString, Arc<CachedFile>>> {
+    fn files(&self) -> MutexGuard<'_, HashMap<roastedduck_common::ByteString, Arc<CachedFile>>> {
         self.files.lock().unwrap_or_else(PoisonError::into_inner)
     }
 

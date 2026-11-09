@@ -2,9 +2,9 @@
 //! `damerau_levenshtein`, `hamming`/`mismatches`, `jaccard`, `jaro_similarity` and
 //! `jaro_winkler_similarity` (the rapidfuzz-based `jaro_winkler.cpp`). All work on bytes.
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use crate::scalar::executor::{Str, binary, ternary};
 

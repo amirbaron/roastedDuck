@@ -7,10 +7,10 @@ use std::any::Any;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use rustdb_ast::{MergeActionCondition, MergeActionType};
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_planner::Expression;
-use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
+use roastedduck_ast::{MergeActionCondition, MergeActionType};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_planner::Expression;
+use roastedduck_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
 
 use super::modify::count_types;
 use crate::expression_executor::ExpressionExecutor;

@@ -17,12 +17,12 @@ mod transformer;
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::{
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::{
     FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
 };
-use rustdb_planner::ClientContext;
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_planner::ClientContext;
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::autocomplete::{AutoCompleteParameters, AutoCompleteSuggestion, CompletionSources};
 use crate::matcher::{Grammar, MatchContext, MatchState};
@@ -197,7 +197,7 @@ fn check_peg_parser_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunc
         bind_data: None,
     };
     let sql = sql_argument(input)?;
-    let stripped = rustdb_pg_parser::strip_unicode_spaces(&sql);
+    let stripped = roastedduck_pg_parser::strip_unicode_spaces(&sql);
     let clean_sql = stripped.as_deref().unwrap_or(&sql);
     let mut root_tokens = Vec::new();
     let mut tokenizer = ParserTokenizer::default();
@@ -236,7 +236,7 @@ fn check_peg_parser_bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunc
 /// configuration the call changes.
 #[derive(Debug)]
 struct PegParserSwitchData {
-    client: Arc<rustdb_function::FunctionClient>,
+    client: Arc<roastedduck_function::FunctionClient>,
 }
 
 impl FunctionData for PegParserSwitchData {
@@ -264,7 +264,7 @@ fn peg_parser_switch(name: &'static str, setting: &'static str) -> TableFunction
                 .and_then(|data| data.as_any().downcast_ref::<PegParserSwitchData>())
                 .ok_or_else(|| Error::internal("peg parser switch without bind data"))?;
             data.client
-                .push_client_request(rustdb_function::ClientRequest::SetGlobalOption {
+                .push_client_request(roastedduck_function::ClientRequest::SetGlobalOption {
                     name: "allow_parser_override_extension".to_owned(),
                     value: Value::varchar(setting),
                 });

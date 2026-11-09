@@ -5,9 +5,9 @@
 use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{FunctionClient, TempCatalog};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{FunctionClient, TempCatalog};
+use roastedduck_types::{LogicalType, Value};
 
 use crate::error::CsvErrorType;
 use crate::file_scan::CsvFileScan;
@@ -173,7 +173,7 @@ impl CsvRejectsTable {
         client: &FunctionClient,
         file: &CsvFileScan,
         (scan_idx, file_idx): (u64, u64),
-        names: &[rustdb_common::ByteString],
+        names: &[roastedduck_common::ByteString],
         limit: u64,
     ) -> Result<()> {
         let catalog = temp_catalog(client)?;
@@ -205,7 +205,7 @@ fn error_row(
     error: &crate::error::CsvError,
     line: u64,
     (scan_idx, file_idx): (u64, u64),
-    names: &[rustdb_common::ByteString],
+    names: &[roastedduck_common::ByteString],
 ) -> Vec<Value> {
     let column_idx = error.column_idx as usize;
     let name = |index: usize| {
@@ -245,9 +245,9 @@ fn error_row(
 fn scan_row(file: &CsvFileScan, scan_idx: u64, file_idx: u64) -> Result<Vec<Value>> {
     let options = &file.options;
     let sm = &options.dialect_options.state_machine_options;
-    let mut columns = rustdb_common::ByteString::from("{");
+    let mut columns = roastedduck_common::ByteString::from("{");
     for (i, (name, ty)) in file.names.iter().zip(&file.types).enumerate() {
-        let _ = rustdb_common::byte_write!(columns, "'{name}': '{ty}'");
+        let _ = roastedduck_common::byte_write!(columns, "'{name}': '{ty}'");
         if i + 1 != file.types.len() {
             columns.push(b',');
         }

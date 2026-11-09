@@ -1,8 +1,8 @@
 //! Frozen DuckDB 1.5.6 `ExportedTableData` wires, including native names and paths.
-use rustdb_ast::ExportedTableData;
-use rustdb_common::ByteString;
-use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
-use rustdb_serde::{Deserializer, SerializationOptions, Serializer};
+use roastedduck_ast::ExportedTableData;
+use roastedduck_common::ByteString;
+use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
+use roastedduck_serde::{Deserializer, SerializationOptions, Serializer};
 fn decode(hex: &str) -> Vec<u8> {
     hex.as_bytes()
         .as_chunks::<2>()
@@ -19,7 +19,7 @@ fn decode(hex: &str) -> Vec<u8> {
         .collect()
 }
 #[test]
-fn native_export_metadata_round_trips_exact_cpp_property_bytes() -> rustdb_common::Result<()> {
+fn native_export_metadata_round_trips_exact_cpp_property_bytes() -> roastedduck_common::Result<()> {
     let mut count = 0;
     for line in include_str!("data/exported_table_bytes_1.5.6.tsv").lines() {
         let (name, wire) = line.split_once('\t').expect("frozen TSV pair");

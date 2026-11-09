@@ -1,12 +1,12 @@
 //! Native CSV metadata and error boundaries against DuckDB 1.5.6.
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_csv::{
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_csv::{
     error::{CsvError, LinesPerBoundary},
     options::CsvReaderOptions,
     schema::CsvSchema,
     sniffer::{SetColumns, SnifferResult},
 };
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 use std::io::{self, BufRead};
 
 fn decode(hex: &str) -> Result<Vec<u8>> {
@@ -92,12 +92,12 @@ fn outcome(op: &str, name: ByteString, input: Option<&str>) -> Result<ByteString
             Ok(output)
         }
         "read" => {
-            use rustdb_csv::{
+            use roastedduck_csv::{
                 multi_file::{FileList, MultiFileOptions},
                 read_csv::{bind_csv_files, read_csv_functions},
             };
-            use rustdb_function::{TableScanState, cast::CastFunctionSet};
-            use rustdb_types::DataChunk;
+            use roastedduck_function::{TableScanState, cast::CastFunctionSet};
+            use roastedduck_types::DataChunk;
             use std::sync::Arc;
             let path = input.ok_or_else(|| Error::invalid_input("CSV fixture path required"))?;
             options.auto_detect = false;
@@ -161,7 +161,11 @@ pub fn compare(line: &str, input: Option<&str>) -> Result<()> {
     if status != fields[2] || output.as_bytes() != decode(fields[3])? {
         return Err(Error::internal(format!(
             "CSV outcome differs from C++: {} name {} ({status}, expected {}), actual {:?}, expected {:?}",
-            fields[0], fields[1], fields[2], output.as_bytes(), decode(fields[3])?
+            fields[0],
+            fields[1],
+            fields[2],
+            output.as_bytes(),
+            decode(fields[3])?
         )));
     }
     Ok(())

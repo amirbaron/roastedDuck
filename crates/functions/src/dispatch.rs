@@ -6,7 +6,7 @@
 /// `$other`.
 macro_rules! with_numeric_type {
     ($physical:expr, $T:ident => $body:expr, _ => $other:expr $(,)?) => {{
-        use rustdb_types::PhysicalType as P;
+        use roastedduck_types::PhysicalType as P;
         match $physical {
             P::Bool => {
                 type $T = bool;
@@ -68,7 +68,7 @@ macro_rules! with_numeric_type {
 /// Like [`with_numeric_type`], for the signed and unsigned integer types only.
 macro_rules! with_integer_type {
     ($physical:expr, $T:ident => $body:expr, _ => $other:expr $(,)?) => {{
-        use rustdb_types::PhysicalType as P;
+        use roastedduck_types::PhysicalType as P;
         match $physical {
             P::Int8 => {
                 type $T = i8;

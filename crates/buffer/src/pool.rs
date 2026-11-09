@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use crate::allocator::BlockAllocator;
 use crate::block::{BlockInner, BlockMemory};

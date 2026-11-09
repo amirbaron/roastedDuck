@@ -9,10 +9,10 @@
 use std::ffi::{CString, c_char, c_void};
 use std::sync::Arc;
 
-use rustdb::{MaterializedResult, QueryResult, StatementReturnType, StatementType, StreamQueryResult};
-use rustdb_arrow::ClientProperties;
-use rustdb_common::Error;
-use rustdb_types::{
+use roastedduck::{MaterializedResult, QueryResult, StatementReturnType, StatementType, StreamQueryResult};
+use roastedduck_arrow::ClientProperties;
+use roastedduck_common::Error;
+use roastedduck_types::{
     DataChunk, LogicalType, LogicalTypeId, PhysicalType, STANDARD_VECTOR_SIZE, Timestamp, Vector,
 };
 
@@ -70,7 +70,7 @@ pub(crate) struct ResultData {
 impl ResultData {
     fn new(
         context: &Arc<SharedConnection>,
-        outcome: rustdb::Result<QueryResult>,
+        outcome: roastedduck::Result<QueryResult>,
         properties: ClientProperties,
     ) -> Self {
         let mut data = Self {
@@ -109,7 +109,7 @@ impl ResultData {
         data
     }
 
-    fn set_columns(&mut self, names: &[rustdb_common::ByteString], types: &[LogicalType]) {
+    fn set_columns(&mut self, names: &[roastedduck_common::ByteString], types: &[LogicalType]) {
         self.names = names.iter().map(to_cstring).collect();
         self.types = types.to_vec();
     }
@@ -154,7 +154,7 @@ impl ResultData {
         }
     }
 
-    fn stream_context(&self) -> rustdb::Result<&Arc<SharedConnection>> {
+    fn stream_context(&self) -> roastedduck::Result<&Arc<SharedConnection>> {
         self.context
             .as_ref()
             .ok_or_else(|| Error::internal("Streaming C API result has no connection"))
@@ -174,7 +174,7 @@ impl ResultData {
 
     /// The next chunk of the result (`QueryResult::Fetch`): of the collection for a
     /// materialized result, from the query for a streaming one; `None` at the end.
-    fn fetch(&mut self) -> rustdb::Result<Option<DataChunk>> {
+    fn fetch(&mut self) -> roastedduck::Result<Option<DataChunk>> {
         match &self.state {
             ResultState::Materialized(_) => {
                 let index = self.next_chunk;
@@ -234,7 +234,7 @@ pub(crate) fn pack_chunks(types: &[LogicalType], chunks: &[DataChunk]) -> Vec<Da
             let start = current.len();
             for column in 0..chunk.column_count() {
                 // Copying between vectors of one type only fails for corrupt vectors.
-                let _ = rustdb_types::vector_ops::copy_rows(
+                let _ = roastedduck_types::vector_ops::copy_rows(
                     chunk.column(column),
                     offset,
                     count,
@@ -279,7 +279,7 @@ pub(crate) unsafe fn result_data<'a>(result: *const DuckdbResult) -> Option<&'a 
 /// `out` must be NULL or point to writable `duckdb_result` storage.
 pub(crate) unsafe fn translate_result(
     context: &Arc<SharedConnection>,
-    outcome: rustdb::Result<QueryResult>,
+    outcome: roastedduck::Result<QueryResult>,
     properties: ClientProperties,
     out: *mut DuckdbResult,
 ) -> DuckdbState {
@@ -351,7 +351,7 @@ pub(crate) unsafe fn deprecated_materialize(result: *mut DuckdbResult) -> bool {
     result.deprecated_row_count = materialized.row_count() as Idx;
     if materialized.row_count() > 0 && materialized.return_type() == StatementReturnType::ChangedRows {
         let changed = materialized.value(0, 0);
-        if let Some(count) = rustdb_function::cast::ValueCast::try_cast(&changed, &LogicalType::BIGINT)
+        if let Some(count) = roastedduck_function::cast::ValueCast::try_cast(&changed, &LogicalType::BIGINT)
             .ok()
             .and_then(|count| count.as_i64())
         {
@@ -432,7 +432,7 @@ fn translate_column(
             LogicalTypeId::HugeInt => writer.copy(&vector, chunk.len(), DuckdbHugeint::from_i128),
             LogicalTypeId::UHugeInt => writer.copy(&vector, chunk.len(), DuckdbUhugeint::from_u128),
             LogicalTypeId::Interval => {
-                writer.copy(&vector, chunk.len(), |interval: rustdb_types::Interval| {
+                writer.copy(&vector, chunk.len(), |interval: roastedduck_types::Interval| {
                     DuckdbInterval {
                         months: interval.months,
                         days: interval.days,
@@ -487,7 +487,7 @@ struct ColumnWriter {
 impl ColumnWriter {
     /// Writes `count` rows of `vector` (flat) converted by `convert`; NULL rows get a
     /// zeroed value.
-    fn copy<T: rustdb_types::NativeType, C: Copy>(
+    fn copy<T: roastedduck_types::NativeType, C: Copy>(
         &mut self,
         vector: &Vector,
         count: usize,
@@ -681,7 +681,7 @@ pub unsafe extern "C" fn duckdb_rows_changed(result: *mut DuckdbResult) -> Idx {
     }
     match &data.state {
         ResultState::Materialized(result) if result.row_count() == 1 && result.column_count() == 1 => {
-            rustdb_function::cast::ValueCast::try_cast(&result.value(0, 0), &LogicalType::UBIGINT)
+            roastedduck_function::cast::ValueCast::try_cast(&result.value(0, 0), &LogicalType::UBIGINT)
                 .ok()
                 .and_then(|count| count.as_u64())
                 .unwrap_or(0)

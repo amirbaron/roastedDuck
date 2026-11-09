@@ -2,8 +2,8 @@
 //! `WindowSharedExpressions`): each distinct, non-volatile expression is computed once per
 //! row, in one of three places.
 
-use rustdb_planner::Expression;
-use rustdb_types::LogicalType;
+use roastedduck_planner::Expression;
+use roastedduck_types::LogicalType;
 
 use crate::ExpressionExecutor;
 

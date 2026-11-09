@@ -7,10 +7,10 @@
 
 use std::ptr::NonNull;
 
-use rustdb_common::Result;
-use rustdb_function::StatePtr;
-use rustdb_function::aggregate::AggregateInput;
-use rustdb_types::Vector;
+use roastedduck_common::Result;
+use roastedduck_function::StatePtr;
+use roastedduck_function::aggregate::AggregateInput;
+use roastedduck_types::Vector;
 
 use crate::layout::{RowAggregate, TupleDataLayout};
 use crate::row::RowPtr;
@@ -100,7 +100,7 @@ pub unsafe fn update_states(
 }
 
 /// Whether every aggregate of `layout` can add a selection of rows to one state
-/// ([`AggregateOps::update_selection`](rustdb_function::aggregate::AggregateOps)).
+/// ([`AggregateOps::update_selection`](roastedduck_function::aggregate::AggregateOps)).
 pub fn supports_update_selection(layout: &TupleDataLayout) -> bool {
     layout
         .aggregates()

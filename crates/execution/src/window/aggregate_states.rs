@@ -5,10 +5,10 @@ use std::alloc::{Layout, alloc_zeroed, dealloc, handle_alloc_error};
 use std::ptr::NonNull;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::AggregateInput;
-use rustdb_function::{AggregateOps, StatePtr};
-use rustdb_types::Vector;
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::AggregateInput;
+use roastedduck_function::{AggregateOps, StatePtr};
+use roastedduck_types::Vector;
 
 /// Aligned memory for a number of states of one aggregate; states are not initialised.
 struct StateMemory {

@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use rustdb_buffer::BufferManager;
-use rustdb_common::profiling::QueryMetrics;
+use roastedduck_buffer::BufferManager;
+use roastedduck_common::profiling::QueryMetrics;
 
 use crate::operator::PhysicalOperator;
 
@@ -42,7 +42,7 @@ pub struct QueryProfiler {
     start: Instant,
     operators: Mutex<HashMap<usize, OperatorProfile>>,
     /// Parameters sources report once exhausted (`OperatorInformation::extra_info`).
-    extra_info: Mutex<HashMap<usize, Vec<(rustdb_common::ByteString, rustdb_common::ByteString)>>>,
+    extra_info: Mutex<HashMap<usize, Vec<(roastedduck_common::ByteString, roastedduck_common::ByteString)>>>,
     /// What the table scans read, by operator.
     scans: Mutex<HashMap<usize, ScanMetrics>>,
     /// The metrics of the query the threads record into while they work on it.
@@ -152,7 +152,7 @@ impl QueryProfiler {
     pub(crate) fn record_extra_info(
         &self,
         key: usize,
-        params: Vec<(rustdb_common::ByteString, rustdb_common::ByteString)>,
+        params: Vec<(roastedduck_common::ByteString, roastedduck_common::ByteString)>,
     ) {
         let mut extra_info = self.extra_info.lock().unwrap_or_else(PoisonError::into_inner);
         let entry = extra_info.entry(key).or_default();
@@ -185,7 +185,7 @@ impl QueryProfiler {
     pub fn extra_info(
         &self,
         op: &dyn PhysicalOperator,
-    ) -> Vec<(rustdb_common::ByteString, rustdb_common::ByteString)> {
+    ) -> Vec<(roastedduck_common::ByteString, roastedduck_common::ByteString)> {
         self.extra_info_by_key(operator_key(op))
     }
 
@@ -193,7 +193,7 @@ impl QueryProfiler {
     pub fn extra_info_by_key(
         &self,
         key: usize,
-    ) -> Vec<(rustdb_common::ByteString, rustdb_common::ByteString)> {
+    ) -> Vec<(roastedduck_common::ByteString, roastedduck_common::ByteString)> {
         self.extra_info
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

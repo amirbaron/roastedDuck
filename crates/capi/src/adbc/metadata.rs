@@ -1,6 +1,6 @@
 //! Metadata SQL is preserved from DuckDB 1.5.6's ADBC implementation, including filters and nested schemas.
 use super::*;
-use rustdb_arrow::ffi::{ArrowArrayStreamWrapper, ArrowArrayWrapper};
+use roastedduck_arrow::ffi::{ArrowArrayStreamWrapper, ArrowArrayWrapper};
 pub(super) unsafe fn query_internal(
     connection: *mut AdbcConnection,
     out: *mut ArrowArrayStream,
@@ -142,7 +142,7 @@ pub(super) unsafe extern "C" fn get_table_schema(
                 b"AdbcConnectionGetTableSchema: must provide table_name",
             );
         };
-        let quoted = rustdb_ast::keyword::write_optionally_quoted_bytes;
+        let quoted = roastedduck_ast::keyword::write_optionally_quoted_bytes;
         let mut sql = ByteString::from("SELECT * FROM ");
         if let Some(catalog) = opt_bytes(catalog).filter(|v| !v.is_empty()) {
             sql.push_bytes(quoted(catalog));

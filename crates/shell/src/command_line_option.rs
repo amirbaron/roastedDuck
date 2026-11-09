@@ -2,8 +2,8 @@
 //! table, the callbacks run before the database opens and after the init file, and
 //! `-help`.
 
-use rustdb::Value;
-use rustdb_common::ByteString;
+use roastedduck::Value;
+use roastedduck_common::ByteString;
 
 use crate::highlight::{
     self, HighlightElementType, HighlightMode, PrintColor, PrintIntensity, ShellHighlight,
@@ -106,7 +106,7 @@ fn disable_batch(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
 }
 
 fn set_read_only_mode(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
-    shell.state.config.access_mode = rustdb::AccessMode::ReadOnly;
+    shell.state.config.access_mode = roastedduck::AccessMode::ReadOnly;
     MetadataResult::Success
 }
 
@@ -150,9 +150,9 @@ fn allow_unsigned(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
 fn show_version_and_exit(_shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     ShellState::printf_stdout(format!(
         "roastedDuck {} ({}) {}\n",
-        rustdb::Database::library_version(),
-        rustdb::Database::release_codename(),
-        rustdb::Database::source_id()
+        roastedduck::Database::library_version(),
+        roastedduck::Database::release_codename(),
+        roastedduck::Database::source_id()
     ));
     MetadataResult::Exit
 }
@@ -183,9 +183,11 @@ fn set_newline_separator(shell: &mut Shell, args: &[ByteString]) -> MetadataResu
 fn set_storage_version(shell: &mut Shell, args: &[ByteString]) -> MetadataResult {
     let storage_version = &args[1];
     let parsed = if storage_version.is_empty() {
-        Err(rustdb::Error::invalid_input("Version string can not be empty"))
+        Err(roastedduck::Error::invalid_input(
+            "Version string can not be empty",
+        ))
     } else {
-        rustdb_serde::SerializationCompatibility::from_version_name(storage_version).map(|_| ())
+        roastedduck_serde::SerializationCompatibility::from_version_name(storage_version).map(|_| ())
     };
     let set = parsed.and_then(|()| {
         shell.state.config.set_option_by_name(
@@ -195,7 +197,7 @@ fn set_storage_version(shell: &mut Shell, args: &[ByteString]) -> MetadataResult
     });
     if let Err(error) = set {
         let error_bytes = error.to_bytes();
-        shell.state.print_err(rustdb_common::byte_format!(
+        shell.state.print_err(roastedduck_common::byte_format!(
             "{}: Error: unknown argument ({storage_version}) for '-storage-version': {error_bytes}\n",
             shell.state.program_name
         ));
@@ -629,12 +631,12 @@ pub fn find_command_line_option(
         .iter()
         .map(|option| format!("-{}", option.option))
         .collect();
-    let candidates = rustdb_common::string_util::candidates_error_message_bytes(
+    let candidates = roastedduck_common::string_util::candidates_error_message_bytes(
         &option_names,
-        &rustdb_common::byte_format!("-{option}"),
+        &roastedduck_common::byte_format!("-{option}"),
         b"Did you mean",
     );
-    Err(rustdb_common::byte_format!(
+    Err(roastedduck_common::byte_format!(
         "Unknown Option Error: Unrecognized option '-{option}'\n{candidates}\nRun '{} -help' for a list of options.\n",
         state.program_name
     ))

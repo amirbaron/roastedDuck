@@ -24,7 +24,7 @@ pub use state::{
 
 pub use zeroize::Zeroize;
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 /// The key given to `ATTACH ... (ENCRYPTION_KEY ...)`, as the bytes of its BLOB cast
 /// (`StorageOptions::user_key`). It is zeroed once a key is derived from it, and when it

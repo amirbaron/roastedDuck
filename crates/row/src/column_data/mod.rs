@@ -12,7 +12,7 @@
 //! of their own. The blocks count against the memory limit and are spilled to the
 //! temporary directory when evicted.
 //!
-//! Reading a chunk copies the values out (rustdb vectors own their buffers; DuckDB
+//! Reading a chunk copies the values out (roastedduck vectors own their buffers; DuckDB
 //! references the block memory); strings point into the heap blocks, which the vectors keep
 //! pinned for as long as the strings live.
 

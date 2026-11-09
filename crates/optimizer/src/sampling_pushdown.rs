@@ -1,8 +1,8 @@
 //! Pushing SYSTEM samples into table scans (DuckDB's `SamplingPushdown`): a percentage
 //! SYSTEM sample directly over a table scan becomes the scan skipping vectors.
 
-use rustdb_ast::SampleMethod;
-use rustdb_planner::{LogicalKind, LogicalOperator};
+use roastedduck_ast::SampleMethod;
+use roastedduck_planner::{LogicalKind, LogicalOperator};
 
 /// Moves the SYSTEM percentage samples of `op` into the scans below them (DuckDB's
 /// `SamplingPushdown::Optimize`).

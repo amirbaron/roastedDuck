@@ -2,7 +2,7 @@
 //! `ListVector::Append`), used to assemble nested values from their children.
 
 use crate::{ListEntry, PhysicalType, StringT, Vector, VectorKind};
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 /// Copies rows `src_start..src_start + count` of `src` into `dst` starting at row
 /// `dst_start`; `dst` must be flat and large enough.
@@ -146,10 +146,7 @@ mod tests {
 
     #[test]
     fn copies_nested_rows() {
-        let ty = LogicalType::list(LogicalType::struct_type(vec![(
-            "a".into(),
-            LogicalType::VARCHAR,
-        )]));
+        let ty = LogicalType::list(LogicalType::struct_type(vec![("a".into(), LogicalType::VARCHAR)]));
         let value = |text: &str| {
             Value::list(
                 LogicalType::struct_type(vec![("a".into(), LogicalType::VARCHAR)]),

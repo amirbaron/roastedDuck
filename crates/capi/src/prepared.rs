@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use std::ffi::{CString, c_char, c_void};
 use std::sync::Arc;
 
-use rustdb::{PreparedStatement, SqlStatement};
-use rustdb_common::{CaseInsensitiveMap, Error};
-use rustdb_types::{Date, Interval, LogicalType, LogicalTypeId, Time, Timestamp, Value};
+use roastedduck::{PreparedStatement, SqlStatement};
+use roastedduck_common::{CaseInsensitiveMap, Error};
+use roastedduck_types::{Date, Interval, LogicalType, LogicalTypeId, Time, Timestamp, Value};
 
 use crate::helper::{bytes, c_string, catch, logical_type_id_to_c, statement_type_to_c, to_cstring};
 use crate::logical_types::{DuckdbLogicalType, wrap_type};
@@ -36,18 +36,18 @@ pub struct PreparedStatementWrapper {
     /// The statement, or why preparing it failed.
     pub(crate) statement: Result<PreparedStatement, CError>,
     /// The values bound so far, by parameter identifier.
-    pub(crate) values: CaseInsensitiveMap<Value, rustdb_common::ByteString>,
+    pub(crate) values: CaseInsensitiveMap<Value, roastedduck_common::ByteString>,
     /// The last binding error (`error_data` with `success` false).
     bind_error: Option<CError>,
     /// The identifier of each parameter, by index (`param_index_to_name`).
-    param_index_to_name: HashMap<u64, rustdb_common::ByteString>,
+    param_index_to_name: HashMap<u64, roastedduck_common::ByteString>,
 }
 
 /// `duckdb_prepared_statement`
 pub type DuckdbPreparedStatement = *mut PreparedStatementWrapper;
 
 impl PreparedStatementWrapper {
-    fn new(context: &Arc<SharedConnection>, statement: rustdb::Result<PreparedStatement>) -> Self {
+    fn new(context: &Arc<SharedConnection>, statement: roastedduck::Result<PreparedStatement>) -> Self {
         let param_index_to_name = statement
             .as_ref()
             .map(|statement| {
@@ -70,7 +70,7 @@ impl PreparedStatementWrapper {
     fn parameter_name(&self, index: Idx) -> Option<&[u8]> {
         self.param_index_to_name
             .get(&index)
-            .map(rustdb_common::ByteString::as_bytes)
+            .map(roastedduck_common::ByteString::as_bytes)
     }
 }
 
@@ -89,7 +89,7 @@ unsafe fn prepared_ref<'a>(prepared: DuckdbPreparedStatement) -> Option<&'a mut 
 /// `out` must point to writable storage.
 unsafe fn store_prepared(
     context: &Arc<SharedConnection>,
-    statement: rustdb::Result<PreparedStatement>,
+    statement: roastedduck::Result<PreparedStatement>,
     out: *mut DuckdbPreparedStatement,
 ) -> DuckdbState {
     let wrapper = PreparedStatementWrapper::new(context, statement);
@@ -270,7 +270,7 @@ unsafe fn parameter_type(prepared_statement: DuckdbPreparedStatement, param_idx:
 /// collation bind as string literals.
 fn parameter_value_type(value: &Value) -> LogicalType {
     let ty = value.logical_type();
-    if ty.id() == LogicalTypeId::Varchar && rustdb_planner::expression_binder::collation(ty).is_none() {
+    if ty.id() == LogicalTypeId::Varchar && roastedduck_planner::expression_binder::collation(ty).is_none() {
         return LogicalType::STRING_LITERAL;
     }
     ty.clone()
@@ -362,7 +362,7 @@ fn bind(wrapper: &mut PreparedStatementWrapper, param_idx: Idx, value: Value) ->
         ))));
         return DuckdbState::DuckDBError;
     };
-    let identifier = rustdb_common::ByteString::from(identifier);
+    let identifier = roastedduck_common::ByteString::from(identifier);
     wrapper.values.insert(identifier, value);
     DuckdbState::DuckDBSuccess
 }

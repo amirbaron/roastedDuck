@@ -1,9 +1,9 @@
 //! Native ColumnIndex/StorageIndex binary round trips against frozen C++ 1.5.6.
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
-use rustdb_serde::{Deserialize, Deserializer, SerializationOptions, Serialize, Serializer};
-use rustdb_storage::table::StorageIndex;
-use rustdb_types::{ColumnIndex, ColumnIndexType, LogicalType};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
+use roastedduck_serde::{Deserialize, Deserializer, SerializationOptions, Serialize, Serializer};
+use roastedduck_storage::table::StorageIndex;
+use roastedduck_types::{ColumnIndex, ColumnIndexType, LogicalType};
 use std::io::{self, BufRead};
 fn decode(hex: &str) -> Result<Vec<u8>> {
     let (pairs, rest) = hex.as_bytes().as_chunks::<2>();

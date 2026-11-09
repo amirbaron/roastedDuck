@@ -5,13 +5,13 @@
 
 use std::sync::Arc;
 
-use rustdb_ast::ForeignKeyType;
-use rustdb_catalog::{Catalog, CatalogEntry, CatalogType, EntryKind, Transaction};
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_planner::Expression;
-use rustdb_planner::operator::BoundConstraint;
-use rustdb_storage::{BoundForeignKey, ConstraintVerifier, DataTable, ForeignKeyKind, TableConstraints};
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_ast::ForeignKeyType;
+use roastedduck_catalog::{Catalog, CatalogEntry, CatalogType, EntryKind, Transaction};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_planner::Expression;
+use roastedduck_planner::operator::BoundConstraint;
+use roastedduck_storage::{BoundForeignKey, ConstraintVerifier, DataTable, ForeignKeyKind, TableConstraints};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use crate::expression_executor::ExpressionExecutor;
 
@@ -22,18 +22,18 @@ struct CheckConstraint {
     /// The physical columns the expression reads.
     bound_columns: Vec<usize>,
     /// The constraint as written (`CHECK((i > 0))`), for the error message.
-    text: rustdb_common::ByteString,
+    text: roastedduck_common::ByteString,
 }
 
 /// Evaluates the generated column expressions and `CHECK` constraints of a table.
 #[derive(Debug)]
 struct CheckVerifier {
-    table: rustdb_common::ByteString,
+    table: roastedduck_common::ByteString,
     /// The types of the table's physical columns.
     types: Vec<LogicalType>,
     checks: Vec<CheckConstraint>,
     /// Generated column expressions with their `name TYPE AS (expression)` text.
-    generated: Vec<(Expression, rustdb_common::ByteString)>,
+    generated: Vec<(Expression, roastedduck_common::ByteString)>,
 }
 
 impl CheckVerifier {
@@ -51,7 +51,7 @@ impl CheckVerifier {
         if (0..count).any(|row| !vector.is_null(row) && values[row] == 0) {
             return Err(Error::new_bytes(
                 ErrorKind::Constraint,
-                rustdb_common::byte_format!(
+                roastedduck_common::byte_format!(
                     "CHECK constraint failed on table {} with expression {}",
                     self.table,
                     check.text
@@ -75,7 +75,7 @@ impl ConstraintVerifier for CheckVerifier {
                 }
                 return Err(Error::new_bytes(
                     ErrorKind::Constraint,
-                    rustdb_common::byte_format!(
+                    roastedduck_common::byte_format!(
                         "Incorrect value for generated column \"{text}\" : {}",
                         error.raw_message_bytes()
                     ),

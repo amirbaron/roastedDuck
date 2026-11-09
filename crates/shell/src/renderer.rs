@@ -3,14 +3,14 @@
 //! `box`, `latex`), row renderers that print rows as they stream (`line`, `list`, `csv`,
 //! `json`, `insert`, ...), the duckbox renderer, the `DESCRIBE` renderer and `trash`.
 
-use rustdb_common::ByteString;
+use roastedduck_common::ByteString;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use rustdb::{
+use roastedduck::{
     Connection, DataChunk, LogicalType, LogicalTypeId, MaterializedResult, Result, StreamQueryResult,
 };
-use rustdb_types::PhysicalType;
+use roastedduck_types::PhysicalType;
 
 use crate::box_renderer::{
     self, BaseResultRenderer, BoxRenderMode, BoxRendererConfig, BoxRendererState, is_json_type,
@@ -1276,7 +1276,7 @@ impl ModeCsvRenderer {
         });
         if needs_quote {
             // `SQLIdentifier`: quoted only if it is not a plain identifier.
-            out.print_bytes(&rustdb_ast::keyword::write_optionally_quoted_bytes(bytes));
+            out.print_bytes(&roastedduck_ast::keyword::write_optionally_quoted_bytes(bytes));
         } else {
             out.print_bytes(bytes);
         }
@@ -1356,7 +1356,7 @@ impl ShellRenderer for ModeQuoteRenderer {
             if i > 0 {
                 out.print_bytes(&self.settings.col_sep);
             }
-            out.print_bytes(&rustdb_ast::keyword::sql_string_bytes(name));
+            out.print_bytes(&roastedduck_ast::keyword::sql_string_bytes(name));
         }
         out.print_bytes(&self.settings.row_sep);
     }
@@ -1456,7 +1456,7 @@ impl ShellRenderer for ModeJsonRenderer {
             if i > 0 {
                 out.print(",");
             }
-            out.print_bytes(&rustdb_common::string_util::json_quote_bytes(name));
+            out.print_bytes(&roastedduck_common::string_util::json_quote_bytes(name));
             out.print(":");
             let ty = &metadata.types[i];
             if row.is_null[i] {
@@ -1539,7 +1539,7 @@ impl ShellRenderer for ModeInsertRenderer {
                 if i > 0 {
                     out.print(",");
                 }
-                out.print_bytes(&rustdb_ast::keyword::write_optionally_quoted_bytes(name));
+                out.print_bytes(&roastedduck_ast::keyword::write_optionally_quoted_bytes(name));
             }
             out.print(")");
         }
@@ -1818,7 +1818,7 @@ impl ShellRenderer for ModeDuckBoxRenderer {
         conn: &mut Connection,
     ) -> Result<()> {
         let ResultSource::Materialized(scanned) = &result.source else {
-            return Err(rustdb::Error::internal(
+            return Err(roastedduck::Error::internal(
                 "duckbox rendering needs a materialized result",
             ));
         };
@@ -1887,7 +1887,7 @@ impl ShellRenderer for ModeDuckBoxRenderer {
         match rendered {
             Ok(()) => Ok(SuccessState::Success),
             Err(error) => {
-                renderer.render_layout(&rustdb_common::byte_format!("{}\n", error.as_bytes()));
+                renderer.render_layout(&roastedduck_common::byte_format!("{}\n", error.as_bytes()));
                 Ok(SuccessState::Failure)
             }
         }
@@ -1921,7 +1921,7 @@ impl ShellRenderer for ModeDescribeRenderer {
         _conn: &mut Connection,
     ) -> Result<SuccessState> {
         let ResultSource::Materialized(scanned) = &result.source else {
-            return Err(rustdb::Error::internal(
+            return Err(roastedduck::Error::internal(
                 "DESCRIBE rendering needs a materialized result",
             ));
         };

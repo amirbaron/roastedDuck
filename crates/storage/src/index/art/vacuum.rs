@@ -1,7 +1,7 @@
 //! Compacting the memory of an ART (DuckDB's `ART::Vacuum`): segments of mostly empty
 //! buffers move to fuller ones, and the emptied buffers are freed.
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use super::Art;
 use super::node::{LEAF_NEXT, NType, Node, Slot};

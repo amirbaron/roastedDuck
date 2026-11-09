@@ -4,10 +4,10 @@
 //! shared "collection" expressions are computed for every row of the hash group and kept
 //! as one flat vector per column, indexed by the row's position in the sorted group.
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{DataChunk, LogicalType, NativeType, PhysicalType, StringT, Vector, VectorKind};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{DataChunk, LogicalType, NativeType, PhysicalType, StringT, Vector, VectorKind};
 
-use rustdb_types::compare::SqlOrd;
+use roastedduck_types::compare::SqlOrd;
 
 use super::mask::WindowMask;
 
@@ -49,7 +49,7 @@ pub(crate) fn copy_into(source: &Vector, count: usize, target: &mut Vector, offs
         PhysicalType::UInt128 => typed::<u128>(source, count, target, offset),
         PhysicalType::Float => typed::<f32>(source, count, target, offset),
         PhysicalType::Double => typed::<f64>(source, count, target, offset),
-        PhysicalType::Interval => typed::<rustdb_types::Interval>(source, count, target, offset),
+        PhysicalType::Interval => typed::<roastedduck_types::Interval>(source, count, target, offset),
         PhysicalType::Varchar => {
             typed::<StringT>(source, count, target, offset);
             target.add_heap_references(source);
@@ -106,7 +106,7 @@ fn mark_column(
         if let Some((vector, row)) = previous {
             flags[0] |= distinct(vector.unified::<T>().get(row), values.get(0), eq);
         }
-        if matches!(values.sel, rustdb_types::Sel::Identity) && values.validity.is_all_valid() {
+        if matches!(values.sel, roastedduck_types::Sel::Identity) && values.validity.is_all_valid() {
             // Flat without NULLs: compare neighbouring slots directly.
             for ((flag, &prev), &curr) in flags[1..count]
                 .iter_mut()
@@ -160,21 +160,21 @@ fn mark_column(
         PhysicalType::UInt128 => fixed::<u128>(column, count, previous, flags, |a, b| a == b),
         PhysicalType::Float => fixed::<f32>(column, count, previous, flags, SqlOrd::sql_eq),
         PhysicalType::Double => fixed::<f64>(column, count, previous, flags, SqlOrd::sql_eq),
-        PhysicalType::Interval => fixed::<rustdb_types::Interval>(
+        PhysicalType::Interval => fixed::<roastedduck_types::Interval>(
             column,
             count,
             previous,
             flags,
-            rustdb_types::Interval::normalized_eq,
+            roastedduck_types::Interval::normalized_eq,
         ),
         PhysicalType::Varchar => strings(column, count, previous, flags),
         _ => {
             // Nested types: compare value by value with DuckDB's nested semantics.
             if let Some((vector, row)) = previous {
-                flags[0] |= rustdb_row::values_distinct(vector, row, column, 0)?;
+                flags[0] |= roastedduck_row::values_distinct(vector, row, column, 0)?;
             }
             for (row, flag) in flags.iter_mut().enumerate().take(count).skip(1) {
-                *flag |= rustdb_row::values_distinct(column, row - 1, column, row)?;
+                *flag |= roastedduck_row::values_distinct(column, row - 1, column, row)?;
             }
         }
     }

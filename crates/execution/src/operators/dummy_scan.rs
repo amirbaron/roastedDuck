@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use rustdb_common::Result;
-use rustdb_types::{DataChunk, LogicalType, Value};
+use roastedduck_common::Result;
+use roastedduck_types::{DataChunk, LogicalType, Value};
 
 use crate::operator::{ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
 use crate::{ExecutionContext, Source, SourceResult};

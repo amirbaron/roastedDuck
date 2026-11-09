@@ -4,8 +4,8 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use rustdb_function::{CopyFunction, FunctionData};
-use rustdb_types::LogicalType;
+use roastedduck_function::{CopyFunction, FunctionData};
+use roastedduck_types::LogicalType;
 
 /// What happens to existing files (DuckDB's `CopyOverwriteMode`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,7 +26,7 @@ pub enum CopyFunctionReturnType {
 
 impl CopyFunctionReturnType {
     /// `GetCopyFunctionReturnNames`.
-    pub fn names(self) -> Vec<rustdb_common::ByteString> {
+    pub fn names(self) -> Vec<roastedduck_common::ByteString> {
         match self {
             Self::ChangedRows => vec!["Count".into()],
             Self::ChangedRowsAndFileList => vec!["Count".into(), "Files".into()],
@@ -69,7 +69,7 @@ impl CopyFunctionReturnType {
 /// One part of a [`FilenamePattern`] (DuckDB's `FileNameSegment`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FileNameSegment {
-    Literal(rustdb_common::ByteString),
+    Literal(roastedduck_common::ByteString),
     Offset,
     UuidV4,
     UuidV7,
@@ -113,34 +113,40 @@ fn random_uuid(version: u8) -> String {
     result
 }
 
-impl rustdb_serde::Serialize for FileNameSegment {
-    fn serialize(&self, serializer: &mut dyn rustdb_serde::Serializer) -> rustdb_common::Result<()> {
+impl roastedduck_serde::Serialize for FileNameSegment {
+    fn serialize(
+        &self,
+        serializer: &mut dyn roastedduck_serde::Serializer,
+    ) -> roastedduck_common::Result<()> {
         let (segment_type, data) = match self {
             Self::Literal(text) => (crate::FileNameSegmentType::Literal, text),
             Self::Offset => (
                 crate::FileNameSegmentType::Offset,
-                &rustdb_common::ByteString::new(),
+                &roastedduck_common::ByteString::new(),
             ),
             Self::UuidV4 => (
                 crate::FileNameSegmentType::UuidV4,
-                &rustdb_common::ByteString::new(),
+                &roastedduck_common::ByteString::new(),
             ),
             Self::UuidV7 => (
                 crate::FileNameSegmentType::UuidV7,
-                &rustdb_common::ByteString::new(),
+                &roastedduck_common::ByteString::new(),
             ),
         };
         serializer.write_object(&crate::generated::logical_operator::FileNameSegment { segment_type, data })
     }
 }
 
-impl rustdb_serde::Serialize for FilenamePattern {
+impl roastedduck_serde::Serialize for FilenamePattern {
     /// `FilenamePattern::Serialize`: patterns with a single placeholder other than
     /// `{uuidv7}` are written in the legacy form, `base` with the placeholder at `pos`.
-    fn serialize(&self, serializer: &mut dyn rustdb_serde::Serializer) -> rustdb_common::Result<()> {
+    fn serialize(
+        &self,
+        serializer: &mut dyn roastedduck_serde::Serializer,
+    ) -> roastedduck_common::Result<()> {
         let mut placeholders = 0;
         let mut legacy = true;
-        let mut base = rustdb_common::ByteString::new();
+        let mut base = roastedduck_common::ByteString::new();
         let mut pos = 0;
         for segment in &self.segments {
             match segment {
@@ -153,7 +159,7 @@ impl rustdb_serde::Serialize for FilenamePattern {
             }
         }
         let legacy = legacy && placeholders == 1;
-        let empty = rustdb_common::ByteString::new();
+        let empty = roastedduck_common::ByteString::new();
         serializer.write_object(&crate::generated::logical_operator::FilenamePattern {
             base: if legacy { &base } else { &empty },
             pos: if legacy { pos } else { 0 },
@@ -214,8 +220,13 @@ impl FilenamePattern {
     }
 
     /// `CreateFilename`: `<path>/<name>.<extension>`.
-    pub fn create_filename(&self, path: &[u8], extension: &str, offset: u64) -> rustdb_common::ByteString {
-        let mut result = rustdb_common::ByteString::new();
+    pub fn create_filename(
+        &self,
+        path: &[u8],
+        extension: &str,
+        offset: u64,
+    ) -> roastedduck_common::ByteString {
+        let mut result = roastedduck_common::ByteString::new();
         for segment in &self.segments {
             match segment {
                 FileNameSegment::Literal(text) => result += text,
@@ -225,7 +236,7 @@ impl FilenamePattern {
             }
         }
         let separator = if path.is_empty() { "" } else { "/" };
-        rustdb_common::byte_format!("{path}{separator}{result}.{extension}")
+        roastedduck_common::byte_format!("{path}{separator}{result}.{extension}")
     }
 }
 
@@ -235,7 +246,7 @@ impl FilenamePattern {
 pub struct LogicalCopyToFile {
     pub function: CopyFunction,
     pub bind_data: Arc<dyn FunctionData>,
-    pub file_path: rustdb_common::ByteString,
+    pub file_path: roastedduck_common::ByteString,
     pub use_tmp_file: bool,
     pub overwrite_mode: CopyOverwriteMode,
     pub filename_pattern: FilenamePattern,
@@ -251,10 +262,10 @@ pub struct LogicalCopyToFile {
     /// The `PRESERVE_ORDER` option (`PreserveOrderType`); `None` when not given.
     pub preserve_order: Option<bool>,
     pub return_type: CopyFunctionReturnType,
-    pub names: Vec<rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
     pub expected_types: Vec<LogicalType>,
     /// The statement, its query filled in (DuckDB's `copy_info`).
-    pub copy_info: Box<rustdb_ast::CopyInfo>,
+    pub copy_info: Box<roastedduck_ast::CopyInfo>,
 }
 
 impl LogicalCopyToFile {
@@ -277,19 +288,19 @@ impl LogicalCopyToFile {
 }
 
 /// A table written by `EXPORT DATABASE` (DuckDB's `ExportedTableData`).
-pub type ExportedTable = rustdb_ast::ExportedTableData;
+pub type ExportedTable = roastedduck_ast::ExportedTableData;
 
 /// `EXPORT DATABASE` (DuckDB's `LogicalExport`): its child (if any) copies the tables;
 /// the operator then writes `schema.sql` and `load.sql`.
 #[derive(Clone, Debug)]
 pub struct LogicalExport {
     /// The actual bound export options, including defaults/readable options.
-    pub copy_info: rustdb_ast::CopyInfo,
+    pub copy_info: roastedduck_ast::CopyInfo,
     pub function: CopyFunction,
-    pub file_path: rustdb_common::ByteString,
-    pub format: rustdb_common::ByteString,
+    pub file_path: roastedduck_common::ByteString,
+    pub format: roastedduck_common::ByteString,
     /// The options of the generated `COPY ... FROM` statements.
-    pub options: Vec<(rustdb_common::ByteString, Vec<rustdb_types::Value>)>,
-    pub catalog: rustdb_common::ByteString,
+    pub options: Vec<(roastedduck_common::ByteString, Vec<roastedduck_types::Value>)>,
+    pub catalog: roastedduck_common::ByteString,
     pub tables: Vec<ExportedTable>,
 }

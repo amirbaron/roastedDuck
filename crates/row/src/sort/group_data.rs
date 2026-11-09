@@ -6,9 +6,9 @@
 
 use std::sync::Arc;
 
-use rustdb_buffer::{BufferManager, MemoryTag};
-use rustdb_common::{Error, Result};
-use rustdb_types::{DataChunk, LogicalType};
+use roastedduck_buffer::{BufferManager, MemoryTag};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{DataChunk, LogicalType};
 
 use crate::collection::TupleDataCollection;
 use crate::column_data::{ColumnDataAppendState, ColumnDataCollection, ColumnDataScanState};

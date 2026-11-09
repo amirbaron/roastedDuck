@@ -1,7 +1,7 @@
 //! `bitstring_agg(x[, min, max])` (DuckDB's `bitstring_agg.cpp`): a BIT string with one
 //! bit per value of `[min, max]`, set for every value seen.
 //!
-//! Without explicit bounds DuckDB takes them from the column statistics; rustdb does not
+//! Without explicit bounds DuckDB takes them from the column statistics; roastedduck does not
 //! propagate statistics to aggregates yet, so that form fails like DuckDB does when no
 //! statistics are available.
 
@@ -10,10 +10,10 @@ use std::fmt::Display;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::{Aggregate, AggregateInput, States, Typed};
-use rustdb_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
-use rustdb_types::{LogicalType, NativeType, StringT, Value, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::{Aggregate, AggregateInput, States, Typed};
+use roastedduck_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
+use roastedduck_types::{LogicalType, NativeType, StringT, Value, Vector};
 
 use crate::bitstring::{BitwiseOp, bitwise_in_place, set_bit, zeros};
 
@@ -32,8 +32,8 @@ impl FunctionData for Bounds {
         match (&self.0, &other.0) {
             (None, None) => true,
             (Some((left_min, left_max)), Some((right_min, right_max))) => {
-                rustdb_function::cast::values_not_distinct(left_min, right_min)
-                    && rustdb_function::cast::values_not_distinct(left_max, right_max)
+                roastedduck_function::cast::values_not_distinct(left_min, right_min)
+                    && roastedduck_function::cast::values_not_distinct(left_max, right_max)
             }
             (None, Some((min, max))) | (Some((min, max)), None) => min.is_null() && max.is_null(),
         }
@@ -263,7 +263,7 @@ fn bind_bitstring_agg(
 
 /// `BitstringAggBindData::Serialize`: the bounds, NULL when not known.
 fn serialize_bounds(
-    serializer: &mut dyn rustdb_serde::Serializer,
+    serializer: &mut dyn roastedduck_serde::Serializer,
     bind_data: Option<&dyn FunctionData>,
     _: &AggregateFunction,
 ) -> Result<()> {

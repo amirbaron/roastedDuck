@@ -1,7 +1,7 @@
 //! The transform functions of DuckDB's `transform_create_secret.cpp`: `CREATE SECRET
 //! [name] [IN storage] (option value, ...)`.
 
-use rustdb_parser::hash_order::CiHashMap;
+use roastedduck_parser::hash_order::CiHashMap;
 
 use super::create_table::{create_info, on_create_conflict};
 use super::prelude::*;

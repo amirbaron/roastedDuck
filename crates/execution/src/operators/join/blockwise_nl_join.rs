@@ -2,14 +2,14 @@
 //! arbitrary condition by evaluating it over the cross product of each input chunk with
 //! each right row (or of each input row with each right chunk).
 
-use rustdb_common::tree_renderer::RenderParams;
+use roastedduck_common::tree_renderer::RenderParams;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::JoinType;
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_planner::Expression;
-use rustdb_row::AppendState;
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_ast::JoinType;
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_planner::Expression;
+use roastedduck_row::AppendState;
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use super::nested_loop_join::{RightOuterScanState, scan_right_outer};
 use super::{

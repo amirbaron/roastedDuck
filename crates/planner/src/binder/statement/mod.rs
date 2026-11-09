@@ -4,13 +4,13 @@
 
 use std::sync::Arc;
 
-use rustdb_ast::{
+use roastedduck_ast::{
     CatalogType as AstCatalogType, DropInfo, ExecuteStatement, ExplainStatement, ExpressionType, PragmaInfo,
     PrepareStatement, SetScope, SetStatement, SqlStatement, SqlStatementKind, TransactionInfo,
     TransactionType,
 };
-use rustdb_common::{CaseInsensitiveMap, Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_common::{CaseInsensitiveMap, Error, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 mod alter;
 mod alter_struct;
@@ -97,7 +97,7 @@ pub fn bind_statement(scope: &mut BindScope<'_>, statement: &mut SqlStatement) -
         SqlStatementKind::Copy(info) => copy::bind_copy(scope, info),
         SqlStatementKind::Export(export) => export::bind_export(scope, export),
         SqlStatementKind::Vacuum(info) => bind_vacuum(scope, info),
-        other => Err(Error::not_implemented(rustdb_common::byte_format!(
+        other => Err(Error::not_implemented(roastedduck_common::byte_format!(
             "Unimplemented statement type \"{}\" for Bind",
             other.statement_type().name()
         ))),
@@ -106,7 +106,7 @@ pub fn bind_statement(scope: &mut BindScope<'_>, statement: &mut SqlStatement) -
 
 /// `VACUUM` / `ANALYZE` (DuckDB's `Binder::Bind(VacuumStatement &)`): the table and
 /// columns are checked; the statistics DuckDB recomputes are not kept here.
-fn bind_vacuum(scope: &mut BindScope<'_>, info: &mut rustdb_ast::VacuumInfo) -> Result<BoundStatement> {
+fn bind_vacuum(scope: &mut BindScope<'_>, info: &mut roastedduck_ast::VacuumInfo) -> Result<BoundStatement> {
     scope.with_properties(|properties| properties.return_type = StatementReturnType::Nothing);
     let names = vec!["Success".into()];
     let types = vec![LogicalType::BOOLEAN];
@@ -126,7 +126,7 @@ fn bind_vacuum(scope: &mut BindScope<'_>, info: &mut rustdb_ast::VacuumInfo) -> 
     let Some(entry) = get.table.clone() else {
         return Err(base_tables());
     };
-    let rustdb_catalog::EntryKind::Table(table) = &entry.kind else {
+    let roastedduck_catalog::EntryKind::Table(table) = &entry.kind else {
         return Err(base_tables());
     };
     if info.columns.is_empty() {
@@ -140,13 +140,13 @@ fn bind_vacuum(scope: &mut BindScope<'_>, info: &mut rustdb_ast::VacuumInfo) -> 
     let mut select_list = Vec::with_capacity(info.columns.len());
     for name in &info.columns {
         let Some((logical, column)) = table.column(name) else {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Column with name \"{name}\" does not exist"
             )));
         };
         if column.generated.is_some() {
             return Err(Error::new_bytes(
-                rustdb_common::ErrorKind::Binder,
+                roastedduck_common::ErrorKind::Binder,
                 [
                     "cannot vacuum or analyze generated column \"".as_bytes(),
                     column.name.as_bytes(),
@@ -187,25 +187,25 @@ fn bind_vacuum(scope: &mut BindScope<'_>, info: &mut rustdb_ast::VacuumInfo) -> 
 
 /// `CALL function(...)` (DuckDB's `Binder::Bind(CallStatement &)`): bound as
 /// `SELECT * FROM function(...)`.
-fn bind_call(scope: &mut BindScope<'_>, call: &mut rustdb_ast::CallStatement) -> Result<BoundStatement> {
-    use rustdb_ast::{
+fn bind_call(scope: &mut BindScope<'_>, call: &mut roastedduck_ast::CallStatement) -> Result<BoundStatement> {
+    use roastedduck_ast::{
         AggregateHandling, CommonTableExpressionMap, OrdinalityType, ParsedExpression, ParsedExpressionKind,
         QueryNode, QueryNodeKind, SelectNode, StarExpression, TableFunctionRef, TableRef, TableRefKind,
     };
     let star = ParsedExpression::new(
         ExpressionType::Star,
         ParsedExpressionKind::Star(Box::new(StarExpression {
-            relation_name: rustdb_common::ByteString::new(),
+            relation_name: roastedduck_common::ByteString::new(),
             exclude_list: Vec::new(),
             replace_list: CaseInsensitiveMap::default(),
-            rename_list: rustdb_common::OrderedMap::default(),
+            rename_list: roastedduck_common::OrderedMap::default(),
             columns: false,
             expr: None,
         })),
     );
     let from_table = TableRef {
-        external_dependency: rustdb_ast::ExternalDependency::default(),
-        alias: rustdb_common::ByteString::new(),
+        external_dependency: roastedduck_ast::ExternalDependency::default(),
+        alias: roastedduck_common::ByteString::new(),
         sample: None,
         query_location: None,
         kind: TableRefKind::TableFunction(TableFunctionRef {
@@ -263,27 +263,27 @@ fn bind_set(scope: &mut BindScope<'_>, set: &mut SetStatement) -> Result<BoundSt
     };
     if set.scope == SetScope::Variable {
         // The value is computed by running `SELECT value` when the statement executes.
-        let select = rustdb_ast::SelectNode {
+        let select = roastedduck_ast::SelectNode {
             select_list: vec![(**value).clone()],
-            from_table: Box::new(rustdb_ast::TableRef {
-                external_dependency: rustdb_ast::ExternalDependency::default(),
-                alias: rustdb_common::ByteString::new(),
+            from_table: Box::new(roastedduck_ast::TableRef {
+                external_dependency: roastedduck_ast::ExternalDependency::default(),
+                alias: roastedduck_common::ByteString::new(),
                 sample: None,
                 query_location: None,
-                kind: rustdb_ast::TableRefKind::Empty,
+                kind: roastedduck_ast::TableRefKind::Empty,
             }),
             where_clause: None,
             group_expressions: Vec::new(),
             group_sets: Vec::new(),
-            aggregate_handling: rustdb_ast::AggregateHandling::StandardHandling,
+            aggregate_handling: roastedduck_ast::AggregateHandling::StandardHandling,
             having: None,
             sample: None,
             qualify: None,
         };
-        let mut node = rustdb_ast::QueryNode {
+        let mut node = roastedduck_ast::QueryNode {
             modifiers: Vec::new(),
-            cte_map: rustdb_ast::CommonTableExpressionMap::default(),
-            kind: rustdb_ast::QueryNodeKind::Select(Box::new(select)),
+            cte_map: roastedduck_ast::CommonTableExpressionMap::default(),
+            kind: roastedduck_ast::QueryNodeKind::Select(Box::new(select)),
         };
         let bound = bind_node(scope, &mut node)?;
         if bound.types.len() > 1 {
@@ -291,7 +291,7 @@ fn bind_set(scope: &mut BindScope<'_>, set: &mut SetStatement) -> Result<BoundSt
         }
         let plan = LogicalOperator::new(LogicalKind::Set {
             name: set.name.clone(),
-            value: rustdb_types::Value::null(LogicalType::SQLNULL),
+            value: roastedduck_types::Value::null(LogicalType::SQLNULL),
             scope: set.scope,
         })
         .with_children(vec![bound.plan]);
@@ -315,7 +315,7 @@ fn bind_set(scope: &mut BindScope<'_>, set: &mut SetStatement) -> Result<BoundSt
 
 /// `ATTACH path AS name (options)` (DuckDB's `Binder::Bind(AttachStatement &)`): the
 /// options are evaluated; a bare identifier is its own name as a string.
-fn bind_attach(scope: &mut BindScope<'_>, info: &mut rustdb_ast::AttachInfo) -> Result<BoundStatement> {
+fn bind_attach(scope: &mut BindScope<'_>, info: &mut roastedduck_ast::AttachInfo) -> Result<BoundStatement> {
     scope.with_properties(|properties| {
         properties.return_type = StatementReturnType::Nothing;
         properties.requires_valid_transaction = false;
@@ -323,13 +323,13 @@ fn bind_attach(scope: &mut BindScope<'_>, info: &mut rustdb_ast::AttachInfo) -> 
     let mut bound_info = info.clone();
     let parsed = std::mem::take(&mut bound_info.parsed_options);
     for (name, expression) in parsed.iter() {
-        let value = if let rustdb_ast::ParsedExpressionKind::ColumnRef(column) = &expression.kind {
+        let value = if let roastedduck_ast::ParsedExpressionKind::ColumnRef(column) = &expression.kind {
             if column.column_names.len() != 1 {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "ATTACH option \"{name}\": qualified column names are not supported"
                 )));
             }
-            rustdb_types::Value::try_varchar(&column.column_names[0])?
+            roastedduck_types::Value::try_varchar(&column.column_names[0])?
         } else {
             let mut expression = expression.clone();
             let bound = {
@@ -340,7 +340,7 @@ fn bind_attach(scope: &mut BindScope<'_>, info: &mut rustdb_ast::AttachInfo) -> 
             scope.context.evaluator.evaluate_scalar(&bound)?
         };
         if value.is_null() {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "NULL is not supported as a valid option for ATTACH option \"{name}\""
             )));
         }
@@ -352,7 +352,7 @@ fn bind_attach(scope: &mut BindScope<'_>, info: &mut rustdb_ast::AttachInfo) -> 
 }
 
 /// `DETACH name` (DuckDB's `Binder::Bind(DetachStatement &)`).
-fn bind_detach(scope: &BindScope<'_>, info: &rustdb_ast::DetachInfo) -> BoundStatement {
+fn bind_detach(scope: &BindScope<'_>, info: &roastedduck_ast::DetachInfo) -> BoundStatement {
     scope.with_properties(|properties| {
         properties.return_type = StatementReturnType::Nothing;
         properties.requires_valid_transaction = false;
@@ -361,7 +361,7 @@ fn bind_detach(scope: &BindScope<'_>, info: &rustdb_ast::DetachInfo) -> BoundSta
 }
 
 /// `LOAD` / `INSTALL` (DuckDB's `Binder::Bind(LoadStatement &)`).
-fn bind_load(scope: &BindScope<'_>, info: &rustdb_ast::LoadInfo) -> BoundStatement {
+fn bind_load(scope: &BindScope<'_>, info: &roastedduck_ast::LoadInfo) -> BoundStatement {
     scope.with_properties(|properties| {
         properties.allow_stream_result = false;
         properties.return_type = StatementReturnType::Nothing;
@@ -394,7 +394,7 @@ fn bind_deallocate(scope: &BindScope<'_>, drop: &DropInfo) -> BoundStatement {
 /// A pragma bound to its overload (DuckDB's `BoundPragmaInfo`).
 #[derive(Debug)]
 pub struct BoundPragmaInfo {
-    pub function: rustdb_function::PragmaFunction,
+    pub function: roastedduck_function::PragmaFunction,
     pub parameters: Vec<Value>,
 }
 
@@ -419,7 +419,7 @@ fn bind_pragma(scope: &mut BindScope<'_>, pragma: &mut PragmaInfo) -> Result<Bou
 /// DuckDB's `Binder::BindPragma`: the arguments are constants, and the catalog must hold
 /// the pragma with an overload for them.
 pub fn bind_pragma_info(scope: &mut BindScope<'_>, pragma: &mut PragmaInfo) -> Result<BoundPragmaInfo> {
-    let constant = |scope: &mut BindScope<'_>, parameter: &mut rustdb_ast::ParsedExpression| {
+    let constant = |scope: &mut BindScope<'_>, parameter: &mut roastedduck_ast::ParsedExpression| {
         let bound = {
             let (inner, outer) = scope.split();
             let mut binder = ConstantBinder::new(inner, outer, "PRAGMA value");
@@ -439,8 +439,8 @@ pub fn bind_pragma_info(scope: &mut BindScope<'_>, pragma: &mut PragmaInfo) -> R
     let lookup = |if_exists| {
         context.get_entry(
             "",
-            rustdb_catalog::DEFAULT_SCHEMA,
-            rustdb_catalog::CatalogType::PragmaFunction,
+            roastedduck_catalog::DEFAULT_SCHEMA,
+            roastedduck_catalog::CatalogType::PragmaFunction,
             &pragma.name,
             if_exists,
         )
@@ -450,13 +450,13 @@ pub fn bind_pragma_info(scope: &mut BindScope<'_>, pragma: &mut PragmaInfo) -> R
     } else {
         let table_function = context.get_entry(
             "",
-            rustdb_catalog::DEFAULT_SCHEMA,
-            rustdb_catalog::CatalogType::TableFunction,
+            roastedduck_catalog::DEFAULT_SCHEMA,
+            roastedduck_catalog::CatalogType::TableFunction,
             &pragma.name,
             true,
         )?;
         if table_function.is_some() {
-            return Err(Error::catalog(rustdb_common::byte_format!(
+            return Err(Error::catalog(roastedduck_common::byte_format!(
                 "Pragma Function with name {0} does not exist, but a table function with the same name \
                  exists, try `CALL {0}(...)`",
                 pragma.name
@@ -465,8 +465,8 @@ pub fn bind_pragma_info(scope: &mut BindScope<'_>, pragma: &mut PragmaInfo) -> R
         // The lookup again, for its error.
         lookup(false)?.ok_or_else(|| Error::internal("pragma lookup"))?
     };
-    let rustdb_catalog::EntryKind::PragmaFunction(functions) = &entry.entry.kind else {
-        return Err(Error::internal(rustdb_common::byte_format!(
+    let roastedduck_catalog::EntryKind::PragmaFunction(functions) = &entry.entry.kind else {
+        return Err(Error::internal(roastedduck_common::byte_format!(
             "\"{}\" is not a pragma",
             pragma.name
         )));
@@ -512,22 +512,22 @@ fn bind_prepare(scope: &mut BindScope<'_>, prepare: &mut PrepareStatement) -> Re
 /// `PreparedStatement::VerifyParameters`: the supplied values name exactly the
 /// statement's parameters (`MissingValuesException` / `ExcessValuesException`).
 pub fn verify_parameters<V, E, K: AsRef<[u8]>, L: AsRef<[u8]>>(
-    provided: &rustdb_common::CaseInsensitiveMap<V, K>,
-    expected: &rustdb_common::CaseInsensitiveMap<E, L>,
+    provided: &roastedduck_common::CaseInsensitiveMap<V, K>,
+    expected: &roastedduck_common::CaseInsensitiveMap<E, L>,
 ) -> Result<()> {
     let missing: Vec<_> = expected
         .iter_keys()
         .filter(|(name, _)| !provided.contains_key(name.as_ref()))
-        .map(|(name, _)| rustdb_common::ByteString::from(name.as_ref()))
+        .map(|(name, _)| roastedduck_common::ByteString::from(name.as_ref()))
         .collect();
     if expected.len() >= provided.len() {
         if !missing.is_empty() {
             let mut names = missing;
             names.sort_unstable();
             names.dedup();
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "Values were not provided for the following prepared statement parameters: {}",
-                rustdb_common::ByteString::join(&names, b", ")
+                roastedduck_common::ByteString::join(&names, b", ")
             )));
         }
         return Ok(());
@@ -535,13 +535,13 @@ pub fn verify_parameters<V, E, K: AsRef<[u8]>, L: AsRef<[u8]>>(
     let mut names: Vec<_> = provided
         .iter_keys()
         .filter(|(name, _)| !expected.contains_key(name.as_ref()))
-        .map(|(name, _)| rustdb_common::ByteString::from(name.as_ref()))
+        .map(|(name, _)| roastedduck_common::ByteString::from(name.as_ref()))
         .collect();
     names.sort_unstable();
     names.dedup();
-    Err(Error::invalid_input(rustdb_common::byte_format!(
+    Err(Error::invalid_input(roastedduck_common::byte_format!(
         "Parameter argument/count mismatch, identifiers of the excess parameters: {}",
-        rustdb_common::ByteString::join(&names, b", ")
+        roastedduck_common::ByteString::join(&names, b", ")
     )))
 }
 
@@ -549,7 +549,7 @@ pub fn verify_parameters<V, E, K: AsRef<[u8]>, L: AsRef<[u8]>>(
 /// again with the values, so the plan uses them as constants.
 fn bind_execute(scope: &mut BindScope<'_>, execute: &mut ExecuteStatement) -> Result<BoundStatement> {
     let Some(prepared) = scope.context.prepared_statements.get(&execute.name).cloned() else {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "Prepared statement \"{}\" does not exist",
             execute.name
         )));
@@ -559,7 +559,7 @@ fn bind_execute(scope: &mut BindScope<'_>, execute: &mut ExecuteStatement) -> Re
     // DuckDB's `PreparedStatementData::Bind`: every parameter needs a value.
     for (identifier, _) in prepared.value_map.iter() {
         if execute.named_values.get(identifier).is_none() {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Could not find parameter with identifier {identifier}"
             )));
         }

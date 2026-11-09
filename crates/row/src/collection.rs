@@ -3,9 +3,9 @@
 use std::ops::Range;
 use std::sync::{Arc, PoisonError};
 
-use rustdb_buffer::{BufferHandle, BufferManager, MemoryTag};
-use rustdb_common::{Error, Result};
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_buffer::{BufferHandle, BufferManager, MemoryTag};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use crate::format::ChunkFormat;
 use crate::gather::{HeapKeepAlive, gather_column, has_heap_data};

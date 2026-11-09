@@ -1,13 +1,13 @@
 //! Real physical COPY pipeline with Unicode paths, temp rename and returned filenames.
-use rustdb_common::Error;
-use rustdb_execution::operators::{
+use roastedduck_common::Error;
+use roastedduck_execution::operators::{
     CollectedResult, CopyToFileOptions, PhysicalCopyToFile, PhysicalResultCollector,
 };
-use rustdb_execution::{ClientEnv, Executor, PhysicalRef, create_physical_plan};
-use rustdb_function::{CopyFunction, FunctionData};
-use rustdb_planner::operator::{CopyFunctionReturnType, CopyOverwriteMode, FilenamePattern};
-use rustdb_planner::{Expression, LogicalKind, LogicalOperator};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_execution::{ClientEnv, Executor, PhysicalRef, create_physical_plan};
+use roastedduck_function::{CopyFunction, FunctionData};
+use roastedduck_planner::operator::{CopyFunctionReturnType, CopyOverwriteMode, FilenamePattern};
+use roastedduck_planner::{Expression, LogicalKind, LogicalOperator};
+use roastedduck_types::{LogicalType, Value};
 use std::any::Any;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -21,7 +21,7 @@ impl FunctionData for Bind {
 fn function() -> CopyFunction {
     let mut f = CopyFunction::new("native_test_blob");
     f.copy_to_initialize_global = Some(Arc::new(|_, path| {
-        let file = std::fs::File::create(rustdb_function::file_system::native_path(path)?)
+        let file = std::fs::File::create(roastedduck_function::file_system::native_path(path)?)
             .map_err(|e| Error::invalid_input(e.to_string()))?;
         Ok(Box::new(Mutex::new(file)))
     }));
@@ -104,14 +104,14 @@ fn physical_copy_writes_renames_and_returns_native_path() {
 
 #[test]
 fn physical_export_writes_native_sql_files() {
-    use rustdb_execution::operators::PhysicalExport;
-    use rustdb_planner::operator::{ExportedTable, LogicalExport};
+    use roastedduck_execution::operators::PhysicalExport;
+    use roastedduck_planner::operator::{ExportedTable, LogicalExport};
     let directory = std::path::PathBuf::from(std::env::var_os("TMPDIR").expect("external test TMPDIR"))
         .join(format!("physical-native-export-{}", std::process::id()));
     std::fs::create_dir(&directory).unwrap();
-    let raw_path = rustdb_common::ByteString::from(b"raw\xff'\\file.csv");
+    let raw_path = roastedduck_common::ByteString::from(b"raw\xff'\\file.csv");
     let export = LogicalExport {
-        copy_info: rustdb_ast::CopyInfo {
+        copy_info: roastedduck_ast::CopyInfo {
             catalog: "".into(),
             schema: "main".into(),
             table: "".into(),
@@ -119,10 +119,10 @@ fn physical_export_writes_native_sql_files() {
             is_from: false,
             format: "csv".into(),
             file_path: directory.as_os_str().as_encoded_bytes().into(),
-            options: rustdb_common::CaseInsensitiveMap::default(),
+            options: roastedduck_common::CaseInsensitiveMap::default(),
             select_statement: None,
             is_format_auto_detected: false,
-            parsed_options: rustdb_common::CaseInsensitiveMap::default(),
+            parsed_options: roastedduck_common::CaseInsensitiveMap::default(),
             file_path_expression: None,
         },
         function: CopyFunction::new("csv"),
@@ -141,8 +141,8 @@ fn physical_export_writes_native_sql_files() {
     let operator: PhysicalRef = Arc::new(PhysicalExport::new(
         None,
         export,
-        Arc::new(rustdb_catalog::Catalog::new("memory").unwrap()),
-        Arc::new(rustdb_catalog::Transaction::system()),
+        Arc::new(roastedduck_catalog::Catalog::new("memory").unwrap()),
+        Arc::new(roastedduck_catalog::Transaction::system()),
     ));
     let root: PhysicalRef = Arc::new(PhysicalResultCollector::new(operator));
     Executor::execute(&root, ClientEnv::standalone().unwrap()).unwrap();

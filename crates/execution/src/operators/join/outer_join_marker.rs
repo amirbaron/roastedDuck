@@ -2,7 +2,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use rustdb_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE};
+use roastedduck_types::{DataChunk, LogicalType, STANDARD_VECTOR_SIZE};
 
 use super::{null_columns, slice_columns};
 

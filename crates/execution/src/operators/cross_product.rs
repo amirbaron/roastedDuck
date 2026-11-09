@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use crate::operator::{ErasedOperator, ErasedSink, PhysicalOperator, PhysicalRef, SinkState};
 use crate::{ExecutionContext, Operator, OperatorResult, Sink, SinkFinalize, SinkResult};

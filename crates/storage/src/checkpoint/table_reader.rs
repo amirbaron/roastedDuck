@@ -4,8 +4,8 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::LogicalType;
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::LogicalType;
 
 use super::pointers::{PersistentColumnData, RowGroupPointer};
 use super::stream::StreamDeserializer;
@@ -125,7 +125,7 @@ fn read_deletes(metadata: &MetadataManager, pointer: MetaBlockPointer) -> Result
             usize::try_from(reader.read_u64()?).map_err(|_| Error::serialization("vector index"))?;
         if vector_index * STANDARD_VECTOR_SIZE >= crate::MAX_ROW_GROUP_SIZE as usize {
             return Err(Error::new(
-                rustdb_common::ErrorKind::Io,
+                roastedduck_common::ErrorKind::Io,
                 format!(
                     "In DeserializeDeletes, vector_index {vector_index} is out of range for the max row group size \
                      of {}. Corrupted file?",

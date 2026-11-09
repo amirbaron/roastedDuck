@@ -5,7 +5,7 @@
 //! Nodes render as objects whose first key is `"node"`; enums and C `char` fields
 //! render as their integer codes; absent pointers as `null`.
 
-use rustdb_common::ByteString;
+use roastedduck_common::ByteString;
 use std::fmt::Write as _;
 
 use super::{List, Node, Value};

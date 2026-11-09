@@ -4,11 +4,11 @@
 
 use std::sync::Arc;
 
-use rustdb_ast::{CatalogType, CreateInfo, DropInfo, OnConflictAction, OnEntryNotFound, ParseInfo};
-use rustdb_catalog::{CatalogEntry, EntryKind};
-use rustdb_common::{Error, PhysicalIndex, Result};
-use rustdb_function::named_parameters_in_map_order;
-use rustdb_serde::{SerializeObject, Serializer};
+use roastedduck_ast::{CatalogType, CreateInfo, DropInfo, OnConflictAction, OnEntryNotFound, ParseInfo};
+use roastedduck_catalog::{CatalogEntry, EntryKind};
+use roastedduck_common::{Error, PhysicalIndex, Result};
+use roastedduck_function::named_parameters_in_map_order;
+use roastedduck_serde::{SerializeObject, Serializer};
 
 use super::{
     BoundLimitNode, BoundMergeIntoAction, BoundPivotInfo, CopyFunctionReturnType, CopyOverwriteMode,
@@ -137,7 +137,7 @@ impl SerializeObject for LogicalOperator {
                 chunk_types,
                 collection,
             } => {
-                let collection = rustdb_types::ColumnDataCollection::from_shared(
+                let collection = roastedduck_types::ColumnDataCollection::from_shared(
                     chunk_types.clone(),
                     Arc::clone(collection),
                 );
@@ -272,8 +272,8 @@ impl SerializeObject for LogicalOperator {
                 // `DEALLOCATE` is a `DROP` of the prepared statement (`Binder::Bind(DropStatement&)`).
                 let info = DropInfo {
                     catalog_type: CatalogType::PreparedStatement,
-                    catalog: rustdb_common::ByteString::new(),
-                    schema: rustdb_common::ByteString::new(),
+                    catalog: roastedduck_common::ByteString::new(),
+                    schema: roastedduck_common::ByteString::new(),
                     name: name.clone(),
                     if_not_found: OnEntryNotFound::ThrowException,
                     cascade: false,
@@ -373,12 +373,12 @@ impl SerializeObject for LogicalOperator {
             LogicalKind::CopyToFile(copy) => serialize_copy_to_file(copy, serializer),
             LogicalKind::Export(export) => {
                 let copy_info = ParseInfo::Copy(Box::new(export.copy_info.clone()));
-                let exported_tables = ParseInfo::BoundExportData(rustdb_ast::BoundExportData {
+                let exported_tables = ParseInfo::BoundExportData(roastedduck_ast::BoundExportData {
                     data: export
                         .tables
                         .iter()
                         .cloned()
-                        .map(|table_data| rustdb_ast::ExportedTableInfo { table_data })
+                        .map(|table_data| roastedduck_ast::ExportedTableInfo { table_data })
                         .collect(),
                 });
                 properties::LogicalExport {
@@ -399,7 +399,7 @@ impl SerializeObject for LogicalOperator {
     }
 }
 
-rustdb_serde::impl_pointee_serialize!(LogicalOperator, BoundMergeIntoAction);
+roastedduck_serde::impl_pointee_serialize!(LogicalOperator, BoundMergeIntoAction);
 
 /// `LogicalSimple::Serialize`.
 fn serialize_simple(info: &ParseInfo, serializer: &mut dyn Serializer) -> Result<()> {
@@ -430,7 +430,7 @@ fn serialize_get(get: &LogicalGet, serializer: &mut dyn Serializer) -> Result<()
     // 203 `column_ids` is no longer written.
     serializer.write_property(204, "projection_ids", &get.projection_ids)?;
     serializer.write_property(205, "table_filters", &get.table_filters)?;
-    // A table scan's bind data (`TableScanBindData`) is the scanned table, which rustdb
+    // A table scan's bind data (`TableScanBindData`) is the scanned table, which roastedduck
     // keeps in the `LogicalGet`.
     let table_scan = get.table.as_ref().map(|table| {
         move |serializer: &mut dyn Serializer| {
@@ -447,7 +447,7 @@ fn serialize_get(get: &LogicalGet, serializer: &mut dyn Serializer) -> Result<()
     if table_scan.is_none() && get.function.serialize.is_none() {
         // Without bind data the arguments are kept to bind the function again.
         serializer.write_property(206, "parameters", &get.parameters)?;
-        let named: Vec<(&rustdb_common::ByteString, &rustdb_types::Value)> =
+        let named: Vec<(&roastedduck_common::ByteString, &roastedduck_types::Value)> =
             named_parameters_in_map_order(&get.named_parameters)
                 .map(|(name, value)| (name, value))
                 .collect();
@@ -473,8 +473,8 @@ fn serialize_get(get: &LogicalGet, serializer: &mut dyn Serializer) -> Result<()
     serializer.write_property_with_explicit_default(
         213,
         "ordinality_idx",
-        &rustdb_serde::OptionalIdx(get.ordinality_index),
-        &rustdb_serde::OptionalIdx(None),
+        &roastedduck_serde::OptionalIdx(get.ordinality_index),
+        &roastedduck_serde::OptionalIdx(None),
     )?;
     serializer.write_property_with_default(214, "row_group_order_options", &get.row_group_order.as_ref())
 }
@@ -545,8 +545,8 @@ fn serialize_copy_to_file(copy: &LogicalCopyToFile, serializer: &mut dyn Seriali
     serializer.write_property_with_explicit_default(
         220,
         "file_size_bytes",
-        &rustdb_serde::OptionalIdx(copy.file_size_bytes),
-        &rustdb_serde::OptionalIdx(None),
+        &roastedduck_serde::OptionalIdx(copy.file_size_bytes),
+        &roastedduck_serde::OptionalIdx(None),
     )
 }
 
@@ -573,9 +573,9 @@ fn serialize_table_scan_bind_data(
 }
 
 /// A `named_parameter_map_t` (an unordered map) in its iteration order.
-struct NamedParameters<'a>(&'a [(&'a rustdb_common::ByteString, &'a rustdb_types::Value)]);
+struct NamedParameters<'a>(&'a [(&'a roastedduck_common::ByteString, &'a roastedduck_types::Value)]);
 
-impl rustdb_serde::Serialize for NamedParameters<'_> {
+impl roastedduck_serde::Serialize for NamedParameters<'_> {
     fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
         serializer.on_list_begin(self.0.len());
         for (name, value) in self.0 {
@@ -593,9 +593,9 @@ impl rustdb_serde::Serialize for NamedParameters<'_> {
 /// iteration order (`std::hash<idx_t>` is the identity).
 struct IndexMap<'a>(&'a [usize]);
 
-impl rustdb_serde::Serialize for IndexMap<'_> {
+impl roastedduck_serde::Serialize for IndexMap<'_> {
     fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
-        let mut map = rustdb_common::libcxx::UnorderedOrder::default();
+        let mut map = roastedduck_common::libcxx::UnorderedOrder::default();
         for key in 0..self.0.len() {
             map.insert(key as u64, key, |a, b| a == b);
         }
@@ -620,7 +620,7 @@ fn table_info(
     entry: &CatalogEntry,
 ) -> Result<CreateInfo> {
     match &entry.kind {
-        EntryKind::Table(table) => Ok(rustdb_catalog::checkpoint::table_create_info(
+        EntryKind::Table(table) => Ok(roastedduck_catalog::checkpoint::table_create_info(
             catalog, schema, entry, table,
         )),
         _ => Err(Error::internal("modified entry is not a table")),
@@ -642,7 +642,7 @@ fn physical_indexes(columns: &[usize]) -> Vec<PhysicalIndex> {
         .collect()
 }
 
-impl rustdb_serde::Serialize for BoundLimitNode {
+impl roastedduck_serde::Serialize for BoundLimitNode {
     fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
         // DuckDB's members default to 0 and -1.
         let (limit_type, constant_integer, constant_percentage, expression) = match self {
@@ -665,7 +665,7 @@ impl rustdb_serde::Serialize for BoundLimitNode {
     }
 }
 
-impl rustdb_serde::Serialize for JoinCondition {
+impl roastedduck_serde::Serialize for JoinCondition {
     fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
         serializer.write_object(&nodes::JoinCondition {
             left: &self.left,
@@ -675,7 +675,7 @@ impl rustdb_serde::Serialize for JoinCondition {
     }
 }
 
-impl rustdb_serde::Serialize for BoundPivotInfo {
+impl roastedduck_serde::Serialize for BoundPivotInfo {
     fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
         serializer.write_object(&nodes::BoundPivotInfo {
             group_count: self.group_count,

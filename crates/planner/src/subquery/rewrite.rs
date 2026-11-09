@@ -4,8 +4,8 @@
 
 use std::collections::HashMap;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, Value};
 
 use crate::binder::{CorrelatedColumnInfo, CorrelatedColumns};
 use crate::expression::{BoundCaseCheck, BoundCaseExpression, Expression, ExpressionKind};
@@ -188,7 +188,7 @@ fn rewrite_count_expression(
             LogicalType::BOOLEAN,
             vec![reference.clone()],
         );
-        let zero = Expression::constant(rustdb_function::cast::ValueCast::default_cast_as(
+        let zero = Expression::constant(roastedduck_function::cast::ValueCast::default_cast_as(
             &Value::integer(0),
             &return_type,
         )?);

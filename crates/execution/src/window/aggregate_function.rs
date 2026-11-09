@@ -1,10 +1,10 @@
 //! Aggregates used as window functions (DuckDB's `window_aggregate_function.cpp`):
 //! simplification, the choice of evaluation strategy and the FILTER clause.
 
-use rustdb_ast::WindowBoundary;
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::{DistinctDependence, FrameDelta, OrderDependence};
-use rustdb_types::{DataChunk, Vector};
+use roastedduck_ast::WindowBoundary;
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::{DistinctDependence, FrameDelta, OrderDependence};
+use roastedduck_types::{DataChunk, Vector};
 
 use super::WindowExpression;
 use super::aggregator::WindowAggregator;
@@ -44,7 +44,7 @@ pub(crate) struct AggregateExecutor {
     /// Collection columns of the `ORDER BY` arguments (naive strategy).
     arg_order_idx: Vec<usize>,
     /// The `ORDER BY` arguments.
-    arg_orders: Vec<rustdb_planner::expression::BoundOrderByNode>,
+    arg_orders: Vec<roastedduck_planner::expression::BoundOrderByNode>,
     start: WindowBoundary,
     end: WindowBoundary,
 }

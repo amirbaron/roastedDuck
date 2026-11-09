@@ -6,10 +6,10 @@
 
 use std::sync::Arc;
 
-use rustdb_common::string_util::{candidates_message_bytes, top_n_jaro_winkler};
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
+use roastedduck_common::string_util::{candidates_message_bytes, top_n_jaro_winkler};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_function::{BindInput, FunctionData, NullHandling, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, Value, Vector};
 
 use crate::scalar::executor::addressable;
 use crate::scalar::nested::{all_constant, struct_field};
@@ -61,7 +61,7 @@ fn bind_union_extract(function: &mut ScalarFunction, input: &BindInput<'_>) -> B
     else {
         let names: Vec<ByteString> = members.iter().map(|(name, _)| name.clone()).collect();
         let message = candidates_message_bytes(&top_n_jaro_winkler(&names, &key), b"Candidate Entries");
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "Could not find key \"{key}\" in union\n{message}"
         )));
     };

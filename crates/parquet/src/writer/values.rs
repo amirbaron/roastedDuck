@@ -2,8 +2,8 @@
 //! `StandardColumnWriter`, `BooleanColumnWriter`, `FixedDecimalColumnWriter` and
 //! `EnumColumnWriter`): dictionaries, page encodings and statistics.
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{Vector, VectorKind};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{Vector, VectorKind};
 
 use super::bloom::BloomFilter;
 use super::encoders::{BssEncoder, DbpEncoder, DlbaEncoder, RleBpEncoder};
@@ -601,7 +601,7 @@ impl ValueWriter for FixedDecimalWriter {
 /// `EnumColumnWriter`: the enum's index, with the enum values as dictionary.
 #[derive(Debug)]
 pub struct EnumWriter {
-    values: Vec<rustdb_common::ByteString>,
+    values: Vec<roastedduck_common::ByteString>,
     bit_width: u8,
     stats: StringStatistics,
     encoder: RleBpEncoder,
@@ -609,7 +609,7 @@ pub struct EnumWriter {
 }
 
 impl EnumWriter {
-    pub fn new(values: Vec<rustdb_common::ByteString>) -> Self {
+    pub fn new(values: Vec<roastedduck_common::ByteString>) -> Self {
         let bit_width = compute_bit_width(values.len() as u64);
         Self {
             values,
@@ -621,7 +621,7 @@ impl EnumWriter {
     }
 
     fn index(vector: &Vector, row: usize) -> Result<u32> {
-        use rustdb_types::PhysicalType as P;
+        use roastedduck_types::PhysicalType as P;
         Ok(match vector.logical_type().physical_type() {
             P::UInt8 => u32::from(vector.values::<u8>()[row]),
             P::UInt16 => u32::from(vector.values::<u16>()[row]),
@@ -703,7 +703,7 @@ pub fn deep_flatten(vector: &Vector, count: usize) -> Result<Vector> {
         return Ok(vector.clone());
     }
     let mut flat = Vector::flat(vector.logical_type().clone(), count.max(1));
-    rustdb_types::vector_ops::copy_rows(vector, 0, count, &mut flat, 0)?;
+    roastedduck_types::vector_ops::copy_rows(vector, 0, count, &mut flat, 0)?;
     Ok(flat)
 }
 

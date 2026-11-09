@@ -4,10 +4,10 @@
 //! The binder names result columns after the text of their expressions, so this output
 //! must match DuckDB's character for character.
 
-use rustdb_common::{ByteString, byte_format as format, byte_write as write};
+use roastedduck_common::{ByteString, byte_format as format, byte_write as write};
 use std::fmt;
 
-use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo, TypeParameterValue, UnboundTypeInfo, Value};
+use roastedduck_types::{LogicalType, LogicalTypeId, TypeInfo, TypeParameterValue, UnboundTypeInfo, Value};
 
 use crate::keyword::{KeywordCategory, write_optionally_quoted_with_bytes};
 use crate::{
@@ -1351,7 +1351,7 @@ macro_rules! native_sql {
                 output
             }
         }
-        impl rustdb_common::byte_format::NativeByteFormat for $ty {
+        impl roastedduck_common::byte_format::NativeByteFormat for $ty {
             fn append_native_bytes(&self, output: &mut ByteString) { let _ = self.write_sql_bytes(output); }
         }
         impl fmt::Display for $ty {

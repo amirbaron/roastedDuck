@@ -1,5 +1,5 @@
 //! Actual C++ extension-install hint output with native base messages.
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 use std::io::{self, BufRead};
 fn decode(h: &str) -> Result<Vec<u8>> {
     h.as_bytes()
@@ -21,8 +21,12 @@ pub fn compare(line: &str) -> Result<()> {
         return Err(Error::invalid_input("bad record"));
     }
     let base = decode(f[0])?;
-    let actual =
-        rustdb_function::extension_entries::add_install_hint_bytes(&base, f[1], f[2] == "1", f[3] == "1");
+    let actual = roastedduck_function::extension_entries::add_install_hint_bytes(
+        &base,
+        f[1],
+        f[2] == "1",
+        f[3] == "1",
+    );
     if actual.as_bytes() != decode(f[4])? {
         return Err(Error::internal("native install hint differs"));
     }

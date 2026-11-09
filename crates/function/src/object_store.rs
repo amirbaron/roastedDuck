@@ -1,10 +1,10 @@
 //! Database-local immutable files owned by external relation dependencies.
 //! Names are weakly registered: closing a relation does not turn ephemeral input into a cache.
 use crate::ObjectCache;
-use rustdb_common::ByteString;
+use roastedduck_common::ByteString;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
-const KEY: &str = "rustdb_object_store_files";
+const KEY: &str = "roastedduck_object_store_files";
 #[derive(Debug, Default)]
 pub struct ObjectStore {
     files: Mutex<HashMap<ByteString, Weak<MemoryFile>>>,

@@ -20,7 +20,7 @@ mod shell;
 mod state;
 mod utf8;
 
-use rustdb_common::ByteString;
+use roastedduck_common::ByteString;
 use std::io::IsTerminal;
 use std::process::ExitCode;
 
@@ -79,7 +79,7 @@ fn run_shell(shell: &mut Shell, args: &[ByteString]) -> i32 {
         let mut arguments = vec![ByteString::from(option.option)];
         for arg_idx in 0..option.argument_count {
             if i + 1 >= args.len() {
-                let error = rustdb_common::byte_format!(
+                let error = roastedduck_common::byte_format!(
                     "Missing Argument Error: Argument '-{}' needs {} arguments, but got {arg_idx}\nOPTION:\n  -{} {}    \
                      {}\n\nRun '{} -help' for a list of options.\n",
                     option.option,
@@ -115,7 +115,7 @@ fn run_shell(shell: &mut Shell, args: &[ByteString]) -> i32 {
         let init_file = (!shell.state.init_file.is_empty()).then(|| shell.state.init_file.clone());
         if !shell.process_duckdbrc(init_file.as_deref()) && shell.state.bail != BailOnError::DontBailOnError {
             if !shell.state.duckdb_rc_path.is_empty() {
-                let error = rustdb_common::byte_format!(
+                let error = roastedduck_common::byte_format!(
                     "Encountered errors while executing init file \"{}\". Exiting.",
                     shell.state.duckdb_rc_path
                 );
@@ -167,12 +167,12 @@ fn run_shell(shell: &mut Shell, args: &[ByteString]) -> i32 {
 fn print_startup_text(state: &ShellState) {
     let mut startup_version = format!(
         "roastedDuck {} (DuckDB-compatible, {}",
-        rustdb::Database::library_version(),
-        rustdb::Database::release_codename()
+        roastedduck::Database::library_version(),
+        roastedduck::Database::release_codename()
     );
-    if rustdb::Database::release_codename().contains("Development") {
+    if roastedduck::Database::release_codename().contains("Development") {
         startup_version += ", ";
-        startup_version += rustdb::Database::source_id();
+        startup_version += roastedduck::Database::source_id();
     }
     startup_version += ")\n";
     if state.startup_text != StartupText::None {
@@ -192,7 +192,7 @@ fn print_startup_text(state: &ShellState) {
 }
 
 fn main() -> ExitCode {
-    rustdb_capi::register_extension_loader();
+    roastedduck_capi::register_extension_loader();
     // Preserve the OS argument bytes until the consuming operation validates them.
     let args: Vec<ByteString> = std::env::args_os()
         .map(|arg| arg.as_encoded_bytes().into())

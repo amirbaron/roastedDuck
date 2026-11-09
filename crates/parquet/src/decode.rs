@@ -2,10 +2,10 @@
 //! `DbpDecoder` and `BssDecoder`): a bounds-checked byte cursor, varints, bit unpacking,
 //! the RLE/bit-packing hybrid, `DELTA_BINARY_PACKED` and `BYTE_STREAM_SPLIT`.
 
-use rustdb_common::{Error, ErrorKind, Result};
+use roastedduck_common::{Error, ErrorKind, Result};
 
 /// A `std::runtime_error` of the C++ reader, reported as an `Invalid Error`.
-pub(crate) fn runtime_error(message: impl Into<rustdb_common::ByteString>) -> Error {
+pub(crate) fn runtime_error(message: impl Into<roastedduck_common::ByteString>) -> Error {
     Error::new_bytes(ErrorKind::Invalid, message.into())
 }
 

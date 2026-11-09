@@ -9,8 +9,8 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::sync::Arc;
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_csv::options::FileCompressionType;
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_csv::options::FileCompressionType;
 
 use crate::json_enums::{JsonFormat, JsonRecordType, JsonScanType};
 use crate::json_reader_options::{JsonReaderOptions, STANDARD_VECTOR_SIZE};
@@ -31,7 +31,7 @@ pub(crate) struct JsonFileHandle {
 /// Positional, bounded reads through the database's existing external file cache.
 /// The cache's buffer manager owns accounting and eviction; readers retain no copy.
 struct CachedJsonReader {
-    handle: rustdb_function::caching_file_system::CachingFileHandle,
+    handle: roastedduck_function::caching_file_system::CachingFileHandle,
     position: u64,
     size: u64,
 }
@@ -63,7 +63,7 @@ impl std::fmt::Debug for JsonFileHandle {
 /// Whether `path` is a pipe (`LocalFileSystem::IsPipe`: a FIFO).
 pub(crate) fn is_pipe(path: &[u8]) -> bool {
     use std::os::unix::fs::FileTypeExt;
-    rustdb_function::file_system::native_path(path)
+    roastedduck_function::file_system::native_path(path)
         .ok()
         .and_then(|path| std::fs::metadata(path).ok())
         .is_some_and(|metadata| metadata.file_type().is_fifo())
@@ -71,13 +71,13 @@ pub(crate) fn is_pipe(path: &[u8]) -> bool {
 
 /// Size of a local or database-owned immutable file, without materializing its bytes.
 pub(crate) fn file_size(path: &[u8]) -> u64 {
-    if let Some(fs) = rustdb_function::registered_files::lookup(path) {
+    if let Some(fs) = roastedduck_function::registered_files::lookup(path) {
         return fs.open(path, false).and_then(|h| h.size()).unwrap_or(0);
     }
-    if let Some(file) = rustdb_function::object_store::lookup(path) {
+    if let Some(file) = roastedduck_function::object_store::lookup(path) {
         return file.bytes.len() as u64;
     }
-    rustdb_function::file_system::native_path(path)
+    roastedduck_function::file_system::native_path(path)
         .ok()
         .and_then(|p| std::fs::metadata(p).ok())
         .map_or(0, |m| m.len())
@@ -85,9 +85,9 @@ pub(crate) fn file_size(path: &[u8]) -> u64 {
 
 /// Reads the whole pipe at `path`, still compressed.
 pub(crate) fn read_pipe(path: &[u8]) -> Result<Vec<u8>> {
-    rustdb_function::file_system::verify_can_access_file(path)?;
-    let mut file = File::open(rustdb_function::file_system::native_path(path)?)
-        .map_err(|error| rustdb_csv::buffer::open_error(path, &error))?;
+    roastedduck_function::file_system::verify_can_access_file(path)?;
+    let mut file = File::open(roastedduck_function::file_system::native_path(path)?)
+        .map_err(|error| roastedduck_csv::buffer::open_error(path, &error))?;
     let mut contents = Vec::new();
     file.read_to_end(&mut contents)
         .map_err(|error| Error::new(ErrorKind::Io, error.to_string()))?;
@@ -108,18 +108,18 @@ impl JsonFileHandle {
             let raw: Box<dyn Read + Send> = Box::new(std::io::Cursor::new(contents));
             let reader: Box<dyn Read + Send> = match compression {
                 FileCompressionType::Gzip => Box::new(flate2::read::MultiGzDecoder::new(raw)),
-                FileCompressionType::Zstd => Box::new(rustdb_zstd::StreamDecoder::new(raw)),
+                FileCompressionType::Zstd => Box::new(roastedduck_zstd::StreamDecoder::new(raw)),
                 _ => raw,
             };
             // `GetFileSize` of a pipe.
             return Ok(Self { reader, file_size: 0 });
         }
-        rustdb_function::file_system::verify_can_access_file(path)?;
-        if let Some(fs) = rustdb_function::registered_files::lookup(path) {
+        roastedduck_function::file_system::verify_can_access_file(path)?;
+        if let Some(fs) = roastedduck_function::registered_files::lookup(path) {
             let (cursor, file_size): (Box<dyn Read + Send>, u64) = if fs.is_remote() {
-                use rustdb_function::caching_file_system::CachingFileHandle;
-                use rustdb_function::external_file_cache::CacheValidationMode;
-                let client = rustdb_function::file_system::opener();
+                use roastedduck_function::caching_file_system::CachingFileHandle;
+                use roastedduck_function::external_file_cache::CacheValidationMode;
+                let client = roastedduck_function::file_system::opener();
                 let handle = CachingFileHandle::open(
                     client.as_ref().and_then(|client| client.external_file_cache()),
                     path,
@@ -137,7 +137,7 @@ impl JsonFileHandle {
             } else {
                 let handle = fs.open(path, false)?;
                 let size = handle.size()?;
-                let mut cursor = rustdb_function::registered_files::Cursor::new(handle);
+                let mut cursor = roastedduck_function::registered_files::Cursor::new(handle);
                 cursor
                     .seek(SeekFrom::Start(start))
                     .map_err(|e| Error::new(ErrorKind::Io, e.to_string()))?;
@@ -146,20 +146,20 @@ impl JsonFileHandle {
             let mut buffered = BufReader::with_capacity(1 << 16, cursor);
             let compression = compression.resolve(path);
             if compression == FileCompressionType::Zstd {
-                rustdb_function::file_system::verify_zstd_file_system()?;
+                roastedduck_function::file_system::verify_zstd_file_system()?;
             }
             if compression == FileCompressionType::Gzip && start == 0 {
-                rustdb_csv::buffer::verify_gzip_header(&mut buffered, path)?;
+                roastedduck_csv::buffer::verify_gzip_header(&mut buffered, path)?;
             }
             let raw: Box<dyn Read + Send> = Box::new(buffered);
             let reader: Box<dyn Read + Send> = match compression {
                 FileCompressionType::Gzip => Box::new(flate2::read::MultiGzDecoder::new(raw)),
-                FileCompressionType::Zstd => Box::new(rustdb_zstd::StreamDecoder::new(raw)),
+                FileCompressionType::Zstd => Box::new(roastedduck_zstd::StreamDecoder::new(raw)),
                 _ => raw,
             };
             return Ok(Self { reader, file_size });
         }
-        if let Some(file) = rustdb_function::object_store::lookup(path) {
+        if let Some(file) = roastedduck_function::object_store::lookup(path) {
             let file_size = file.bytes.len() as u64;
             let mut cursor = std::io::Cursor::new(Arc::clone(&file.bytes));
             cursor
@@ -167,34 +167,34 @@ impl JsonFileHandle {
                 .map_err(|e| Error::new(ErrorKind::Io, e.to_string()))?;
             let compression = compression.resolve(path);
             if compression == FileCompressionType::Zstd {
-                rustdb_function::file_system::verify_zstd_file_system()?;
+                roastedduck_function::file_system::verify_zstd_file_system()?;
             }
             let mut buffered = BufReader::with_capacity(1 << 16, cursor);
             if compression == FileCompressionType::Gzip && start == 0 {
-                rustdb_csv::buffer::verify_gzip_header(&mut buffered, path)?;
+                roastedduck_csv::buffer::verify_gzip_header(&mut buffered, path)?;
             }
             let raw: Box<dyn Read + Send> = Box::new(buffered);
             let reader: Box<dyn Read + Send> = match compression {
                 FileCompressionType::Gzip => Box::new(flate2::read::MultiGzDecoder::new(raw)),
-                FileCompressionType::Zstd => Box::new(rustdb_zstd::StreamDecoder::new(raw)),
+                FileCompressionType::Zstd => Box::new(roastedduck_zstd::StreamDecoder::new(raw)),
                 _ => raw,
             };
             return Ok(Self { reader, file_size });
         }
-        let mut file = File::open(rustdb_function::file_system::native_path(path)?)
-            .map_err(|error| rustdb_csv::buffer::open_error(path, &error))?;
+        let mut file = File::open(roastedduck_function::file_system::native_path(path)?)
+            .map_err(|error| roastedduck_csv::buffer::open_error(path, &error))?;
         let metadata = file
             .metadata()
-            .map_err(|error| rustdb_csv::buffer::open_error(path, &error))?;
+            .map_err(|error| roastedduck_csv::buffer::open_error(path, &error))?;
         if metadata.is_dir() {
             return Err(Error::new_bytes(
                 ErrorKind::Io,
-                rustdb_common::byte_format!("Could not read from file \"{path}\": Is a directory"),
+                roastedduck_common::byte_format!("Could not read from file \"{path}\": Is a directory"),
             ));
         }
         let compression = compression.resolve(path);
         if compression == FileCompressionType::Zstd {
-            rustdb_function::file_system::verify_zstd_file_system()?;
+            roastedduck_function::file_system::verify_zstd_file_system()?;
         }
         if start > 0 {
             file.seek(SeekFrom::Start(start))
@@ -202,12 +202,12 @@ impl JsonFileHandle {
         }
         let mut buffered = BufReader::with_capacity(1 << 16, file);
         if compression == FileCompressionType::Gzip && start == 0 {
-            rustdb_csv::buffer::verify_gzip_header(&mut buffered, path)?;
+            roastedduck_csv::buffer::verify_gzip_header(&mut buffered, path)?;
         }
         let raw: Box<dyn Read + Send> = Box::new(buffered);
         let reader: Box<dyn Read + Send> = match compression {
             FileCompressionType::Gzip => Box::new(flate2::read::MultiGzDecoder::new(raw)),
-            FileCompressionType::Zstd => Box::new(rustdb_zstd::StreamDecoder::new(raw)),
+            FileCompressionType::Zstd => Box::new(roastedduck_zstd::StreamDecoder::new(raw)),
             _ => raw,
         };
         Ok(Self {
@@ -390,7 +390,7 @@ pub(crate) struct ByteRange {
     reason = "mirrors DuckDB's reader state flags"
 )]
 pub(crate) struct JsonReader {
-    pub(crate) path: rustdb_common::ByteString,
+    pub(crate) path: roastedduck_common::ByteString,
     scan_type: JsonScanType,
     ignore_errors: bool,
     maximum_object_size: u64,
@@ -531,7 +531,7 @@ impl JsonReader {
     fn parse_error(&self, values_in_batch: u64, error: &ReadError, extra: &str) -> Result<Error> {
         // DuckDB reports the 0-based value index plus two.
         let line = self.values_before(values_in_batch)? + 2;
-        Ok(Error::invalid_input(rustdb_common::byte_format!(
+        Ok(Error::invalid_input(roastedduck_common::byte_format!(
             "Malformed JSON in file \"{}\", at byte {} in {} {line}: {}. {extra}",
             self.path,
             error.pos + 1,
@@ -552,19 +552,22 @@ impl JsonReader {
             Some(range) if range.start > 0 => line + count_lines_before(&self.path, range.start)?,
             _ => line,
         };
-        let mut text = rustdb_common::byte_format!(
+        let mut text = roastedduck_common::byte_format!(
             "JSON transform error in file \"{}\", in {} {line}: ",
             self.path,
             self.unit()
         )
         .into_bytes();
         text.extend_from_slice(message);
-        Ok(Error::new_bytes(rustdb_common::ErrorKind::InvalidInput, text))
+        Ok(Error::new_bytes(
+            roastedduck_common::ErrorKind::InvalidInput,
+            text,
+        ))
     }
 
     /// `ThrowObjectSizeError`.
     fn object_size_error(&self, object_size: usize) -> Error {
-        Error::invalid_input(rustdb_common::byte_format!(
+        Error::invalid_input(roastedduck_common::byte_format!(
             "\"maximum_object_size\" of {} bytes exceeded while reading file \"{}\" (>{object_size} bytes).\n Try increasing \"maximum_object_size\".",
             self.maximum_object_size,
             self.path
@@ -644,7 +647,7 @@ impl JsonReader {
             return Ok(());
         }
         if self.buffer[self.buffer_offset] != b'[' {
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "Expected top-level JSON array with format='array', but first character is '{}' in file \"{}\".\n Try setting format='auto' or format='newline_delimited'.",
                 char::from(self.buffer[self.buffer_offset]),
                 self.path
@@ -652,7 +655,7 @@ impl JsonReader {
         }
         self.buffer_offset = skip_whitespace(&self.buffer, self.buffer_offset + 1, size);
         if self.buffer_offset >= size {
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "Missing closing brace ']' in JSON array with format='array' in file \"{}\"",
                 self.path
             )));
@@ -660,7 +663,7 @@ impl JsonReader {
         if self.buffer[self.buffer_offset] == b']' {
             self.buffer_offset = skip_whitespace(&self.buffer, self.buffer_offset + 1, size);
             if self.buffer_offset != size {
-                return Err(Error::invalid_input(rustdb_common::byte_format!(
+                return Err(Error::invalid_input(roastedduck_common::byte_format!(
                     "Empty array with trailing data when parsing JSON array with format='array' in file \"{}\"",
                     self.path
                 )));
@@ -916,7 +919,7 @@ fn count_lines_before(path: &[u8], offset: u64) -> Result<u64> {
 #[cfg(test)]
 mod memory_file_tests {
     use super::*;
-    use rustdb_function::{FunctionClient, ObjectCache, object_store::ObjectStore};
+    use roastedduck_function::{FunctionClient, ObjectCache, object_store::ObjectStore};
     use std::io::Write;
 
     #[test]
@@ -924,7 +927,7 @@ mod memory_file_tests {
         let cache = Arc::new(ObjectCache::default());
         let client = Arc::new(FunctionClient::default());
         client.set_object_cache(Arc::clone(&cache));
-        let _scope = rustdb_function::file_system::activate_opener(client);
+        let _scope = roastedduck_function::file_system::activate_opener(client);
         let path = b"DUCKDB_INTERNAL_OBJECTSTORE://json-offset";
         let owner = ObjectStore::register(
             &cache,
@@ -935,7 +938,7 @@ mod memory_file_tests {
         let mut reader = JsonFileHandle::open(path, FileCompressionType::Uncompressed, 4, None)?;
         assert_eq!(reader.file_size(), 12);
         drop(owner);
-        assert!(rustdb_function::object_store::lookup(path).is_none());
+        assert!(roastedduck_function::object_store::lookup(path).is_none());
         let mut buffer = [0; 32];
         let size = reader.read(&mut buffer)?;
         assert_eq!(&buffer[..size], b"{\"i\":42}");
@@ -948,7 +951,7 @@ mod memory_file_tests {
         let cache = Arc::new(ObjectCache::default());
         let client = Arc::new(FunctionClient::default());
         client.set_object_cache(Arc::clone(&cache));
-        let _scope = rustdb_function::file_system::activate_opener(client);
+        let _scope = roastedduck_function::file_system::activate_opener(client);
         let text = b"{\"i\":42}\n";
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         encoder

@@ -1,7 +1,7 @@
 //! Calendar arithmetic shared by the date functions (DuckDB's `Date::Extract*` helpers in
 //! `date.cpp`).
 
-use rustdb_types::Date;
+use roastedduck_types::Date;
 
 /// Day number (days since 1970-01-01) of a proleptic Gregorian date, without range checks
 /// (DuckDB's `Date::FromDate`).

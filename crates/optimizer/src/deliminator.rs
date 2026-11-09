@@ -10,12 +10,12 @@
 //! Operators are addressed by their child-index path from the root, as the plan is
 //! owned.
 
-use rustdb_ast::{ExpressionType, JoinType};
-use rustdb_planner::{
+use roastedduck_ast::{ExpressionType, JoinType};
+use roastedduck_planner::{
     ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator, LogicalOperatorType,
 };
-use rustdb_storage::TableFilter;
-use rustdb_types::LogicalType;
+use roastedduck_storage::TableFilter;
+use roastedduck_types::LogicalType;
 
 use crate::column_binding_replacer::{ColumnBindingReplacer, ReplacementBinding};
 use crate::expression_util::flip_comparison;
@@ -296,7 +296,7 @@ fn remove_inequality_join_with_delim_get(
     delim_path: &[usize],
     delim_get_count: usize,
     join_path: &[usize],
-    join_conditions: &[rustdb_planner::operator::JoinCondition],
+    join_conditions: &[roastedduck_planner::operator::JoinCondition],
     delim_index: usize,
 ) -> bool {
     let Some(delim_op) = operator_at_path(plan, delim_path) else {

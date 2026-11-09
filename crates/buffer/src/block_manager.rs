@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::block::{BlockHandle, BlockId};
 use crate::file_buffer::FileBuffer;

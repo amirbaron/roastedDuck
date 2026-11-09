@@ -1,11 +1,11 @@
 //! Table references (`transform/tableref/*.cpp`).
 
-use rustdb_ast::{
+use roastedduck_ast::{
     AtClause, BaseTableRef, JoinRef, JoinRefType, JoinType, OrdinalityType, PivotColumn, PivotColumnEntry,
     PivotRef, QueryNodeKind, SubqueryRef, TableFunctionRef, TableRef, TableRefKind,
 };
-use rustdb_common::{Error, Result};
-use rustdb_pg_parser::nodes::{
+use roastedduck_common::{Error, Result};
+use roastedduck_pg_parser::nodes::{
     AtClause as PgAtClause, JoinExpr, JoinRefType as PgJoinRefType, JoinType as PgJoinType, List, Node,
     Pivot, PivotExpr, RangeFunction, RangeSubselect, RangeVar,
 };
@@ -24,7 +24,7 @@ impl<'a> Transformer<'a> {
             Node::RangeSubselect(subselect) => t.transform_range_subselect(subselect),
             Node::RangeFunction(function) => t.transform_range_function(function),
             Node::PivotExpr(pivot) => t.transform_pivot(pivot),
-            other => Err(Error::not_implemented(rustdb_common::byte_format!(
+            other => Err(Error::not_implemented(roastedduck_common::byte_format!(
                 "From Type {} not supported",
                 super::node_tag(other).0
             ))),
@@ -99,7 +99,7 @@ impl<'a> Transformer<'a> {
                 JoinType::Inner
             }
             other => {
-                return Err(Error::not_implemented(rustdb_common::byte_format!(
+                return Err(Error::not_implemented(roastedduck_common::byte_format!(
                     "Join type {} not supported\n",
                     other as i32
                 )));
@@ -215,7 +215,7 @@ impl<'a> Transformer<'a> {
             pivot_expressions: Vec::new(),
             unpivot_names: Vec::new(),
             entries: Vec::new(),
-            pivot_enum: rustdb_common::ByteString::new(),
+            pivot_enum: roastedduck_common::ByteString::new(),
             subquery: None,
         };
         if !pivot.pivot_columns.is_empty() {
@@ -224,13 +224,13 @@ impl<'a> Transformer<'a> {
                 if is_scalar(expr) {
                     return Err(parser_error_at(
                         expr.query_location,
-                        rustdb_common::byte_format!("Cannot pivot on constant value \"{expr}\""),
+                        roastedduck_common::byte_format!("Cannot pivot on constant value \"{expr}\""),
                     ));
                 }
                 if has_subquery(expr) {
                     return Err(parser_error_at(
                         expr.query_location,
-                        rustdb_common::byte_format!("Cannot pivot on subquery \"{expr}\""),
+                        roastedduck_common::byte_format!("Cannot pivot on subquery \"{expr}\""),
                     ));
                 }
             }

@@ -3,9 +3,9 @@
 //! reader, and CTEs used a few times are copied where materializing them would be
 //! wasteful.
 
-use rustdb_ast::CteMaterialize;
-use rustdb_function::Stability;
-use rustdb_planner::{Expression, ExpressionKind, LogicalKind, LogicalOperator, LogicalOperatorType};
+use roastedduck_ast::CteMaterialize;
+use roastedduck_function::Stability;
+use roastedduck_planner::{Expression, ExpressionKind, LogicalKind, LogicalOperator, LogicalOperatorType};
 
 use crate::logical_operator_deep_copy::deep_copy;
 use crate::optimizer::Optimizer;

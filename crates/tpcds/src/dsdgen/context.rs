@@ -5,7 +5,7 @@
 //! The original keeps all of this in globals and statics; DuckDB resets the ones guarded
 //! by `InitConstants` before each generation. A [`Context`] per generation is the same.
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use super::constants::{DATA_END_DATE, DATA_START_DATE, DATE_MINIMUM, TODAYS_DATE};
 use super::date::Date;

@@ -1,9 +1,9 @@
 //! Expression binders of DDL and DML statements (DuckDB's `CheckBinder`,
 //! `UpdateBinder` and `ReturningBinder`).
 
-use rustdb_ast::{ParsedExpression, ParsedExpressionKind};
-use rustdb_common::{Error, Result};
-use rustdb_types::LogicalType;
+use roastedduck_ast::{ParsedExpression, ParsedExpressionKind};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::LogicalType;
 
 use super::base::{BinderBase, expression_binder_accessors, expression_binder_base};
 use super::{BindResult, ExpressionBinder, unsupported};
@@ -14,7 +14,7 @@ use crate::expression::Expression;
 /// A column of the table a CHECK constraint belongs to.
 #[derive(Clone, Debug)]
 pub struct CheckColumn {
-    pub name: rustdb_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     pub logical_type: LogicalType,
     /// The physical index; `None` for generated columns.
     pub physical: Option<usize>,
@@ -27,7 +27,7 @@ pub struct CheckColumn {
 #[derive(Debug)]
 pub struct CheckBinder<'a> {
     base: BinderBase<'a>,
-    table: rustdb_common::ByteString,
+    table: roastedduck_common::ByteString,
     columns: &'a [CheckColumn],
     /// The physical columns the constraint reads.
     pub bound_columns: Vec<usize>,
@@ -39,7 +39,7 @@ impl<'a> CheckBinder<'a> {
     pub fn new(
         binder: &'a mut Binder,
         outer: Option<&'a mut dyn Scope>,
-        table: impl Into<rustdb_common::ByteString>,
+        table: impl Into<roastedduck_common::ByteString>,
         columns: &'a [CheckColumn],
     ) -> Self {
         Self {
@@ -57,7 +57,7 @@ impl<'a> CheckBinder<'a> {
     pub fn generated(
         binder: &'a mut Binder,
         outer: Option<&'a mut dyn Scope>,
-        table: impl Into<rustdb_common::ByteString>,
+        table: impl Into<roastedduck_common::ByteString>,
         columns: &'a [CheckColumn],
     ) -> Self {
         Self {
@@ -102,7 +102,7 @@ impl<'a> CheckBinder<'a> {
             .iter()
             .find(|column| column.name.eq_ignore_ascii_case(name))
         else {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Table does not contain column {name} referenced in check constraint!"
             )));
         };
@@ -146,7 +146,7 @@ impl ExpressionBinder for CheckBinder<'_> {
         }
     }
 
-    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+    fn unsupported_aggregate_message(&self) -> roastedduck_common::ByteString {
         "aggregate functions are not allowed in check constraints".into()
     }
 }
@@ -185,7 +185,7 @@ impl ExpressionBinder for UpdateBinder<'_> {
         }
     }
 
-    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+    fn unsupported_aggregate_message(&self) -> roastedduck_common::ByteString {
         "aggregate functions are not allowed in UPDATE".into()
     }
 }
@@ -265,11 +265,13 @@ impl ExpressionBinder for ProjectionBinder<'_> {
     ) -> Result<BindResult> {
         match &expr.kind {
             ParsedExpressionKind::Default => {
-                let message = rustdb_common::byte_format!("{} cannot contain DEFAULT clause", self.clause);
+                let message =
+                    roastedduck_common::byte_format!("{} cannot contain DEFAULT clause", self.clause);
                 crate::binder::expression::bind_unsupported_expression(self, expr, depth, &message)
             }
             ParsedExpressionKind::Window(_) => {
-                let message = rustdb_common::byte_format!("{} cannot contain window functions!", self.clause);
+                let message =
+                    roastedduck_common::byte_format!("{} cannot contain window functions!", self.clause);
                 crate::binder::expression::bind_unsupported_expression(self, expr, depth, &message)
             }
             ParsedExpressionKind::ColumnRef(_) | ParsedExpressionKind::Subquery(_) => {
@@ -279,8 +281,8 @@ impl ExpressionBinder for ProjectionBinder<'_> {
         }
     }
 
-    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
-        rustdb_common::byte_format!("{} cannot contain aggregate functions", self.clause)
+    fn unsupported_aggregate_message(&self) -> roastedduck_common::ByteString {
+        roastedduck_common::byte_format!("{} cannot contain aggregate functions", self.clause)
     }
 }
 
@@ -290,7 +292,7 @@ impl ExpressionBinder for ProjectionBinder<'_> {
 #[derive(Debug)]
 pub struct AlterBinder<'a> {
     base: BinderBase<'a>,
-    table: rustdb_common::ByteString,
+    table: roastedduck_common::ByteString,
     columns: &'a [CheckColumn],
     /// The physical columns read, one per reference.
     pub bound_columns: Vec<usize>,
@@ -299,7 +301,7 @@ pub struct AlterBinder<'a> {
 impl<'a> AlterBinder<'a> {
     pub fn new(
         binder: &'a mut Binder,
-        table: impl Into<rustdb_common::ByteString>,
+        table: impl Into<roastedduck_common::ByteString>,
         columns: &'a [CheckColumn],
         target: Option<LogicalType>,
     ) -> Self {
@@ -349,7 +351,7 @@ impl<'a> AlterBinder<'a> {
             .iter()
             .find(|column| column.name.eq_ignore_ascii_case(name))
         else {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Table does not contain column {name} referenced in alter statement!"
             )));
         };
@@ -398,7 +400,7 @@ impl ExpressionBinder for AlterBinder<'_> {
         }
     }
 
-    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+    fn unsupported_aggregate_message(&self) -> roastedduck_common::ByteString {
         "aggregate functions are not allowed in alter statement".into()
     }
 }
@@ -442,7 +444,7 @@ impl ExpressionBinder for IndexBinder<'_> {
         }
     }
 
-    fn unsupported_aggregate_message(&self) -> rustdb_common::ByteString {
+    fn unsupported_aggregate_message(&self) -> roastedduck_common::ByteString {
         "aggregate functions are not allowed in index expressions".into()
     }
 }

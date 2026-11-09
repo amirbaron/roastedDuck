@@ -1,4 +1,4 @@
-// Reference zstd encoder for rustdb-zstd's byte comparisons: the zstd 1.5.6 that DuckDB
+// Reference zstd encoder for roastedduck-zstd's byte comparisons: the zstd 1.5.6 that DuckDB
 // vendors (linked from libduckdb), driven the way DuckDB drives it. Dev tooling only; it is
 // never part of a cargo build.
 //

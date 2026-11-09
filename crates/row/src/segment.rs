@@ -13,9 +13,9 @@
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rustdb_buffer::{BlockHandle, BufferHandle, BufferManager, DestroyBufferUpon, MemoryTag};
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::PhysicalType;
+use roastedduck_buffer::{BlockHandle, BufferHandle, BufferManager, DestroyBufferUpon, MemoryTag};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::PhysicalType;
 
 use crate::layout::{HEAP_SIZE_WIDTH, TupleDataLayout};
 use crate::radix::RadixPartitioning;
@@ -760,7 +760,7 @@ pub(crate) unsafe fn recompute_heap_pointers(
                             continue;
                         }
                         let location = row.as_ptr().add(offset);
-                        if load::<u32>(location) as usize > rustdb_types::StringT::INLINE_LENGTH {
+                        if load::<u32>(location) as usize > roastedduck_types::StringT::INLINE_LENGTH {
                             let (old, new) = bases.get(i);
                             let pointer = load::<u64>(location.add(8)) as usize;
                             store(
@@ -847,7 +847,7 @@ unsafe fn find_heap_pointers_in(
                         return true;
                     }
                     let location = row.add(offset);
-                    if load::<u32>(location) as usize > rustdb_types::StringT::INLINE_LENGTH {
+                    if load::<u32>(location) as usize > roastedduck_types::StringT::INLINE_LENGTH {
                         heaps[i] = RowPtr::from_ptr(load::<u64>(location.add(8)) as usize as *mut u8);
                         false
                     } else {

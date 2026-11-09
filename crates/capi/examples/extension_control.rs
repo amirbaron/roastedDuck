@@ -1,5 +1,5 @@
 //! Standalone public-C-ABI extension regression driver; payloads are signed externally.
-use rustdb::{Config, Database, Error, ErrorKind, Result, Value};
+use roastedduck::{Config, Database, Error, ErrorKind, Result, Value};
 
 fn main() -> Result<()> {
     duckdb::register_extension_loader();
@@ -119,7 +119,7 @@ fn install_matrix(fixtures: &str, output: &str) -> Result<()> {
             con.query(format!("INSTALL '{}'", quote(&a)))?;
             let target = directory.join(format!(
                 "v1.5.6/{}/c_only_probe.duckdb_extension",
-                rustdb::external_extensions::platform()
+                roastedduck::external_extensions::platform()
             ));
             let info = std::path::PathBuf::from(format!("{}.info", target.display()));
             let initial = std::fs::read(&target).map_err(|e| Error::new(ErrorKind::Io, e.to_string()))?;

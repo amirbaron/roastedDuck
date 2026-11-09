@@ -11,18 +11,18 @@
 //! of L2 (`INNER`) and emit unmatched rows of outer joins (`OUTER`). A thread without a
 //! task of the current stage waits for the stage to complete.
 
-use rustdb_common::tree_renderer::RenderParams;
+use roastedduck_common::tree_renderer::RenderParams;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use rustdb_ast::{ExpressionType, JoinType};
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_planner::Expression;
-use rustdb_planner::operator::JoinCondition;
-use rustdb_row::PinProperties;
-use rustdb_row::sort::{ExternalBlockIteratorState, SortKey, SortKeyType, SortedRun};
-use rustdb_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
+use roastedduck_ast::{ExpressionType, JoinType};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_planner::Expression;
+use roastedduck_planner::operator::JoinCondition;
+use roastedduck_row::PinProperties;
+use roastedduck_row::sort::{ExternalBlockIteratorState, SortKey, SortKeyType, SortedRun};
+use roastedduck_types::{DataChunk, LogicalType, SelectionVector, Value, Vector};
 
 use super::range_join::{
     LocalSortedTable, SortedTable, is_strict_comparison, key_before, order_modifiers,
@@ -623,7 +623,7 @@ impl IEJoinUnion {
     }
 
     fn next_row(&mut self, run: &SortedRun) -> Result<bool> {
-        rustdb_row::dispatch_sort_key!(self.sort_key_type, K => self.next_row_typed::<K>(run))
+        roastedduck_row::dispatch_sort_key!(self.sort_key_type, K => self.next_row_typed::<K>(run))
     }
 
     /// Moves to the next left row in L2 order, first marking every right row whose second

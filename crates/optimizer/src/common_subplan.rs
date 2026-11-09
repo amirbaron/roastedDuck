@@ -9,10 +9,10 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
-use rustdb_ast::{CteMaterialize, JoinType};
-use rustdb_common::{Error, Result};
-use rustdb_planner::operator::{COLUMN_IDENTIFIER_ROW_ID, ColumnIndex};
-use rustdb_planner::{
+use roastedduck_ast::{CteMaterialize, JoinType};
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::operator::{COLUMN_IDENTIFIER_ROW_ID, ColumnIndex};
+use roastedduck_planner::{
     ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator, LogicalOperatorType,
 };
 
@@ -418,8 +418,8 @@ impl CommonSubplanFinder {
         // The materialized columns: the primary occurrence's.
         let primary = node_at(plan, &paths[0])?;
         let types = primary.types.clone();
-        let column_names: Vec<rustdb_common::ByteString> = (1..=types.len())
-            .map(|i| rustdb_common::byte_format!("{cte_name}_col_{i}"))
+        let column_names: Vec<roastedduck_common::ByteString> = (1..=types.len())
+            .map(|i| roastedduck_common::byte_format!("{cte_name}_col_{i}"))
             .collect();
         let primary_index: HashMap<ColumnBinding, usize> = info.subplans[0]
             .canonical_bindings
@@ -511,7 +511,7 @@ impl CommonSubplanFinder {
             table_index: cte_index,
             column_count: types.len() as u64,
             materialize: CteMaterialize::CteMaterializeDefault,
-            correlated_columns: rustdb_planner::binder::CorrelatedColumns::default(),
+            correlated_columns: roastedduck_planner::binder::CorrelatedColumns::default(),
         })
         .with_children(vec![materialized_projection, remainder]);
         let cte_id = cte.node_id();
@@ -621,7 +621,11 @@ fn operator_is_supported(op: &LogicalOperator) -> bool {
     match &op.kind {
         LogicalKind::ChunkGet { collection, .. } => {
             // Large inline data is not worth comparing.
-            collection.iter().map(rustdb_types::DataChunk::len).sum::<usize>() < 1000
+            collection
+                .iter()
+                .map(roastedduck_types::DataChunk::len)
+                .sum::<usize>()
+                < 1000
         }
         LogicalKind::Projection { .. }
         | LogicalKind::Filter { .. }

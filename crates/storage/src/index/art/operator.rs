@@ -1,6 +1,6 @@
 //! Lookup, insertion and deletion of keys (DuckDB's `ARTOperator`).
 
-use rustdb_common::{Error, ErrorKind, Result};
+use roastedduck_common::{Error, ErrorKind, Result};
 
 use super::key::ROW_ID_SIZE;
 use super::node::{GateStatus, NType, Node, Slot};
@@ -119,7 +119,7 @@ pub(crate) fn insert(
             }
             return Err(Error::new_bytes(
                 ErrorKind::Fatal,
-                rustdb_common::byte_format!(
+                roastedduck_common::byte_format!(
                     "Corrupted unique ART index \"{}\": encountered an existing gated leaf in unique index while inserting",
                     art.name()
                 ).into_bytes(),

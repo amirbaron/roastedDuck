@@ -1,6 +1,6 @@
 //! The `customer` table (`w_customer.c`).
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use super::Output;
 use super::build_support::{bkey_str, mk_bkey};

@@ -4,12 +4,12 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::{
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::{
     FunctionData, InOutResult, TableFunction, TableFunctionBindInput, TableFunctionBindOutput,
     TableFunctionSet, TableScanState,
 };
-use rustdb_types::{DataChunk, Interval, LogicalType, Timestamp, Value, Vector};
+use roastedduck_types::{DataChunk, Interval, LogicalType, Timestamp, Value, Vector};
 
 use crate::temporal::timestamp_add_interval;
 

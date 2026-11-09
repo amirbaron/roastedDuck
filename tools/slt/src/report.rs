@@ -178,7 +178,7 @@ pub fn comparison_dashboard(cpp: &[FileResult], rust: &[FileResult]) -> String {
     for row in groups.values() {
         total.merge(row);
     }
-    let mut out = String::from("# rustdb conformance dashboard\n\n");
+    let mut out = String::from("# roastedduck conformance dashboard\n\n");
     let _ = writeln!(
         out,
         "Rust passing: **{} / {} files** ({} pass on both engines). \"Passing\" means the Rust run passed, or \

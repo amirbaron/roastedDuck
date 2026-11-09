@@ -1,7 +1,7 @@
 //! Arrow arrays to DuckDB vectors (DuckDB's `function/table/arrow_conversion.cpp` and
 //! `arrow/arrow_array_scan_state.cpp`).
 //!
-//! DuckDB points flat vectors at the Arrow buffers where the layouts agree. rustdb's
+//! DuckDB points flat vectors at the Arrow buffers where the layouts agree. roastedduck's
 //! vectors own their buffers, so fixed-width data is copied; strings still point into the
 //! Arrow data, which the vectors keep alive. Everything else follows DuckDB, including
 //! how offsets combine: `chunk_offset` is how far the scan is into the Arrow chunk,
@@ -14,8 +14,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::{
     DataChunk, Interval, ListEntry, LogicalType, LogicalTypeId, NativeType, PhysicalType, SelectionVector,
     StringT, ValidityMask, Value, Vector,
 };
@@ -802,7 +802,7 @@ unsafe fn column_arrow_to_duckdb(
             }
             // Arrow UUIDs are big-endian bytes; DuckDB flips the top bit (`UUIDConversion`).
             LogicalTypeId::Uuid => convert_values(vector, array, offset, size, true, |bytes: [u8; 16]| {
-                Ok(rustdb_types::Uuid::from_blob(&bytes).0)
+                Ok(roastedduck_types::Uuid::from_blob(&bytes).0)
             })?,
             LogicalTypeId::Blob | LogicalTypeId::Bit | LogicalTypeId::Bignum | LogicalTypeId::Varchar => {
                 let (size_type, fixed_size) = arrow_type.string_info()?;
@@ -848,14 +848,16 @@ unsafe fn column_arrow_to_duckdb(
                 ArrowDateTimeType::Days => direct_conversion(vector, array, offset, size, 4),
                 ArrowDateTimeType::Milliseconds => {
                     convert_values(vector, array, offset, size, false, |millis: u64| {
-                        Ok(rustdb_types::Date((millis as i64 / (1000 * 60 * 60 * 24)) as i32))
+                        Ok(roastedduck_types::Date(
+                            (millis as i64 / (1000 * 60 * 60 * 24)) as i32,
+                        ))
                     })?;
                 }
                 _ => return Err(Error::not_implemented("Unsupported precision for Date Type ")),
             },
             LogicalTypeId::Time => {
                 const MESSAGE: &str = "Could not convert Time to Microsecond";
-                let to_time = |micros: i64| rustdb_types::Time(micros);
+                let to_time = |micros: i64| roastedduck_types::Time(micros);
                 match arrow_type.date_time_info()? {
                     ArrowDateTimeType::Seconds => {
                         convert_values(vector, array, offset, size, true, |v: i32| {
@@ -878,7 +880,7 @@ unsafe fn column_arrow_to_duckdb(
             }
             LogicalTypeId::TimeNs => {
                 const MESSAGE: &str = "Could not convert TimeNS to Nanoseconds";
-                let to_time = |nanos: i64| rustdb_types::TimeNs(nanos);
+                let to_time = |nanos: i64| roastedduck_types::TimeNs(nanos);
                 match arrow_type.date_time_info()? {
                     ArrowDateTimeType::Seconds => {
                         convert_values(vector, array, offset, size, true, |v: i32| {
@@ -903,7 +905,7 @@ unsafe fn column_arrow_to_duckdb(
             }
             LogicalTypeId::TimestampTz => {
                 const MESSAGE: &str = "Could not convert TimestampTZ to Microsecond";
-                let to_timestamp = |micros: i64| rustdb_types::Timestamp(micros);
+                let to_timestamp = |micros: i64| roastedduck_types::Timestamp(micros);
                 match arrow_type.date_time_info()? {
                     ArrowDateTimeType::Seconds => {
                         convert_values(vector, array, offset, size, true, |v: i64| {

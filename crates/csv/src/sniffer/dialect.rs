@@ -4,7 +4,7 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use super::CsvSniffer;
 use crate::buffer::CsvBufferManager;

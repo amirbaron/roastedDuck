@@ -4,13 +4,13 @@
 
 use std::collections::HashSet;
 
-use rustdb_ast::{
+use roastedduck_ast::{
     ExpressionClass, ExpressionType, FunctionExpression, LambdaRefExpression, ParsedExpression,
     ParsedExpressionKind, lambda_parameters,
 };
-use rustdb_catalog::CatalogType;
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_types::Value;
+use roastedduck_catalog::CatalogType;
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_types::Value;
 
 use super::{BindError, function_call, is_bound, is_unnest_function, operator_expression};
 use crate::binder::{Binder, Binding, BindingAlias};
@@ -28,14 +28,14 @@ pub trait ColumnQualifier {
     fn lambda_bindings(&self) -> &[Binding];
 
     /// Whether `names` could be a select-list alias (DuckDB's `DoesColumnAliasExist`).
-    fn does_column_alias_exist(&self, _names: &[rustdb_common::ByteString]) -> bool {
+    fn does_column_alias_exist(&self, _names: &[roastedduck_common::ByteString]) -> bool {
         false
     }
 
     /// The qualified form of a column reference (DuckDB's virtual `QualifyColumnName`).
     fn qualify_column_name(
         &self,
-        names: &[rustdb_common::ByteString],
+        names: &[roastedduck_common::ByteString],
         location: Option<u64>,
     ) -> Result<std::result::Result<ParsedExpression, BindError>> {
         default_qualify_column_name(self, names, location)
@@ -368,7 +368,7 @@ fn qualify_single<Q: ColumnQualifier + ?Sized>(
         && macro_binding.has_matching_binding(column_name)
     {
         if table_binding.is_some() {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Conflicting column names for column {column_name}!"
             ))
             .with_position(location));
@@ -399,7 +399,7 @@ fn column_reference(alias: &BindingAlias, column: &[u8]) -> ParsedExpression {
 /// (DuckDB's `CreateStructPack`).
 fn create_struct_pack(
     binder: &Binder,
-    names: &[rustdb_common::ByteString],
+    names: &[roastedduck_common::ByteString],
 ) -> Result<Option<ParsedExpression>> {
     let context = &binder.bind_context;
     let lookup = |alias: BindingAlias| -> Result<Option<BindingAlias>> {
@@ -429,7 +429,7 @@ fn create_struct_pack(
 /// DuckDB's base `ExpressionBinder::QualifyColumnName(ColumnRefExpression &)`.
 pub fn default_qualify_column_name<Q: ColumnQualifier + ?Sized>(
     qualifier: &Q,
-    names: &[rustdb_common::ByteString],
+    names: &[roastedduck_common::ByteString],
     location: Option<u64>,
 ) -> Result<std::result::Result<ParsedExpression, BindError>> {
     let binder = qualifier.binder_ref();
@@ -461,7 +461,7 @@ pub fn default_qualify_column_name<Q: ColumnQualifier + ?Sized>(
 /// `QualifyColumnNameWithManyDots`).
 fn qualify_many_dots<Q: ColumnQualifier + ?Sized>(
     qualifier: &Q,
-    names: &[rustdb_common::ByteString],
+    names: &[roastedduck_common::ByteString],
     location: Option<u64>,
 ) -> Result<std::result::Result<ParsedExpression, BindError>> {
     let binder = qualifier.binder_ref();
@@ -576,7 +576,7 @@ pub fn bind_and_qualify_function<Q: ColumnQualifier + ?Sized>(
         if !allow_throw {
             return Ok(None);
         }
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "Function \"{}\" is a table function but it was used as a scalar function. This function has to be \
              called in a FROM clause (similar to a table).",
             function.function_name

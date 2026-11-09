@@ -5,11 +5,11 @@
 
 use std::collections::BTreeSet;
 
-use rustdb_ast::{
+use roastedduck_ast::{
     ColumnDefinition, ColumnList, CreateInfoKind, OrderByNode, ParsedExpression, QueryNodeKind,
     ResultModifier, SelectNode, SqlStatementKind, TableRefKind,
 };
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::{ParserOptions, parse_with_options};
 
@@ -110,7 +110,7 @@ pub fn parse_order_list(order_list: &str, options: &ParserOptions) -> Result<Vec
 pub fn parse_update_list(
     update_list: &str,
     options: &ParserOptions,
-) -> Result<(Vec<rustdb_common::ByteString>, Vec<ParsedExpression>)> {
+) -> Result<(Vec<roastedduck_common::ByteString>, Vec<ParsedExpression>)> {
     let mut statements = parse_with_options(&format!("UPDATE tbl SET {update_list}"), options)?;
     match statements.pop() {
         Some(statement) if statements.is_empty() => match statement.kind {
@@ -150,7 +150,7 @@ pub fn parse_column_list(column_list: &str, options: &ParserOptions) -> Result<C
 
 /// Byte-preserving version of [`parse_column_list`].
 pub fn parse_column_list_bytes(column_list: &[u8], options: &ParserOptions) -> Result<ColumnList> {
-    let sql = rustdb_common::byte_format!("CREATE TABLE tbl ({column_list})");
+    let sql = roastedduck_common::byte_format!("CREATE TABLE tbl ({column_list})");
     let mut statements = crate::parse_bytes_with_options(&sql, options)?;
     let info = match statements.pop() {
         Some(statement) if statements.is_empty() => match statement.kind {

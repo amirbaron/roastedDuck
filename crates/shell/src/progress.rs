@@ -5,7 +5,7 @@
 
 use std::time::{Duration, Instant};
 
-use rustdb::Database;
+use roastedduck::Database;
 
 use crate::printer;
 use crate::progress_bar::ProgressStatus;
@@ -311,7 +311,7 @@ impl ProgressDisplay {
         is_finished: bool,
     ) {
         let terminal_width = printer::terminal_width();
-        let mut result = rustdb_common::ByteString::new();
+        let mut result = roastedduck_common::ByteString::new();
         if let Some(previous) = self.previous_terminal_width
             && terminal_width < previous
         {
@@ -329,7 +329,7 @@ impl ProgressDisplay {
                 estimated_remaining_seconds,
             };
             let line = db
-                .ok_or_else(|| rustdb::Error::internal("no database open"))
+                .ok_or_else(|| roastedduck::Error::internal("no database open"))
                 .and_then(Database::connect)
                 .and_then(|mut connection| {
                     state.progress_bar.generate_progress_bar(

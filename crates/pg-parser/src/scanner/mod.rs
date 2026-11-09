@@ -6,10 +6,10 @@
 //! locations are byte offsets. Errors reproduce `scanner_yyerror`: the message names
 //! the text from the error location up to the end of the current flex match.
 
-use rustdb_common::ByteString;
+use roastedduck_common::ByteString;
 mod literal;
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::error::parser_error;
 use crate::keywords;
@@ -153,10 +153,10 @@ impl<'a> Scanner<'a> {
         // The C scanner prints the NUL-terminated string at `loc`: it ends where flex
         // parked its NUL (`end`) or, past that point, at the end of the buffer.
         let full = if loc == end || loc >= self.buf.len() {
-            rustdb_common::byte_format!("{message} at end of input")
+            roastedduck_common::byte_format!("{message} at end of input")
         } else {
             let end = if loc > end { self.buf.len() } else { end };
-            rustdb_common::byte_format!(
+            roastedduck_common::byte_format!(
                 "{message} at or near \"{}\"",
                 &self.buf[loc..end.min(self.buf.len())]
             )

@@ -20,7 +20,7 @@ use crate::verify::ResultTable;
 pub enum EngineKind {
     /// C++ DuckDB 1.5.6, loaded from the reference `libduckdb` by the bench driver.
     Cpp,
-    /// rustdb, linked into the bench driver.
+    /// roastedduck, linked into the bench driver.
     Rust,
     /// C++ DuckDB through its own `benchmark_runner` (fixed 5 runs; cross-check only).
     CppRunner,
@@ -41,7 +41,7 @@ impl EngineKind {
     pub fn root_name(self) -> &'static str {
         match self {
             Self::Cpp | Self::CppRunner => "duckdb",
-            Self::Rust => "rustdb",
+            Self::Rust => "roastedduck",
         }
     }
 }

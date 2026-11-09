@@ -1,8 +1,8 @@
 //! The transform functions of DuckDB's `transform_attach.cpp`: `ATTACH` and the generic
 //! `(name value, ...)` option lists `ATTACH`, `EXPLAIN`, `EXPORT`, ... share.
 
-use rustdb_ast::expression_type_to_string;
-use rustdb_parser::hash_order::CiHashMap;
+use roastedduck_ast::expression_type_to_string;
+use roastedduck_parser::hash_order::CiHashMap;
 
 use super::prelude::*;
 

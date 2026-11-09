@@ -2,8 +2,8 @@
 //! on columns every window function partitions by does not change any partition's
 //! result, so it can go below the window.
 
-use rustdb_common::Result;
-use rustdb_planner::{ColumnBinding, ExpressionKind, LogicalOperator};
+use roastedduck_common::Result;
+use roastedduck_planner::{ColumnBinding, ExpressionKind, LogicalOperator};
 
 use super::FilterPushdown;
 use crate::expression_util::column_bindings;

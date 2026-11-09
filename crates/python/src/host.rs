@@ -2,9 +2,9 @@
 use crate::{conversion, error};
 use pyo3::prelude::*;
 use pyo3::types::{PyByteArray, PyBytes, PyDict, PyList, PySlice, PyTuple};
-use rustdb::DataChunk;
-use rustdb_common::{ByteString, Error, byte_format};
-use rustdb_types::{LogicalType, LogicalTypeId as L, Value};
+use roastedduck::DataChunk;
+use roastedduck_common::{ByteString, Error, byte_format};
+use roastedduck_types::{LogicalType, LogicalTypeId as L, Value};
 use std::collections::HashMap;
 
 /// Tensor clients use the same owned `NumPy` columns as the frozen client. Fetch
@@ -66,10 +66,10 @@ pub(super) struct Metadata {
     pub consumed: bool,
     pub materialized: bool,
     pub materialized_empty: bool,
-    pub arrow: rustdb_arrow::ClientProperties,
+    pub arrow: roastedduck_arrow::ClientProperties,
 }
 
-fn dtype(kind: &LogicalType) -> rustdb_common::Result<&'static str> {
+fn dtype(kind: &LogicalType) -> roastedduck_common::Result<&'static str> {
     Ok(match kind.id() {
         L::Boolean => "bool",
         L::TinyInt => "int8",
@@ -199,7 +199,7 @@ impl Column {
     fn append_vector(
         &mut self,
         py: Python<'_>,
-        vector: &rustdb_types::Vector,
+        vector: &roastedduck_types::Vector,
         count: usize,
         timezone: &str,
     ) -> PyResult<()> {
@@ -254,7 +254,7 @@ impl Column {
         self.capacity = count;
         Ok(())
     }
-    fn numeric(&self, value: &Value, bytes: &mut Vec<u8>) -> rustdb_common::Result<()> {
+    fn numeric(&self, value: &Value, bytes: &mut Vec<u8>) -> roastedduck_common::Result<()> {
         let integer = value.as_i128().unwrap_or_default();
         macro_rules! append {
             ($value:expr) => {
@@ -282,7 +282,7 @@ impl Column {
                 let micros = i64::from(days).checked_mul(86_400_000_000).ok_or_else(|| {
                     Error::conversion(format!(
                         "Could not convert DATE ({}) to microseconds",
-                        rustdb_types::Date(days)
+                        roastedduck_types::Date(days)
                     ))
                 })?;
                 append!(micros);
@@ -578,8 +578,8 @@ pub(super) fn arrow(
         ));
     }
     let arrow = py.import("pyarrow")?;
-    let mut schema = rustdb_arrow::ffi::ArrowSchemaWrapper::default();
-    rustdb_arrow::to_arrow_schema(
+    let mut schema = roastedduck_arrow::ffi::ArrowSchemaWrapper::default();
+    roastedduck_arrow::to_arrow_schema(
         &mut schema.arrow_schema,
         &metadata.types,
         &metadata.names,
@@ -593,15 +593,15 @@ pub(super) fn arrow(
         .call_method1("_import_from_c", ((&raw mut schema.arrow_schema) as usize,))?;
     let batches = PyList::empty(py);
     let new_appender = || {
-        rustdb_arrow::ArrowAppender::new(
+        roastedduck_arrow::ArrowAppender::new(
             metadata.types.clone(),
             rows_per_batch.min(2048),
             metadata.arrow.clone(),
         )
         .map_err(|e| error::native(py, &e))
     };
-    let append_batch = |appender: rustdb_arrow::ArrowAppender| -> PyResult<()> {
-        let mut array = rustdb_arrow::ffi::ArrowArrayWrapper {
+    let append_batch = |appender: roastedduck_arrow::ArrowAppender| -> PyResult<()> {
+        let mut array = roastedduck_arrow::ffi::ArrowArrayWrapper {
             arrow_array: appender.finalize().map_err(|e| error::native(py, &e))?,
         };
         let batch = arrow

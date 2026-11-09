@@ -1,4 +1,4 @@
-// Catch runner and test-directory helpers for DuckDB's C API tests built against rustdb's
+// Catch runner and test-directory helpers for DuckDB's C API tests built against roastedduck's
 // libduckdb (DuckDB's test/unittest.cpp and test/helpers/test_helpers.cpp, reduced to what
 // the C API tests use). Test-only; never shipped.
 #define CATCH_CONFIG_RUNNER
@@ -74,8 +74,8 @@ static void RemoveTree(const string &path) {
 string TestDirectoryPath() {
 	if (test_directory.empty()) {
 		auto base = getenv("CAPI_TEST_DIR");
-		test_directory = string(base ? base : "/tmp/rustdb-capi-tests") + "/" + to_string(getpid());
-		mkdir(base ? base : "/tmp/rustdb-capi-tests", 0755);
+		test_directory = string(base ? base : "/tmp/roastedduck-capi-tests") + "/" + to_string(getpid());
+		mkdir(base ? base : "/tmp/roastedduck-capi-tests", 0755);
 		mkdir(test_directory.c_str(), 0755);
 	}
 	return test_directory;

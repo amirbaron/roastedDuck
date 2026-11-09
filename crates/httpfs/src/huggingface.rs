@@ -1,13 +1,13 @@
 //! `HuggingFace` HTTP paths and tree traversal from pinned HTTPFS 4bc690d.
 use crate::{HttpFile, Parameters, io_error};
-use rustdb_common::{ByteString, Error, ErrorKind, Result};
-use rustdb_function::registered_files::{FileHandle, FileSystem};
+use roastedduck_common::{ByteString, Error, ErrorKind, Result};
+use roastedduck_function::registered_files::{FileHandle, FileSystem};
 use std::fmt::Write as _;
 use std::io::Read as _;
 use std::sync::Arc;
 
 const ENDPOINT: &str = "https://huggingface.co";
-pub const SECRET_RESOLVER_KEY: &str = "rustdb.huggingface_secret_resolver";
+pub const SECRET_RESOLVER_KEY: &str = "roastedduck.huggingface_secret_resolver";
 
 pub trait ResolveSecret: std::fmt::Debug + Send + Sync {
     fn token(&self, path: &str) -> Result<Option<String>>;
@@ -88,7 +88,7 @@ impl Parsed {
 }
 
 fn parameters(path: &str) -> Result<Parameters> {
-    let token = rustdb_function::file_system::opener()
+    let token = roastedduck_function::file_system::opener()
         .and_then(|c| c.object_cache())
         .and_then(|c| c.get::<SecretResolver>(SECRET_RESOLVER_KEY))
         .map_or(Ok(None), |r| r.0.token(path))?;
@@ -218,7 +218,7 @@ impl FileSystem for HuggingFaceFileSystem {
         let shared = &parsed.path[..first];
         let shared = shared.rfind('/').map_or("", |at| &shared[..at]);
         let params = parameters(original)?;
-        let limit = rustdb_function::file_system::opener()
+        let limit = roastedduck_function::file_system::opener()
             .and_then(|c| c.settings())
             .and_then(|s| s.current_setting("hf_max_per_page").ok())
             .and_then(|v| v.to_varchar().ok())

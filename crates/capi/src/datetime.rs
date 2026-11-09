@@ -5,7 +5,7 @@
 //! defined result instead (the epoch for an invalid date, the raw day and time of day for
 //! a timestamp whose date does not fit).
 
-use rustdb_types::{Date, Time, TimeTz, Timestamp};
+use roastedduck_types::{Date, Time, TimeTz, Timestamp};
 
 use crate::types::*;
 

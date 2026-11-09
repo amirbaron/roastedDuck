@@ -1,6 +1,6 @@
-use rustdb_common::Result;
-use rustdb_planner::Expression;
-use rustdb_types::{DataChunk, LogicalType};
+use roastedduck_common::Result;
+use roastedduck_planner::Expression;
+use roastedduck_types::{DataChunk, LogicalType};
 
 use crate::operator::{ErasedOperator, PhysicalOperator, PhysicalRef};
 use crate::{ExecutionContext, ExpressionExecutor, Operator, OperatorResult};

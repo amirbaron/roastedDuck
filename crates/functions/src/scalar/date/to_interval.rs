@@ -1,16 +1,16 @@
 //! `to_years`, `to_days`, `to_seconds`, ...: intervals from numbers (DuckDB's
 //! `to_interval.cpp`).
 
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::numeric::TryCastTo;
-use rustdb_function::{ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{Interval, LogicalType, NativeType};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::numeric::TryCastTo;
+use roastedduck_function::{ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{Interval, LogicalType, NativeType};
 
 use crate::scalar::executor::unary;
 use crate::values::cast_error;
 
 /// `Cast::Operation<T, int32_t>` with DuckDB's error.
-fn to_i32<T: TryCastTo<i32> + rustdb_function::cast::numeric::CastNumber>(value: T) -> Result<i32> {
+fn to_i32<T: TryCastTo<i32> + roastedduck_function::cast::numeric::CastNumber>(value: T) -> Result<i32> {
     value.try_cast_to().ok_or_else(|| cast_error(value, "INT32"))
 }
 
@@ -56,7 +56,7 @@ impl WholeUnit {
 
     fn interval<T>(self, value: T) -> Result<Interval>
     where
-        T: TryCastTo<i32> + rustdb_function::cast::numeric::CastNumber + std::fmt::Display,
+        T: TryCastTo<i32> + roastedduck_function::cast::numeric::CastNumber + std::fmt::Display,
     {
         let count = to_i32(value)?;
         let scaled = count.checked_mul(self.factor()).ok_or_else(|| {

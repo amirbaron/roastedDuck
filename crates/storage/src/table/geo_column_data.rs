@@ -1,8 +1,8 @@
 //! GEOMETRY column storage helpers (DuckDB's `GeoColumnData`): the statistics of a
 //! shredded column come from the statistics of its vectorized layout.
 
-use rustdb_types::GeometryStorageType;
-use rustdb_types::geometry::{self, GeometryType, VertexType};
+use roastedduck_types::GeometryStorageType;
+use roastedduck_types::geometry::{self, GeometryType, VertexType};
 
 use crate::statistics::{BaseStatistics, GeometryStats, StatsData};
 

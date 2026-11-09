@@ -3,10 +3,10 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use rustdb_ast::{ExpressionType, JoinType};
-use rustdb_common::{Error, Result};
-use rustdb_planner::operator::{JoinCondition, LogicalComparisonJoin};
-use rustdb_planner::{
+use roastedduck_ast::{ExpressionType, JoinType};
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::operator::{JoinCondition, LogicalComparisonJoin};
+use roastedduck_planner::{
     ColumnBinding, Expression, ExpressionKind, LogicalKind, LogicalOperator, LogicalOperatorType,
 };
 

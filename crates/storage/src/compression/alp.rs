@@ -11,8 +11,8 @@ use std::marker::PhantomData;
 
 use std::collections::HashMap;
 
-use rustdb_common::Result;
-use rustdb_types::{LogicalType, PhysicalType, Vector};
+use roastedduck_common::Result;
+use roastedduck_types::{LogicalType, PhysicalType, Vector};
 
 use super::bitpacking_primitives::{
     minimum_bit_width_unsigned, pack_buffer_u64, required_size, unpack_buffer_u64,

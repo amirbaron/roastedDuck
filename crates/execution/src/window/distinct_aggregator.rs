@@ -6,10 +6,12 @@
 //! sorted run, answers each frame by combining `O(log n)` states (Vogelsgesang et al.,
 //! SIGMOD 2022, algorithm 2).
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::StatePtr;
-use rustdb_row::sort::{NullOrder, OrderModifiers, OrderType as SortOrder, Sort, SortColumn, SortConfig};
-use rustdb_types::{DataChunk, LogicalType, SelectionVector, Vector};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::StatePtr;
+use roastedduck_row::sort::{
+    NullOrder, OrderModifiers, OrderType as SortOrder, Sort, SortColumn, SortConfig,
+};
+use roastedduck_types::{DataChunk, LogicalType, SelectionVector, Vector};
 
 use super::aggregate_states::{ScratchStates, WindowAggregateStates};
 use super::aggregator::{WindowAggregator, evaluate_subframes, init_subframes};
@@ -22,7 +24,7 @@ use crate::ExecutionContext;
 pub(crate) fn can_aggregate(aggregator: &WindowAggregator, has_arg_orders: bool) -> bool {
     aggregator.function.ops.can_aggregate()
         && aggregator.distinct
-        && aggregator.exclude_mode == rustdb_ast::WindowExcludeMode::NoOther
+        && aggregator.exclude_mode == roastedduck_ast::WindowExcludeMode::NoOther
         && !has_arg_orders
 }
 
@@ -30,8 +32,8 @@ pub(crate) fn can_aggregate(aggregator: &WindowAggregator, has_arg_orders: bool)
 #[derive(Debug)]
 pub(crate) struct DistinctSink {
     sort: Sort,
-    global: rustdb_row::sort::SortGlobalSinkState,
-    local: rustdb_row::sort::SortLocalSinkState,
+    global: roastedduck_row::sort::SortGlobalSinkState,
+    local: roastedduck_row::sort::SortLocalSinkState,
     key_count: usize,
 }
 

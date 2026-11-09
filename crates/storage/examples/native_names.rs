@@ -1,9 +1,9 @@
 //! Compares native filter wire bytes/SQL and nested statistics with C++ 1.5.6.
-use rustdb_common::ByteString;
-use rustdb_serde::binary::BinarySerializer;
-use rustdb_serde::{SerializationOptions, Serializer};
-use rustdb_storage::{TableFilter, statistics::BaseStatistics};
-use rustdb_types::{LogicalType, Value, compare::CompareOp};
+use roastedduck_common::ByteString;
+use roastedduck_serde::binary::BinarySerializer;
+use roastedduck_serde::{SerializationOptions, Serializer};
+use roastedduck_storage::{TableFilter, statistics::BaseStatistics};
+use roastedduck_types::{LogicalType, Value, compare::CompareOp};
 use std::io::{self, BufRead};
 fn decode(hex: &str) -> Vec<u8> {
     hex.as_bytes()

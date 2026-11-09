@@ -1,5 +1,5 @@
 //! Text rendering of stored BIGNUM values (DuckDB's `Bignum::BignumToVarchar`); the
-//! arithmetic and conversions live in `rustdb_function::bignum`.
+//! arithmetic and conversions live in `roastedduck_function::bignum`.
 //!
 //! A stored bignum is a 3-byte header followed by the big-endian magnitude; for negative
 //! numbers the header and every data byte are bit-inverted.

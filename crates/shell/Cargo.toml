@@ -7,23 +7,23 @@ license.workspace = true
 rust-version.workspace = true
 
 [lib]
-name = "rustdb_shell"
+name = "roastedduck_cli"
 
 [[bin]]
 name = "roastedDuck"
 path = "src/main.rs"
 
 [dependencies]
-rustdb_capi = { package = "rustdb-capi", path = "../capi" }
-rustdb.workspace = true
-rustdb-ast.workspace = true
-rustdb-common.workspace = true
-rustdb-parser.workspace = true
-rustdb-planner.workspace = true
-rustdb-types.workspace = true
-rustdb-function = { path = "../function" }
-rustdb-functions = { path = "../functions" }
-rustdb-serde.workspace = true
+roastedduck_capi = { package = "roastedduck-capi", path = "../capi" }
+roastedduck.workspace = true
+roastedduck-ast.workspace = true
+roastedduck-common.workspace = true
+roastedduck-parser.workspace = true
+roastedduck-planner.workspace = true
+roastedduck-types.workspace = true
+roastedduck-function = { path = "../function" }
+roastedduck-functions = { path = "../functions" }
+roastedduck-serde.workspace = true
 libc = "0.2"
 unicode-segmentation = "1"
 unicode-width = "0.2"

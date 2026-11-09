@@ -4,9 +4,9 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{FunctionClient, FunctionData, ScalarFunction, ScalarFunctionSet, Stability};
-use rustdb_types::{LogicalType, Timestamp, Value, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{FunctionClient, FunctionData, ScalarFunction, ScalarFunctionSet, Stability};
+use roastedduck_types::{LogicalType, Timestamp, Value, Vector};
 
 #[derive(Debug)]
 struct ClientData(Arc<FunctionClient>);

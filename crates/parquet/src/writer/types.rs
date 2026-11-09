@@ -6,8 +6,8 @@
 use std::hash::Hash;
 use std::marker::PhantomData;
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_types::{NativeType, Vector};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_types::{NativeType, Vector};
 
 use super::stats::{
     BytesStatistics, NoStatistics, NumericStatistics, StatValue, StringStatistics, WriterStatistics,
@@ -293,7 +293,7 @@ numeric_cast!(
     /// `Time::NormalizeTimeTZ`), without statistics (its operator has none).
     TimeTz, i64 => i64, INT64, DeltaBinaryPacked, true, false, |value| {
         const MICROS_PER_DAY: i64 = 86_400_000_000;
-        let time = rustdb_types::TimeTz(value as u64);
+        let time = roastedduck_types::TimeTz(value as u64);
         let shift = -i64::from(time.offset()) * 1_000_000;
         let mut micros = time.time().0 + (shift - (shift / MICROS_PER_DAY) * MICROS_PER_DAY);
         if micros >= MICROS_PER_DAY {

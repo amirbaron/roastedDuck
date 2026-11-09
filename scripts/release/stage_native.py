@@ -31,14 +31,13 @@ go_files = {str(path.relative_to(args.go_source)): hashlib.sha256(path.read_byte
             for path in args.go_source.rglob("*") if path.is_file()}
 assert go_files == go_pin["files"]
 shutil.copytree(args.go_source, sdk / "go/duckdb-go")
-shutil.copy2(compiled / "roastedDuck", sdk / "bin/rustdb")
-(sdk / "bin/roastedDuck").symlink_to("rustdb")
+shutil.copy2(compiled / "roastedDuck", sdk / "bin/roastedDuck")
 library = "libduckdb.dylib" if args.platform == "macos-arm64" else "libduckdb.so"
 for name in [library, "libduckdb.a"]:
     shutil.copy2(compiled / name, sdk / "lib" / name)
 if args.platform == "macos-arm64":
     subprocess.run(["install_name_tool", "-id", "@rpath/libduckdb.dylib", str(sdk / "lib" / library)], check=True)
-    for path in [sdk / "lib" / library, sdk / "bin/rustdb"]:
+    for path in [sdk / "lib" / library, sdk / "bin/roastedDuck"]:
         subprocess.run(["codesign", "--force", "--sign", "-", "--timestamp=none", str(path)], check=True)
         subprocess.run(["codesign", "--verify", "--strict", str(path)], check=True)
     symbols = subprocess.check_output(["nm", "-gU", str(sdk / "lib" / library)], text=True)
@@ -47,7 +46,7 @@ else:
     symbols = subprocess.check_output(["nm", "-D", "--defined-only", str(sdk / "lib" / library)], text=True)
     exported = sorted(line.split()[-1] for line in symbols.splitlines() if line.split())
 assert len(exported) == 547, (len(exported), exported)
-assert not any("test" in name.lower() and "duckdb" in name.lower() for name in exported)
+assert not any("test" in name.lower() and any(prefix in name.lower() for prefix in ["duckdb", "roastedduck"]) for name in exported)
 (args.out / "exports.txt").write_text("\n".join(exported) + "\n")
 for name in ["LICENSE", "THIRD_PARTY_NOTICES.md"]:
     shutil.copy2(ROOT / name, sdk / name)
@@ -69,7 +68,7 @@ for path in sorted(args.out.rglob("*")):
         with path.open("rb") as stream:
             files[str(path.relative_to(args.out))] = hashlib.file_digest(stream, "sha256").hexdigest()
 (args.out / "build-provenance.json").write_text(json.dumps({
-    "platform": args.platform, "target": args.target,
+    "platform": args.platform, "target": args.target, "sdk_layout": "roastedduck-v2",
     "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
     "export_count": len(exported), "adbc_test_api": False, "files_sha256": files,
     "macos_signing": "ad-hoc CI development signature; not notarized" if args.platform == "macos-arm64" else None,

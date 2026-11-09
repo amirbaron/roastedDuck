@@ -13,9 +13,9 @@
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rustdb_buffer::{AllocatedData, BufferHandle};
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{DataChunk, PhysicalType, Vector};
+use roastedduck_buffer::{AllocatedData, BufferHandle};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::{DataChunk, PhysicalType, Vector};
 
 use super::algorithm::KeyBlocks;
 use super::encode::{decode_fixed_into, decode_sort_key};

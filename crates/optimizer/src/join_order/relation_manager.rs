@@ -9,9 +9,9 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use rustdb_ast::{ExpressionType, JoinType};
-use rustdb_common::Result;
-use rustdb_planner::{
+use roastedduck_ast::{ExpressionType, JoinType};
+use roastedduck_common::Result;
+use roastedduck_planner::{
     BoundLimitNode, Expression, ExpressionKind, LogicalKind, LogicalOperator, LogicalOperatorType,
 };
 
@@ -459,7 +459,7 @@ impl RelationManager {
                     return Ok(false);
                 };
                 let Some(stats) = optimizer.materialized_cte_stats.get(&cte_index).cloned() else {
-                    return Err(rustdb_common::Error::internal(format!(
+                    return Err(roastedduck_common::Error::internal(format!(
                         "Unable to find materialized CTE stats with index {cte_index}"
                     )));
                 };
@@ -475,7 +475,7 @@ impl RelationManager {
                 let stats = optimizer
                     .delim_scan_stats
                     .clone()
-                    .ok_or_else(|| rustdb_common::Error::internal("Unable to find delim scan stats!"))?;
+                    .ok_or_else(|| roastedduck_common::Error::internal("Unable to find delim scan stats!"))?;
                 op.estimated_cardinality = Some(stats.cardinality);
                 self.add_aggregate_or_window_relation(root, input_path, stats);
                 Ok(true)
@@ -501,8 +501,8 @@ impl RelationManager {
         };
         let join_type = join.join_type;
         let groups = join.duplicate_eliminated_columns.clone();
-        let grouping_set: rustdb_planner::operator::GroupingSet = (0..groups.len() as u64).collect();
-        let dummy_aggregate = rustdb_planner::operator::LogicalAggregate {
+        let grouping_set: roastedduck_planner::operator::GroupingSet = (0..groups.len() as u64).collect();
+        let dummy_aggregate = roastedduck_planner::operator::LogicalAggregate {
             group_index: u64::MAX - 1,
             aggregate_index: u64::MAX,
             groupings_index: u64::MAX,
@@ -510,7 +510,7 @@ impl RelationManager {
             grouping_sets: vec![grouping_set],
             grouping_functions: Vec::new(),
             group_stats: Vec::new(),
-            distinct_validity: rustdb_planner::TupleDataValidityType::default(),
+            distinct_validity: roastedduck_planner::TupleDataValidityType::default(),
         };
         let dummy = LogicalOperator::new(LogicalKind::Aggregate(Box::new(dummy_aggregate)));
         let bindings = dummy.column_bindings();
@@ -576,7 +576,7 @@ impl RelationManager {
                 if matches!(join_type, JoinType::Semi | JoinType::Anti) {
                     let comparisons: Vec<Expression> = conditions
                         .into_iter()
-                        .map(rustdb_planner::operator::JoinCondition::into_expression)
+                        .map(roastedduck_planner::operator::JoinCondition::into_expression)
                         .collect();
                     let mut left_set = RelationSet::default();
                     let mut right_set = RelationSet::default();

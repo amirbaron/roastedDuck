@@ -6,7 +6,7 @@
 
 use std::ptr::NonNull;
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use crate::manager::{AllocatedData, BufferManager};
 

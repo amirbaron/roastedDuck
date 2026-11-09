@@ -1,12 +1,12 @@
-//! rustdb's benchmark harness (milestone M0).
+//! roastedduck's benchmark harness (milestone M0).
 //!
 //! Runs DuckDB's own benchmark suites (`benchmark/**/*.benchmark`) on C++ DuckDB 1.5.6
-//! and on rustdb, on the same machine and with the same settings, and compares them:
+//! and on roastedduck, on the same machine and with the same settings, and compares them:
 //!
 //! - [`format`]: parser for DuckDB's interpreted `.benchmark` format (a port of
 //!   `interpreted_benchmark.cpp`), resolving templates, includes and arguments.
 //! - [`engine`]: the engines behind one interface — C++ DuckDB through `libduckdb`'s C
-//!   API (loaded at run time) and rustdb (linked).
+//!   API (loaded at run time) and roastedduck (linked).
 //! - [`driver`]: executes one benchmark in its own process, following DuckDB's runner:
 //!   initialize (with caches), assert, warm-up and timed runs of the `run` section,
 //!   result checks, cleanup.

@@ -25,8 +25,8 @@ use std::fmt;
 use std::ptr::NonNull;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, ValidityMask, Value, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, ValidityMask, Value, Vector};
 
 use crate::{BindInput, FunctionData, NullHandling};
 
@@ -423,7 +423,11 @@ pub struct AggregateFunction {
 
 /// See [`AggregateFunction::serialize`] (DuckDB's `aggregate_serialize_t`).
 pub type AggregateSerialize = Arc<
-    dyn Fn(&mut dyn rustdb_serde::Serializer, Option<&dyn FunctionData>, &AggregateFunction) -> Result<()>
+    dyn Fn(
+            &mut dyn roastedduck_serde::Serializer,
+            Option<&dyn FunctionData>,
+            &AggregateFunction,
+        ) -> Result<()>
         + Send
         + Sync,
 >;
@@ -529,7 +533,7 @@ impl AggregateFunction {
     #[must_use]
     pub fn with_serialize(
         mut self,
-        serialize: impl Fn(&mut dyn rustdb_serde::Serializer, Option<&dyn FunctionData>, &Self) -> Result<()>
+        serialize: impl Fn(&mut dyn roastedduck_serde::Serializer, Option<&dyn FunctionData>, &Self) -> Result<()>
         + Send
         + Sync
         + 'static,

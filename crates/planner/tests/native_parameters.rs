@@ -10,8 +10,8 @@ fn native_parameter_wire_and_shared_data_match_cpp() {
 
 #[test]
 fn binding_replacement_keeps_raw_parameter_text() {
-    use rustdb_ast::{ParsedExpression, ParsedExpressionKind};
-    use rustdb_planner::{expression_binder::set_bound, prepared::BoundParameterMap};
+    use roastedduck_ast::{ParsedExpression, ParsedExpressionKind};
+    use roastedduck_planner::{expression_binder::set_bound, prepared::BoundParameterMap};
     for name in [b"\x80".as_slice(), b"caf\xe9", b"a\xffb", "雪".as_bytes()] {
         let mut parameters = BoundParameterMap::default();
         let bound = parameters.bind_parameter_expression(name, name);

@@ -3,11 +3,11 @@
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::{AggregateInput, Unary, UnaryAggregate};
-use rustdb_function::cast::numeric::i128_to_f64;
-use rustdb_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
-use rustdb_types::{Interval, LogicalType, LogicalTypeId, NativeType, PhysicalType, TimeTz};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::{AggregateInput, Unary, UnaryAggregate};
+use roastedduck_function::cast::numeric::i128_to_f64;
+use roastedduck_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
+use roastedduck_types::{Interval, LogicalType, LogicalTypeId, NativeType, PhysicalType, TimeTz};
 
 use crate::aggregate::distributive::sum::{
     hugeint_add, hugeint_multiply, kahan_add, wrapping_sum_i64, wrapping_sum_i128,
@@ -385,7 +385,7 @@ impl UnaryAggregate for TimeTzAverage {
     }
 
     fn finalize(state: &AvgState<i128>) -> Result<Option<TimeTz>> {
-        Ok(DiscreteAverage::finalize(state)?.map(|micros| TimeTz::new(rustdb_types::Time(micros), 0)))
+        Ok(DiscreteAverage::finalize(state)?.map(|micros| TimeTz::new(roastedduck_types::Time(micros), 0)))
     }
 }
 

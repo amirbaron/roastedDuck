@@ -11,11 +11,11 @@ use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_serde::{SerializeObject, Serializer};
-use rustdb_types::compare::{CompareOp, SqlOrd};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_serde::{SerializeObject, Serializer};
+use roastedduck_types::compare::{CompareOp, SqlOrd};
 
-use rustdb_types::{NativeType, PhysicalType, Sel, StringT, ValidityMask, Value, Vector};
+use roastedduck_types::{NativeType, PhysicalType, Sel, StringT, ValidityMask, Value, Vector};
 
 use crate::TableFilterType;
 use crate::generated::{nodes, table_filter as properties};
@@ -48,8 +48,8 @@ pub trait ExpressionFilter: Send + Sync + fmt::Debug {
     fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
         let _ = serializer;
         Err(Error::new_bytes(
-            rustdb_common::ErrorKind::Serialization,
-            rustdb_common::byte_format!("Cannot serialize the table filter {}", self.to_sql(b"column"))
+            roastedduck_common::ErrorKind::Serialization,
+            roastedduck_common::byte_format!("Cannot serialize the table filter {}", self.to_sql(b"column"))
                 .into_bytes(),
         ))
     }
@@ -434,7 +434,7 @@ impl TableFilter {
 
     /// The filter as SQL text over `column_name` (`TableFilter::ToString`).
     pub fn to_sql(&self, column_name: impl AsRef<[u8]>) -> ByteString {
-        use rustdb_common::byte_format as format;
+        use roastedduck_common::byte_format as format;
         let column_name = column_name.as_ref();
         match self {
             Self::ConstantComparison { op, constant } => {
@@ -479,7 +479,7 @@ impl TableFilter {
                 let list = ByteString::join(
                     &values
                         .iter()
-                        .map(rustdb_types::Value::to_sql_string)
+                        .map(roastedduck_types::Value::to_sql_string)
                         .collect::<Vec<_>>(),
                     ", ",
                 );
@@ -655,7 +655,7 @@ impl TableFilterSet {
     }
 }
 
-impl rustdb_serde::Serialize for TableFilterSet {
+impl roastedduck_serde::Serialize for TableFilterSet {
     fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
         serializer.write_object(&nodes::TableFilterSet {
             filters: &self.filters,
@@ -722,12 +722,12 @@ impl SerializeObject for TableFilter {
     }
 }
 
-rustdb_serde::impl_pointee_serialize!(TableFilter);
+roastedduck_serde::impl_pointee_serialize!(TableFilter);
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustdb_types::LogicalType;
+    use roastedduck_types::LogicalType;
 
     #[test]
     fn constant_filters_select_rows() {

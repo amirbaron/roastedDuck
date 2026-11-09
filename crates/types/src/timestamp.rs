@@ -9,7 +9,7 @@
 
 use std::fmt;
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::date::{DateParseError, digit_at, push_time_of_day, skip_spaces};
 use crate::{Date, Interval, NativeType, PhysicalType, Time, TimeNs, TimeTz};

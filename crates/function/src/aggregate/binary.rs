@@ -5,8 +5,8 @@ use std::alloc::Layout;
 use std::fmt;
 use std::marker::PhantomData;
 
-use rustdb_common::Result;
-use rustdb_types::{NativeType, Unified, Vector};
+use roastedduck_common::Result;
+use roastedduck_types::{NativeType, Unified, Vector};
 
 use super::{AggregateInput, AggregateOps, StatePtr, set_nulls, state_mut};
 

@@ -5,7 +5,7 @@
 //! The rule list is generated from DuckDB's `peg_transformer_factory.cpp` and the return
 //! types of `peg_transformer.hpp`.
 
-use rustdb_ast::{
+use roastedduck_ast::{
     AlterInfo, AtClause, CaseCheck, CatalogType, ColumnList, ColumnRefExpression, CommonTableExpressionInfo,
     CommonTableExpressionMap, CompressionType, Constraint, ConstraintType, CopyDatabaseType, CreateInfo,
     CreateTypeInfo, DropInfo, ExpressionType, ForeignKeyConstraint, InsertColumnOrder, JoinType,
@@ -15,8 +15,8 @@ use rustdb_ast::{
     SetOperationType, SetScope, SetStatement, ShowType, SqlStatement, TableRef, TransactionInfo,
     TransactionModifierType, UpdateSetInfo, VacuumOptions, WindowExcludeMode,
 };
-use rustdb_common::{CaseInsensitiveMap, OrderedMap};
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_common::{CaseInsensitiveMap, OrderedMap};
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use super::nodes::{
     AddColumnEntry, AnalyzeTarget, BaseTable, ColumnElements, ConstraintColumnDefinition, CreateTableAs,
@@ -475,7 +475,7 @@ transform_rules! {
         "CreateTypeStmt" => transform_create_type_stmt,
         "CreateViewStmt" => transform_create_view_stmt,
     }
-    CaseInsensitiveMap<ParsedExpression, rustdb_common::ByteString> [] {
+    CaseInsensitiveMap<ParsedExpression, roastedduck_common::ByteString> [] {
         "WithList" => transform_with_list,
         "RelOptionOrOids" => transform_rel_option_or_oids,
         "RelOptionList" => transform_rel_option_list,
@@ -490,7 +490,7 @@ transform_rules! {
 
         "UpdateSetElement" => transform_update_set_element,
     }
-    (rustdb_common::ByteString, ParsedExpression) [] {
+    (roastedduck_common::ByteString, ParsedExpression) [] {
         "ReplaceEntry" => transform_replace_entry,
     }
     MacroFunction [] {
@@ -864,7 +864,7 @@ transform_rules! {
     CommonTableExpressionMap [] {
         "WithClause" => transform_with_clause,
     }
-    (rustdb_common::ByteString, CommonTableExpressionInfo) [] {
+    (roastedduck_common::ByteString, CommonTableExpressionInfo) [] {
         "WithStatement" => transform_with_statement,
     }
     SampleOptions [] {

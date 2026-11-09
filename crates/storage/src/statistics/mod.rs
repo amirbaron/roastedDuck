@@ -21,8 +21,8 @@ pub use variant::{
 
 use std::fmt;
 
-use rustdb_common::{ByteString, Result};
-use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Value};
+use roastedduck_common::{ByteString, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId, PhysicalType, Value};
 
 /// What a filter evaluates to on a set of values, judged from statistics
 /// (DuckDB's `FilterPropagateResult`).
@@ -180,7 +180,7 @@ fn bound_text(bytes: &[u8]) -> String {
 impl BaseStatistics {
     /// DuckDB's `BaseStatistics::ToString`.
     fn write_statistics_bytes(&self, f: &mut ByteString) -> fmt::Result {
-        use rustdb_common::byte_write as write;
+        use roastedduck_common::byte_write as write;
         match &self.data {
             StatsData::Base => {}
             StatsData::Numeric(numeric) => write!(
@@ -247,7 +247,7 @@ impl BaseStatistics {
         out
     }
 }
-impl rustdb_common::byte_format::NativeByteFormat for BaseStatistics {
+impl roastedduck_common::byte_format::NativeByteFormat for BaseStatistics {
     fn append_native_bytes(&self, output: &mut ByteString) {
         let _ = self.write_statistics_bytes(output);
     }
@@ -337,7 +337,7 @@ impl BaseStatistics {
                 }
             }
             StatsData::Variant(variant) => {
-                let ty = rustdb_types::variant::unshredded_type();
+                let ty = roastedduck_types::variant::unshredded_type();
                 let unshredded = match value.children() {
                     Some(children) if !value.is_null() => Value::from_children(ty, children.to_vec()),
                     _ => Value::null(ty),

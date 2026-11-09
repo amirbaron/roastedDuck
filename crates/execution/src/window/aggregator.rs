@@ -3,11 +3,11 @@
 
 use std::sync::Arc;
 
-use rustdb_ast::WindowExcludeMode;
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::aggregate::AggregateInput;
-use rustdb_function::{AggregateFunction, FunctionData, StatePtr};
-use rustdb_types::{LogicalType, SelectionVector, Vector};
+use roastedduck_ast::WindowExcludeMode;
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::aggregate::AggregateInput;
+use roastedduck_function::{AggregateFunction, FunctionData, StatePtr};
+use roastedduck_types::{LogicalType, SelectionVector, Vector};
 
 use super::WindowExpression;
 use super::boundaries_state::{FrameBounds, WindowBound, WindowBounds};

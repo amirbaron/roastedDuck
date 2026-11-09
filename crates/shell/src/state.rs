@@ -9,8 +9,8 @@ use std::io::{BufRead, BufReader, BufWriter, Read};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb::Config;
-use rustdb_common::ByteString;
+use roastedduck::Config;
+use roastedduck_common::ByteString;
 
 use crate::highlight::{self, HighlightElementType, HighlightMode, ShellHighlight};
 use crate::output::{Output, OutputTarget, PrintOutput};
@@ -206,7 +206,7 @@ pub enum BailOnError {
 /// A column of a table as `.tables` and `DESCRIBE` show it (`ShellColumnInfo`).
 #[derive(Clone, Debug, Default)]
 pub struct ShellColumnInfo {
-    pub column_name: rustdb_common::ByteString,
+    pub column_name: roastedduck_common::ByteString,
     pub column_type: String,
     pub is_primary_key: bool,
     pub is_not_null: bool,
@@ -217,9 +217,9 @@ pub struct ShellColumnInfo {
 /// A table as `.tables` and `DESCRIBE` show it (`ShellTableInfo`).
 #[derive(Clone, Debug, Default)]
 pub struct ShellTableInfo {
-    pub database_name: rustdb_common::ByteString,
-    pub schema_name: rustdb_common::ByteString,
-    pub table_name: rustdb_common::ByteString,
+    pub database_name: roastedduck_common::ByteString,
+    pub schema_name: roastedduck_common::ByteString,
+    pub table_name: roastedduck_common::ByteString,
     pub estimated_size: Option<u64>,
     pub is_view: bool,
     pub columns: Vec<ShellColumnInfo>,
@@ -306,7 +306,7 @@ pub struct ShellState {
     pub last_result: LastResult,
     pub bail: BailOnError,
     /// The table name shown for a `DESCRIBE`.
-    pub describe_table_name: rustdb_common::ByteString,
+    pub describe_table_name: roastedduck_common::ByteString,
     pub stdin_is_interactive: bool,
     pub stdout_is_console: bool,
     pub stderr_is_console: bool,
@@ -378,7 +378,7 @@ impl ShellState {
             run_init: true,
             last_result: LastResult::default(),
             bail: BailOnError::Automatic,
-            describe_table_name: rustdb_common::ByteString::new(),
+            describe_table_name: roastedduck_common::ByteString::new(),
             stdin_is_interactive: true,
             stdout_is_console: true,
             stderr_is_console: true,
@@ -601,7 +601,7 @@ impl ShellState {
         if arg.eq_ignore_ascii_case(b"off") || arg.eq_ignore_ascii_case(b"no") {
             return false;
         }
-        self.print_err(rustdb_common::byte_format!(
+        self.print_err(roastedduck_common::byte_format!(
             "ERROR: Not a boolean value: \"{arg}\". Assuming \"no\".\n"
         ));
         false
@@ -771,7 +771,10 @@ impl ShellState {
     /// `SetPrompt`: at most 19 bytes of `value`.
     pub fn truncated_prompt(value: impl AsRef<[u8]>) -> ByteString {
         let value = value.as_ref();
-        let end = value.iter().position(|&byte| byte == 0).unwrap_or(value.len())
+        let end = value
+            .iter()
+            .position(|&byte| byte == 0)
+            .unwrap_or(value.len())
             .min(MAX_PROMPT_SIZE - 1);
         value[..end].into()
     }
@@ -825,13 +828,15 @@ impl ShellState {
             b"stderr" => Some(OutputTarget::Stderr),
             b"off" => None,
             _ => {
-                let handle = rustdb_function::file_system::native_path(&expand_path_bytes(file))
+                let handle = roastedduck_function::file_system::native_path(&expand_path_bytes(file))
                     .ok()
                     .and_then(|path| File::create(path).ok());
                 if let Some(handle) = handle {
                     Some(OutputTarget::File(BufWriter::new(handle)))
                 } else {
-                    self.print_err(rustdb_common::byte_format!("Error: cannot open \"{file}\"\n"));
+                    self.print_err(roastedduck_common::byte_format!(
+                        "Error: cannot open \"{file}\"\n"
+                    ));
                     None
                 }
             }
@@ -905,10 +910,12 @@ impl ShellState {
         crate::interrupt::install(libc::SIGPIPE);
         let child = Command::new("/bin/sh")
             .arg("-c")
-            .arg(match rustdb_function::file_system::native_path(&self.pager_command) {
-                Ok(command) => command,
-                Err(_) => return false,
-            })
+            .arg(
+                match roastedduck_function::file_system::native_path(&self.pager_command) {
+                    Ok(command) => command,
+                    Err(_) => return false,
+                },
+            )
             .stdin(Stdio::piped())
             .spawn();
         let mut child = match child {
@@ -930,7 +937,7 @@ impl ShellState {
             child,
             stdin: BufWriter::new(stdin),
         });
-        self.outfile = rustdb_common::byte_format!("|{}", self.pager_command);
+        self.outfile = roastedduck_common::byte_format!("|{}", self.pager_command);
         true
     }
 
@@ -1008,20 +1015,20 @@ fn hex_digit_value(c: u8) -> Option<u8> {
 
 /// An identifier quoted if it must be (DuckDB's `SQLIdentifier`).
 pub fn sql_identifier(name: &str) -> String {
-    rustdb_types::identifier::sql_identifier(name).into_owned()
+    roastedduck_types::identifier::sql_identifier(name).into_owned()
 }
 
 /// A string literal (DuckDB's `SQLString`).
 pub fn sql_string(text: &str) -> String {
-    rustdb_types::identifier::write_quoted(text, '\'')
+    roastedduck_types::identifier::write_quoted(text, '\'')
 }
 
 pub fn sql_identifier_bytes(name: &[u8]) -> ByteString {
-    rustdb_types::identifier::sql_identifier_bytes(name)
+    roastedduck_types::identifier::sql_identifier_bytes(name)
 }
 
 pub fn sql_string_bytes(text: &[u8]) -> ByteString {
-    rustdb_types::identifier::write_quoted_bytes(text, b'\'')
+    roastedduck_types::identifier::write_quoted_bytes(text, b'\'')
 }
 
 /// Native path expansion, keeping the suffix and OS home-directory bytes intact.

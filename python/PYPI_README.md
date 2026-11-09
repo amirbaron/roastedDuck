@@ -54,7 +54,7 @@ with duckdb.connect("example.duckdb") as connection:
 ## Versions and platforms
 
 The compatibility target is **DuckDB 1.5.6**. The distribution version
-`1.5.6.post1` identifies a roastedDuck packaging/security revision of that
+`1.5.6.post2` identifies a roastedDuck packaging/security revision of that
 target. `duckdb.__version__` and `duckdb.__duckdb_version__` retain the compatibility
 version; `importlib.metadata.version("roastedduck")` identifies the installed
 distribution, and `duckdb.version()` reports both.
@@ -74,8 +74,11 @@ Use a copy of existing data when evaluating a different engine. SQL can access
 files and configured network resources; it is not an isolation boundary for
 untrusted code.
 
-The `post1` security revision updates PyO3 to 0.30.1, rsa to 0.10.0, and
+The security revisions update PyO3 to 0.30.1, rsa to 0.10.0, and
 ctutils to 0.4.8, and has its own artifact and test provenance.
+The `post2` revision uses roastedDuck names throughout the Rust workspace and
+ships freshly qualified images. DuckDB-compatible Python imports and native APIs
+remain stable.
 Historical native benchmarks describe their recorded binaries
 and workloads; they are not a guarantee for every Python query or later build.
 

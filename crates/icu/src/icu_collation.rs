@@ -7,10 +7,10 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
-use rustdb_functions::scalar::executor::{Str, StrOut, unary};
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet};
+use roastedduck_functions::scalar::executor::{Str, StrOut, unary};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, Vector};
 
 use crate::icu4c::collation_package::CollationPackage;
 use crate::icu4c::rulebasedcollator::{CollatorError, RuleBasedCollator, SortKeyBuffers};

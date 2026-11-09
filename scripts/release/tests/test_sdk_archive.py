@@ -55,6 +55,27 @@ class SDKArchiveTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             verify_archive(self.archive(), self.provenance)
 
+    def use_branded_layout(self):
+        (self.sdk / "bin/roastedDuck").unlink()
+        (self.sdk / "bin/rustdb").rename(self.sdk / "bin/roastedDuck")
+        self.provenance["files_sha256"]["sdk/bin/roastedDuck"] = self.provenance["files_sha256"].pop("sdk/bin/rustdb")
+        self.provenance["sdk_layout"] = "roastedduck-v2"
+
+    def test_branded_cli_is_a_real_file(self):
+        self.use_branded_layout()
+        self.assertTrue(verify_archive(self.archive(), self.provenance)["passed"])
+
+    def test_branded_layout_rejects_legacy_alias(self):
+        self.use_branded_layout()
+        (self.sdk / "bin/rustdb").symlink_to("roastedDuck")
+        with self.assertRaises(AssertionError):
+            verify_archive(self.archive(), self.provenance)
+
+    def test_unknown_layout_rejected(self):
+        self.provenance["sdk_layout"] = "unknown"
+        with self.assertRaises(AssertionError):
+            verify_archive(self.archive(), self.provenance)
+
 
 if __name__ == "__main__":
     unittest.main()

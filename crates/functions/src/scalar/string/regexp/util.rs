@@ -13,8 +13,8 @@ use std::fmt::Write as _;
 
 use regex::bytes::{CaptureLocations, Regex, RegexBuilder};
 use regex_syntax::ast::ErrorKind as AstErrorKind;
-use rustdb_common::{Error, Result};
-use rustdb_types::Value;
+use roastedduck_common::{Error, Result};
+use roastedduck_types::Value;
 
 /// The RE2 options DuckDB exposes (`RE2::Options`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,12 +69,12 @@ pub(crate) fn parse_options(
 
 /// The options argument of a call (DuckDB's `ParseRegexOptions(context, expr, ...)`).
 pub(crate) fn parse_options_argument(
-    argument_type: &rustdb_types::LogicalType,
+    argument_type: &roastedduck_types::LogicalType,
     constant: Option<&Option<Value>>,
     target: &mut RegexOptions,
     global: Option<&mut bool>,
 ) -> Result<()> {
-    if argument_type.id() == rustdb_types::LogicalTypeId::Unknown {
+    if argument_type.id() == roastedduck_types::LogicalTypeId::Unknown {
         return Err(crate::parameter_not_resolved());
     }
     let Some(Some(value)) = constant else {
@@ -94,7 +94,7 @@ pub(crate) fn constant_pattern(constant: Option<&Option<Value>>) -> Option<Strin
     let Some(Some(value)) = constant else {
         return None;
     };
-    if value.is_null() || value.logical_type().id() != rustdb_types::LogicalTypeId::Varchar {
+    if value.is_null() || value.logical_type().id() != roastedduck_types::LogicalTypeId::Varchar {
         return None;
     }
     value.as_str().map(str::to_owned)

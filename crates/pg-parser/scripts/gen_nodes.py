@@ -139,7 +139,7 @@ def gen_structs(m: M.Model) -> str:
         "    SortByDir, SortByNulls, SubLinkType, TransactionStmtKind, TransactionStmtType, Value,",
         "    VariableSetKind, VariableSetScope, ViewCheckOption,",
         "};",
-        "use rustdb_common::ByteString;",
+        "use roastedduck_common::ByteString;",
         "",
         "nodes! {",
     ]

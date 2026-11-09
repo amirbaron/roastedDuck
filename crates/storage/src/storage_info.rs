@@ -5,7 +5,7 @@
 //! is active. Every header and every block starts with an 8-byte checksum. Blocks start
 //! at [`BLOCK_START`].
 
-use rustdb_common::{Error, ErrorKind, Result};
+use roastedduck_common::{Error, ErrorKind, Result};
 
 /// Size of each of the three header blocks (`Storage::FILE_HEADER_SIZE`).
 pub const FILE_HEADER_SIZE: usize = 4096;
@@ -19,7 +19,7 @@ pub const DEFAULT_BLOCK_ALLOC_SIZE: usize = 262_144;
 pub const MIN_BLOCK_ALLOC_SIZE: usize = 16_384;
 pub const MAX_BLOCK_ALLOC_SIZE: usize = 262_144;
 /// The vector size recorded in database headers.
-pub const STANDARD_VECTOR_SIZE: u64 = rustdb_common::STANDARD_VECTOR_SIZE as u64;
+pub const STANDARD_VECTOR_SIZE: u64 = roastedduck_common::STANDARD_VECTOR_SIZE as u64;
 /// "No block" in headers and pointers (`INVALID_BLOCK` as an `idx_t`).
 pub const INVALID_BLOCK_INDEX: u64 = u64::MAX;
 

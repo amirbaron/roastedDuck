@@ -1,10 +1,10 @@
 //! `LIKE` patterns as cheaper string functions (DuckDB's `LikeOptimizationRule`) and
 //! `prefix`/`contains`/`suffix` with an empty needle (DuckDB's `EmptyNeedleRemovalRule`).
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::Result;
-use rustdb_planner::{Expression, ExpressionKind};
-use rustdb_types::{LogicalType, PhysicalType, Value};
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::Result;
+use roastedduck_planner::{Expression, ExpressionKind};
+use roastedduck_types::{LogicalType, PhysicalType, Value};
 
 use super::RuleOutcome;
 use crate::expression_rewriter::RuleContext;

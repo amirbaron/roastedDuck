@@ -4,11 +4,11 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_function::{
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_function::{
     BindInput, FunctionData, FunctionState, NullHandling, ScalarFunction, ScalarFunctionSet,
 };
-use rustdb_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, StringT, Unified, Vector};
+use roastedduck_types::{DataChunk, ListEntry, LogicalType, LogicalTypeId, StringT, Unified, Vector};
 
 use crate::scalar::executor::{ScalarOutput, StrOut, addressable};
 use crate::scalar::nested::{ListInput, all_constant, list_child_type};

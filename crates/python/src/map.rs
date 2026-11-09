@@ -3,16 +3,16 @@ use crate::connection::lock;
 use crate::{host, pandas};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use rustdb_ast::{
+use roastedduck_ast::{
     ExpressionType, ExternalDependency, OrdinalityType, ParsedExpression, ParsedExpressionKind,
     SelectStatement, SubqueryExpression, SubqueryType, TableFunctionRef, TableRef, TableRefKind,
 };
-use rustdb_common::{ByteString, Error, Result, STANDARD_VECTOR_SIZE, byte_format};
-use rustdb_function::{
+use roastedduck_common::{ByteString, Error, Result, STANDARD_VECTOR_SIZE, byte_format};
+use roastedduck_function::{
     FunctionData, InOutResult, TableFunction, TableFunctionBindInput, TableFunctionBindOutput,
     TableFunctionSet, TableScanState,
 };
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Value};
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, Value};
 use std::any::Any;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -42,7 +42,7 @@ struct BoundData {
     out_names: Vec<ByteString>,
     out_types: Vec<LogicalType>,
     sample: usize,
-    properties: rustdb_arrow::ClientProperties,
+    properties: roastedduck_arrow::ClientProperties,
 }
 impl FunctionData for BoundData {
     fn as_any(&self) -> &dyn Any {
@@ -70,13 +70,17 @@ pub(super) fn table(
             comparison_type: ExpressionType::Invalid,
         }),
     );
-    let mut table = rustdb_parser::build::table_ref(TableRefKind::TableFunction(TableFunctionRef {
-        function: Box::new(rustdb_parser::build::function(
+    let mut table = roastedduck_parser::build::table_ref(TableRefKind::TableFunction(TableFunctionRef {
+        function: Box::new(roastedduck_parser::build::function(
             "python_map_function",
             vec![
                 subquery,
-                rustdb_parser::build::constant(Value::ubigint(owner.id).reinterpret(LogicalType::POINTER)),
-                rustdb_parser::build::constant(Value::ubigint(owner.id).reinterpret(LogicalType::POINTER)),
+                roastedduck_parser::build::constant(
+                    Value::ubigint(owner.id).reinterpret(LogicalType::POINTER),
+                ),
+                roastedduck_parser::build::constant(
+                    Value::ubigint(owner.id).reinterpret(LogicalType::POINTER),
+                ),
             ],
         )),
         column_name_alias: Vec::new(),
@@ -147,11 +151,11 @@ fn binding(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOutput
         out_names: Vec::new(),
         out_types: Vec::new(),
         sample: 1000,
-        properties: rustdb_arrow::ClientProperties::default(),
+        properties: roastedduck_arrow::ClientProperties::default(),
     };
     if let Some(settings) = input
         .binder
-        .and_then(|b| b.downcast_ref::<rustdb_planner::ClientContext>())
+        .and_then(|b| b.downcast_ref::<roastedduck_planner::ClientContext>())
         .and_then(|c| c.function_client.settings())
     {
         if let Ok(value) = settings.current_setting("pandas_analyze_sample") {
@@ -199,7 +203,7 @@ fn binding(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOutput
                         .map_err(|e| boundary(&e))?,
                 ));
                 data.out_types.push(crate::udf::annotation(&kind).map_err(|_| {
-                    Error::new(rustdb_common::ErrorKind::Invalid, format!("Unable to cast Python instance of type {} to C++ type '?' (#define PYBIND11_DETAILED_ERROR_MESSAGES or compile in debug mode for details)", kind.get_type().repr().map_or_else(|_| "?".to_owned(), |s| s.to_string())))
+                    Error::new(roastedduck_common::ErrorKind::Invalid, format!("Unable to cast Python instance of type {} to C++ type '?' (#define PYBIND11_DETAILED_ERROR_MESSAGES or compile in debug mode for details)", kind.get_type().repr().map_or_else(|_| "?".to_owned(), |s| s.to_string())))
                         .with_subtype("python_callback")
                 })?);
             }

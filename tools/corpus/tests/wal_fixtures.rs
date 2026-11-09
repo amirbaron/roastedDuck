@@ -6,7 +6,7 @@
 #![cfg(test)]
 
 use corpus::wal::{self, Entry};
-use rustdb_serde::SerializationCompatibility;
+use roastedduck_serde::SerializationCompatibility;
 
 fn check_fixture(name: &str, version: &str, expected_entries: usize) {
     let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));

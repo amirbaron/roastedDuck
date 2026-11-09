@@ -10,12 +10,12 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::cast::{BoundCastInfo, CastFunctionSet, CastParameters, cast_vector};
-use rustdb_function::{
+use roastedduck_common::{Error, Result};
+use roastedduck_function::cast::{BoundCastInfo, CastFunctionSet, CastParameters, cast_vector};
+use roastedduck_function::{
     BindInput, FunctionData, FunctionState, NullHandling, ScalarFunction, ScalarFunctionSet,
 };
-use rustdb_types::{
+use roastedduck_types::{
     DataChunk, ListEntry, LogicalType, LogicalTypeId, Sel, StringT, Unified, ValidityMask, Vector, VectorKind,
 };
 
@@ -90,7 +90,7 @@ pub(crate) fn get_json_type(ty: &LogicalType) -> Result<LogicalType> {
                 .unwrap_or_default()
                 .iter()
                 .map(|(name, child)| {
-                    rustdb_types::Value::try_varchar(name)?;
+                    roastedduck_types::Value::try_varchar(name)?;
                     Ok((name.clone(), get_json_type(child)?))
                 })
                 .collect::<Result<_>>()?,
@@ -104,7 +104,7 @@ pub(crate) fn get_json_type(ty: &LogicalType) -> Result<LogicalType> {
                 .unwrap_or_default()
                 .iter()
                 .map(|(name, member)| {
-                    rustdb_types::Value::try_varchar(name)?;
+                    roastedduck_types::Value::try_varchar(name)?;
                     Ok((name.clone(), get_json_type(member)?))
                 })
                 .collect::<Result<_>>()?,
@@ -117,7 +117,7 @@ pub(crate) fn get_json_type(ty: &LogicalType) -> Result<LogicalType> {
 fn context_casts(input: &BindInput<'_>) -> Arc<CastFunctionSet> {
     input
         .binder
-        .and_then(|binder| binder.downcast_ref::<rustdb_planner::ClientContext>())
+        .and_then(|binder| binder.downcast_ref::<roastedduck_planner::ClientContext>())
         .map_or_else(
             || Arc::new(CastFunctionSet::new()),
             |context| Arc::clone(&context.casts),
@@ -133,7 +133,7 @@ fn create_bind(
     function.arguments.clear();
     for (i, ty) in input.argument_types.iter().enumerate() {
         if ty.id() == LogicalTypeId::Unknown {
-            return Err(rustdb_planner::expression_binder::parameter_not_resolved());
+            return Err(roastedduck_planner::expression_binder::parameter_not_resolved());
         }
         if object && i % 2 == 0 {
             if !matches!(ty.id(), LogicalTypeId::Varchar | LogicalTypeId::StringLiteral)
@@ -142,8 +142,8 @@ fn create_bind(
                 let name = input
                     .names
                     .get(i)
-                    .map_or(b"".as_slice(), rustdb_common::ByteString::as_bytes);
-                return Err(Error::binder(rustdb_common::byte_format!(
+                    .map_or(b"".as_slice(), roastedduck_common::ByteString::as_bytes);
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "json_object() keys must be VARCHAR, add an explicit cast to argument \"{name}\""
                 )));
             }
@@ -244,7 +244,7 @@ fn convert(casts: &CastFunctionSet, vector: &Vector, count: usize) -> Result<Nod
         L::Struct => {
             // Field vectors are indexed by the parent's slots: work on a flat parent.
             let vector = flat_parent(vector, count);
-            let names: Vec<rustdb_common::ByteString> = ty
+            let names: Vec<roastedduck_common::ByteString> = ty
                 .struct_children()
                 .unwrap_or_default()
                 .iter()
@@ -287,7 +287,7 @@ fn convert(casts: &CastFunctionSet, vector: &Vector, count: usize) -> Result<Nod
             Node::Array(flat, size, Box::new(child))
         }
         L::Union => {
-            let names: Vec<rustdb_common::ByteString> = ty
+            let names: Vec<roastedduck_common::ByteString> = ty
                 .union_members()
                 .unwrap_or_default()
                 .iter()
@@ -663,7 +663,7 @@ pub(crate) fn array_to_json_function() -> ScalarFunctionSet {
             }
             let id = input.argument_types[0].id();
             if id == LogicalTypeId::Unknown {
-                return Err(rustdb_planner::expression_binder::parameter_not_resolved());
+                return Err(roastedduck_planner::expression_binder::parameter_not_resolved());
             }
             if !matches!(
                 id,
@@ -690,7 +690,7 @@ pub(crate) fn row_to_json_function() -> ScalarFunctionSet {
             }
             let id = input.argument_types[0].id();
             if id == LogicalTypeId::Unknown {
-                return Err(rustdb_planner::expression_binder::parameter_not_resolved());
+                return Err(roastedduck_planner::expression_binder::parameter_not_resolved());
             }
             if !matches!(id, LogicalTypeId::Struct | LogicalTypeId::SqlNull) {
                 return Err(Error::binder("row_to_json() argument type must be STRUCT"));

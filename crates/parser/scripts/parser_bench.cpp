@@ -1,5 +1,5 @@
 // Benchmark of DuckDB's Parser::ParseQuery (grammar + transformer) for comparison with
-// rustdb-parser's `parse_bench` example.
+// roastedduck-parser's `parse_bench` example.
 //
 // Build (from the workspace root, REF = the DuckDB 1.5.6 checkout with a release build):
 //   c++ -std=c++17 -O2 -I$REF/src/include crates/parser/scripts/parser_bench.cpp \

@@ -6,9 +6,9 @@
 //! through `normalized_interval`, so `1 month = 30 days` also holds for grouping, sorting
 //! and joins.
 
-use rustdb_catalog::{CatalogType, EntryKind};
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo};
+use roastedduck_catalog::{CatalogType, EntryKind};
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_types::{LogicalType, LogicalTypeId, TypeInfo};
 
 use crate::context::ClientContext;
 use crate::expression::{Expression, ExpressionKind};
@@ -73,7 +73,7 @@ enum ResolvedCollation {
     Builtin(&'static Collation),
     Catalog {
         name: ByteString,
-        entry: Box<rustdb_catalog::CollationEntry>,
+        entry: Box<roastedduck_catalog::CollationEntry>,
     },
 }
 
@@ -162,13 +162,13 @@ fn push_varchar_collation(
 /// Checks that `collation` names collations that can be combined (the check
 /// `ExpressionBinder::TestCollation` makes for `SET default_collation`); `extensions` are
 /// the collations extensions registered, with whether they are combinable.
-pub fn test_collation(collation: &str, extensions: &[(rustdb_common::ByteString, bool)]) -> Result<()> {
+pub fn test_collation(collation: &str, extensions: &[(roastedduck_common::ByteString, bool)]) -> Result<()> {
     resolve_collations(&collation.as_bytes().to_ascii_lowercase(), |argument| {
         Ok(extensions
             .iter()
             .find(|(name, _)| name.as_bytes() == argument)
-            .map(|(_, combinable)| rustdb_catalog::CollationEntry {
-                function: rustdb_function::ScalarFunction::new(
+            .map(|(_, combinable)| roastedduck_catalog::CollationEntry {
+                function: roastedduck_function::ScalarFunction::new(
                     "",
                     vec![],
                     LogicalType::VARCHAR,
@@ -185,7 +185,7 @@ pub fn test_collation(collation: &str, extensions: &[(rustdb_common::ByteString,
 /// none for the binary collations. `lookup` finds the collations extensions registered.
 fn resolve_collations(
     collation: &[u8],
-    lookup: impl Fn(&[u8]) -> Result<Option<rustdb_catalog::CollationEntry>>,
+    lookup: impl Fn(&[u8]) -> Result<Option<roastedduck_catalog::CollationEntry>>,
 ) -> Result<Vec<ResolvedCollation>> {
     if collation.is_empty() || matches!(collation, b"binary" | b"c" | b"posix") {
         return Ok(Vec::new());
@@ -204,7 +204,7 @@ fn resolve_collations(
             None => match COLLATIONS.iter().find(|entry| entry.name.as_bytes() == argument) {
                 Some(entry) => ResolvedCollation::Builtin(entry),
                 None => {
-                    return Err(Error::catalog(rustdb_common::byte_format!(
+                    return Err(Error::catalog(roastedduck_common::byte_format!(
                         "Collation with name {argument} does not exist!"
                     )));
                 }
@@ -216,7 +216,7 @@ fn resolve_collations(
             if let Some(last) = entries.last()
                 && !last.combinable()
             {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Cannot combine collation types \"{}\" and \"{}\"",
                     last.name(),
                     entry.name()

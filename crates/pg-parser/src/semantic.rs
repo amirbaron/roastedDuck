@@ -1,7 +1,7 @@
 //! Semantic values (bison's `%union`) and the context a rule's action runs in.
 
-use rustdb_common::ByteString;
-use rustdb_common::{Error, Result};
+use roastedduck_common::ByteString;
+use roastedduck_common::{Error, Result};
 
 use crate::error::internal;
 use crate::nodes::{
@@ -240,7 +240,7 @@ impl<'s, 'a> Reduction<'s, 'a> {
     }
 
     /// `$k` as a string that must be present.
-    pub(crate) fn string(&mut self, k: usize) -> Result<rustdb_common::ByteString> {
+    pub(crate) fn string(&mut self, k: usize) -> Result<roastedduck_common::ByteString> {
         match self.take_value(k) {
             SemValue::Str(Some(s)) => Ok(s),
             SemValue::Keyword(text) => Ok(text.into()),

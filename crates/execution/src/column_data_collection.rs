@@ -8,10 +8,10 @@
 
 use std::sync::Arc;
 
-use rustdb_buffer::{BufferManager, MemoryTag};
-use rustdb_common::Result;
-use rustdb_row::{AppendState, PinProperties, TupleDataCollection, TupleDataLayout, ValidityType};
-use rustdb_types::{DataChunk, LogicalType, Vector, VectorKind};
+use roastedduck_buffer::{BufferManager, MemoryTag};
+use roastedduck_common::Result;
+use roastedduck_row::{AppendState, PinProperties, TupleDataCollection, TupleDataLayout, ValidityType};
+use roastedduck_types::{DataChunk, LogicalType, Vector, VectorKind};
 
 /// Packed, buffer-managed chunks of rows of fixed types; see the module docs.
 #[derive(Debug)]

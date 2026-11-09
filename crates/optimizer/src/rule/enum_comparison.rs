@@ -2,17 +2,17 @@
 //! without common members never compare equal, and in a filter the cast to VARCHAR
 //! becomes a cast of one enum to the other.
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::Result;
-use rustdb_planner::{Expression, ExpressionKind, LogicalOperatorType};
-use rustdb_types::{LogicalType, LogicalTypeId, TypeInfo, Value};
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::Result;
+use roastedduck_planner::{Expression, ExpressionKind, LogicalOperatorType};
+use roastedduck_types::{LogicalType, LogicalTypeId, TypeInfo, Value};
 
 use super::RuleOutcome;
 use crate::expression_rewriter::RuleContext;
 use crate::expression_util::constant_or_null;
 
 /// The members of an ENUM type.
-fn enum_values(ty: &LogicalType) -> &[rustdb_common::ByteString] {
+fn enum_values(ty: &LogicalType) -> &[roastedduck_common::ByteString] {
     match ty.info() {
         Some(TypeInfo::Enum(info)) => &info.values,
         _ => &[],
@@ -70,7 +70,7 @@ pub fn enum_comparison(
     if !is_root || context.op_type != LogicalOperatorType::LogicalFilter {
         return Ok(RuleOutcome::Unchanged);
     }
-    let cast_left = rustdb_planner::function_binder::add_cast_to_type(
+    let cast_left = roastedduck_planner::function_binder::add_cast_to_type(
         context.client,
         left.clone(),
         &right.return_type,

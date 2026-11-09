@@ -1,9 +1,9 @@
 //! Factoring common terms out of an OR: `(X AND A) OR (X AND B)` becomes
 //! `X AND (A OR B)` (DuckDB's `DistributivityRule`).
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::Result;
-use rustdb_planner::{Expression, ExpressionKind};
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::Result;
+use roastedduck_planner::{Expression, ExpressionKind};
 
 use super::RuleOutcome;
 use crate::expression_rewriter::RuleContext;

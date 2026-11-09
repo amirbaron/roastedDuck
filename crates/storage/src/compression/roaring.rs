@@ -8,8 +8,8 @@
 //! per position. Segment layout: an 8-byte offset of the container metadata, the container
 //! data, and the metadata (2-bit container types, 7-bit run counts, 8-bit array sizes).
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, PhysicalType, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, PhysicalType, Vector};
 
 use super::bitpacking_primitives::{pack_buffer_u64, required_size, round_up_to_group, unpack_buffer_u64};
 use super::primitive::{align8, bit, corrupt, load, set_invalid_where, update_numeric_stats, write_values};

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use rustdb_planner::{Expression, ExpressionEvaluator};
+use roastedduck_planner::{Expression, ExpressionEvaluator};
 
 use crate::error_data::{DuckdbErrorData, ErrorDataWrapper};
 use crate::helper::catch;
@@ -85,8 +85,8 @@ pub unsafe extern "C" fn duckdb_expression_fold(
         }
         Err(error) => {
             let what = error.into_json().raw_message_bytes().to_vec();
-            ErrorDataWrapper::new(Some(rustdb_common::Error::new_bytes(
-                rustdb_common::ErrorKind::InvalidInput,
+            ErrorDataWrapper::new(Some(roastedduck_common::Error::new_bytes(
+                roastedduck_common::ErrorKind::InvalidInput,
                 what,
             )))
             .into_handle()

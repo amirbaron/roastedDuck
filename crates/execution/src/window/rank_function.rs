@@ -1,9 +1,9 @@
 //! `rank`, `dense_rank`, `percent_rank` and `cume_dist` (DuckDB's
 //! `window_rank_function.cpp`): functions of a row's peer group.
 
-use rustdb_common::{Error, Result};
-use rustdb_planner::ExpressionType;
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::ExpressionType;
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use super::WindowExpression;
 use super::boundaries_state::WindowBound;

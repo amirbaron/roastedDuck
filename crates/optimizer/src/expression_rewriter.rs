@@ -1,9 +1,9 @@
 //! The expression rewriter (DuckDB's `ExpressionRewriter`): applies the rewrite rules to
 //! every expression of the plan until none of them changes anything.
 
-use rustdb_common::Result;
-use rustdb_planner::operator::{GroupingSet, split_predicates};
-use rustdb_planner::{ClientContext, Expression, LogicalKind, LogicalOperator, LogicalOperatorType};
+use roastedduck_common::Result;
+use roastedduck_planner::operator::{GroupingSet, split_predicates};
+use roastedduck_planner::{ClientContext, Expression, LogicalKind, LogicalOperator, LogicalOperatorType};
 
 use crate::optimizer::Optimizer;
 use crate::rule::{RULES, RuleOutcome};

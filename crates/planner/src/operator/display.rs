@@ -1,7 +1,7 @@
 //! A textual rendering of logical plans for debugging and plan-shape comparisons: one line
 //! per operator with its type and expressions, children indented below.
 
-use rustdb_common::{ByteString, byte_format, byte_write};
+use roastedduck_common::{ByteString, byte_format, byte_write};
 
 use super::{LogicalKind, LogicalOperator};
 use crate::expression::expression_list_to_string;
@@ -36,7 +36,7 @@ fn render(op: &LogicalOperator, depth: usize, out: &mut ByteString) {
                     byte_format!(
                         "{} {} {}",
                         c.left.to_bytes(),
-                        rustdb_ast::expression_type_to_operator(c.comparison),
+                        roastedduck_ast::expression_type_to_operator(c.comparison),
                         c.right.to_bytes()
                     )
                 })

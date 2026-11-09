@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 /// The encoded length in front of a module (`LENGTH_BYTES`).
 pub const LENGTH_BYTES: usize = 4;
@@ -39,7 +39,7 @@ impl ParquetKeys {
     const OBJECT_TYPE: &'static str = "parquet_keys";
 
     /// The keys of the database of `cache` (`ParquetKeys::Get`).
-    pub fn get(cache: &rustdb_function::ObjectCache) -> Arc<Self> {
+    pub fn get(cache: &roastedduck_function::ObjectCache) -> Arc<Self> {
         if let Some(keys) = cache.get::<Self>(Self::OBJECT_TYPE) {
             return keys;
         }
@@ -104,7 +104,7 @@ fn base64_decode(text: &[u8]) -> Option<Vec<u8>> {
 
 /// `PRAGMA add_parquet_key(name, key)` (`ParquetCrypto::AddKey`): a plain AES key or a
 /// base64 encoded one.
-pub fn add_key(cache: &rustdb_function::ObjectCache, name: &str, key: &str) -> Result<()> {
+pub fn add_key(cache: &roastedduck_function::ObjectCache, name: &str, key: &str) -> Result<()> {
     let keys = ParquetKeys::get(cache);
     if valid_key(key.as_bytes()) {
         keys.add(name, key.as_bytes().to_vec());
@@ -133,16 +133,16 @@ fn gcm_decrypt(key: &[u8], nonce: &[u8], aad: &[u8], ciphertext: &[u8], tag: &[u
         .try_into()
         .map_err(|_| Error::invalid_input("Invalid AES-GCM tag length"))?;
     let mut data = ciphertext.to_vec();
-    rustdb_crypto::aead::decrypt_gcm(key, nonce, aad, &mut data, tag)?;
+    roastedduck_crypto::aead::decrypt_gcm(key, nonce, aad, &mut data, tag)?;
     Ok(data)
 }
 
 /// Encrypt one Parquet module: little-endian length, random nonce, ciphertext and tag.
 pub fn encrypt_module(key: &[u8], aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
     let mut nonce = [0; NONCE_BYTES];
-    rustdb_crypto::generate_random_data(&mut nonce)?;
+    roastedduck_crypto::generate_random_data(&mut nonce)?;
     let mut data = plaintext.to_vec();
-    let tag = rustdb_crypto::aead::encrypt_gcm(key, &nonce, aad, &mut data)?;
+    let tag = roastedduck_crypto::aead::encrypt_gcm(key, &nonce, aad, &mut data)?;
     let length = u32::try_from(NONCE_BYTES + data.len() + TAG_BYTES)
         .map_err(|_| Error::invalid_input("Parquet encrypted module is too large"))?;
     let mut encoded = Vec::with_capacity(LENGTH_BYTES + length as usize);
@@ -238,7 +238,7 @@ pub struct FooterKey(pub Arc<[u8]>);
 /// The frozen `ParquetEncryptionConfig` object stores the resolved raw footer key.
 /// Its column-key map is empty (unsupported by both implementations) and omitted.
 pub fn serialize_encryption_config(
-    serializer: &mut dyn rustdb_serde::Serializer,
+    serializer: &mut dyn roastedduck_serde::Serializer,
     key: Option<&FooterKey>,
 ) -> Result<()> {
     let Some(key) = key else {
@@ -249,7 +249,7 @@ pub fn serialize_encryption_config(
     serializer.write_property_with_default(
         100,
         "footer_key",
-        &rustdb_common::ByteString::from(key.0.as_ref()),
+        &roastedduck_common::ByteString::from(key.0.as_ref()),
     )?;
     serializer.on_object_end();
     Ok(())
@@ -264,13 +264,13 @@ impl std::fmt::Debug for FooterKey {
 /// `ParquetEncryptionConfig::ParquetEncryptionConfig(context, arg)`: the footer key of an
 /// `encryption_config` STRUCT, by key name (`footer_key`) or value (`footer_key_value`).
 pub fn parse_encryption_config(
-    value: &rustdb_types::Value,
-    cache: Option<&rustdb_function::ObjectCache>,
+    value: &roastedduck_types::Value,
+    cache: Option<&roastedduck_function::ObjectCache>,
 ) -> Result<FooterKey> {
     let names = value
         .logical_type()
         .struct_children()
-        .filter(|_| value.logical_type().id() == rustdb_types::LogicalTypeId::Struct)
+        .filter(|_| value.logical_type().id() == roastedduck_types::LogicalTypeId::Struct)
         .ok_or_else(|| Error::binder("Parquet encryption_config must be of type STRUCT"))?;
     let children = value.children().unwrap_or_default();
     let mut footer_key = Vec::new();
@@ -281,7 +281,7 @@ pub fn parse_encryption_config(
                 let key = cache
                     .and_then(|cache| ParquetKeys::get(cache).key(&key_name))
                     .ok_or_else(|| {
-                        Error::binder(rustdb_common::byte_format!(
+                        Error::binder(roastedduck_common::byte_format!(
                             "No key with name \"{key_name}\" exists. Add it with PRAGMA add_parquet_key('<key_name>','<key>');"
                         ))
                     })?;
@@ -289,8 +289,8 @@ pub fn parse_encryption_config(
             }
             b"footer_key_value" => {
                 footer_key = match child.logical_type().id() {
-                    rustdb_types::LogicalTypeId::Blob => child.as_bytes().unwrap_or_default().to_vec(),
-                    _ => rustdb_common::blob::from_string(child.to_varchar()?.as_bytes())?,
+                    roastedduck_types::LogicalTypeId::Blob => child.as_bytes().unwrap_or_default().to_vec(),
+                    _ => roastedduck_common::blob::from_string(child.to_varchar()?.as_bytes())?,
                 };
             }
             b"column_keys" => {
@@ -299,7 +299,7 @@ pub fn parse_encryption_config(
                 ));
             }
             _ => {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Unknown key in encryption_config \"{name}\""
                 )));
             }

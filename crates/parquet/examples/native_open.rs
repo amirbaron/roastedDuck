@@ -1,5 +1,7 @@
 //! Compare actual native cache-handle open errors with C++ `LocalFileSystem`.
-use rustdb_function::{caching_file_system::CachingFileHandle, external_file_cache::CacheValidationMode};
+use roastedduck_function::{
+    caching_file_system::CachingFileHandle, external_file_cache::CacheValidationMode,
+};
 use std::io::{self, BufRead};
 fn decode(s: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     if !s.len().is_multiple_of(2) {

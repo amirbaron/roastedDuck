@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs DuckDB's sqllogictest corpus against rustdb, compares with the C++ reference
+# Runs DuckDB's sqllogictest corpus against roastedduck, compares with the C++ reference
 # results, enforces the ratchet and refreshes the dashboard.
 #
 # Usage: scripts/conformance.sh [--update] [test paths...]   (default: the whole corpus)

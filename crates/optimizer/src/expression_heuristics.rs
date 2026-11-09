@@ -2,9 +2,9 @@
 //! `ExpressionHeuristics`), so that cheap predicates run first and short-circuit
 //! expensive ones.
 
-use rustdb_ast::ExpressionType;
-use rustdb_planner::{Expression, ExpressionKind, LogicalOperator, LogicalOperatorType};
-use rustdb_types::{LogicalTypeId, PhysicalType};
+use roastedduck_ast::ExpressionType;
+use roastedduck_planner::{Expression, ExpressionKind, LogicalOperator, LogicalOperatorType};
+use roastedduck_types::{LogicalTypeId, PhysicalType};
 
 use crate::expression_util::can_throw;
 

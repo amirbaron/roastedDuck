@@ -1,4 +1,4 @@
-//! Compares rustdb-zstd's frames with the reference encoder's (`tools/zstd-ref`, DuckDB's
+//! Compares roastedduck-zstd's frames with the reference encoder's (`tools/zstd-ref`, DuckDB's
 //! zstd 1.5.6), driven the same way.
 //!
 //! Usage: `compare <zstd_ref> <scratch dir> <mode> <level> <input> [args]` with the modes
@@ -7,7 +7,7 @@
 //! - `stream <level> <input> <chunk>` (`ZstdStreamWrapper`).
 use std::process::Command;
 
-use rustdb_zstd::{Compressor, EndDirective, compress, compress_bound};
+use roastedduck_zstd::{Compressor, EndDirective, compress, compress_bound};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();

@@ -1,7 +1,7 @@
 //! The `inventory` table (`w_inventory.c`): the quantity of every item in every
 //! warehouse, weekly.
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use super::Output;
 use super::columns::{INV_NULLS, INV_QUANTITY_ON_HAND};

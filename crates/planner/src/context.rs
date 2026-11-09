@@ -6,13 +6,13 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::Arc;
 
-use rustdb_ast::{OrderByNullType, OrderType};
-use rustdb_catalog::{Catalog, CatalogEntry, CatalogType, DEFAULT_SCHEMA, TEMP_CATALOG, Transaction};
-use rustdb_common::string_util::similarity_rating;
-use rustdb_common::{ByteString, Error, Result};
-use rustdb_function::FunctionClient;
-use rustdb_function::cast::CastFunctionSet;
-use rustdb_types::{LogicalType, Value};
+use roastedduck_ast::{OrderByNullType, OrderType};
+use roastedduck_catalog::{Catalog, CatalogEntry, CatalogType, DEFAULT_SCHEMA, TEMP_CATALOG, Transaction};
+use roastedduck_common::string_util::similarity_rating;
+use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_function::FunctionClient;
+use roastedduck_function::cast::CastFunctionSet;
+use roastedduck_types::{LogicalType, Value};
 
 use crate::expression::Expression;
 use crate::prepared::PreparedStatementData;
@@ -149,7 +149,7 @@ pub struct ReplacementScanInput<'a> {
 /// What a replacement scan computes: the table reference to read in place of a table
 /// that does not exist, if it has one.
 pub type ReplacementScanFunction =
-    dyn Fn(&ReplacementScanInput<'_>) -> Result<Option<rustdb_ast::TableRef>> + Send + Sync;
+    dyn Fn(&ReplacementScanInput<'_>) -> Result<Option<roastedduck_ast::TableRef>> + Send + Sync;
 
 /// A replacement scan a client added to the database (DuckDB's `ReplacementScan` in
 /// `DBConfig::replacement_scans`).
@@ -187,7 +187,7 @@ pub struct ClientContext {
     pub evaluator: Arc<dyn ExpressionEvaluator>,
     pub config: PlannerConfig,
     /// Prepared statements of the connection, by name.
-    pub prepared_statements: rustdb_common::CaseInsensitiveMap<Arc<PreparedStatementData>, ByteString>,
+    pub prepared_statements: roastedduck_common::CaseInsensitiveMap<Arc<PreparedStatementData>, ByteString>,
     /// Connection state functions use (random engine, ...).
     pub function_client: Arc<FunctionClient>,
     /// The entries looked up while recording (DuckDB's catalog lookup callback of the
@@ -196,7 +196,7 @@ pub struct ClientContext {
     /// The embedding database's state, if any.
     pub database_state: Option<Arc<dyn DatabaseState>>,
     /// `SET VARIABLE` values of the connection (DuckDB's `ClientConfig::user_variables`).
-    pub user_variables: rustdb_common::CaseInsensitiveMap<Value, ByteString>,
+    pub user_variables: roastedduck_common::CaseInsensitiveMap<Value, ByteString>,
     /// The replacement scans clients added, tried in order after the built-in ones.
     pub replacement_scans: Vec<ReplacementScan>,
 }
@@ -288,7 +288,7 @@ impl ClientContext {
                 .catalog(&catalog_name)
                 .is_some_and(|found| found.schema(&self.transaction, schema).is_some())
             {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Ambiguous reference to catalog or schema \"{schema}\" - use a fully qualified path like \"{catalog_name}.{schema}\""
                 )));
             }
@@ -572,7 +572,7 @@ impl ClientContext {
                 if if_exists {
                     return Ok(None);
                 }
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "Catalog \"{catalog_name}\" does not exist!"
                 )));
             }
@@ -610,7 +610,7 @@ impl ClientContext {
             return Ok(None);
         }
         if !catalog.is_empty() && self.catalog(catalog).is_none() {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Catalog \"{catalog}\" does not exist!"
             )));
         }
@@ -622,7 +622,7 @@ impl ClientContext {
                     .is_some_and(|catalog| catalog.schema(&self.transaction, schema_name).is_some())
             })
         {
-            return Err(Error::catalog(rustdb_common::byte_format!(
+            return Err(Error::catalog(roastedduck_common::byte_format!(
                 "Table with name \"{schema}.{name}\" does not exist because schema \"{schema}\" does not exist."
             )));
         }
@@ -630,7 +630,7 @@ impl ClientContext {
     }
 
     fn autoload_catalog_entry(&self, ty: CatalogType, name: &[u8]) -> Result<bool> {
-        use rustdb_function::extension_entries::{self as entries, ExtensionFunctionType as F};
+        use roastedduck_function::extension_entries::{self as entries, ExtensionFunctionType as F};
         let enabled = self
             .function_client
             .settings()
@@ -770,7 +770,7 @@ impl ClientContext {
             );
         }
         if schema_catalogs.iter().any(|c| c.eq_ignore_ascii_case(catalog)) {
-            rustdb_common::byte_format!("{schema}.{name}")
+            roastedduck_common::byte_format!("{schema}.{name}")
         } else {
             let catalog_schemas: Vec<&[u8]> = paths
                 .iter()
@@ -780,9 +780,9 @@ impl ClientContext {
             if (catalog_schemas.is_empty() && schema.eq_ignore_ascii_case(DEFAULT_SCHEMA.as_bytes()))
                 || catalog_schemas.iter().any(|s| s.eq_ignore_ascii_case(schema))
             {
-                rustdb_common::byte_format!("{catalog}.{name}")
+                roastedduck_common::byte_format!("{catalog}.{name}")
             } else {
-                rustdb_common::byte_format!("{catalog}.{schema}.{name}")
+                roastedduck_common::byte_format!("{catalog}.{schema}.{name}")
             }
         }
     }
@@ -790,7 +790,7 @@ impl ClientContext {
     /// The part of `Catalog::CreateMissingEntryException` that points at the extension
     /// providing a missing function, type, copy function or collation.
     fn extension_entry_error(&self, ty: CatalogType, name: impl AsRef<[u8]>) -> Option<Error> {
-        use rustdb_function::extension_entries::{self as entries, ExtensionFunctionType as F};
+        use roastedduck_function::extension_entries::{self as entries, ExtensionFunctionType as F};
         let name = name.as_ref();
         let extension = match ty {
             CatalogType::TableFunction
@@ -823,7 +823,7 @@ impl ClientContext {
                 match matched {
                     Some(extension) => extension,
                     None if other_types.len() == 1 => {
-                        return Some(Error::catalog(rustdb_common::byte_format!(
+                        return Some(Error::catalog(roastedduck_common::byte_format!(
                             "{} with name \"{name}\" is not in the catalog, a function by this name exists in the \
                              {extension_for_error} extension, but it's of a different type, namely {}",
                             ty.display_name(),
@@ -831,7 +831,7 @@ impl ClientContext {
                         )));
                     }
                     None => {
-                        return Some(Error::catalog(rustdb_common::byte_format!(
+                        return Some(Error::catalog(roastedduck_common::byte_format!(
                             "{} with name \"{name}\" is not in the catalog, functions with this name exist in the \
                              {extension_for_error} extension, but they are of different types, namely {}",
                             ty.display_name(),
@@ -845,7 +845,7 @@ impl ClientContext {
             CatalogType::Collation => entries::find_extension(name, entries::EXTENSION_COLLATIONS)?,
             _ => return None,
         };
-        let message = rustdb_common::byte_format!(
+        let message = roastedduck_common::byte_format!(
             "{} with name \"{name}\" is not in the catalog, but it exists in the {extension} extension.",
             ty.display_name()
         );
@@ -898,18 +898,18 @@ impl ClientContext {
         let mut suggestions: Vec<ByteString> = suggestions.into_iter().collect();
         let did_you_mean = if suggestions.len() > 2 {
             let last = suggestions.pop().unwrap_or_default();
-            rustdb_common::byte_format!("{}, or {last}", ByteString::join(&suggestions, ", "))
+            roastedduck_common::byte_format!("{}, or {last}", ByteString::join(&suggestions, ", "))
         } else {
             ByteString::join(&suggestions, " or ")
         };
         let hint = if did_you_mean.is_empty() {
             ByteString::new()
         } else {
-            rustdb_common::byte_format!("\nDid you mean \"{did_you_mean}\"?")
+            roastedduck_common::byte_format!("\nDid you mean \"{did_you_mean}\"?")
         };
         // `CatalogException::MissingEntry`, caught into the lookup's `ErrorData`; the
         // position of the lookup follows the subtype.
-        let error = Error::catalog(rustdb_common::byte_format!(
+        let error = Error::catalog(roastedduck_common::byte_format!(
             "{} with name {name} does not exist!{hint}",
             ty.display_name()
         ))
@@ -936,7 +936,7 @@ pub fn is_default_schema(schema: impl AsRef<[u8]>) -> bool {
 /// Attaches `location` to a missing-entry error of a catalog lookup; errors about a
 /// missing catalog or schema have no position in DuckDB.
 pub fn position_missing_entry(error: Error, location: Option<u64>) -> Error {
-    if error.kind() == rustdb_common::ErrorKind::Catalog {
+    if error.kind() == roastedduck_common::ErrorKind::Catalog {
         error.with_position(location)
     } else {
         error
@@ -952,7 +952,7 @@ fn default_table_ambiguity(
 ) -> Error {
     let name = name.as_ref();
     let entry_type = found.entry.catalog_type().display_name();
-    Error::catalog(rustdb_common::byte_format!(
+    Error::catalog(roastedduck_common::byte_format!(
         "Ambiguity detected for '{name}': this could either refer to the '{entry_type}' '{name}', or the attached \
          catalog '{name}' which has a default table. To avoid this error, either detach the catalog and reattach \
          under a different name, or use a fully qualified name for the '{entry_type}': '{}.{}.{}' or for the \

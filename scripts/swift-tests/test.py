@@ -49,9 +49,9 @@ def main():
         (output / name).mkdir()
     env = dict(os.environ, TMPDIR=str(output / "tmp") + "/",
                CFFIXED_USER_HOME=str(output / "foundation-home"),
-               RUSTDB_SWIFT_TEST_DIRECTORY=str(output / "fixtures"),
-               RUSTDB_SWIFT_EXPECTED_LIBRARY=str(library),
-               RUSTDB_SWIFT_IDENTITY_REPORT=str(output / "identity.json"),
+               ROASTEDDUCK_SWIFT_TEST_DIRECTORY=str(output / "fixtures"),
+               ROASTEDDUCK_SWIFT_EXPECTED_LIBRARY=str(library),
+               ROASTEDDUCK_SWIFT_IDENTITY_REPORT=str(output / "identity.json"),
                CLANG_MODULE_CACHE_PATH=str(build / "module-cache"),
                SWIFTPM_MODULECACHE_OVERRIDE=str(build / "module-cache"))
     with (output / "storage-probe.json").open("x") as log:

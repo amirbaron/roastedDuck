@@ -1,8 +1,8 @@
 //! `json_pretty` (DuckDB's `json_pretty.cpp`).
 
-use rustdb_common::Result;
-use rustdb_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_common::Result;
+use roastedduck_function::{FunctionState, ScalarFunction, ScalarFunctionSet};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use crate::json_executors::{StrBuilder, unary_execute};
 use crate::json_type;

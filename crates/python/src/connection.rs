@@ -4,9 +4,11 @@ use crate::pending::PythonExecution;
 use crate::{conversion, error};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
-use rustdb::{AccessMode, ClientHandle, Config, Connection, DataChunk, Database, LogicalType, QueryResult};
-use rustdb_common::{ByteString, CaseInsensitiveMap, Error, Result};
-use rustdb_types::Value;
+use roastedduck::{
+    AccessMode, ClientHandle, Config, Connection, DataChunk, Database, LogicalType, QueryResult,
+};
+use roastedduck_common::{ByteString, CaseInsensitiveMap, Error, Result};
+use roastedduck_types::Value;
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -41,7 +43,7 @@ fn cache_key(path: &Path) -> Result<ByteString> {
         path.to_owned()
     } else {
         std::env::current_dir()
-            .map_err(|e| Error::new(rustdb_common::ErrorKind::Io, e.to_string()))?
+            .map_err(|e| Error::new(roastedduck_common::ErrorKind::Io, e.to_string()))?
             .join(path)
     };
     let mut key = PathBuf::new();
@@ -69,7 +71,7 @@ fn open_database(path: &Path, config: &Config, extras: &[(String, Value)]) -> Re
         };
         let database = Arc::new(Database::open(instance_path, config)?);
         for (name, value) in extras {
-            database.add_extension_option(rustdb_function::ExtensionOption{name:name.clone(),description:match name.as_str(){"pandas_analyze_sample"=>"The maximum number of rows to sample when analyzing a pandas object column.","python_enable_replacements"=>"Whether variables visible to the current stack should be used for replacement scans.",_=>"If set, restores the old behavior of scanning all preceding frames to locate the referenced variable."}.into(),input_type:value.logical_type().clone(),default_value:value.clone(),set_function:None,global_by_default:true});
+            database.add_extension_option(roastedduck_function::ExtensionOption{name:name.clone(),description:match name.as_str(){"pandas_analyze_sample"=>"The maximum number of rows to sample when analyzing a pandas object column.","python_enable_replacements"=>"Whether variables visible to the current stack should be used for replacement scans.",_=>"If set, restores the old behavior of scanning all preceding frames to locate the referenced variable."}.into(),input_type:value.logical_type().clone(),default_value:value.clone(),set_function:None,global_by_default:true});
         }
         database.add_replacement_scan(crate::input::replacement_scan());
         Ok(database)
@@ -84,7 +86,7 @@ fn open_database(path: &Path, config: &Config, extras: &[(String, Value)]) -> Re
     {
         if cached.config != *config || cached.python_options != extras {
             return Err(Error::new(
-                rustdb_common::ErrorKind::Connection,
+                roastedduck_common::ErrorKind::Connection,
                 "Can't open a connection to same database file with a different configuration than existing connections",
             ));
         }
@@ -122,7 +124,7 @@ pub(super) struct ResultCursor {
     row: usize,
     exhausted: bool,
     bulk_consumed: bool,
-    properties: rustdb_arrow::ClientProperties,
+    properties: roastedduck_arrow::ClientProperties,
 }
 impl ResultCursor {
     pub(super) fn is_open(&self, connection: &Connection) -> bool {
@@ -131,7 +133,7 @@ impl ResultCursor {
             QueryResult::Materialized(_) => true,
         }
     }
-    pub(super) fn new(result: QueryResult, properties: rustdb_arrow::ClientProperties) -> Self {
+    pub(super) fn new(result: QueryResult, properties: roastedduck_arrow::ClientProperties) -> Self {
         Self {
             id: CURSOR_IDS.fetch_add(1, Ordering::Relaxed),
             row_epoch: 0,
@@ -215,7 +217,7 @@ impl ResultCursor {
             if let QueryResult::Materialized(result) = &mut self.result {
                 self.chunk = None;
                 self.row = 0;
-                *result = rustdb::MaterializedResult::new(
+                *result = roastedduck::MaterializedResult::new(
                     result.names().to_vec(),
                     result.types().to_vec(),
                     Vec::new(),
@@ -289,9 +291,12 @@ pub(super) struct State {
 }
 impl State {
     pub(super) fn reader_handle(&self) -> Result<Arc<Mutex<Connection>>> {
-        self.connection
-            .clone()
-            .ok_or_else(|| Error::new(rustdb_common::ErrorKind::Connection, "Connection already closed!"))
+        self.connection.clone().ok_or_else(|| {
+            Error::new(
+                roastedduck_common::ErrorKind::Connection,
+                "Connection already closed!",
+            )
+        })
     }
     fn host_metadata(&mut self) -> Result<crate::host::Metadata> {
         let missing = if self.transferred.is_some() {
@@ -315,10 +320,12 @@ impl State {
             .result
             .as_mut()
             .ok_or_else(|| Error::invalid_input(missing))?;
-        let connection = self
-            .connection
-            .as_mut()
-            .ok_or_else(|| Error::new(rustdb_common::ErrorKind::Connection, "Connection already closed!"))?;
+        let connection = self.connection.as_mut().ok_or_else(|| {
+            Error::new(
+                roastedduck_common::ErrorKind::Connection,
+                "Connection already closed!",
+            )
+        })?;
         result.bulk_next(&mut lock(connection))
     }
     pub(super) fn relation_connection(&self) -> Result<MutexGuard<'_, Connection>> {
@@ -327,7 +334,7 @@ impl State {
             .map(|connection| lock(connection))
             .ok_or_else(|| {
                 Error::new(
-                    rustdb_common::ErrorKind::Connection,
+                    roastedduck_common::ErrorKind::Connection,
                     "Connection has already been closed",
                 )
             })
@@ -336,7 +343,12 @@ impl State {
         self.connection
             .as_ref()
             .map(|connection| lock(connection))
-            .ok_or_else(|| Error::new(rustdb_common::ErrorKind::Connection, "Connection already closed!"))
+            .ok_or_else(|| {
+                Error::new(
+                    roastedduck_common::ErrorKind::Connection,
+                    "Connection already closed!",
+                )
+            })
     }
     pub(super) fn clear_result(&mut self) {
         self.transferred = None;
@@ -415,10 +427,12 @@ impl State {
             .result
             .as_mut()
             .ok_or_else(|| Error::invalid_input(missing))?;
-        let connection = self
-            .connection
-            .as_mut()
-            .ok_or_else(|| Error::new(rustdb_common::ErrorKind::Connection, "Connection already closed!"))?;
+        let connection = self.connection.as_mut().ok_or_else(|| {
+            Error::new(
+                roastedduck_common::ErrorKind::Connection,
+                "Connection already closed!",
+            )
+        })?;
         result.next(&mut lock(connection))
     }
 }
@@ -530,7 +544,10 @@ impl PyConnection {
         if self.closed.load(Ordering::Acquire) {
             return Err(error::native(
                 py,
-                &Error::new(rustdb_common::ErrorKind::Connection, "Connection already closed!"),
+                &Error::new(
+                    roastedduck_common::ErrorKind::Connection,
+                    "Connection already closed!",
+                ),
             ));
         }
         Ok(())
@@ -692,7 +709,7 @@ fn self_check_relation(
     {
         return Err(error::native(
             py,
-            &Error::invalid_input(rustdb_common::byte_format!(
+            &Error::invalid_input(roastedduck_common::byte_format!(
                 "Python Object \"{}\" of type \"DuckDBPyRelation\" not suitable for replacement scan.\nThe object was created by another Connection and can therefore not be used by this Connection.",
                 name.as_ref()
             )),
@@ -917,18 +934,19 @@ impl PyConnection {
                 &Error::invalid_input("The provided 'version' can not be empty!"),
             ));
         }
-        let statement =
-            rustdb_ast::SqlStatement::new(rustdb_ast::SqlStatementKind::Load(rustdb_ast::LoadInfo {
+        let statement = roastedduck_ast::SqlStatement::new(roastedduck_ast::SqlStatementKind::Load(
+            roastedduck_ast::LoadInfo {
                 filename: extension.into(),
                 load_type: if force_install {
-                    rustdb_ast::LoadType::ForceInstall
+                    roastedduck_ast::LoadType::ForceInstall
                 } else {
-                    rustdb_ast::LoadType::Install
+                    roastedduck_ast::LoadType::Install
                 },
                 repository: repository.unwrap_or_default().into(),
                 version: version.unwrap_or_default().into(),
                 repo_is_alias,
-            }));
+            },
+        ));
         py.detach(|| {
             lock(&self.state)
                 .connection()?
@@ -1041,15 +1059,17 @@ impl PyConnection {
             }
             let _length = parameters.len()?;
             for value in parameters.try_iter()? {
-                args.push(rustdb_parser::build::constant(conversion::from_python(&value?)?));
+                args.push(roastedduck_parser::build::constant(conversion::from_python(
+                    &value?,
+                )?));
             }
         }
-        let function = rustdb_parser::build::function(name, args);
-        let mut table = rustdb_parser::build::table_ref(rustdb_ast::TableRefKind::TableFunction(
-            rustdb_ast::TableFunctionRef {
+        let function = roastedduck_parser::build::function(name, args);
+        let mut table = roastedduck_parser::build::table_ref(roastedduck_ast::TableRefKind::TableFunction(
+            roastedduck_ast::TableFunctionRef {
                 function: Box::new(function),
                 column_name_alias: Vec::new(),
-                with_ordinality: rustdb_ast::OrdinalityType::WithoutOrdinality,
+                with_ordinality: roastedduck_ast::OrdinalityType::WithoutOrdinality,
             },
         ));
         table.alias.clear();
@@ -1272,7 +1292,7 @@ impl PyConnection {
         let properties=py.detach(|| {
             let state=lock(&state); let mut connection=state.connection()?;
             connection.cancel_registration_transaction()?;
-            if state.functions.contains(&name.to_ascii_lowercase()) {return Err(Error::not_implemented(rustdb_common::byte_format!("A function by the name of '{name}' is already created, creating multiple functions with the same name is not supported yet, please remove it first")));}
+            if state.functions.contains(&name.to_ascii_lowercase()) {return Err(Error::not_implemented(roastedduck_common::byte_format!("A function by the name of '{name}' is already created, creating multiple functions with the same name is not supported yet, please remove it first")));}
             Ok::<_,Error>(connection.client_properties())
         }).map_err(|e|error::native(py,&e))?;
         let set = crate::udf::function(
@@ -1332,7 +1352,7 @@ impl PyConnection {
         py.detach(|| {
             let mut state = lock(&state);
             if !state.functions.contains(&name.to_ascii_lowercase()) {
-                return Err(Error::invalid_input(rustdb_common::byte_format!(
+                return Err(Error::invalid_input(roastedduck_common::byte_format!(
                     "No function by the name of '{name}' was found in the list of registered functions"
                 )));
             }
@@ -1440,10 +1460,10 @@ impl PyConnection {
             let mut state = lock(&state);
             drop(state.connection()?);
             if state.registered.remove(view_name.as_slice()) {
-                let quoted = rustdb_ast::keyword::write_optionally_quoted_bytes(&view_name);
+                let quoted = roastedduck_ast::keyword::write_optionally_quoted_bytes(&view_name);
                 let _ = state
                     .connection()?
-                    .query(rustdb_common::byte_format!("DROP VIEW {quoted}"));
+                    .query(roastedduck_common::byte_format!("DROP VIEW {quoted}"));
             }
             Ok::<_, Error>(())
         })
@@ -1630,7 +1650,10 @@ impl PyConnection {
             .detach(|| {
                 let mut state = lock(&self.state);
                 let database = state.database.clone().ok_or_else(|| {
-                    Error::new(rustdb_common::ErrorKind::Connection, "Connection already closed!")
+                    Error::new(
+                        roastedduck_common::ErrorKind::Connection,
+                        "Connection already closed!",
+                    )
                 })?;
                 let child = Self::from_database(database)?;
                 state.children.retain(|child| child.strong_count() > 0);
@@ -1827,7 +1850,7 @@ pub fn connect<'py>(
                 .iter_mut()
                 .find(|(name, _)| name.eq_ignore_ascii_case(&key))
             {
-                use rustdb_function::cast::ValueCast;
+                use roastedduck_function::cast::ValueCast;
                 *target = value
                     .default_cast_as(target.logical_type())
                     .map_err(|e| error::native(py, &e))?;

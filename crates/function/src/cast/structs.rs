@@ -3,9 +3,9 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{ByteString, Error, ErrorKind, Result, byte_format as format};
-use rustdb_types::format::{NestedQuoting, write_nested_string};
-use rustdb_types::{ListEntry, LogicalType, LogicalTypeId, ValidityMask, Vector};
+use roastedduck_common::{ByteString, Error, ErrorKind, Result, byte_format as format};
+use roastedduck_types::format::{NestedQuoting, write_nested_string};
+use roastedduck_types::{ListEntry, LogicalType, LogicalTypeId, ValidityMask, Vector};
 
 use super::executor::{StringColumn, cast_rows_to_string};
 use super::nested::{NestedInput, cast_child, child_quoting, missing_child, write_element};

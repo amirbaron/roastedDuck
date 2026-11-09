@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use rustdb_common::{ByteString, Error, Result};
+use roastedduck_common::{ByteString, Error, Result};
 
 use crate::variant::{
     VariantChild, VariantData, VariantEntry, VariantLogicalType, varint_encode, varint_size,

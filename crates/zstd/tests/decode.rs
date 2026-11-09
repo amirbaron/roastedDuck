@@ -8,7 +8,7 @@ mod common;
 
 use std::io::Read;
 
-use rustdb_zstd::{Decompressor, Error, StreamDecoder};
+use roastedduck_zstd::{Decompressor, Error, StreamDecoder};
 
 /// The zstd CLI's frames of `tests/data` and their content's size and hash.
 const FIXTURES: &[(&str, usize, u64)] = &[
@@ -27,7 +27,7 @@ fn fixture(name: &str) -> Vec<u8> {
 
 fn one_shot(frame: &[u8], capacity: usize) -> Result<Vec<u8>, Error> {
     let mut out = vec![0; capacity];
-    let size = rustdb_zstd::decompress(&mut out, frame)?;
+    let size = roastedduck_zstd::decompress(&mut out, frame)?;
     out.truncate(size);
     Ok(out)
 }
@@ -87,7 +87,7 @@ fn reads_the_zstd_clis_frames() {
 fn reads_the_encoders_frames() {
     for (name, data) in common::inputs() {
         for level in [-5, -1, 1, 3, 4, 9, 19] {
-            let frame = rustdb_zstd::compress(&data, level);
+            let frame = roastedduck_zstd::compress(&data, level);
             assert_eq!(
                 one_shot(&frame, data.len()).expect(name),
                 data,
@@ -159,7 +159,7 @@ fn checks_sizes_and_checksums() {
     trailing.extend_from_slice(b"garbage!");
     assert_eq!(one_shot(&trailing, 96_000), Err(Error::SrcSizeWrong));
     // A truncated frame.
-    let frame = rustdb_zstd::compress(&common::text(&mut common::Rng::new(5), 10_000), 3);
+    let frame = roastedduck_zstd::compress(&common::text(&mut common::Rng::new(5), 10_000), 3);
     assert_eq!(
         one_shot(&frame[..frame.len() - 3], 10_000),
         Err(Error::SrcSizeWrong)
@@ -176,11 +176,11 @@ fn corrupt_frames_fail_without_panicking() {
     for (name, data) in common::inputs() {
         if name.starts_with("text_100k") || name == "binary" || name == "uuids_2400k" {
             frames.push((
-                rustdb_zstd::compress(&data[..data.len().min(200_000)], -1),
+                roastedduck_zstd::compress(&data[..data.len().min(200_000)], -1),
                 data.len(),
             ));
             frames.push((
-                rustdb_zstd::compress(&data[..data.len().min(200_000)], 3),
+                roastedduck_zstd::compress(&data[..data.len().min(200_000)], 3),
                 data.len(),
             ));
         }

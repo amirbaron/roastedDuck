@@ -12,8 +12,8 @@
 
 use std::sync::Arc;
 
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_crypto::{
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_crypto::{
     AES_TAG_LEN, CipherType, DEFAULT_ENCRYPTION_KEY_LENGTH, EncryptionKey, EncryptionNonce, EncryptionState,
     EncryptionTag, EncryptionVersion, KeyDerivationFunction, UserKey,
 };
@@ -23,7 +23,7 @@ use crate::storage_info::{
 };
 
 /// The block header of an encrypted file (`DEFAULT_ENCRYPTION_BLOCK_HEADER_SIZE`).
-pub const ENCRYPTION_BLOCK_HEADER_SIZE: usize = rustdb_crypto::ENCRYPTION_BLOCK_HEADER_SIZE;
+pub const ENCRYPTION_BLOCK_HEADER_SIZE: usize = roastedduck_crypto::ENCRYPTION_BLOCK_HEADER_SIZE;
 
 /// How a database file is encrypted, as `ATTACH` gives it (the encryption fields of
 /// DuckDB's `StorageOptions`): the key, the cipher (`Invalid` when not given) and the

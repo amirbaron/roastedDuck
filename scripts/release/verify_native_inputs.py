@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+from archive_native_sdk import expected_layout
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--native", type=Path, required=True)
@@ -23,8 +24,11 @@ for name, expected in provenance["files_sha256"].items():
     assert file.is_relative_to(root) and file.is_file(), name
     with file.open("rb") as stream:
         assert hashlib.file_digest(stream, "sha256").hexdigest() == expected, name
-alias = root / "sdk/bin/roastedDuck"
-assert alias.is_symlink() and alias.readlink() == Path("rustdb")
+executable, links = expected_layout(provenance)
+assert (root / "sdk" / executable).is_file() and not (root / "sdk" / executable).is_symlink()
+actual_links = {str(path.relative_to(root / "sdk")): str(path.readlink())
+                for path in (root / "sdk").rglob("*") if path.is_symlink()}
+assert actual_links == links
 args.out.parent.mkdir(parents=True, exist_ok=True)
 args.out.write_text(json.dumps({"passed": True, "source_commit": args.expected_commit,
                                "producer_manifest_sha256": hashlib.sha256((root / "build-provenance.json").read_bytes()).hexdigest(),

@@ -1,7 +1,7 @@
 //! Native parser statement codecs checked against frozen C++ 1.5.6.
-use rustdb_ast::{CopyInfo, ParseInfo, SqlStatementKind};
-use rustdb_common::{Error, Result};
-use rustdb_serde::{
+use roastedduck_ast::{CopyInfo, ParseInfo, SqlStatementKind};
+use roastedduck_common::{Error, Result};
+use roastedduck_serde::{
     Deserialize, Deserializer, SerializationOptions, Serialize, Serializer,
     binary::{BinaryDeserializer, BinarySerializer},
 };
@@ -44,7 +44,7 @@ fn copy_round_trip(bytes: &[u8]) -> Result<()> {
     reader.begin()?;
     let deserializer = &mut reader as &mut dyn Deserializer;
     let value: ParseInfo = deserializer.read_property(100, "payload")?;
-    let names: Vec<rustdb_common::ByteString> = deserializer.read_property(101, "parsed_names")?;
+    let names: Vec<roastedduck_common::ByteString> = deserializer.read_property(101, "parsed_names")?;
     reader.end()?;
     let mut writer = BinarySerializer::new(SerializationOptions::default());
     writer.begin();
@@ -73,7 +73,7 @@ pub fn compare(line: &str) -> Result<()> {
         return Err(Error::invalid_input("invalid statement oracle record"));
     }
     let query = unhex(fields[1])?;
-    let result = rustdb_parser::parse_bytes(&query);
+    let result = roastedduck_parser::parse_bytes(&query);
     if fields[0] == "error" {
         let error = result
             .err()
@@ -110,8 +110,8 @@ pub fn compare(line: &str) -> Result<()> {
         return Err(Error::internal("native statement wire differs"));
     }
     match kind {
-        "select" => round_trip::<rustdb_ast::SelectStatement>(&expected)?,
-        "create" => round_trip::<rustdb_ast::CreateInfo>(&expected)?,
+        "select" => round_trip::<roastedduck_ast::SelectStatement>(&expected)?,
+        "create" => round_trip::<roastedduck_ast::CreateInfo>(&expected)?,
         "alter" => round_trip::<ParseInfo>(&expected)?,
         "copy" => copy_round_trip(&expected)?,
         _ => unreachable!(),

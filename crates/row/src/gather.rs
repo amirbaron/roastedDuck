@@ -6,8 +6,8 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{ListEntry, PhysicalType, TypeInfo, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{ListEntry, PhysicalType, TypeInfo, Vector};
 
 use crate::heap::{Targets, ensure_capacity, read_elements};
 use crate::layout::TupleDataLayout;
@@ -23,7 +23,7 @@ fn index(sel: Option<&[u32]>, i: usize) -> usize {
 }
 
 /// Whether a column of type `ty` may hold data in the heap.
-pub(crate) fn has_heap_data(ty: &rustdb_types::LogicalType) -> bool {
+pub(crate) fn has_heap_data(ty: &roastedduck_types::LogicalType) -> bool {
     matches!(
         ty.physical_type(),
         PhysicalType::Varchar | PhysicalType::List | PhysicalType::Array | PhysicalType::Struct
@@ -118,7 +118,7 @@ pub(crate) unsafe fn gather_column(
             }
             PhysicalType::Array => {
                 let size = match target.logical_type().info() {
-                    Some(TypeInfo::Array(rustdb_types::ArrayTypeInfo { size, .. })) => *size as usize,
+                    Some(TypeInfo::Array(roastedduck_types::ArrayTypeInfo { size, .. })) => *size as usize,
                     _ => return Err(Error::internal("ARRAY type without size")),
                 };
                 for i in 0..count {

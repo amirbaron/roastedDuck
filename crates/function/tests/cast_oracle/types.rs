@@ -3,7 +3,7 @@
 
 use std::sync::OnceLock;
 
-use rustdb_types::LogicalType;
+use roastedduck_types::LogicalType;
 
 /// Broad kind of a grid type; selects which VARCHAR inputs are interesting for it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,7 +85,7 @@ fn build() -> Vec<GridType> {
         let sql: &'static str = format!("DECIMAL({width},{scale})").leak();
         types.push(simple(sql, LogicalType::decimal(width, scale), F::Decimal));
     }
-    let child = |name: &str, ty: LogicalType| (rustdb_common::ByteString::from(name), ty);
+    let child = |name: &str, ty: LogicalType| (roastedduck_common::ByteString::from(name), ty);
     types.extend([
         simple("VARCHAR", LogicalType::VARCHAR, F::Varchar),
         simple("BLOB", LogicalType::BLOB, F::Blob),

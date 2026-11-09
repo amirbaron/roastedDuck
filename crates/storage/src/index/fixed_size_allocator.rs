@@ -8,8 +8,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, OnceLock, PoisonError};
 
-use rustdb_buffer::{BlockHandle, BufferManager, MemoryReservation, MemoryTag};
-use rustdb_common::{Error, Result};
+use roastedduck_buffer::{BlockHandle, BufferManager, MemoryReservation, MemoryTag};
+use roastedduck_common::{Error, Result};
 
 use super::IndexPointer;
 
@@ -448,7 +448,7 @@ impl FixedSizeAllocator {
     pub(crate) fn serialize_buffers(
         &mut self,
         write: &mut dyn FnMut(&[u8]) -> Result<BufferPointer>,
-        keep: &mut dyn FnMut(rustdb_buffer::BlockId),
+        keep: &mut dyn FnMut(roastedduck_buffer::BlockId),
     ) -> Result<()> {
         self.update_allocation_sizes();
         let ids: Vec<u64> = self.buffers.keys().copied().collect();
@@ -548,7 +548,7 @@ impl FixedSizeAllocator {
                 .block_pointers
                 .get(i)
                 .ok_or_else(|| Error::serialization("missing block pointer in index storage information"))?;
-            if pointer.block_id < 0 || pointer.block_id >= rustdb_buffer::MAXIMUM_BLOCK {
+            if pointer.block_id < 0 || pointer.block_id >= roastedduck_buffer::MAXIMUM_BLOCK {
                 return Err(Error::serialization(
                     "invalid block ID in index storage information",
                 ));
@@ -752,7 +752,7 @@ fn take_free_segment(
 
 #[cfg(test)]
 mod tests {
-    use rustdb_buffer::BufferManagerConfig;
+    use roastedduck_buffer::BufferManagerConfig;
 
     use super::*;
 

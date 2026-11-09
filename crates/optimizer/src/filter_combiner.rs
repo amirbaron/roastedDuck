@@ -7,16 +7,16 @@
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::Result;
-use rustdb_planner::expression::{BoundBetweenExpression, BoundComparisonExpression};
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::Result;
+use roastedduck_planner::expression::{BoundBetweenExpression, BoundComparisonExpression};
 use std::sync::Arc;
 
-use rustdb_planner::operator::{ColumnIndex, ExpressionTableFilter, LogicalGet};
-use rustdb_planner::{ClientContext, Expression, ExpressionKind};
-use rustdb_storage::{TableFilter, TableFilterSet};
-use rustdb_types::compare::CompareOp;
-use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Value};
+use roastedduck_planner::operator::{ColumnIndex, ExpressionTableFilter, LogicalGet};
+use roastedduck_planner::{ClientContext, Expression, ExpressionKind};
+use roastedduck_storage::{TableFilter, TableFilterSet};
+use roastedduck_types::compare::CompareOp;
+use roastedduck_types::{LogicalType, LogicalTypeId, PhysicalType, Value};
 
 use crate::expression_util::{boolean_value, compare_values, flip_comparison, try_evaluate_scalar};
 
@@ -738,7 +738,7 @@ fn push_down_filter_into_expression(expression: &Expression, inner: TableFilter)
     let field = field.as_constant();
     match (&*function.function.name, field) {
         (b"struct_extract", Some(name)) => {
-            let name = rustdb_common::ByteString::from(name.as_bytes().unwrap_or_default());
+            let name = roastedduck_common::ByteString::from(name.as_bytes().unwrap_or_default());
             let index = child
                 .return_type
                 .struct_children()
@@ -762,7 +762,7 @@ fn push_down_filter_into_expression(expression: &Expression, inner: TableFilter)
                 .unwrap_or(0);
             let filter = TableFilter::StructExtract {
                 child_index: index,
-                child_name: rustdb_common::ByteString::new(),
+                child_name: roastedduck_common::ByteString::new(),
                 child_filter: Box::new(inner),
             };
             push_down_filter_into_expression(child, filter)

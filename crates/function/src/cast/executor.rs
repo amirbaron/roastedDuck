@@ -6,8 +6,8 @@
 //! without NULLs run a tight loop), NULL propagation and the CAST vs `TRY_CAST` handling of
 //! rows that fail to convert.
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{NativeType, Sel, StringHeap, StringT, Vector, VectorKind};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{NativeType, Sel, StringHeap, StringT, Vector, VectorKind};
 
 use super::CastParameters;
 
@@ -264,7 +264,7 @@ impl StringColumn {
     /// The finished flat VARCHAR vector.
     pub(super) fn finish(self) -> Vector {
         let rows = self.values.len();
-        let mut vector = Vector::flat(rustdb_types::LogicalType::VARCHAR, rows);
+        let mut vector = Vector::flat(roastedduck_types::LogicalType::VARCHAR, rows);
         vector.values_mut::<StringT>()[..rows].copy_from_slice(&self.values);
         if self.valid.iter().any(|valid| !valid) {
             let mask = vector.validity_mut();

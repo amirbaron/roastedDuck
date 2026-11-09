@@ -1,9 +1,9 @@
 //! `bool_and` and `bool_or` (DuckDB's `bool.cpp`).
 
-use rustdb_common::Result;
-use rustdb_function::aggregate::{Unary, UnaryAggregate};
-use rustdb_function::{AggregateFunction, AggregateFunctionSet};
-use rustdb_types::LogicalType;
+use roastedduck_common::Result;
+use roastedduck_function::aggregate::{Unary, UnaryAggregate};
+use roastedduck_function::{AggregateFunction, AggregateFunctionSet};
+use roastedduck_types::LogicalType;
 
 /// Whether any value was seen, and the running AND/OR.
 #[derive(Clone, Copy, Debug)]

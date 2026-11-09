@@ -579,12 +579,12 @@ pub fn write_optionally_quoted(text: &str) -> String {
 }
 
 /// The byte-preserving identifier form of `WriteOptionallyQuoted`.
-pub fn write_optionally_quoted_bytes(text: &[u8]) -> rustdb_common::ByteString {
+pub fn write_optionally_quoted_bytes(text: &[u8]) -> roastedduck_common::ByteString {
     quoted_identifier_bytes(text, true)
 }
 
 /// The native byte form of `SQLIdentifier` (ASCII capitals are allowed).
-pub fn sql_identifier_bytes(text: &[u8]) -> rustdb_common::ByteString {
+pub fn sql_identifier_bytes(text: &[u8]) -> roastedduck_common::ByteString {
     quoted_identifier_bytes(text, true)
 }
 
@@ -594,7 +594,7 @@ pub fn write_optionally_quoted_with_bytes(
     quote: u8,
     allow_caps: bool,
     excluded: KeywordCategory,
-) -> rustdb_common::ByteString {
+) -> roastedduck_common::ByteString {
     let plain = text.iter().enumerate().all(|(i, byte)| {
         (i > 0 && byte.is_ascii_digit())
             || byte.is_ascii_lowercase()
@@ -608,7 +608,7 @@ pub fn write_optionally_quoted_with_bytes(
     if plain && category == excluded {
         return text.into();
     }
-    let mut out = rustdb_common::ByteString::new();
+    let mut out = roastedduck_common::ByteString::new();
     out.push(quote);
     for &byte in text {
         if byte == quote {
@@ -619,7 +619,7 @@ pub fn write_optionally_quoted_with_bytes(
     out.push(quote);
     out
 }
-fn quoted_identifier_bytes(text: &[u8], allow_caps: bool) -> rustdb_common::ByteString {
+fn quoted_identifier_bytes(text: &[u8], allow_caps: bool) -> roastedduck_common::ByteString {
     write_optionally_quoted_with_bytes(text, b'"', allow_caps, KeywordCategory::None)
 }
 
@@ -630,8 +630,8 @@ pub fn sql_identifier(text: &str) -> String {
 }
 
 /// Native SQL string quoting, without a VARCHAR-value validation boundary.
-pub fn sql_string_bytes(text: &[u8]) -> rustdb_common::ByteString {
-    let mut out = rustdb_common::ByteString::from(b"'");
+pub fn sql_string_bytes(text: &[u8]) -> roastedduck_common::ByteString {
+    let mut out = roastedduck_common::ByteString::from(b"'");
     for &byte in text {
         if byte == b'\'' {
             out.push(byte);

@@ -91,7 +91,7 @@ let package = Package(
       appropriateFor: FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0],
       create: true
     )'''
-        new = '''    guard let directory = ProcessInfo.processInfo.environment["RUSTDB_SWIFT_TEST_DIRECTORY"] else {
+        new = '''    guard let directory = ProcessInfo.processInfo.environment["ROASTEDDUCK_SWIFT_TEST_DIRECTORY"] else {
       throw CocoaError(.fileNoSuchFile)
     }
     let tmpDirURL = URL(fileURLWithPath: directory, isDirectory: true)

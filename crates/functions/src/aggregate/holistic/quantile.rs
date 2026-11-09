@@ -10,11 +10,11 @@ use std::cmp::Ordering;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::aggregate::{Aggregate, AggregateInput, AggregateOps, States, Typed};
-use rustdb_function::cast::numeric::i128_to_f64;
-use rustdb_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
-use rustdb_types::{
+use roastedduck_common::{Error, Result};
+use roastedduck_function::aggregate::{Aggregate, AggregateInput, AggregateOps, States, Typed};
+use roastedduck_function::cast::numeric::i128_to_f64;
+use roastedduck_function::{AggregateFunction, AggregateFunctionSet, BindInput, FunctionData};
+use roastedduck_types::{
     Date, Interval, LogicalType, LogicalTypeId, NativeType, PhysicalType, Timestamp, Value, Vector,
 };
 
@@ -37,7 +37,7 @@ impl PartialEq for QuantileValue {
     fn eq(&self, other: &Self) -> bool {
         // QuantileValue::operator== compares the original Values numerically,
         // including equivalent DECIMAL scales and DOUBLE probability literals.
-        rustdb_function::cast::values_equal(&self.val, &other.val).unwrap_or(false)
+        roastedduck_function::cast::values_equal(&self.val, &other.val).unwrap_or(false)
     }
 }
 
@@ -174,7 +174,7 @@ pub(crate) fn bind_quantile(
 /// `QuantileBindData::Serialize`: the quantiles as given, made positive, their order and
 /// whether they were negative.
 fn serialize_quantile(
-    serializer: &mut dyn rustdb_serde::Serializer,
+    serializer: &mut dyn roastedduck_serde::Serializer,
     bind_data: Option<&dyn FunctionData>,
     _: &AggregateFunction,
 ) -> Result<()> {
@@ -399,7 +399,7 @@ impl Continuous for DecimalQuantile<i128> {
 
     fn interpolate(lo: i128, d: f64, hi: i128) -> i128 {
         let interpolated = lerp(i128_to_f64(lo), d, i128_to_f64(hi));
-        rustdb_function::cast::numeric::f64_to_i128(interpolated).unwrap_or(0)
+        roastedduck_function::cast::numeric::f64_to_i128(interpolated).unwrap_or(0)
     }
 }
 
@@ -557,9 +557,13 @@ fn discrete_function(ty: &LogicalType, list: bool) -> AggregateFunction {
     } else {
         ty.clone()
     };
-    let mut function =
-        AggregateFunction::new("", vec![ty.clone()], result, rustdb_function::aggregate::Unbound)
-            .order_independent();
+    let mut function = AggregateFunction::new(
+        "",
+        vec![ty.clone()],
+        result,
+        roastedduck_function::aggregate::Unbound,
+    )
+    .order_independent();
     function.ops = discrete_ops(ty, list);
     function
 }
@@ -640,8 +644,9 @@ fn continuous_function(ty: &LogicalType, list: bool) -> Result<AggregateFunction
         }
     };
     let result = if list { LogicalType::list(output) } else { output };
-    let mut function = AggregateFunction::new("", vec![input], result, rustdb_function::aggregate::Unbound)
-        .order_independent();
+    let mut function =
+        AggregateFunction::new("", vec![input], result, roastedduck_function::aggregate::Unbound)
+            .order_independent();
     function.ops = ops;
     Ok(function)
 }
@@ -1072,7 +1077,7 @@ fn mad_function(ty: &LogicalType) -> Result<AggregateFunction> {
         "mad",
         vec![ty.clone()],
         output,
-        rustdb_function::aggregate::Unbound,
+        roastedduck_function::aggregate::Unbound,
     )
     .order_independent();
     function.ops = ops;

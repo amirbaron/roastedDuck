@@ -14,13 +14,13 @@ mod table_index;
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_ast::{
+use roastedduck_ast::{
     CteMaterialize, ExplainFormat, ExplainType, ExpressionType, JoinType, SampleOptions, SetScope,
     TransactionInfo,
 };
-use rustdb_common::{Error, Result};
-use rustdb_function::{FunctionData, TableFunction};
-use rustdb_types::{DataChunk, LogicalType, Value};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{FunctionData, TableFunction};
+use roastedduck_types::{DataChunk, LogicalType, Value};
 
 use crate::binder::CorrelatedColumns;
 use crate::column_binding::generate_column_bindings;
@@ -73,7 +73,7 @@ impl BoundLimitNode {
 /// A set of group indexes (DuckDB's `GroupingSet`).
 pub type GroupingSet = std::collections::BTreeSet<u64>;
 
-pub use rustdb_types::{ColumnIndex, ColumnIndexType};
+pub use roastedduck_types::{ColumnIndex, ColumnIndexType};
 
 /// The pseudo column id of `rowid` (DuckDB's `COLUMN_IDENTIFIER_ROW_ID`).
 pub const COLUMN_IDENTIFIER_ROW_ID: u64 = u64::MAX;
@@ -95,7 +95,7 @@ pub struct LogicalAggregate {
     pub grouping_functions: Vec<Vec<u64>>,
     /// The statistics of each group, set by statistics propagation (DuckDB's
     /// `group_stats`); they decide on perfect hash aggregation.
-    pub group_stats: Vec<Option<rustdb_storage::statistics::BaseStatistics>>,
+    pub group_stats: Vec<Option<roastedduck_storage::statistics::BaseStatistics>>,
     /// Whether the inputs of the aggregates can be NULL, set by statistics propagation.
     pub distinct_validity: TupleDataValidityType,
 }
@@ -108,15 +108,15 @@ pub struct LogicalGet {
     pub bind_data: Option<Arc<dyn FunctionData>>,
     /// All columns the function can produce.
     pub returned_types: Vec<LogicalType>,
-    pub names: Vec<rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
     /// The columns actually scanned (indexes into `returned_types`).
     pub column_ids: Vec<ColumnIndex>,
     /// The scanned columns that are output (empty: all of them).
     pub projection_ids: Vec<u64>,
     pub parameters: Vec<Value>,
-    pub named_parameters: Vec<(rustdb_common::ByteString, Value)>,
+    pub named_parameters: Vec<(roastedduck_common::ByteString, Value)>,
     pub input_table_types: Vec<LogicalType>,
-    pub input_table_names: Vec<rustdb_common::ByteString>,
+    pub input_table_names: Vec<roastedduck_common::ByteString>,
     /// Input columns of a table-in/table-out function passed through to the output.
     pub projected_input: Vec<u64>,
     /// The column holding `WITH ORDINALITY` numbers.
@@ -125,23 +125,23 @@ pub struct LogicalGet {
     /// (DuckDB's `TableBinding` refers to the scan's `column_ids`).
     pub shared_column_ids: Option<SharedColumnIds>,
     /// The scanned table of a base table scan (DuckDB's `LogicalGet::GetTable`).
-    pub table: Option<Arc<rustdb_catalog::CatalogEntry>>,
+    pub table: Option<Arc<roastedduck_catalog::CatalogEntry>>,
     /// The catalog and schema of the scanned table, for `EXPLAIN`.
-    pub table_schema: Option<(rustdb_common::ByteString, rustdb_common::ByteString)>,
+    pub table_schema: Option<(roastedduck_common::ByteString, roastedduck_common::ByteString)>,
     /// Filters pushed into the scan, keyed by the filtered column's index in
     /// `returned_types` (DuckDB's `LogicalGet::table_filters`).
-    pub table_filters: rustdb_storage::TableFilterSet,
+    pub table_filters: roastedduck_storage::TableFilterSet,
     /// Filters that joins above set at run time, keyed by position in `column_ids`
     /// (DuckDB's `LogicalGet::dynamic_filters`).
-    pub dynamic_filters: Option<Arc<rustdb_storage::table_filter::DynamicTableFilterSet>>,
+    pub dynamic_filters: Option<Arc<roastedduck_storage::table_filter::DynamicTableFilterSet>>,
     /// SYSTEM sampling pushed into the scan (DuckDB's `extra_info.sample_options`).
-    pub sample_options: Option<Box<rustdb_ast::SampleOptions>>,
+    pub sample_options: Option<Box<roastedduck_ast::SampleOptions>>,
     /// The filters that pruned the scanned files, for `EXPLAIN` (the rest of DuckDB's
     /// `ExtraOperatorInfo`).
     pub file_filters: FileFilterInfo,
     /// The order a table scan reads its row groups in (DuckDB's
     /// `row_group_order_options`, set by the `RowGroupPruner`).
-    pub row_group_order: Option<rustdb_storage::table::RowGroupOrderOptions>,
+    pub row_group_order: Option<roastedduck_storage::table::RowGroupOrderOptions>,
     /// The table scan feeds a `CREATE INDEX` (`TableScanBindData::is_create_index`).
     pub is_create_index: bool,
 }
@@ -175,7 +175,7 @@ impl FileFilterInfo {
 fn modify_bindings(
     return_chunk: bool,
     table_index: u64,
-    table: &rustdb_catalog::CatalogEntry,
+    table: &roastedduck_catalog::CatalogEntry,
 ) -> Vec<ColumnBinding> {
     if return_chunk {
         generate_column_bindings(table_index, table_types(table).len())
@@ -251,7 +251,7 @@ impl LogicalGet {
     }
 
     /// The name of a scanned column, virtual columns included.
-    pub fn column_name(&self, column: &ColumnIndex) -> rustdb_common::ByteString {
+    pub fn column_name(&self, column: &ColumnIndex) -> roastedduck_common::ByteString {
         if let Some(name) = self.names.get(column.index as usize) {
             return name.clone();
         }
@@ -261,7 +261,7 @@ impl LogicalGet {
     }
 
     /// The name and type of the function's virtual column `index` (`GetVirtualColumns`).
-    pub fn virtual_column(&self, index: u64) -> Option<(rustdb_common::ByteString, LogicalType)> {
+    pub fn virtual_column(&self, index: u64) -> Option<(roastedduck_common::ByteString, LogicalType)> {
         let virtual_columns = self.function.get_virtual_columns.as_ref()?;
         virtual_columns(self.bind_data.as_deref())
             .into_iter()
@@ -321,7 +321,7 @@ pub struct JoinFilter {
 #[derive(Clone, Debug)]
 pub struct JoinFilterTarget {
     /// The scan's run-time filters.
-    pub dynamic_filters: Arc<rustdb_storage::table_filter::DynamicTableFilterSet>,
+    pub dynamic_filters: Arc<roastedduck_storage::table_filter::DynamicTableFilterSet>,
     /// The filtered column, by position in the scan's `column_ids`.
     pub column_index: usize,
     /// The scanned column's type, which the build key values are cast to.
@@ -431,7 +431,7 @@ pub enum LogicalKind {
         offset: u64,
         /// The run-time filter on the first ORDER BY column pushed into scans, which
         /// the Top-N tightens as its heap fills (DuckDB's `LogicalTopN::dynamic_filter`).
-        dynamic_filter: Option<Arc<rustdb_storage::table_filter::DynamicFilterData>>,
+        dynamic_filter: Option<Arc<roastedduck_storage::table_filter::DynamicFilterData>>,
     },
     Distinct {
         distinct_type: DistinctType,
@@ -477,7 +477,7 @@ pub enum LogicalKind {
         table_index: u64,
         cte_index: u64,
         chunk_types: Vec<LogicalType>,
-        bound_columns: Vec<rustdb_common::ByteString>,
+        bound_columns: Vec<roastedduck_common::ByteString>,
         correlated_columns: u64,
         is_recurring: bool,
     },
@@ -499,7 +499,7 @@ pub enum LogicalKind {
         allow_out_of_order: bool,
     },
     RecursiveCte {
-        ctename: rustdb_common::ByteString,
+        ctename: roastedduck_common::ByteString,
         table_index: u64,
         column_count: u64,
         union_all: bool,
@@ -509,7 +509,7 @@ pub enum LogicalKind {
         ref_recurring: bool,
     },
     MaterializedCte {
-        ctename: rustdb_common::ByteString,
+        ctename: roastedduck_common::ByteString,
         table_index: u64,
         column_count: u64,
         materialize: CteMaterialize,
@@ -519,10 +519,10 @@ pub enum LogicalKind {
         explain_type: ExplainType,
         explain_format: ExplainFormat,
         /// The plan before optimization, rendered when it was bound.
-        logical_plan_unopt: rustdb_common::ByteString,
+        logical_plan_unopt: roastedduck_common::ByteString,
     },
     Prepare {
-        name: rustdb_common::ByteString,
+        name: roastedduck_common::ByteString,
         prepared: Arc<PreparedStatementData>,
     },
     Execute {
@@ -530,37 +530,37 @@ pub enum LogicalKind {
     },
     /// `SET name = value`.
     Set {
-        name: rustdb_common::ByteString,
+        name: roastedduck_common::ByteString,
         value: Value,
         scope: SetScope,
     },
     /// `RESET name`.
     Reset {
-        name: rustdb_common::ByteString,
+        name: roastedduck_common::ByteString,
         scope: SetScope,
     },
     /// `ATTACH`, options evaluated.
-    Attach(Box<rustdb_ast::AttachInfo>),
+    Attach(Box<roastedduck_ast::AttachInfo>),
     /// `DETACH`.
-    Detach(rustdb_ast::DetachInfo),
+    Detach(roastedduck_ast::DetachInfo),
     /// `LOAD` / `INSTALL` (DuckDB's `LogicalSimple` of a `LoadInfo`).
-    Load(Box<rustdb_ast::LoadInfo>),
+    Load(Box<roastedduck_ast::LoadInfo>),
     /// `UPDATE EXTENSIONS` (DuckDB's `LogicalSimple`).
-    UpdateExtensions(rustdb_ast::UpdateExtensionsInfo),
+    UpdateExtensions(roastedduck_ast::UpdateExtensionsInfo),
     /// `ALTER DATABASE` (DuckDB's `LogicalSimple` of an `AlterDatabaseInfo`, run by the
     /// `DatabaseManager`): the database `catalog` of `info`.
-    AlterDatabase(rustdb_ast::AlterInfo),
+    AlterDatabase(roastedduck_ast::AlterInfo),
     /// `BEGIN` / `COMMIT` / `ROLLBACK`.
     Transaction {
         info: TransactionInfo,
     },
     /// `DEALLOCATE name`.
     Deallocate {
-        name: rustdb_common::ByteString,
+        name: roastedduck_common::ByteString,
     },
     /// A `PRAGMA` call without a result.
     Pragma {
-        name: rustdb_common::ByteString,
+        name: roastedduck_common::ByteString,
         parameters: Vec<Value>,
     },
     /// `CREATE TABLE`, with the query of `CREATE TABLE AS` as child.
@@ -568,10 +568,10 @@ pub enum LogicalKind {
     /// `CREATE SCHEMA` / `CREATE VIEW` (DuckDB's `LogicalCreate`).
     Create {
         operator_type: LogicalOperatorType,
-        info: Box<rustdb_ast::CreateInfo>,
+        info: Box<roastedduck_ast::CreateInfo>,
     },
     /// `DROP ...` (DuckDB's `LogicalSimple` of type `LOGICAL_DROP`).
-    Drop(Box<rustdb_ast::DropInfo>),
+    Drop(Box<roastedduck_ast::DropInfo>),
     CreateIndex(Box<LogicalCreateIndex>),
     /// `ALTER TABLE` / `ALTER VIEW` (DuckDB's `LogicalSimple` of type `LOGICAL_ALTER`).
     Alter(Box<LogicalAlter>),
@@ -593,30 +593,30 @@ pub enum LogicalKind {
 /// A bound `VACUUM`/`ANALYZE` of a table.
 #[derive(Clone, Debug)]
 pub struct LogicalVacuum {
-    pub table: Arc<rustdb_catalog::CatalogEntry>,
+    pub table: Arc<roastedduck_catalog::CatalogEntry>,
     /// The physical column of each column the child produces.
     pub column_id_map: Vec<usize>,
     /// The statement, its columns listed (DuckDB's `info`).
-    pub info: rustdb_ast::VacuumInfo,
+    pub info: roastedduck_ast::VacuumInfo,
 }
 
 /// A bound `CREATE TABLE` (DuckDB's `BoundCreateTableInfo`): the table definition with
 /// its column types bound and its foreign keys resolved.
 #[derive(Clone, Debug)]
 pub struct BoundCreateTableInfo {
-    pub catalog: rustdb_common::ByteString,
-    pub schema: rustdb_common::ByteString,
+    pub catalog: roastedduck_common::ByteString,
+    pub schema: roastedduck_common::ByteString,
     /// The `CREATE TABLE` info (`CreateInfoKind::Table`).
-    pub info: rustdb_ast::CreateInfo,
+    pub info: roastedduck_ast::CreateInfo,
 }
 
 /// A foreign key bound to its tables (DuckDB's `BoundForeignKeyConstraint`).
 #[derive(Clone, Debug)]
 pub struct BoundForeignKeyInfo {
-    pub fk_type: rustdb_ast::ForeignKeyType,
+    pub fk_type: roastedduck_ast::ForeignKeyType,
     /// The other table of the constraint.
-    pub schema: rustdb_common::ByteString,
-    pub table: rustdb_common::ByteString,
+    pub schema: roastedduck_common::ByteString,
+    pub table: roastedduck_common::ByteString,
     /// Key columns (physical indexes) of the referenced table.
     pub pk_keys: Vec<usize>,
     /// Key columns (physical indexes) of the referencing table.
@@ -632,7 +632,7 @@ pub enum BoundConstraint {
         expression: Expression,
         bound_columns: Vec<usize>,
         /// The constraint as written, for error messages.
-        text: rustdb_common::ByteString,
+        text: roastedduck_common::ByteString,
     },
     Unique {
         keys: Vec<usize>,
@@ -644,7 +644,7 @@ pub enum BoundConstraint {
     Generated {
         expression: Expression,
         /// `name TYPE AS (expression)`, for the error message.
-        text: rustdb_common::ByteString,
+        text: roastedduck_common::ByteString,
     },
 }
 
@@ -656,12 +656,12 @@ pub struct CreateSecretInput {
     /// Empty for the type's default provider.
     pub provider: String,
     /// `IN storage`, or empty.
-    pub storage: rustdb_common::ByteString,
-    pub name: rustdb_common::ByteString,
+    pub storage: roastedduck_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     pub scope: Vec<String>,
-    pub options: Vec<(rustdb_common::ByteString, Value)>,
-    pub on_conflict: rustdb_ast::OnCreateConflict,
-    pub persist_type: rustdb_ast::SecretPersistType,
+    pub options: Vec<(roastedduck_common::ByteString, Value)>,
+    pub on_conflict: roastedduck_ast::OnCreateConflict,
+    pub persist_type: roastedduck_ast::SecretPersistType,
 }
 
 /// A bound `ALTER TABLE` / `ALTER VIEW`: the checks of DuckDB's
@@ -669,16 +669,16 @@ pub struct CreateSecretInput {
 /// and the catalog.
 #[derive(Clone, Debug)]
 pub struct LogicalAlter {
-    pub catalog: rustdb_common::ByteString,
-    pub schema: rustdb_common::ByteString,
+    pub catalog: roastedduck_common::ByteString,
+    pub schema: roastedduck_common::ByteString,
     /// The altered entry; `None` with `IF EXISTS` when it does not exist.
-    pub entry: Option<Arc<rustdb_catalog::CatalogEntry>>,
+    pub entry: Option<Arc<roastedduck_catalog::CatalogEntry>>,
     pub action: AlterAction,
     /// Whether the alter is allowed while other entries (indexes) depend on the table
     /// (`DependencyManager::AlterObject`: ADD COLUMN and SET DEFAULT).
     pub dependents_allowed: bool,
     /// The statement with the entry's catalog and schema filled in, as the WAL logs it.
-    pub info: Option<Box<rustdb_ast::AlterInfo>>,
+    pub info: Option<Box<roastedduck_ast::AlterInfo>>,
 }
 
 /// What an `ALTER` does. `definition` is the table's new definition (without storage).
@@ -687,37 +687,37 @@ pub enum AlterAction {
     /// Nothing (`IF EXISTS` / `IF NOT EXISTS` found nothing to do).
     Nothing,
     /// `RENAME TO`.
-    Rename(rustdb_common::ByteString),
+    Rename(roastedduck_common::ByteString),
     /// `COMMENT ON <entry> IS value`.
-    SetComment(rustdb_types::Value),
+    SetComment(roastedduck_types::Value),
     /// `COMMENT ON COLUMN <table or view>.column IS value`.
     SetColumnComment {
-        column: rustdb_common::ByteString,
-        comment: rustdb_types::Value,
+        column: roastedduck_common::ByteString,
+        comment: roastedduck_types::Value,
     },
     /// `ALTER SEQUENCE ... OWNED BY schema.name`.
     ChangeOwnership {
-        owner_schema: rustdb_common::ByteString,
-        owner_name: rustdb_common::ByteString,
+        owner_schema: roastedduck_common::ByteString,
+        owner_name: roastedduck_common::ByteString,
     },
     /// A new definition over the same data (rename column, defaults, drop NOT NULL).
-    Definition(rustdb_catalog::TableEntry),
+    Definition(roastedduck_catalog::TableEntry),
     /// `ADD COLUMN`, filled with `default`.
     AddColumn {
-        definition: rustdb_catalog::TableEntry,
-        name: rustdb_common::ByteString,
+        definition: roastedduck_catalog::TableEntry,
+        name: roastedduck_common::ByteString,
         logical_type: LogicalType,
         default: Expression,
     },
     /// `DROP COLUMN` of a physical column.
     RemoveColumn {
-        definition: rustdb_catalog::TableEntry,
+        definition: roastedduck_catalog::TableEntry,
         column: usize,
     },
     /// `ALTER COLUMN ... TYPE`: physical column `column` becomes `target`, computed by
     /// `expression` over the physical columns `bound_columns`.
     AlterType {
-        definition: rustdb_catalog::TableEntry,
+        definition: roastedduck_catalog::TableEntry,
         column: usize,
         target: LogicalType,
         expression: Expression,
@@ -725,16 +725,16 @@ pub enum AlterAction {
     },
     /// `ALTER COLUMN ... SET NOT NULL` of a physical column without NOT NULL.
     SetNotNull {
-        definition: rustdb_catalog::TableEntry,
+        definition: roastedduck_catalog::TableEntry,
         column: usize,
     },
     /// `ADD PRIMARY KEY`: an index named `index_name` over the physical `keys`.
     AddPrimaryKey {
-        definition: rustdb_catalog::TableEntry,
+        definition: roastedduck_catalog::TableEntry,
         keys: Vec<usize>,
-        index_name: rustdb_common::ByteString,
+        index_name: roastedduck_common::ByteString,
         /// The existing primary key, as `PRIMARY KEY(a, b)`, if any.
-        existing: Option<rustdb_common::ByteString>,
+        existing: Option<roastedduck_common::ByteString>,
     },
 }
 
@@ -744,8 +744,8 @@ pub enum AlterAction {
 pub struct LogicalCreateIndex {
     /// The statement (`CreateInfoKind::Index`) with catalog and schema resolved;
     /// `column_ids` are the physical columns the keys read.
-    pub info: rustdb_ast::CreateInfo,
-    pub table: Arc<rustdb_catalog::CatalogEntry>,
+    pub info: roastedduck_ast::CreateInfo,
+    pub table: Arc<roastedduck_catalog::CatalogEntry>,
     /// The key expressions, referencing the table's physical columns by index.
     pub expressions: Vec<Expression>,
     /// The key expressions over `scan`'s columns (DuckDB's `unbound_expressions`).
@@ -758,10 +758,10 @@ pub struct LogicalCreateIndex {
 /// `INSERT` (DuckDB's `LogicalInsert`).
 #[derive(Clone, Debug)]
 pub struct LogicalInsert {
-    pub table: Arc<rustdb_catalog::CatalogEntry>,
+    pub table: Arc<roastedduck_catalog::CatalogEntry>,
     /// The catalog and schema of `table`.
-    pub catalog: rustdb_common::ByteString,
-    pub schema: rustdb_common::ByteString,
+    pub catalog: roastedduck_common::ByteString,
+    pub schema: roastedduck_common::ByteString,
     pub table_index: u64,
     /// For each physical column, the input column holding its value, or `None` to use the
     /// default; empty when the input holds every column in order.
@@ -776,10 +776,10 @@ pub struct LogicalInsert {
 /// `DELETE` (DuckDB's `LogicalDelete`); `expressions` holds the row id reference.
 #[derive(Clone, Debug)]
 pub struct LogicalDelete {
-    pub table: Arc<rustdb_catalog::CatalogEntry>,
+    pub table: Arc<roastedduck_catalog::CatalogEntry>,
     /// The catalog and schema of `table`.
-    pub catalog: rustdb_common::ByteString,
-    pub schema: rustdb_common::ByteString,
+    pub catalog: roastedduck_common::ByteString,
+    pub schema: roastedduck_common::ByteString,
     pub table_index: u64,
     pub bound_constraints: Vec<BoundConstraint>,
     pub return_chunk: bool,
@@ -789,10 +789,10 @@ pub struct LogicalDelete {
 /// in `columns`, and the input's last column is the row id.
 #[derive(Clone, Debug)]
 pub struct LogicalUpdate {
-    pub table: Arc<rustdb_catalog::CatalogEntry>,
+    pub table: Arc<roastedduck_catalog::CatalogEntry>,
     /// The catalog and schema of `table`.
-    pub catalog: rustdb_common::ByteString,
-    pub schema: rustdb_common::ByteString,
+    pub catalog: roastedduck_common::ByteString,
+    pub schema: roastedduck_common::ByteString,
     pub table_index: u64,
     /// The updated physical columns.
     pub columns: Vec<usize>,
@@ -806,7 +806,7 @@ pub struct LogicalUpdate {
 /// Expressions reference the columns of the merge's input projection.
 #[derive(Clone, Debug)]
 pub struct BoundMergeIntoAction {
-    pub action_type: rustdb_ast::MergeActionType,
+    pub action_type: roastedduck_ast::MergeActionType,
     /// The `AND ...` condition, if any.
     pub condition: Option<Expression>,
     /// The updated physical columns (UPDATE).
@@ -824,10 +824,10 @@ pub struct BoundMergeIntoAction {
 /// `row_id_start` is the target's row id (NULL when there is no matching target row).
 #[derive(Clone, Debug)]
 pub struct LogicalMergeInto {
-    pub table: Arc<rustdb_catalog::CatalogEntry>,
+    pub table: Arc<roastedduck_catalog::CatalogEntry>,
     /// The catalog and schema of `table`.
-    pub catalog: rustdb_common::ByteString,
-    pub schema: rustdb_common::ByteString,
+    pub catalog: roastedduck_common::ByteString,
+    pub schema: roastedduck_common::ByteString,
     pub table_index: u64,
     /// The default of each physical column.
     pub bound_defaults: Vec<Expression>,
@@ -836,7 +836,7 @@ pub struct LogicalMergeInto {
     pub source_marker: Option<usize>,
     pub bound_constraints: Vec<BoundConstraint>,
     pub return_chunk: bool,
-    pub actions: std::collections::BTreeMap<rustdb_ast::MergeActionCondition, Vec<BoundMergeIntoAction>>,
+    pub actions: std::collections::BTreeMap<roastedduck_ast::MergeActionCondition, Vec<BoundMergeIntoAction>>,
 }
 
 impl LogicalInsert {
@@ -846,9 +846,9 @@ impl LogicalInsert {
 }
 
 /// The types of the stored columns of a table entry.
-pub fn table_types(entry: &rustdb_catalog::CatalogEntry) -> Vec<LogicalType> {
+pub fn table_types(entry: &roastedduck_catalog::CatalogEntry) -> Vec<LogicalType> {
     match &entry.kind {
-        rustdb_catalog::EntryKind::Table(table) => table.physical_types(),
+        roastedduck_catalog::EntryKind::Table(table) => table.physical_types(),
         _ => Vec::new(),
     }
 }
@@ -858,7 +858,7 @@ pub fn table_types(entry: &rustdb_catalog::CatalogEntry) -> Vec<LogicalType> {
 pub struct BoundPivotInfo {
     pub group_count: u64,
     pub types: Vec<LogicalType>,
-    pub pivot_values: Vec<rustdb_common::ByteString>,
+    pub pivot_values: Vec<roastedduck_common::ByteString>,
     pub aggregates: Vec<Expression>,
 }
 

@@ -2,7 +2,7 @@
 use std::io::{self, Read};
 use std::sync::{Arc, Weak};
 
-use rustdb_function::FunctionClient;
+use roastedduck_function::FunctionClient;
 
 pub(super) struct Body {
     inner: ureq::Body,

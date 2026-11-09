@@ -2,7 +2,7 @@
 //! VIEW`, and the conversion of a `UNION` into a recursive CTE that recursive views and
 //! `WITH RECURSIVE` share.
 
-use rustdb_parser::build;
+use roastedduck_parser::build;
 
 use super::create_table::{create_info, on_create_conflict};
 use super::prelude::*;

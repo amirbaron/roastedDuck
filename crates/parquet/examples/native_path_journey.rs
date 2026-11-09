@@ -1,11 +1,11 @@
 //! Reads a C++ Unicode-path file, rewrites it with Rust, and reopens the result.
-use rustdb_common::{Error, Result};
-use rustdb_parquet::{
+use roastedduck_common::{Error, Result};
+use roastedduck_parquet::{
     reader::{ParquetReader, ScanColumn},
     schema::ParquetOptions,
     writer::{ParquetWriter, WriterOptions},
 };
-use rustdb_types::{DataChunk, Value};
+use roastedduck_types::{DataChunk, Value};
 use std::path::Path;
 fn read(path: &Path) -> Result<(ParquetReader, Vec<DataChunk>)> {
     let reader = ParquetReader::open(path.as_os_str().as_encoded_bytes(), ParquetOptions::default())?;

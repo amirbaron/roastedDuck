@@ -3,8 +3,8 @@
 
 use std::collections::HashMap;
 
-use rustdb_ast::JoinType;
-use rustdb_planner::{Expression, ExpressionKind, LogicalKind, LogicalOperator};
+use roastedduck_ast::JoinType;
+use roastedduck_planner::{Expression, ExpressionKind, LogicalKind, LogicalOperator};
 
 use crate::optimizer::Optimizer;
 

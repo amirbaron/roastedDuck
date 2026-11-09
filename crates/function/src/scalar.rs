@@ -2,9 +2,9 @@ use std::any::Any;
 use std::fmt;
 use std::sync::Arc;
 
-use rustdb_common::Result;
-use rustdb_serde::Serializer;
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_common::Result;
+use roastedduck_serde::Serializer;
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 
 use crate::FunctionClient;
 use crate::aggregate::AggregateFunction;
@@ -55,7 +55,7 @@ pub trait FunctionData: Any + Send + Sync + fmt::Debug {
     /// The database a function call writes to, which its statement then modifies
     /// (DuckDB's `StatementProperties::RegisterDBModify` in a table function's bind or a
     /// scalar function's `get_modified_databases`).
-    fn modified_database(&self) -> Option<rustdb_common::ByteString> {
+    fn modified_database(&self) -> Option<roastedduck_common::ByteString> {
         None
     }
 }
@@ -129,7 +129,7 @@ pub trait LambdaExecutor: Send + fmt::Debug {
 pub struct FunctionState {
     pub bind_data: Option<Arc<dyn FunctionData>>,
     /// The alias of the call (DuckDB's `state.expr.GetAlias()`), empty if none.
-    pub alias: rustdb_common::ByteString,
+    pub alias: roastedduck_common::ByteString,
     /// Thread-local state created on first use by the kernel.
     pub local: Option<Box<dyn Any + Send>>,
     /// The lambda of a lambda function call (`list_transform(l, x -> ...)`).
@@ -209,10 +209,10 @@ pub struct BindInput<'a> {
     pub constants: &'a [Option<Value>],
     /// The alias of each argument expression (`a := x` names, or the column name of a
     /// column reference).
-    pub aliases: &'a [rustdb_common::ByteString],
+    pub aliases: &'a [roastedduck_common::ByteString],
     /// The name of each argument expression (DuckDB's `Expression::GetName`): its alias, or
     /// its SQL text when it has none.
-    pub names: &'a [rustdb_common::ByteString],
+    pub names: &'a [roastedduck_common::ByteString],
     /// The calling connection's state (DuckDB's `ClientContext`).
     pub client: &'a Arc<FunctionClient>,
     /// The binder's client context (`ScalarFunctionBindInput::binder`), for functions
@@ -238,7 +238,7 @@ pub type ScalarBind =
 /// One overload of a scalar function.
 #[derive(Clone)]
 pub struct ScalarFunction {
-    pub name: rustdb_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     pub arguments: Vec<LogicalType>,
     /// Type of any additional trailing arguments, for variadic functions.
     pub varargs: Option<LogicalType>,
@@ -297,7 +297,7 @@ pub type BindExpression =
 
 impl ScalarFunction {
     pub fn new(
-        name: impl Into<rustdb_common::ByteString>,
+        name: impl Into<roastedduck_common::ByteString>,
         arguments: Vec<LogicalType>,
         return_type: LogicalType,
         kernel: impl Fn(&DataChunk, &mut FunctionState, &mut Vector) -> Result<()> + Send + Sync + 'static,
@@ -437,12 +437,12 @@ impl fmt::Debug for ScalarFunction {
 /// All overloads registered under one name.
 #[derive(Clone, Debug)]
 pub struct ScalarFunctionSet {
-    pub name: rustdb_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     pub functions: Vec<ScalarFunction>,
 }
 
 impl ScalarFunctionSet {
-    pub fn new(name: impl Into<rustdb_common::ByteString>) -> Self {
+    pub fn new(name: impl Into<roastedduck_common::ByteString>) -> Self {
         Self {
             name: name.into(),
             functions: Vec::new(),

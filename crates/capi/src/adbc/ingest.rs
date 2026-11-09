@@ -1,7 +1,7 @@
 //! Stream-to-table ingestion using the native C API appender, as in the frozen driver.
 use super::*;
 use options::{IngestOptions, Mode};
-use rustdb_arrow::ffi::{ArrowArrayWrapper, ArrowSchemaWrapper};
+use roastedduck_arrow::ffi::{ArrowArrayWrapper, ArrowSchemaWrapper};
 struct Types(DuckdbArrowConvertedSchema);
 impl Drop for Types {
     fn drop(&mut self) {
@@ -36,11 +36,11 @@ fn create_sql(
     catalog: Option<&[u8]>,
     schema: Option<&[u8]>,
     table: &[u8],
-    types: &[rustdb_types::LogicalType],
+    types: &[roastedduck_types::LogicalType],
     names: &[ByteString],
     options: &IngestOptions,
 ) -> ByteString {
-    let quoted = rustdb_ast::keyword::write_optionally_quoted_bytes;
+    let quoted = roastedduck_ast::keyword::write_optionally_quoted_bytes;
     let mut sql = ByteString::from(if matches!(options.mode, Mode::Replace) {
         "CREATE OR REPLACE "
     } else {

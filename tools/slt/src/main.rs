@@ -14,7 +14,7 @@ use slt::harness::{self, RESULT_MARKER, RunOptions, Worker};
 use slt::outcome::{FileResult, Status};
 use slt::{ratchet, report, runner};
 
-/// DuckDB-dialect sqllogictest runner for rustdb and the C++ DuckDB oracle.
+/// DuckDB-dialect sqllogictest runner for roastedduck and the C++ DuckDB oracle.
 #[derive(Debug, Parser)]
 #[command(version, about)]
 struct Cli {
@@ -67,7 +67,7 @@ struct RatchetArgs {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 enum EngineKind {
-    /// The Rust engine (rustdb).
+    /// The Rust engine (roastedduck).
     Rust,
     /// The C++ DuckDB oracle through the shim library.
     Cpp,

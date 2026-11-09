@@ -5,7 +5,7 @@ use std::net::TcpListener;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use rustdb_common::{Error, ErrorKind};
+use roastedduck_common::{Error, ErrorKind};
 
 fn agent() -> ureq::Agent {
     ureq::Agent::new_with_config(

@@ -8,8 +8,8 @@
 
 use std::marker::PhantomData;
 
-use rustdb_common::Result;
-use rustdb_types::{PhysicalType, Vector};
+use roastedduck_common::Result;
+use roastedduck_types::{PhysicalType, Vector};
 
 use super::chimp::ChimpFloat;
 use super::primitive::{corrupt, load, slice, write_values};

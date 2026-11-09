@@ -1,8 +1,8 @@
 //! DuckDB's hash function (`common/types/hash.cpp`, `VectorOperations::Hash` and
 //! `CombineHash`), bit-for-bit: hashes decide partitions, and SQL `hash()` exposes them.
 
-use rustdb_common::{Error, Result};
-use rustdb_types::{LogicalType, NativeType, PhysicalType, StringT, Vector, VectorKind};
+use roastedduck_common::{Error, Result};
+use roastedduck_types::{LogicalType, NativeType, PhysicalType, StringT, Vector, VectorKind};
 
 use crate::compare::Interval;
 use crate::format::{FormatKind, VectorFormat};
@@ -261,17 +261,17 @@ fn hash_native_impl<T: HashNative, const COMBINE: bool>(input: &Vector, out: &mu
     if data.validity.is_all_valid() {
         let count = out.len();
         match data.sel {
-            rustdb_types::Sel::Identity => {
+            roastedduck_types::Sel::Identity => {
                 for (target, value) in out.iter_mut().zip(&data.values[..count]) {
                     emit(target, value.hash_value(), combine);
                 }
             }
-            rustdb_types::Sel::Indices(indices) => {
+            roastedduck_types::Sel::Indices(indices) => {
                 for (target, &slot) in out.iter_mut().zip(&indices[..count]) {
                     emit(target, data.values[slot as usize].hash_value(), combine);
                 }
             }
-            rustdb_types::Sel::Constant => {
+            roastedduck_types::Sel::Constant => {
                 let hash = data.values[0].hash_value();
                 for target in out.iter_mut() {
                     emit(target, hash, combine);
@@ -389,17 +389,17 @@ pub fn hash_selected(input: &Vector, rows: &[u32], out: &mut [u64]) -> Result<()
         let data = input.unified::<T>();
         if data.validity.is_all_valid() {
             match data.sel {
-                rustdb_types::Sel::Identity => {
+                roastedduck_types::Sel::Identity => {
                     for (target, &row) in out.iter_mut().zip(rows) {
                         *target = data.values[row as usize].hash_value();
                     }
                 }
-                rustdb_types::Sel::Indices(indices) => {
+                roastedduck_types::Sel::Indices(indices) => {
                     for (target, &row) in out.iter_mut().zip(rows) {
                         *target = data.values[indices[row as usize] as usize].hash_value();
                     }
                 }
-                rustdb_types::Sel::Constant => out.fill(data.values[0].hash_value()),
+                roastedduck_types::Sel::Constant => out.fill(data.values[0].hash_value()),
             }
             return;
         }
@@ -503,7 +503,7 @@ pub fn hash_columns(columns: &[&Vector], count: usize) -> Result<Vector> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustdb_types::{ListEntry, LogicalTypeId, TypeInfo, Value};
+    use roastedduck_types::{ListEntry, LogicalTypeId, TypeInfo, Value};
 
     fn hash_one(vector: &Vector) -> u64 {
         let mut result = Vector::flat(LogicalType::UBIGINT, 1);
@@ -562,7 +562,7 @@ mod tests {
 
         let struct_type = LogicalType::with_info(
             LogicalTypeId::Struct,
-            TypeInfo::Struct(rustdb_types::StructTypeInfo {
+            TypeInfo::Struct(roastedduck_types::StructTypeInfo {
                 child_types: vec![
                     ("a".into(), LogicalType::INTEGER),
                     ("b".into(), LogicalType::VARCHAR),
@@ -625,7 +625,7 @@ mod tests {
             }
             for input in [
                 flat.clone(),
-                flat.slice(&rustdb_types::SelectionVector::new(vec![2, 0, 2])),
+                flat.slice(&roastedduck_types::SelectionVector::new(vec![2, 0, 2])),
             ] {
                 let mut hashes = Vector::flat(LogicalType::UBIGINT, 3);
                 hashes.values_mut::<u64>().fill(seed);

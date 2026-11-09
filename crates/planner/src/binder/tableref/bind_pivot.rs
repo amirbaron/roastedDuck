@@ -11,16 +11,16 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rustdb_ast::visit::{VisitorMut, walk_expression};
-use rustdb_ast::{
+use roastedduck_ast::visit::{VisitorMut, walk_expression};
+use roastedduck_ast::{
     AggregateHandling, BoundPivotSpec, CommonTableExpressionMap, ExpressionType, ParsedExpression,
     ParsedExpressionKind, PivotColumnEntry, PivotRef, PivotValueElement, QueryNode, QueryNodeKind,
     SelectNode, SelectStatement, SubqueryRef, TableRef, TableRefKind,
 };
-use rustdb_catalog::CatalogType;
-use rustdb_common::{ByteString, CaseInsensitiveMap, Error, Result};
-use rustdb_function::cast::ValueCast;
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_catalog::CatalogType;
+use roastedduck_common::{ByteString, CaseInsensitiveMap, Error, Result};
+use roastedduck_function::cast::ValueCast;
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use super::{bind_subquery_ref, bind_table_ref, deduplicate_columns};
 use crate::binder::expression::expand_star_expression;
@@ -40,7 +40,7 @@ pub(super) fn bind_pivot(
     // The source is bound once up front so that its columns (and `*`) can be expanded.
     if matches!(pivot.source.kind, TableRefKind::Subquery(_)) && pivot.source.alias.is_empty() {
         pivot.source.alias =
-            rustdb_common::byte_format!("__internal_pivot_alias_{}", scope.generate_table_index());
+            roastedduck_common::byte_format!("__internal_pivot_alias_{}", scope.generate_table_index());
     }
     let mut star_binder = scope.binder.child()?;
     let mut where_clause = None;
@@ -87,7 +87,7 @@ pub(super) fn bind_pivot(
 
 fn table_ref(kind: TableRefKind) -> TableRef {
     TableRef {
-        external_dependency: rustdb_ast::ExternalDependency::default(),
+        external_dependency: roastedduck_ast::ExternalDependency::default(),
         alias: ByteString::new(),
         sample: None,
         query_location: None,
@@ -278,14 +278,14 @@ fn construct_pivots(
                 if name.is_empty() {
                     name = text;
                 } else {
-                    name = rustdb_common::byte_format!("{name}_{text}");
+                    name = roastedduck_common::byte_format!("{name}_{text}");
                 }
             }
         }
         value.name = if current.name.is_empty() {
             name
         } else {
-            rustdb_common::byte_format!("{}_{name}", current.name)
+            roastedduck_common::byte_format!("{}_{name}", current.name)
         };
         if last {
             result.push(value);
@@ -420,7 +420,7 @@ fn pivot_filtered_aggregate(
                 } else {
                     aggregate.alias.clone()
                 };
-                name = rustdb_common::byte_format!("{name}_{aggregate_name}");
+                name = roastedduck_common::byte_format!("{name}_{aggregate_name}");
             }
             copied.alias = name;
             node.select_list.push(copied);
@@ -452,7 +452,7 @@ fn pivot_initial_aggregate(
     for (count, expression) in node.select_list.iter_mut().enumerate() {
         state.group_names.push(expression.name());
         if expression.alias.is_empty() {
-            expression.alias = rustdb_common::byte_format!("__internal_pivot_group{}", count + 1);
+            expression.alias = roastedduck_common::byte_format!("__internal_pivot_group{}", count + 1);
         }
         state.internal_groups.push(expression.alias.clone());
     }
@@ -461,7 +461,8 @@ fn pivot_initial_aggregate(
         for pivot_expression in &mut column.pivot_expressions {
             if pivot_expression.alias.is_empty() {
                 pivot_count += 1;
-                pivot_expression.alias = rustdb_common::byte_format!("__internal_pivot_ref{pivot_count}");
+                pivot_expression.alias =
+                    roastedduck_common::byte_format!("__internal_pivot_ref{pivot_count}");
             }
             let alias = pivot_expression.alias.clone();
             let expression = std::mem::replace(pivot_expression, ParsedExpression::column_ref([alias]));
@@ -470,13 +471,13 @@ fn pivot_initial_aggregate(
     }
     let aggregate_count = pivot.aggregates.len();
     for (index, aggregate) in pivot.aggregates.iter_mut().enumerate() {
-        let internal_name = rustdb_common::byte_format!("__internal_pivot_aggregate{}", index + 1);
+        let internal_name = roastedduck_common::byte_format!("__internal_pivot_aggregate{}", index + 1);
         let mut name = aggregate.alias.clone();
         if name.is_empty() && aggregate_count > 1 {
             name = aggregate.to_sql_bytes();
         }
         if !name.is_empty() {
-            name = rustdb_common::byte_format!("_{name}");
+            name = roastedduck_common::byte_format!("_{name}");
         }
         // The aggregate call moves into stage 1; the expression keeps a reference to it.
         let mut call = None;
@@ -562,7 +563,7 @@ fn pivot_final_operator(
     let mut aggregate_names = Vec::new();
     for pivot_value in &pivot_values {
         for name in &state.aggregate_names {
-            aggregate_names.push(rustdb_common::byte_format!("{}{name}", pivot_value.name));
+            aggregate_names.push(roastedduck_common::byte_format!("{}{name}", pivot_value.name));
         }
     }
     deduplicate_columns(&mut aggregate_names);
@@ -631,9 +632,9 @@ fn bind_pivot_node(
             let found = if count == 0 {
                 ByteString::from("but no aggregates were found")
             } else {
-                rustdb_common::byte_format!("but {count} were found")
+                roastedduck_common::byte_format!("but {count} were found")
             };
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Pivot expression must contain exactly one aggregate, {found}"
             ))
             .with_position(aggregate.query_location));
@@ -664,7 +665,7 @@ fn bind_pivot_node(
             };
             bind_pivot_in_list(scope, &mut expression, &mut entry.values)?;
             if entry.values.len() != expected {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "PIVOT IN list - inconsistent amount of rows - expected {expected} but got {}",
                     entry.values.len()
                 )));
@@ -690,12 +691,12 @@ fn bind_pivot_node(
             };
             let key = value_name(&value)?;
             if !seen.insert((key.clone(), value.is_null())) {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "The value \"{key}\" was specified multiple times in the IN clause"
                 )));
             }
             if entry.values.len() != column.pivot_expressions.len() {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "PIVOT IN list - inconsistent amount of rows - expected {} but got {}",
                     column.pivot_expressions.len(),
                     entry.values.len()
@@ -705,7 +706,7 @@ fn bind_pivot_node(
     }
     let pivot_limit = scope.context.config.pivot_limit;
     if total_pivots >= pivot_limit {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "Pivot column limit of {pivot_limit} exceeded. Use SET pivot_limit=X to increase the limit."
         )));
     }
@@ -723,14 +724,14 @@ fn bind_pivot_node(
 }
 
 /// `PIVOT ... ON col IN enum_type`: one entry per member of the ENUM type.
-fn expand_pivot_enum(scope: &BindScope<'_>, column: &mut rustdb_ast::PivotColumn) -> Result<()> {
+fn expand_pivot_enum(scope: &BindScope<'_>, column: &mut roastedduck_ast::PivotColumn) -> Result<()> {
     // The built-in types are catalog entries too (`DefaultTypeGenerator`); a bare ENUM
     // has no members.
-    if let Some(id) = rustdb_types::builtin_type_id(&column.pivot_enum) {
+    if let Some(id) = roastedduck_types::builtin_type_id(&column.pivot_enum) {
         if id == LogicalTypeId::Enum {
             return Err(Error::binder("ENUM type is incomplete"));
         }
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "Pivot must reference an ENUM type: \"{}\" is of type \"{}\"",
             column.pivot_enum,
             LogicalType::simple(id)
@@ -740,17 +741,17 @@ fn expand_pivot_enum(scope: &BindScope<'_>, column: &mut rustdb_ast::PivotColumn
         .context
         .get_entry("", "", CatalogType::Type, &column.pivot_enum, false)?
         .ok_or_else(|| {
-            Error::catalog(rustdb_common::byte_format!(
+            Error::catalog(roastedduck_common::byte_format!(
                 "Type with name {} does not exist!",
                 column.pivot_enum
             ))
         })?;
-    let rustdb_catalog::EntryKind::Type(type_entry) = &lookup.entry.kind else {
+    let roastedduck_catalog::EntryKind::Type(type_entry) = &lookup.entry.kind else {
         return Err(Error::internal("type lookup returned a non-type entry"));
     };
     let ty = &type_entry.user_type;
     if ty.id() != LogicalTypeId::Enum {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "Pivot must reference an ENUM type: \"{}\" is of type \"{ty}\"",
             column.pivot_enum
         )));
@@ -882,7 +883,7 @@ fn bind_unpivot(
             extract_unpivot_column_names(expression, &mut names)?;
             match names.as_slice() {
                 [] => {
-                    return Err(Error::binder(rustdb_common::byte_format!(
+                    return Err(Error::binder(roastedduck_common::byte_format!(
                         "UNPIVOT clause must contain exactly one column - expression \"{expression}\" does not \
                          contain any"
                     ))
@@ -895,7 +896,7 @@ fn bind_unpivot(
                     entry.column_names.push(name.clone());
                 }
                 _ => {
-                    return Err(Error::binder(rustdb_common::byte_format!(
+                    return Err(Error::binder(roastedduck_common::byte_format!(
                         "UNPIVOT clause must contain exactly one column - expression \"{expression}\" contains \
                          multiple ({})",
                         ByteString::join(&names, ", ")
@@ -923,7 +924,7 @@ fn bind_unpivot(
         }
     }
     if let Some(missing) = handled.first() {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "Column \"{missing}\" referenced in UNPIVOT but no matching entry was found in the table"
         )));
     }
@@ -950,7 +951,7 @@ fn bind_unpivot(
         .iter()
         .find(|entry| entry.expressions.len() != value_count)
     {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "UNPIVOT value count mismatch - entry has {} values, but expected all entries to have {value_count} \
              values",
             entry.expressions.len()
@@ -968,7 +969,7 @@ fn bind_unpivot(
     select_names.push(ByteString::from("unpivot_names"));
     for i in 0..unnest_count {
         select_names.push(if i > 0 {
-            rustdb_common::byte_format!("unpivot_list_{}", i + 1)
+            roastedduck_common::byte_format!("unpivot_list_{}", i + 1)
         } else {
             ByteString::from("unpivot_list")
         });
@@ -980,7 +981,7 @@ fn bind_unpivot(
         .select_list
         .push(ParsedExpression::constant(names_list).with_alias(select_names[column_count].clone()));
     if pivot.unpivot_names.len() != unpivot_expressions.len() {
-        return Err(Error::binder(rustdb_common::byte_format!(
+        return Err(Error::binder(roastedduck_common::byte_format!(
             "UNPIVOT name count mismatch - got {} names but {} expressions",
             pivot.unpivot_names.len(),
             unpivot_expressions.len()
@@ -1085,7 +1086,7 @@ fn bind_bound_pivot(scope: &mut BindScope<'_>, pivot: &mut PivotRef, alias: &[u8
             }
         }
         if unique_names.len() != aggregates.len() {
-            return Err(Error::internal(rustdb_common::byte_format!(
+            return Err(Error::internal(roastedduck_common::byte_format!(
                 "Pivot aggregate mismatch: {} unique names, {} aggregates",
                 unique_names.len(),
                 aggregates.len()
@@ -1104,7 +1105,7 @@ fn bind_bound_pivot(scope: &mut BindScope<'_>, pivot: &mut PivotRef, alias: &[u8
             .collect();
     }
     if aggregates.len() != bound.aggregate_names.len() {
-        return Err(Error::internal(rustdb_common::byte_format!(
+        return Err(Error::internal(roastedduck_common::byte_format!(
             "Pivot aggregate count mismatch (expected {}, found {})",
             bound.aggregate_names.len(),
             aggregates.len()
@@ -1126,11 +1127,11 @@ fn bind_bound_pivot(scope: &mut BindScope<'_>, pivot: &mut PivotRef, alias: &[u8
                 if text.is_empty() {
                     text = value_text;
                 } else {
-                    text = rustdb_common::byte_format!("{text}_{value_text}");
+                    text = roastedduck_common::byte_format!("{text}_{value_text}");
                 }
             }
             pivot_values.push(text);
-            names.push(rustdb_common::byte_format!(
+            names.push(roastedduck_common::byte_format!(
                 "{}{aggregate_name}",
                 pivot_value.name
             ));

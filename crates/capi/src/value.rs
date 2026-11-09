@@ -8,8 +8,8 @@
 
 use std::ffi::c_char;
 
-use rustdb_function::cast::ValueCast;
-use rustdb_types::{
+use roastedduck_function::cast::ValueCast;
+use roastedduck_types::{
     Date, Interval, LogicalType, LogicalTypeId, Time, TimeNs, TimeTz, Timestamp, Uuid, Value,
 };
 
@@ -228,7 +228,7 @@ scalar_values! {
 pub unsafe extern "C" fn duckdb_create_bignum(input: DuckdbBignum) -> DuckdbValue {
     // SAFETY: `input.data` points to `input.size` bytes per the API contract.
     let magnitude = unsafe { bytes(input.data.cast(), input.size) };
-    let stored = rustdb_function::bignum::from_magnitude(magnitude, input.is_negative);
+    let stored = roastedduck_function::bignum::from_magnitude(magnitude, input.is_negative);
     wrap_value(Value::bytes(LogicalType::BIGNUM, &stored))
 }
 
@@ -239,7 +239,7 @@ pub unsafe extern "C" fn duckdb_get_bignum(val: DuckdbValue) -> DuckdbBignum {
     // SAFETY: `val` is NULL or a live handle.
     let stored = unsafe { cast_copy(val, &LogicalType::BIGNUM) };
     let (magnitude, is_negative) = stored
-        .and_then(|value| rustdb_function::bignum::magnitude(value.as_bytes()?).ok())
+        .and_then(|value| roastedduck_function::bignum::magnitude(value.as_bytes()?).ok())
         .unwrap_or_default();
     DuckdbBignum {
         data: malloc_bytes(&magnitude, false),

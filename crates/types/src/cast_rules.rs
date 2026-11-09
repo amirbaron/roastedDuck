@@ -308,7 +308,7 @@ fn struct_to_struct_cost(from: &LogicalType, to: &LogicalType) -> i64 {
     }
     let mut cost = -1;
     if !from.is_unnamed_struct() && !to.is_unnamed_struct() {
-        let mut remaining: Vec<Option<&(rustdb_common::ByteString, LogicalType)>> =
+        let mut remaining: Vec<Option<&(roastedduck_common::ByteString, LogicalType)>> =
             Vec::with_capacity(target.len());
         for (i, field) in target.iter().enumerate() {
             if target[..i]

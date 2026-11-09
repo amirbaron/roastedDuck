@@ -176,7 +176,7 @@ pub const ONE_SHOT_LEVELS: [i32; 6] = [3, 1, 2, -1, -3, -5];
 /// the frame, empty ones before it skipped; output left to flush starts a new page.
 pub fn strings_frame(strings: &[Vec<u8>], first_space: usize, page_space: usize) -> Vec<u8> {
     strings_frame_with(
-        &mut rustdb_zstd::Compressor::new(0),
+        &mut roastedduck_zstd::Compressor::new(0),
         strings,
         first_space,
         page_space,
@@ -186,12 +186,12 @@ pub fn strings_frame(strings: &[Vec<u8>], first_space: usize, page_space: usize)
 /// `strings_frame` with a context used before, as DuckDB keeps one per column: a new
 /// session per vector (`ZSTD_CCtx_reset(ZSTD_reset_session_only)`).
 pub fn strings_frame_with(
-    compressor: &mut rustdb_zstd::Compressor,
+    compressor: &mut roastedduck_zstd::Compressor,
     strings: &[Vec<u8>],
     first_space: usize,
     page_space: usize,
 ) -> Vec<u8> {
-    use rustdb_zstd::EndDirective;
+    use roastedduck_zstd::EndDirective;
     compressor.reset_session();
     let mut result = Vec::new();
     let mut page = vec![0u8; first_space];
@@ -224,12 +224,16 @@ pub fn strings_frame_with(
 
 /// `ZstdStreamWrapper`: `chunk` bytes per `ZSTD_e_continue` call, then `ZSTD_e_end`.
 pub fn stream_frame(data: &[u8], level: i32, chunk: usize) -> Vec<u8> {
-    stream_frame_with(&mut rustdb_zstd::Compressor::new(level), data, chunk)
+    stream_frame_with(&mut roastedduck_zstd::Compressor::new(level), data, chunk)
 }
 
 /// Buffered stream with the same context retained across caller-selected levels.
-pub fn stream_frame_with(compressor: &mut rustdb_zstd::Compressor, data: &[u8], chunk: usize) -> Vec<u8> {
-    use rustdb_zstd::{EndDirective, compress_bound};
+pub fn stream_frame_with(
+    compressor: &mut roastedduck_zstd::Compressor,
+    data: &[u8],
+    chunk: usize,
+) -> Vec<u8> {
+    use roastedduck_zstd::{EndDirective, compress_bound};
     compressor.reset_session();
     let mut result = Vec::new();
     let mut buffer = vec![0u8; compress_bound(1 << 17) + 3 + 4];

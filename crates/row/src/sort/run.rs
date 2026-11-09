@@ -3,8 +3,8 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use rustdb_buffer::MemoryTag;
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_buffer::MemoryTag;
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
 
 use super::SortLayouts;
 use super::algorithm::{KeyBlocks, ska_key, sort_keys};
@@ -18,7 +18,10 @@ use crate::state::{AppendState, ChunkState, PinProperties};
 /// The interrupt flag of a query, checked during long sorts.
 pub(crate) fn check_interrupt(interrupted: Option<&AtomicBool>) -> Result<()> {
     if interrupted.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
-        return Err(Error::new(rustdb_common::ErrorKind::Interrupt, "Interrupted!"));
+        return Err(Error::new(
+            roastedduck_common::ErrorKind::Interrupt,
+            "Interrupted!",
+        ));
     }
     Ok(())
 }
@@ -109,7 +112,7 @@ impl SortedRun {
     }
 
     /// The types of the columns a scan produces.
-    pub fn output_types(&self) -> &[rustdb_types::LogicalType] {
+    pub fn output_types(&self) -> &[roastedduck_types::LogicalType] {
         &self.layouts.output_types
     }
 
@@ -125,7 +128,7 @@ impl SortedRun {
         keys: &[K],
         decode_buffer: &mut Vec<u8>,
         keep_alive: Option<&crate::gather::HeapKeepAlive>,
-        chunk: &mut rustdb_types::DataChunk,
+        chunk: &mut roastedduck_types::DataChunk,
     ) -> Result<()> {
         self.layouts.scan_keys(keys, decode_buffer, keep_alive, chunk)
     }

@@ -5,12 +5,12 @@ use std::any::Any;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rustdb_common::{Error, Result};
-use rustdb_function::random::RandomEngine;
-use rustdb_function::{
+use roastedduck_common::{Error, Result};
+use roastedduck_function::random::RandomEngine;
+use roastedduck_function::{
     FunctionClient, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet, Stability,
 };
-use rustdb_types::{DataChunk, LogicalType, Timestamp, Uuid, Vector};
+use roastedduck_types::{DataChunk, LogicalType, Timestamp, Uuid, Vector};
 
 use crate::scalar::executor::unary;
 
@@ -81,7 +81,7 @@ fn generator(
 }
 
 /// Fills `result` with one generated value per row.
-fn generate<T: rustdb_types::NativeType>(
+fn generate<T: roastedduck_types::NativeType>(
     args: &DataChunk,
     state: &mut FunctionState,
     result: &mut Vector,

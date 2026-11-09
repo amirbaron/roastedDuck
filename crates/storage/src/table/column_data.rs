@@ -9,8 +9,8 @@
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::{
     GeometryStorageType, ListEntry, LogicalType, LogicalTypeId, PhysicalType, SelectionVector, Value, Vector,
     VectorKind, geometry,
 };
@@ -26,8 +26,8 @@ use crate::data_table::TableIoManager;
 use crate::statistics::{BaseStatistics, FilterPropagateResult, TYPED_VALUE_INDEX, is_fully_shredded};
 use crate::table_filter::TableFilter;
 use crate::transaction::TransactionData;
-use rustdb_function::cast::{BoundCastInfo, CastFunctionSet, CastParameters};
-use rustdb_types::ColumnIndex;
+use roastedduck_function::cast::{BoundCastInfo, CastFunctionSet, CastParameters};
+use roastedduck_types::ColumnIndex;
 
 impl Segment for ColumnSegment {
     fn row_count(&self) -> u64 {
@@ -590,7 +590,7 @@ impl ColumnData {
                 unshredded: Box::new(Self::create(
                     Arc::clone(&io),
                     1,
-                    rustdb_types::variant::unshredded_type(),
+                    roastedduck_types::variant::unshredded_type(),
                     data_type,
                     true,
                     child_layout(1),
@@ -869,7 +869,7 @@ impl ColumnData {
                 .overflow_blocks()
                 .iter()
                 .copied()
-                .filter(|&block| block < rustdb_buffer::MAXIMUM_BLOCK)
+                .filter(|&block| block < roastedduck_buffer::MAXIMUM_BLOCK)
                 .collect();
             let mut segment_info = if overflow.is_empty() {
                 String::new()
@@ -980,7 +980,7 @@ impl ColumnData {
                     "Attempting to call ColumnSegment::GetDataPointer on a transient segment",
                 ));
             }
-            let block_pointer = if segment.block_id() == rustdb_buffer::INVALID_BLOCK {
+            let block_pointer = if segment.block_id() == roastedduck_buffer::INVALID_BLOCK {
                 BlockPointer::invalid()
             } else {
                 BlockPointer {
@@ -1742,7 +1742,7 @@ impl ColumnData {
         };
         if update_type == UpdateScanType::DisallowUpdates && updates.has_uncommitted_updates(vector_index) {
             return Err(Error::new(
-                rustdb_common::ErrorKind::Transaction,
+                roastedduck_common::ErrorKind::Transaction,
                 "Cannot create index with outstanding updates",
             ));
         }
@@ -2975,7 +2975,7 @@ impl ColumnData {
 mod tests {
     use super::*;
     use crate::data_table::TableIoManager;
-    use rustdb_buffer::{BufferManager, BufferManagerConfig, InMemoryBlockManager};
+    use roastedduck_buffer::{BufferManager, BufferManagerConfig, InMemoryBlockManager};
 
     fn io() -> Arc<TableIoManager> {
         let buffer_manager = BufferManager::new(BufferManagerConfig::default()).unwrap();

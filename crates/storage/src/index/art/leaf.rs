@@ -1,7 +1,7 @@
 //! Leaves: merging two inlined leaves into a nested ART of row ids, and converting
 //! deprecated leaf chains (DuckDB's `Leaf`).
 
-use rustdb_common::{Error, ErrorKind, Result};
+use roastedduck_common::{Error, ErrorKind, Result};
 
 use super::Art;
 use super::key::{ROW_ID_SIZE, row_id_key};

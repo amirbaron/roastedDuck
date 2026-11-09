@@ -5,7 +5,7 @@ use std::any::Any;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_common::{Error, Result};
+use roastedduck_common::{Error, Result};
 
 use crate::operator::{OrderPreservationType, PhysicalRef};
 

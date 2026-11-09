@@ -1,17 +1,17 @@
-//! Running statements in rustdb and classifying the differences to the oracle.
+//! Running statements in roastedduck and classifying the differences to the oracle.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use rustdb::{Database, MaterializedResult};
-use rustdb_ast::{SqlStatement, SqlStatementKind};
-use rustdb_common::CaseInsensitiveMap;
+use roastedduck::{Database, MaterializedResult};
+use roastedduck_ast::{SqlStatement, SqlStatementKind};
+use roastedduck_common::CaseInsensitiveMap;
 
 use crate::oracle::{OracleResult, Table};
 use crate::plan_shape::{duckdb_shape, rust_shape};
 
-/// rustdb's outcome for a statement: its result, and the shape of its logical plan.
+/// roastedduck's outcome for a statement: its result, and the shape of its logical plan.
 #[derive(Debug)]
 pub struct RustOutcome {
     pub result: Result<Table, String>,
@@ -33,11 +33,11 @@ fn guarded<T>(run: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
     }
 }
 
-/// Runs a statement parsed by DuckDB (`json`) in a fresh in-memory rustdb database.
-pub fn run_rustdb(sql: &str, json: &str) -> RustOutcome {
+/// Runs a statement parsed by DuckDB (`json`) in a fresh in-memory roastedduck database.
+pub fn run_roastedduck(sql: &str, json: &str) -> RustOutcome {
     let statement = || -> Result<SqlStatement, String> {
         let mut statements =
-            rustdb_ast::json::deserialize_statements(json).map_err(|error| error.to_string())?;
+            roastedduck_ast::json::deserialize_statements(json).map_err(|error| error.to_string())?;
         if statements.len() != 1 {
             return Err(format!("<{} statements>", statements.len()));
         }
@@ -49,7 +49,7 @@ pub fn run_rustdb(sql: &str, json: &str) -> RustOutcome {
             kind: SqlStatementKind::Select(statements.remove(0)),
         })
     };
-    let connect = || -> Result<rustdb::Connection, String> {
+    let connect = || -> Result<roastedduck::Connection, String> {
         let database = Database::open_in_memory().map_err(|error| error.to_string())?;
         database.connect().map_err(|error| error.to_string())
     };
@@ -123,17 +123,17 @@ pub fn render(outcome: &Result<Table, String>) -> String {
     }
 }
 
-/// How rustdb's outcome relates to DuckDB's.
+/// How roastedduck's outcome relates to DuckDB's.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Pass,
-    /// rustdb cannot execute the plan yet, but built the same logical plan as DuckDB.
+    /// roastedduck cannot execute the plan yet, but built the same logical plan as DuckDB.
     PlanPass,
     /// DuckDB needs tables the statement's test file created earlier.
     NeedsTables,
-    /// rustdb reports `Not implemented` (the message is the bucket).
+    /// roastedduck reports `Not implemented` (the message is the bucket).
     NotImplemented(String),
-    /// A function, overload, cast or system table rustdb does not provide yet (outside
+    /// A function, overload, cast or system table roastedduck does not provide yet (outside
     /// the binder's scope).
     Environment(String),
     Panic(String),
@@ -212,7 +212,7 @@ fn compare_plans(expected: &OracleResult, actual: &RustOutcome) -> Option<Outcom
     })
 }
 
-/// Classifies rustdb's outcome against DuckDB's.
+/// Classifies roastedduck's outcome against DuckDB's.
 pub fn compare(oracle: &OracleResult, rust: &RustOutcome) -> Outcome {
     let expected = oracle.outcome();
     let actual = &rust.result;
@@ -254,12 +254,12 @@ pub fn compare(oracle: &OracleResult, rust: &RustOutcome) -> Outcome {
                 Outcome::Mismatch(format!("error kind differs ({expected_kind} vs {actual_kind})"))
             }
         }
-        (Ok(_), Err(actual)) => Outcome::Mismatch(format!("rustdb error: {}", bucket(actual))),
+        (Ok(_), Err(actual)) => Outcome::Mismatch(format!("roastedduck error: {}", bucket(actual))),
         (Err(expected), Ok(_)) => Outcome::Mismatch(format!("duckdb error: {}", bucket(expected))),
     }
 }
 
-/// What rustdb lacks outside the binder when its error stems from a missing function,
+/// What roastedduck lacks outside the binder when its error stems from a missing function,
 /// overload, cast or system table.
 fn environment_gap(expected: &Result<Table, String>, actual: &str) -> Option<String> {
     let expected_line = expected.as_ref().err().map(|error| first_line(error));
@@ -310,7 +310,7 @@ fn environment_gap(expected: &Result<Table, String>, actual: &str) -> Option<Str
     None
 }
 
-/// Whether DuckDB also failed to find the entry rustdb is missing (then the messages
+/// Whether DuckDB also failed to find the entry roastedduck is missing (then the messages
 /// are compared as usual).
 fn same_missing_entry(expected: &Result<Table, String>, actual: &str) -> bool {
     expected
@@ -415,7 +415,7 @@ impl Report {
                     sample.sql.trim_end()
                 );
                 let _ = writeln!(text, "-- duckdb:\n{}", sample.expected.trim_end());
-                let _ = writeln!(text, "-- rustdb:\n{}", sample.actual.trim_end());
+                let _ = writeln!(text, "-- roastedduck:\n{}", sample.actual.trim_end());
             }
             text.push('\n');
         }

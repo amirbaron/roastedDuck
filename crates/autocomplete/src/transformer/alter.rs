@@ -5,7 +5,7 @@
 //! options build them with an empty `AlterEntryData` that `TransformAlterTableStmt`
 //! fills in.
 
-use rustdb_parser::hash_order::CiHashMap;
+use roastedduck_parser::hash_order::CiHashMap;
 
 use super::create_table::{base_table_ref, column_definition, on_entry_not_found};
 use super::prelude::*;
@@ -82,7 +82,7 @@ fn add_update_to_multi_statement(
     table_data: &AlterEntryData,
     original_expression: &ParsedExpression,
 ) {
-    let table_ref = rustdb_parser::build::table_ref(TableRefKind::BaseTable(Box::new(BaseTableRef {
+    let table_ref = roastedduck_parser::build::table_ref(TableRefKind::BaseTable(Box::new(BaseTableRef {
         schema_name: table_data.schema.clone(),
         table_name: table_data.name.clone(),
         column_name_alias: Vec::new(),
@@ -629,12 +629,12 @@ impl PegTransformer {
         let mut option_names: CiHashMap<(), ByteString> = CiHashMap::default();
         for (name, value) in options_map.iter() {
             let ParsedExpressionKind::Constant(const_expr) = &value.kind else {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Reset option \"{name}\" cannot set any value. Did you mean to use SET?"
                 )));
             };
             if !const_expr.value.is_null() {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Reset option \"{name}\" cannot set any value. Did you mean to use SET?"
                 )));
             }

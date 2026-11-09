@@ -1,17 +1,17 @@
 //! Expressions (`transform/expression/*.cpp`): the dispatch and the small transforms.
 
-use rustdb_ast::{
+use roastedduck_ast::{
     CaseCheck, CollateExpression, ExpressionType, LambdaExpression, LambdaSyntaxType, ParameterExpression,
     ParsedExpression, ParsedExpressionKind,
 };
-use rustdb_common::{Error, Result};
-use rustdb_pg_parser::nodes::{
+use roastedduck_common::{Error, Result};
+use roastedduck_pg_parser::nodes::{
     AIndirection, BoolExpr, BoolExprType, BoolTestType, BooleanTest, CaseExpr, CaseWhen, CoalesceExpr,
     CollateClause, GroupingFunc, IntervalConstant, LambdaFunction, List, MultiAssignRef, NamedArgExpr, Node,
     NullTest, NullTestType, ParamRef, PositionalReference, ResTarget, SingleArrowFunction, TypeCast, Value,
     interval_field, interval_mask,
 };
-use rustdb_types::{LogicalType, Value as DuckValue};
+use roastedduck_types::{LogicalType, Value as DuckValue};
 
 use super::build::{self, set_location};
 use super::{ParamType, Transformer, cast_node, node_string, node_tag, required};
@@ -112,7 +112,7 @@ impl<'a> Transformer<'a> {
             Node::Value(value @ Value::String(_)) => Self::transform_value(value),
             other => {
                 let (tag, name) = node_tag(other);
-                Err(Error::not_implemented(rustdb_common::byte_format!(
+                Err(Error::not_implemented(roastedduck_common::byte_format!(
                     "Expression type {name} ({tag})"
                 )))
             }
@@ -330,11 +330,13 @@ impl<'a> Transformer<'a> {
     }
 
     /// `TransformCollation`: the dotted collation name.
-    pub(crate) fn transform_collation(collate: Option<&CollateClause>) -> Result<rustdb_common::ByteString> {
+    pub(crate) fn transform_collation(
+        collate: Option<&CollateClause>,
+    ) -> Result<roastedduck_common::ByteString> {
         let Some(collate) = collate else {
-            return Ok(rustdb_common::ByteString::new());
+            return Ok(roastedduck_common::ByteString::new());
         };
-        let mut collation = rustdb_common::ByteString::new();
+        let mut collation = roastedduck_common::ByteString::new();
         for node in &collate.collname {
             let Node::Value(Value::String(argument)) = node else {
                 return Err(Error::parser("Expected a string as collation type!"));
@@ -433,14 +435,14 @@ impl<'a> Transformer<'a> {
         }
         let value_count = func.args.len() as i64;
         if i64::from(root.ncolumns) < value_count || func.args.is_empty() {
-            return Err(Error::parser(rustdb_common::byte_format!(
+            return Err(Error::parser(roastedduck_common::byte_format!(
                 "Could not perform assignment, expected {} values, got {value_count}",
                 root.ncolumns
             )));
         }
         let index = usize::try_from(root.colno.max(1) - 1).unwrap_or(0);
         let Some(node) = func.args.get(index) else {
-            return Err(Error::parser(rustdb_common::byte_format!(
+            return Err(Error::parser(roastedduck_common::byte_format!(
                 "Could not perform assignment, expected {} values, got {}",
                 root.ncolumns,
                 func.args.len()
@@ -525,7 +527,7 @@ impl<'a> Transformer<'a> {
                 Node::FuncCall(func) => {
                     let mut function = self.transform_func_call(func)?;
                     if function.expression_type != ExpressionType::Function {
-                        return Err(Error::parser(rustdb_common::byte_format!(
+                        return Err(Error::parser(roastedduck_common::byte_format!(
                             "{result}.{function}() call must be a function"
                         )));
                     }
@@ -581,7 +583,7 @@ impl<'a> Transformer<'a> {
         ];
         for (a, b, name) in combined {
             if has(a) && has(b) {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "{name} is not supported"
                 )));
             }
@@ -625,7 +627,7 @@ fn is_blob(ty: &LogicalType) -> bool {
 /// `Blob::ToBlob` of a string constant cast to BLOB.
 fn parse_blob(text: &[u8], location: Option<u64>) -> Result<Vec<u8>> {
     let mut out = Vec::new();
-    rustdb_types::blob::parse_text(text, &mut out)
+    roastedduck_types::blob::parse_text(text, &mut out)
         .map_err(|message| Error::conversion(message).with_position(location))?;
     Ok(out)
 }

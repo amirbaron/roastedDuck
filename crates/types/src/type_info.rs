@@ -1,7 +1,7 @@
 //! The hand-written type infos (DuckDB's `custom_implementation` classes in `types.json`)
 //! and the serialization of [`LogicalType`] itself.
 
-use rustdb_serde::{
+use roastedduck_serde::{
     Deserialize, DeserializeObject, Deserializer, Error, Result, SerializeObject, Serializer,
 };
 
@@ -12,7 +12,7 @@ use crate::{ExtraTypeInfo, LogicalType, LogicalTypeId, PhysicalType, TypeInfo};
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EnumTypeInfo {
     /// The member names; a member's position is its stored value.
-    pub values: Vec<rustdb_common::ByteString>,
+    pub values: Vec<roastedduck_common::ByteString>,
 }
 
 impl EnumTypeInfo {
@@ -78,7 +78,7 @@ impl DeserializeObject for CoordinateReferenceSystem {
     }
 }
 
-rustdb_serde::impl_object_serde!(CoordinateReferenceSystem);
+roastedduck_serde::impl_object_serde!(CoordinateReferenceSystem);
 
 /// The version from which GEOMETRY is written as itself rather than as the spatial
 /// extension's `BLOB` alias.
@@ -152,12 +152,12 @@ impl DeserializeObject for LogicalType {
     }
 }
 
-rustdb_serde::impl_object_serde!(LogicalType);
+roastedduck_serde::impl_object_serde!(LogicalType);
 
 #[cfg(test)]
 mod tests {
-    use rustdb_serde::SerializationOptions;
-    use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
+    use roastedduck_serde::SerializationOptions;
+    use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
 
     use super::*;
     use crate::TypeInfo;

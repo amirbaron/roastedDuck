@@ -1,9 +1,9 @@
 //! Hand-written parse data whose in-memory form differs from the serialized one:
 //! sample options, macros and views.
 
-use rustdb_common::{CaseInsensitiveMap, Error, OrderedMap, Result};
-use rustdb_serde::{DeserializeObject, Deserializer, SerializeObject, Serializer, required};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::{CaseInsensitiveMap, Error, OrderedMap, Result};
+use roastedduck_serde::{DeserializeObject, Deserializer, SerializeObject, Serializer, required};
+use roastedduck_types::{LogicalType, Value};
 
 use crate::{
     MacroType, ParsedExpression, ParsedExpressionKind, SampleMethod, ScalarMacroFunction, SecretPersistType,
@@ -52,7 +52,7 @@ impl DeserializeObject for SampleOptions {
     }
 }
 
-rustdb_serde::impl_pointee_serde!(SampleOptions);
+roastedduck_serde::impl_pointee_serde!(SampleOptions);
 
 /// The serialization version that keeps parameters with defaults in the positional
 /// parameter list and stores parameter types.
@@ -64,7 +64,7 @@ pub struct MacroFunction {
     /// All parameters as column references, including those with defaults.
     pub parameters: Vec<ParsedExpression>,
     /// Default values of parameters, by name.
-    pub default_parameters: CaseInsensitiveMap<ParsedExpression, rustdb_common::ByteString>,
+    pub default_parameters: CaseInsensitiveMap<ParsedExpression, roastedduck_common::ByteString>,
     /// Parameter types (`UNKNOWN` when untyped), one per parameter.
     pub types: Vec<LogicalType>,
     /// The body.
@@ -91,7 +91,7 @@ impl MacroFunctionKind {
 }
 
 /// The name a macro parameter is known by (`ColumnRefExpression::GetName`).
-fn parameter_name(parameter: &ParsedExpression) -> Option<&rustdb_common::ByteString> {
+fn parameter_name(parameter: &ParsedExpression) -> Option<&roastedduck_common::ByteString> {
     if !parameter.alias.is_empty() {
         return Some(&parameter.alias);
     }
@@ -182,13 +182,13 @@ impl DeserializeObject for MacroFunction {
     }
 }
 
-rustdb_serde::impl_pointee_serde!(MacroFunction);
+roastedduck_serde::impl_pointee_serde!(MacroFunction);
 
 /// `CREATE MACRO` with one or more overloads (DuckDB's `CreateMacroInfo`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateMacroInfo {
     /// The macro name.
-    pub name: rustdb_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     /// The overloads; never empty.
     pub macros: Vec<MacroFunction>,
 }
@@ -225,17 +225,17 @@ const COMMENT_MAP_VERSION: u64 = 7;
 #[derive(Clone, Debug, PartialEq)]
 pub struct CreateViewInfo {
     /// The view name.
-    pub view_name: rustdb_common::ByteString,
+    pub view_name: roastedduck_common::ByteString,
     /// Column names given in `CREATE VIEW v(a, b)`.
-    pub aliases: Vec<rustdb_common::ByteString>,
+    pub aliases: Vec<roastedduck_common::ByteString>,
     /// Column types, once bound.
     pub types: Vec<LogicalType>,
     /// The view's query.
     pub query: Box<SelectStatement>,
     /// Column names, once bound.
-    pub names: Vec<rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
     /// `COMMENT ON COLUMN` values, by column name.
-    pub column_comments: OrderedMap<rustdb_common::ByteString, Value>,
+    pub column_comments: OrderedMap<roastedduck_common::ByteString, Value>,
 }
 
 impl CreateViewInfo {
@@ -252,7 +252,7 @@ impl CreateViewInfo {
         let mut list = vec![Value::default(); self.names.len()];
         for (name, comment) in self.column_comments.iter() {
             let index = self.names.iter().position(|n| n == name).ok_or_else(|| {
-                Error::internal(rustdb_common::byte_format!(
+                Error::internal(roastedduck_common::byte_format!(
                     "While serializing comments for view \"{}\" - did not find column \"{name}\" in list of names",
                     self.view_name
                 ))
@@ -285,9 +285,10 @@ impl DeserializeObject for CreateViewInfo {
         let aliases = deserializer.read_property_with_default(201, "aliases")?;
         let types = deserializer.read_property_with_default(202, "types")?;
         let query: Option<Box<SelectStatement>> = deserializer.read_property_with_default(203, "query")?;
-        let names: Vec<rustdb_common::ByteString> = deserializer.read_property_with_default(204, "names")?;
+        let names: Vec<roastedduck_common::ByteString> =
+            deserializer.read_property_with_default(204, "names")?;
         let list: Vec<Value> = deserializer.read_property_with_default(205, "column_comments")?;
-        let mut column_comments: OrderedMap<rustdb_common::ByteString, Value> =
+        let mut column_comments: OrderedMap<roastedduck_common::ByteString, Value> =
             deserializer.read_property_with_default(206, "column_comments_map")?;
         if !list.is_empty() {
             if !column_comments.is_empty() {
@@ -320,9 +321,9 @@ pub struct CreateSecretInfo {
     /// `PERSISTENT`, `TEMPORARY`, or the default.
     pub persist_type: SecretPersistType,
     /// The secret storage (`IN storage`), lower-cased, or empty.
-    pub storage_type: rustdb_common::ByteString,
+    pub storage_type: roastedduck_common::ByteString,
     /// The secret's name, lower-cased; empty names are derived from the type.
-    pub name: rustdb_common::ByteString,
+    pub name: roastedduck_common::ByteString,
     /// `SCOPE ...`
     pub scope: Option<Box<ParsedExpression>>,
     /// `TYPE ...`
@@ -330,13 +331,13 @@ pub struct CreateSecretInfo {
     /// `PROVIDER ...`
     pub provider: Option<Box<ParsedExpression>>,
     /// The other options, by lower-cased name.
-    pub options: CaseInsensitiveMap<ParsedExpression, rustdb_common::ByteString>,
+    pub options: CaseInsensitiveMap<ParsedExpression, roastedduck_common::ByteString>,
 }
 
 impl crate::LoadInfo {
     /// DuckDB's `LoadInfo::ToString`; the version is metadata, omitted by C++ here.
-    pub fn to_sql_bytes(&self) -> rustdb_common::ByteString {
-        use rustdb_common::{ByteString, byte_write};
+    pub fn to_sql_bytes(&self) -> roastedduck_common::ByteString {
+        use roastedduck_common::{ByteString, byte_write};
         let command = match self.load_type {
             crate::LoadType::Load => "LOAD",
             crate::LoadType::Install => "INSTALL",

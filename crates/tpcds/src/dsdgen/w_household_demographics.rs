@@ -1,7 +1,7 @@
 //! The `household_demographics` and `income_band` tables (`w_household_demographics.c`,
 //! `w_income_band.c`).
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use super::Output;
 use super::build_support::{bitmap_to_dist_int, bitmap_to_dist_str};

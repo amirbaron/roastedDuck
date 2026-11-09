@@ -17,9 +17,9 @@
 use std::alloc::Layout;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{AggregateFunction, FunctionData};
-use rustdb_types::{LogicalType, PhysicalType, TypeInfo};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{AggregateFunction, FunctionData};
+use roastedduck_types::{LogicalType, PhysicalType, TypeInfo};
 
 use crate::sort::key::SortKeyType;
 
@@ -181,7 +181,7 @@ impl TupleDataLayout {
         for (col, ty) in layout.types.iter().enumerate() {
             match ty.physical_type() {
                 PhysicalType::Struct => {
-                    let Some(TypeInfo::Struct(rustdb_types::StructTypeInfo {
+                    let Some(TypeInfo::Struct(roastedduck_types::StructTypeInfo {
                         child_types: children,
                     })) = ty.info()
                     else {
@@ -285,7 +285,7 @@ impl TupleDataLayout {
             }
         }
         layout.sort_width = sort_width;
-        let mut temp_row_width = if key_type.id() == rustdb_types::LogicalTypeId::BigInt {
+        let mut temp_row_width = if key_type.id() == roastedduck_types::LogicalTypeId::BigInt {
             Some(8)
         } else {
             sort_width
@@ -444,16 +444,13 @@ impl TupleDataLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustdb_types::LogicalTypeId;
+    use roastedduck_types::LogicalTypeId;
 
     fn struct_of(children: &[(&str, LogicalType)]) -> LogicalType {
         LogicalType::with_info(
             LogicalTypeId::Struct,
-            TypeInfo::Struct(rustdb_types::StructTypeInfo {
-                child_types: children
-                    .iter()
-                    .map(|(n, t)| ((*n).into(), t.clone()))
-                    .collect(),
+            TypeInfo::Struct(roastedduck_types::StructTypeInfo {
+                child_types: children.iter().map(|(n, t)| ((*n).into(), t.clone())).collect(),
             }),
         )
     }

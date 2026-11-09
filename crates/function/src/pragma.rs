@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use rustdb_types::LogicalType;
+use roastedduck_types::LogicalType;
 
 /// How a pragma is called (DuckDB's `PragmaType`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

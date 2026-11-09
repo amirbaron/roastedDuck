@@ -4,11 +4,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_csv::options::FileCompressionType;
-use rustdb_functions::strtime::StrpTimeFormat;
-use rustdb_planner::ClientContext;
-use rustdb_types::{LogicalType, LogicalTypeId, Value};
+use roastedduck_common::{Error, Result};
+use roastedduck_csv::options::FileCompressionType;
+use roastedduck_functions::strtime::StrpTimeFormat;
+use roastedduck_planner::ClientContext;
+use roastedduck_types::{LogicalType, LogicalTypeId, Value};
 
 use crate::json_enums::{JsonFormat, JsonRecordType, JsonScanType};
 use crate::json_functions::json_transform::string_to_logical_type;
@@ -40,7 +40,7 @@ pub struct JsonReaderOptions {
     /// Objects with at least this many similar fields become MAPs.
     pub map_inference_threshold: u64,
     /// `columns`: the names and types.
-    pub name_list: Vec<rustdb_common::ByteString>,
+    pub name_list: Vec<roastedduck_common::ByteString>,
     pub sql_type_list: Vec<LogicalType>,
     pub date_format: String,
     pub timestamp_format: String,
@@ -51,7 +51,7 @@ pub struct JsonReaderOptions {
 
 /// The contents of piped files, by path.
 #[derive(Clone, Debug, Default)]
-pub struct PipeContents(pub Arc<HashMap<rustdb_common::ByteString, Arc<[u8]>>>);
+pub struct PipeContents(pub Arc<HashMap<roastedduck_common::ByteString, Arc<[u8]>>>);
 
 impl PipeContents {
     pub(crate) fn get(&self, path: &[u8]) -> Option<Arc<[u8]>> {
@@ -93,7 +93,7 @@ pub(crate) fn parse_compression(text: &str) -> Result<FileCompressionType> {
         "GZIP" => FileCompressionType::Gzip,
         "ZSTD" => FileCompressionType::Zstd,
         _ => {
-            return Err(rustdb_function::logging::enum_error(
+            return Err(roastedduck_function::logging::enum_error(
                 &upper,
                 "FileCompressionType",
                 &["AUTO_DETECT", "UNCOMPRESSED", "GZIP", "ZSTD"],
@@ -124,7 +124,7 @@ impl JsonReaderOptions {
     ) -> Result<bool> {
         let key = key.as_ref();
         if value.is_null() {
-            return Err(Error::binder(rustdb_common::byte_format!(
+            return Err(Error::binder(roastedduck_common::byte_format!(
                 "Cannot use NULL as argument to key {key}"
             )));
         }
@@ -156,7 +156,7 @@ impl JsonReaderOptions {
                         "read_json \"columns\" parameter requires a struct as input.",
                     ));
                 }
-                let names: Vec<rustdb_common::ByteString> = ty
+                let names: Vec<roastedduck_common::ByteString> = ty
                     .struct_children()
                     .unwrap_or_default()
                     .iter()
@@ -280,13 +280,13 @@ impl JsonReaderOptions {
         let single = |values: &[Value]| -> Result<Value> {
             match values {
                 [value] => Ok(value.clone()),
-                _ => Err(Error::binder(rustdb_common::byte_format!(
+                _ => Err(Error::binder(roastedduck_common::byte_format!(
                     "COPY (FORMAT JSON) parameter {key} expects a single argument."
                 ))),
             }
         };
         let to_bool = |value: &Value| -> Result<bool> {
-            use rustdb_function::cast::ValueCast;
+            use roastedduck_function::cast::ValueCast;
             Ok(value
                 .default_cast_as(&LogicalType::BOOLEAN)?
                 .as_bool()

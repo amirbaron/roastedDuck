@@ -4,15 +4,15 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_ast::json::{JsonSerializeOptions, deserialize_statements};
-use rustdb_common::{Error, ErrorKind, Result};
-use rustdb_function::{
+use roastedduck_ast::json::{JsonSerializeOptions, deserialize_statements};
+use roastedduck_common::{Error, ErrorKind, Result};
+use roastedduck_function::{
     BindInput, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet, TableFunction,
     TableFunctionBindInput, TableFunctionReplacement, TableFunctionSet,
 };
-use rustdb_serde::SerializationCompatibility;
-use rustdb_serde::json::JsonOptions;
-use rustdb_types::{DataChunk, LogicalType, LogicalTypeId, Vector};
+use roastedduck_serde::SerializationCompatibility;
+use roastedduck_serde::json::JsonOptions;
+use roastedduck_types::{DataChunk, LogicalType, LogicalTypeId, Vector};
 
 use crate::json_common::read_document;
 use crate::json_executors::{ColumnBuilder, StrBuilder, StrInput, addressable, all_constant};
@@ -57,7 +57,7 @@ fn serialize_bind(_: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Optio
     let mut format = false;
     for i in 1..input.argument_types.len() {
         if input.argument_types[i].id() == LogicalTypeId::Unknown {
-            return Err(rustdb_planner::expression_binder::parameter_not_resolved());
+            return Err(roastedduck_planner::expression_binder::parameter_not_resolved());
         }
         let Some(Some(value)) = input.constants.get(i) else {
             return Err(Error::binder("json_serialize_sql: arguments must be constant"));
@@ -65,10 +65,10 @@ fn serialize_bind(_: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Optio
         let alias = input
             .aliases
             .get(i)
-            .map_or(b"".as_slice(), rustdb_common::ByteString::as_bytes);
+            .map_or(b"".as_slice(), roastedduck_common::ByteString::as_bytes);
         let flag = |name: &[u8]| -> Result<bool> {
             if input.argument_types[i].id() != LogicalTypeId::Boolean {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "json_serialize_sql: '{name}' argument must be a boolean"
                 )));
             }
@@ -80,7 +80,7 @@ fn serialize_bind(_: &mut ScalarFunction, input: &BindInput<'_>) -> Result<Optio
             b"format" => format = flag(alias)?,
             b"skip_default" => json.skip_default = flag(alias)?,
             _ => {
-                return Err(Error::binder(rustdb_common::byte_format!(
+                return Err(Error::binder(roastedduck_common::byte_format!(
                     "json_serialize_sql: Unknown argument '{alias}'"
                 )));
             }
@@ -112,7 +112,7 @@ fn serialize_rows(args: &DataChunk, state: &mut FunctionState, result: &mut Vect
         match input.get(row) {
             Some(sql) => {
                 let sql = String::from_utf8_lossy(sql);
-                builder.push(rustdb_parser::json::serialize_sql(&sql, &options).as_bytes());
+                builder.push(roastedduck_parser::json::serialize_sql(&sql, &options).as_bytes());
             }
             None => builder.push_null(),
         }

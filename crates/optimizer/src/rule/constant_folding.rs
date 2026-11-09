@@ -2,9 +2,9 @@
 //! the constants of `+`/`*` chains to the front so that they fold together (DuckDB's
 //! `ConstantOrderNormalizationRule`).
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::Result;
-use rustdb_planner::{Expression, ExpressionKind};
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::Result;
+use roastedduck_planner::{Expression, ExpressionKind};
 
 use super::RuleOutcome;
 use crate::expression_rewriter::RuleContext;

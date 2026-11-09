@@ -4,11 +4,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_function::cast::text_parse::{TextFloat, TextInteger, parse_bool, parse_decimal};
-use rustdb_function::cast::{CastParameters, cast_vector};
-use rustdb_functions::strtime::StrpTimeFormat;
-use rustdb_types::{
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_function::cast::text_parse::{TextFloat, TextInteger, parse_bool, parse_decimal};
+use roastedduck_function::cast::{CastParameters, cast_vector};
+use roastedduck_functions::strtime::StrpTimeFormat;
+use roastedduck_types::{
     DataChunk, Date, LogicalType, LogicalTypeId, PhysicalType, SelectionVector, StringT, Time, Timestamp,
     Vector,
 };
@@ -163,7 +163,7 @@ pub struct StringValueResult {
     pub quoted_new_line: bool,
     pub try_row: bool,
     parse_types: Vec<ParseTypeInfo>,
-    pub names: Vec<rustdb_common::ByteString>,
+    pub names: Vec<roastedduck_common::ByteString>,
     projected_columns: Vec<bool>,
     projecting_columns: bool,
     pub chunk_col_id: u64,
@@ -175,7 +175,7 @@ pub struct StringValueResult {
     timestamp_format: StrpTimeFormat,
     sniffing: bool,
     pub borked_rows: HashSet<u64>,
-    pub path: rustdb_common::ByteString,
+    pub path: roastedduck_common::ByteString,
     pub first_line_is_comment: bool,
     ignore_empty_values: bool,
     // ScannerResult
@@ -2417,7 +2417,7 @@ impl StringValueScanner {
                                 options,
                                 names
                                     .get(i)
-                                    .map_or(b"".as_slice(), rustdb_common::ByteString::as_bytes),
+                                    .map_or(b"".as_slice(), roastedduck_common::ByteString::as_bytes),
                                 &error_msg,
                                 i as u64,
                                 borked_line,

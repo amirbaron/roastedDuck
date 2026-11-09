@@ -97,8 +97,8 @@ pub fn write_quoted(text: &str, quote: char) -> String {
 }
 
 /// Native quoted bytes, with embedded quote bytes doubled.
-pub fn write_quoted_bytes(text: &[u8], quote: u8) -> rustdb_common::ByteString {
-    let mut out = rustdb_common::ByteString::new();
+pub fn write_quoted_bytes(text: &[u8], quote: u8) -> roastedduck_common::ByteString {
+    let mut out = roastedduck_common::ByteString::new();
     out.push(quote);
     for &byte in text {
         if byte == quote {
@@ -120,7 +120,7 @@ pub fn sql_identifier(name: &str) -> Cow<'_, str> {
 }
 
 /// Native byte form of the type renderer's optionally quoted identifier.
-pub fn sql_identifier_bytes(name: &[u8]) -> rustdb_common::ByteString {
+pub fn sql_identifier_bytes(name: &[u8]) -> roastedduck_common::ByteString {
     let plain = name
         .iter()
         .enumerate()
@@ -132,7 +132,7 @@ pub fn sql_identifier_bytes(name: &[u8]) -> rustdb_common::ByteString {
     if plain && !keyword {
         return name.into();
     }
-    let mut out = rustdb_common::ByteString::from(b"\"");
+    let mut out = roastedduck_common::ByteString::from(b"\"");
     for &byte in name {
         if byte == b'"' {
             out.push(byte);
@@ -144,8 +144,8 @@ pub fn sql_identifier_bytes(name: &[u8]) -> rustdb_common::ByteString {
 }
 
 /// Type names use DuckDB's `KEYWORD_COL_NAME` exclusion. Non-keywords are quoted.
-/// Categories copied from the frozen 1.5.6 kwlist snapshot used by rustdb-ast.
-pub(crate) fn type_identifier_bytes(name: &[u8]) -> rustdb_common::ByteString {
+/// Categories copied from the frozen 1.5.6 kwlist snapshot used by roastedduck-ast.
+pub(crate) fn type_identifier_bytes(name: &[u8]) -> roastedduck_common::ByteString {
     const COLUMN_KEYWORDS: &[&[u8]] = &[
         b"between",
         b"bigint",

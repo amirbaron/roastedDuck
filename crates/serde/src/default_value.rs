@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use rustdb_common::{ByteString, CaseInsensitiveMap, CaseInsensitiveSet, OrderedMap};
+use roastedduck_common::{ByteString, CaseInsensitiveMap, CaseInsensitiveSet, OrderedMap};
 
 use crate::OptionalIdx;
 

@@ -7,8 +7,8 @@ use std::ptr::NonNull;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
-use rustdb_common::{Error, Result};
-use rustdb_crypto::ENCRYPTED_BUFFER_HEADER_SIZE;
+use roastedduck_common::{Error, Result};
+use roastedduck_crypto::ENCRYPTED_BUFFER_HEADER_SIZE;
 
 use crate::allocator::{self, BlockAllocator};
 use crate::block::{BlockHandle, BlockId, BlockMemory, BufferHandle, DestroyBufferUpon};
@@ -513,12 +513,12 @@ impl BufferManager {
     }
 
     /// The temporary directory (empty when spilling is disabled).
-    pub fn temporary_directory(&self) -> rustdb_common::ByteString {
+    pub fn temporary_directory(&self) -> roastedduck_common::ByteString {
         self.shared.temp_path().as_os_str().as_encoded_bytes().into()
     }
 
     /// The database's encryption keys (DuckDB's `EncryptionKeyManager`).
-    pub fn encryption_keys(&self) -> &Arc<rustdb_crypto::EncryptionKeyManager> {
+    pub fn encryption_keys(&self) -> &Arc<roastedduck_crypto::EncryptionKeyManager> {
         &self.shared.encryption.keys
     }
 
@@ -535,7 +535,7 @@ impl BufferManager {
 
     /// Changes the temporary directory; not possible once it has been used.
     pub fn set_temporary_directory(&self, path: impl AsRef<[u8]>) -> Result<()> {
-        let path = rustdb_common::native_file_path(path.as_ref())?;
+        let path = roastedduck_common::native_file_path(path.as_ref())?;
         let handle = lock(&self.shared.temporary_directory.handle);
         if handle.is_some() {
             return Err(Error::not_implemented(

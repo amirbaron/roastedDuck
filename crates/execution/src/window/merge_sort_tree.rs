@@ -12,10 +12,12 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use std::fmt::Debug;
 
-use rustdb_common::{Error, Result};
-use rustdb_planner::expression::BoundOrderByNode;
-use rustdb_row::sort::{NullOrder, OrderModifiers, OrderType as SortOrder, Sort, SortColumn, SortConfig};
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_common::{Error, Result};
+use roastedduck_planner::expression::BoundOrderByNode;
+use roastedduck_row::sort::{
+    NullOrder, OrderModifiers, OrderType as SortOrder, Sort, SortColumn, SortConfig,
+};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use super::boundaries_state::FrameBounds;
 use super::collection::delta_flags;
@@ -477,8 +479,8 @@ pub(crate) struct WindowMergeSortTree {
     key_count: usize,
     sort: Sort,
     sink: Option<(
-        rustdb_row::sort::SortGlobalSinkState,
-        rustdb_row::sort::SortLocalSinkState,
+        roastedduck_row::sort::SortGlobalSinkState,
+        roastedduck_row::sort::SortLocalSinkState,
     )>,
     pub(crate) tree: IndexTree,
 }
@@ -564,7 +566,7 @@ impl WindowMergeSortTree {
         columns.push(indices);
         let sort_chunk = match filter {
             Some(rows) => {
-                let sel = rustdb_types::SelectionVector::new(rows.to_vec());
+                let sel = roastedduck_types::SelectionVector::new(rows.to_vec());
                 DataChunk::new(
                     columns.iter().map(|column| column.slice(&sel)).collect(),
                     rows.len(),
@@ -748,17 +750,18 @@ fn assign_tokens<T: TreeIndex>(sorted: &[DataChunk], deltas: &[bool], tokens: &m
     let mut position = 0;
     for chunk in sorted {
         let column = index_column(chunk)?;
-        let rows: Vec<usize> = if column.logical_type().physical_type() == rustdb_types::PhysicalType::Int32 {
-            column.values::<i32>()[..chunk.len()]
-                .iter()
-                .map(|&row| row as usize)
-                .collect()
-        } else {
-            column.values::<i64>()[..chunk.len()]
-                .iter()
-                .map(|&row| row as usize)
-                .collect()
-        };
+        let rows: Vec<usize> =
+            if column.logical_type().physical_type() == roastedduck_types::PhysicalType::Int32 {
+                column.values::<i32>()[..chunk.len()]
+                    .iter()
+                    .map(|&row| row as usize)
+                    .collect()
+            } else {
+                column.values::<i64>()[..chunk.len()]
+                    .iter()
+                    .map(|&row| row as usize)
+                    .collect()
+            };
         for row in rows {
             token += usize::from(deltas[position]);
             position += 1;

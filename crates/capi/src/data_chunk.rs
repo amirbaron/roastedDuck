@@ -10,7 +10,7 @@
 
 use std::ffi::c_char;
 
-use rustdb_types::{
+use roastedduck_types::{
     DataChunk, PhysicalType, STANDARD_VECTOR_SIZE, SelectionVector, StringT, Vector, VectorKind,
 };
 
@@ -53,7 +53,7 @@ pub(crate) fn flat_chunk(chunk: &DataChunk) -> DataChunk {
     let mut copy = DataChunk::with_types(&types, STANDARD_VECTOR_SIZE.max(count));
     for (index, column) in chunk.columns().iter().enumerate() {
         // Copying between vectors of one type only fails for corrupt vectors.
-        let _ = rustdb_types::vector_ops::copy_rows(column, 0, count, copy.column_mut(index), 0);
+        let _ = roastedduck_types::vector_ops::copy_rows(column, 0, count, copy.column_mut(index), 0);
     }
     copy.set_len(count);
     copy
@@ -280,7 +280,7 @@ pub unsafe extern "C" fn duckdb_vector_assign_string_element_len(
     let Some(target) = (unsafe { vector_mut(vector) }) else {
         return;
     };
-    if target.logical_type().id() == rustdb_types::LogicalTypeId::Varchar {
+    if target.logical_type().id() == roastedduck_types::LogicalTypeId::Varchar {
         // SAFETY: `str` points to `str_len` bytes per the API contract.
         let mut error = unsafe { duckdb_valid_utf8_check(str, str_len) };
         if !error.is_null() {
@@ -519,8 +519,13 @@ pub unsafe extern "C" fn duckdb_vector_copy_sel(
     let selected = src.slice(&sel);
     let count = (src_count - src_offset) as usize;
     // A failed copy leaves `dst` partially written, like an exception would in DuckDB.
-    let _ =
-        rustdb_types::vector_ops::copy_rows(&selected, src_offset as usize, count, dst, dst_offset as usize);
+    let _ = roastedduck_types::vector_ops::copy_rows(
+        &selected,
+        src_offset as usize,
+        count,
+        dst,
+        dst_offset as usize,
+    );
 }
 
 /// `void duckdb_vector_reference_value(duckdb_vector vector, duckdb_value value)`

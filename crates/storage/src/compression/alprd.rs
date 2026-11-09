@@ -12,8 +12,8 @@ use std::marker::PhantomData;
 
 use std::collections::HashMap;
 
-use rustdb_common::Result;
-use rustdb_types::{LogicalType, PhysicalType, Vector};
+use roastedduck_common::Result;
+use roastedduck_types::{LogicalType, PhysicalType, Vector};
 
 use super::alp::{
     ALP_VECTOR_SIZE, COMPACT_BLOCK_THRESHOLD, must_skip_sampling, replace_nulls, sampling_parameters,

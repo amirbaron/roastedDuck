@@ -2,10 +2,10 @@
 //! `a = b OR (a IS NULL AND b IS NULL)` as `a IS NOT DISTINCT FROM b` (DuckDB's
 //! `EqualOrNullSimplification`).
 
-use rustdb_ast::ExpressionType;
-use rustdb_common::Result;
-use rustdb_planner::{Expression, ExpressionKind};
-use rustdb_types::Value;
+use roastedduck_ast::ExpressionType;
+use roastedduck_common::Result;
+use roastedduck_planner::{Expression, ExpressionKind};
+use roastedduck_types::Value;
 
 use super::RuleOutcome;
 use crate::expression_rewriter::RuleContext;

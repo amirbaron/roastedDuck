@@ -5,7 +5,7 @@
 //! kernels reproduce with `mul_add` (the reductions are not vectorized: no reassociation).
 
 /// A floating point element type.
-pub(crate) trait Float: rustdb_types::NativeType + Copy + PartialOrd {
+pub(crate) trait Float: roastedduck_types::NativeType + Copy + PartialOrd {
     const ZERO: Self;
     const ONE: Self;
     fn mul_add(self, a: Self, b: Self) -> Self;

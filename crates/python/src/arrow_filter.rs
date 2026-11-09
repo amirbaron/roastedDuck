@@ -2,9 +2,9 @@
 use crate::{conversion, error};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyTuple};
-use rustdb_arrow::{ArrowStreamParameters, TableFilter};
-use rustdb_types::compare::CompareOp;
-use rustdb_types::{LogicalTypeId as L, Value};
+use roastedduck_arrow::{ArrowStreamParameters, TableFilter};
+use roastedduck_types::compare::CompareOp;
+use roastedduck_types::{LogicalTypeId as L, Value};
 
 fn arrow_scalar<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
     let arrow = py.import("pyarrow")?;

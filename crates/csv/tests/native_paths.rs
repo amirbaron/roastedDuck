@@ -1,14 +1,14 @@
 //! Native path/hive contracts and real CSV/BLOB journeys on the SSD.
 #[path = "../examples/support/native_hive.rs"]
 mod hive;
-use rustdb_common::{ByteString, CaseInsensitiveMap};
-use rustdb_csv::{
+use roastedduck_common::{ByteString, CaseInsensitiveMap};
+use roastedduck_csv::{
     multi_file::{FileList, MultiFileOptions, create_file_list},
     options::CsvReaderOptions,
     read_csv::{bind_csv_files, read_csv_functions},
 };
-use rustdb_function::{TableScanState, cast::CastFunctionSet, copy::CopyFunctionBindInput};
-use rustdb_types::{DataChunk, LogicalType, Value, Vector};
+use roastedduck_function::{TableScanState, cast::CastFunctionSet, copy::CopyFunctionBindInput};
+use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 use std::sync::Arc;
 #[test]
 fn hive_native_cpp_fixture() {
@@ -25,7 +25,7 @@ fn unicode_csv_file_list_scan_and_native_blob_copy() {
     std::fs::create_dir(&dir).unwrap();
     let csv = dir.join("雪.csv");
     std::fs::write(&csv, b"42\n7\n").unwrap();
-    let pattern = rustdb_common::byte_format!("{}/*.csv", dir.as_os_str().as_encoded_bytes());
+    let pattern = roastedduck_common::byte_format!("{}/*.csv", dir.as_os_str().as_encoded_bytes());
     let files = create_file_list("read_csv", &[pattern], "csv").unwrap();
     assert_eq!(
         files.files,
@@ -66,7 +66,7 @@ fn unicode_csv_file_list_scan_and_native_blob_copy() {
     assert_eq!(data.names, vec![ByteString::from("値")]);
     let output = root.join("blob-出力.bin");
     let path = output.as_os_str().as_encoded_bytes();
-    let function = rustdb_csv::copy_blob::blob_copy_function();
+    let function = roastedduck_csv::copy_blob::blob_copy_function();
     let opts = CaseInsensitiveMap::default();
     let mut input = CopyFunctionBindInput {
         options: &opts,

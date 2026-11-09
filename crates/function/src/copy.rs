@@ -7,8 +7,8 @@ use std::any::Any;
 use std::fmt;
 use std::sync::Arc;
 
-use rustdb_common::{CaseInsensitiveMap, Result};
-use rustdb_types::{DataChunk, LogicalType, Value};
+use roastedduck_common::{CaseInsensitiveMap, Result};
+use roastedduck_types::{DataChunk, LogicalType, Value};
 
 use crate::{FunctionData, TableFunction};
 
@@ -38,7 +38,7 @@ impl CopyOption {
 #[derive(Debug)]
 pub struct CopyFunctionBindInput<'a> {
     /// The options of the statement that are not generic COPY options.
-    pub options: &'a CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteString>,
+    pub options: &'a CaseInsensitiveMap<Vec<Value>, roastedduck_common::ByteString>,
     pub file_path: &'a [u8],
     pub format: &'a [u8],
     /// The extension of written files; the function may extend it (e.g. `.gz`).
@@ -50,7 +50,7 @@ pub struct CopyFunctionBindInput<'a> {
 /// What `copy_from_bind` receives (DuckDB's `CopyFromFunctionBindInput`).
 #[derive(Debug)]
 pub struct CopyFromBindInput<'a> {
-    pub options: &'a CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteString>,
+    pub options: &'a CaseInsensitiveMap<Vec<Value>, roastedduck_common::ByteString>,
     pub file_path: &'a [u8],
     pub format: &'a [u8],
     /// The binder's client context (the planner's `ClientContext`).
@@ -68,9 +68,9 @@ pub enum CopyToType {
 /// query being written.
 #[derive(Debug)]
 pub struct CopyToSelectInput<'a> {
-    pub names: &'a [rustdb_common::ByteString],
+    pub names: &'a [roastedduck_common::ByteString],
     pub types: &'a [LogicalType],
-    pub options: &'a CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteString>,
+    pub options: &'a CaseInsensitiveMap<Vec<Value>, roastedduck_common::ByteString>,
     pub copy_to_type: CopyToType,
     /// The binder's client context (the planner's `ClientContext`).
     pub binder: Option<&'a dyn Any>,
@@ -88,7 +88,7 @@ pub type CopyGlobalState = Box<dyn Any + Send + Sync>;
 pub type CopyToBind = Arc<
     dyn Fn(
             &mut CopyFunctionBindInput<'_>,
-            &[rustdb_common::ByteString],
+            &[roastedduck_common::ByteString],
             &[LogicalType],
         ) -> Result<Arc<dyn FunctionData>>
         + Send
@@ -114,7 +114,7 @@ pub struct CopyFunctionFileStatistics {
     pub file_size_bytes: u64,
     pub footer_size_bytes: Value,
     /// Per column: statistic name -> value.
-    pub column_statistics: Vec<(rustdb_common::ByteString, Vec<(String, Value)>)>,
+    pub column_statistics: Vec<(roastedduck_common::ByteString, Vec<(String, Value)>)>,
 }
 
 /// `copy_to_get_written_statistics`: the statistics of a finalized file.
@@ -133,7 +133,7 @@ pub type CopyRotateNextFile =
 pub type CopyFromBind = Arc<
     dyn Fn(
             &CopyFromBindInput<'_>,
-            &[rustdb_common::ByteString],
+            &[roastedduck_common::ByteString],
             &[LogicalType],
         ) -> Result<Arc<dyn FunctionData>>
         + Send
@@ -186,10 +186,10 @@ pub type CopyDesiredBatchSize = Arc<dyn Fn(&dyn FunctionData) -> u64 + Send + Sy
 /// What a `plan` callback sees (the bound query of `COPY ... TO`).
 #[derive(Debug)]
 pub struct CopyPlanInput<'a> {
-    pub names: &'a [rustdb_common::ByteString],
+    pub names: &'a [roastedduck_common::ByteString],
     pub types: &'a [LogicalType],
     /// The options of the statement (the generic COPY options included).
-    pub options: &'a CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteString>,
+    pub options: &'a CaseInsensitiveMap<Vec<Value>, roastedduck_common::ByteString>,
 }
 
 /// How a `plan` callback rewrites `COPY ... TO`: as a COPY in `format` with `options` of
@@ -197,9 +197,9 @@ pub struct CopyPlanInput<'a> {
 /// references (`#1`, ...) of the query's columns.
 #[derive(Debug)]
 pub struct CopyPlanRewrite {
-    pub format: rustdb_common::ByteString,
-    pub options: CaseInsensitiveMap<Vec<Value>, rustdb_common::ByteString>,
-    pub select_list: Vec<rustdb_ast::ParsedExpression>,
+    pub format: roastedduck_common::ByteString,
+    pub options: CaseInsensitiveMap<Vec<Value>, roastedduck_common::ByteString>,
+    pub select_list: Vec<roastedduck_ast::ParsedExpression>,
 }
 
 /// `copy_to_plan_t`: rewrites a `COPY ... TO` into another COPY (DuckDB's `CopyFunction::plan`).
@@ -252,7 +252,9 @@ pub struct CopyFunction {
 
 /// See [`CopyFunction::serialize`] (DuckDB's `copy_to_serialize_t`).
 pub type CopySerialize = Arc<
-    dyn Fn(&mut dyn rustdb_serde::Serializer, &dyn FunctionData, &CopyFunction) -> Result<()> + Send + Sync,
+    dyn Fn(&mut dyn roastedduck_serde::Serializer, &dyn FunctionData, &CopyFunction) -> Result<()>
+        + Send
+        + Sync,
 >;
 
 impl CopyFunction {

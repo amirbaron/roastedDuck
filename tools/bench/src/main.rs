@@ -1,8 +1,8 @@
-//! `bench`: runs DuckDB's benchmark suites on C++ DuckDB and rustdb, compares the
+//! `bench`: runs DuckDB's benchmark suites on C++ DuckDB and roastedduck, compares the
 //! results and maintains the perf ratchet.
 //!
 //! ```text
-//! cargo build --release -p rustdb-bench          # builds `bench` and `bench-driver`
+//! cargo build --release -p roastedduck-bench          # builds `bench` and `bench-driver`
 //! B=target/release/bench
 //! $B list 'tpch/sf1/'                            # what would run (cache/network/checked)
 //! $B fetch h2oai imdb                            # mirror remote data into target/bench/downloads
@@ -18,7 +18,7 @@
 //! Patterns are regular expressions searched in benchmark paths. Every benchmark runs in
 //! a fresh `bench-driver` process (peak RSS from `wait4`); caches (`CALL dbgen(...)`
 //! databases, generated files) are built first in a separate, unmeasured process.
-//! Generated data lives under `target/bench` (`--work-dir`, `RUSTDB_BENCH_DIR`); the
+//! Generated data lives under `target/bench` (`--work-dir`, `ROASTEDDUCK_BENCH_DIR`); the
 //! DuckDB tree defaults to `.context/duckdb-download/duckdb-1.5.6` (`--duckdb-src`,
 //! `DUCKDB_SRC`).
 
@@ -28,19 +28,22 @@ use std::process::{Command, ExitCode};
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand};
-use rustdb_bench::data;
-use rustdb_bench::discover::{Selection, discover};
-use rustdb_bench::driver::RunSettings;
-use rustdb_bench::engine::EngineKind;
-use rustdb_bench::format::{ParseOptions, parse_benchmark};
-use rustdb_bench::machine;
-use rustdb_bench::ratchet::{self, Baseline};
-use rustdb_bench::record::{Line, Results, Status, Writer};
-use rustdb_bench::report::{self, format_bytes, format_ms};
-use rustdb_bench::runner::{Harness, Paths};
+use roastedduck_bench::data;
+use roastedduck_bench::discover::{Selection, discover};
+use roastedduck_bench::driver::RunSettings;
+use roastedduck_bench::engine::EngineKind;
+use roastedduck_bench::format::{ParseOptions, parse_benchmark};
+use roastedduck_bench::machine;
+use roastedduck_bench::ratchet::{self, Baseline};
+use roastedduck_bench::record::{Line, Results, Status, Writer};
+use roastedduck_bench::report::{self, format_bytes, format_ms};
+use roastedduck_bench::runner::{Harness, Paths};
 
 #[derive(Debug, Parser)]
-#[command(name = "bench", about = "DuckDB benchmark suites on C++ DuckDB and rustdb.")]
+#[command(
+    name = "bench",
+    about = "DuckDB benchmark suites on C++ DuckDB and roastedduck."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Cmd,
@@ -60,7 +63,7 @@ enum Cmd {
         #[arg(long)]
         dry_run: bool,
     },
-    /// Compare a C++ and a rustdb results file; prints a markdown report.
+    /// Compare a C++ and a roastedduck results file; prints a markdown report.
     Compare {
         cpp: PathBuf,
         rust: PathBuf,
@@ -79,7 +82,7 @@ enum Cmd {
 enum RatchetCmd {
     /// Fail if a baseline benchmark regressed beyond noise or stopped passing.
     Check {
-        /// The rustdb results file.
+        /// The roastedduck results file.
         #[arg(long)]
         rust: PathBuf,
         #[arg(long)]
@@ -88,7 +91,7 @@ enum RatchetCmd {
         #[arg(long)]
         allow_missing: bool,
     },
-    /// Record the current rustdb numbers as the new baseline.
+    /// Record the current roastedduck numbers as the new baseline.
     Update {
         #[arg(long)]
         rust: PathBuf,
@@ -119,7 +122,7 @@ struct Selector {
     #[arg(long, env = "DUCKDB_SRC")]
     duckdb_src: Option<PathBuf>,
     /// Scratch directory for generated data, downloads and logs.
-    #[arg(long, env = "RUSTDB_BENCH_DIR")]
+    #[arg(long, env = "ROASTEDDUCK_BENCH_DIR")]
     work_dir: Option<PathBuf>,
 }
 
@@ -192,7 +195,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// The rustdb checkout this binary was built from.
+/// The roastedduck checkout this binary was built from.
 fn repo_root() -> PathBuf {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let root = manifest.join("../..");
@@ -289,7 +292,7 @@ fn run(args: &RunArgs) -> Result<ExitCode, String> {
     };
     require_file(
         &paths.driver,
-        "bench-driver (build with `cargo build --release -p rustdb-bench`)",
+        "bench-driver (build with `cargo build --release -p roastedduck-bench`)",
     )?;
     if args.engine != EngineKind::Rust {
         require_file(&paths.libduckdb, "libduckdb")?;

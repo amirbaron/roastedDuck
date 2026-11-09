@@ -4,9 +4,9 @@
 
 use std::sync::PoisonError;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::ListLambdaBindData;
-use rustdb_serde::{SerializeObject, Serializer};
+use roastedduck_common::{Error, Result};
+use roastedduck_function::ListLambdaBindData;
+use roastedduck_serde::{SerializeObject, Serializer};
 
 use super::{
     BoundAggregateExpression, BoundCaseCheck, BoundFunctionExpression, BoundOrderByNode, BoundOrderModifier,
@@ -126,7 +126,7 @@ impl SerializeObject for Expression {
     }
 }
 
-rustdb_serde::impl_pointee_serialize!(Expression, BoundOrderModifier, BoundParameterData);
+roastedduck_serde::impl_pointee_serialize!(Expression, BoundOrderModifier, BoundParameterData);
 
 /// `BoundFunctionExpression::Serialize`.
 fn serialize_function(
@@ -200,7 +200,7 @@ fn serialize_window(
     serializer.write_property(214, "arg_orders", &window.arg_orders)
 }
 
-impl rustdb_serde::Serialize for BoundCaseCheck {
+impl roastedduck_serde::Serialize for BoundCaseCheck {
     fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
         serializer.write_object(&nodes::BoundCaseCheck {
             when_expr: &self.when_expr,
@@ -209,7 +209,7 @@ impl rustdb_serde::Serialize for BoundCaseCheck {
     }
 }
 
-impl rustdb_serde::Serialize for BoundOrderByNode {
+impl roastedduck_serde::Serialize for BoundOrderByNode {
     fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
         serializer.write_object(&nodes::BoundOrderByNode {
             order_type: self.order_type,
@@ -235,7 +235,7 @@ impl SerializeObject for BoundParameterData {
     }
 }
 
-impl rustdb_serde::Serialize for ColumnBinding {
+impl roastedduck_serde::Serialize for ColumnBinding {
     fn serialize(&self, serializer: &mut dyn Serializer) -> Result<()> {
         serializer.write_object(&nodes::ColumnBinding {
             table_index: self.table_index,

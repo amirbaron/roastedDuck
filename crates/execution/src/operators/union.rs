@@ -1,4 +1,4 @@
-use rustdb_types::LogicalType;
+use roastedduck_types::LogicalType;
 
 use crate::operator::{PhysicalOperator, PhysicalRef};
 

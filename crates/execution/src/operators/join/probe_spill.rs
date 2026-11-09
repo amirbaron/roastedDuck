@@ -5,13 +5,13 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use rustdb_buffer::{BufferManager, MemoryTag};
-use rustdb_common::{Error, Result};
-use rustdb_row::{
+use roastedduck_buffer::{BufferManager, MemoryTag};
+use roastedduck_common::{Error, Result};
+use roastedduck_row::{
     PartitionedAppendState, PartitionedTupleData, PinProperties, TupleDataCollection, TupleDataLayout,
     ValidityType,
 };
-use rustdb_types::{DataChunk, LogicalType};
+use roastedduck_types::{DataChunk, LogicalType};
 
 /// One thread's spilled probe rows.
 #[derive(Debug)]

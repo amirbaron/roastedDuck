@@ -10,8 +10,8 @@
 
 use std::sync::Arc;
 
-use rustdb_buffer::BufferHandle;
-use rustdb_common::{Result, STANDARD_VECTOR_SIZE};
+use roastedduck_buffer::BufferHandle;
+use roastedduck_common::{Result, STANDARD_VECTOR_SIZE};
 
 use super::key::SortKey;
 use super::run::SortedRun;

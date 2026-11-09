@@ -1,6 +1,6 @@
 [package]
 name = "bindcheck"
-description = "Dev loop for the binder and planner: runs DuckDB-parsed SELECT statements in rustdb and compares results and errors with the reference CLI."
+description = "Dev loop for the binder and planner: runs DuckDB-parsed SELECT statements in roastedduck and compares results and errors with the reference CLI."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,11 +9,11 @@ publish = false
 
 [dependencies]
 corpus = { path = "../corpus" }
-rustdb.workspace = true
-rustdb-ast.workspace = true
-rustdb-common.workspace = true
-rustdb-planner.workspace = true
-rustdb-serde.workspace = true
+roastedduck.workspace = true
+roastedduck-ast.workspace = true
+roastedduck-common.workspace = true
+roastedduck-planner.workspace = true
+roastedduck-serde.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

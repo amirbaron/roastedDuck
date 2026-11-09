@@ -2,7 +2,7 @@
 //! (`basic_printf_context::format` in `printf.h`) and `vformat` (`parse_format_string`
 //! with `format_handler` in `format.h`).
 
-use rustdb_common::Result;
+use roastedduck_common::Result;
 
 use super::writer::{
     Align, Sign, Specs, format_bool, format_char, format_double, format_error, format_int, format_string,

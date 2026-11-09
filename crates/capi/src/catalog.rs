@@ -7,9 +7,9 @@
 use std::ffi::{CString, c_char};
 use std::sync::Arc;
 
-use rustdb_catalog::{Catalog, CatalogEntry, CatalogType};
-use rustdb_function::FunctionClient;
-use rustdb_planner::ClientContext as BinderContext;
+use roastedduck_catalog::{Catalog, CatalogEntry, CatalogType};
+use roastedduck_function::FunctionClient;
+use roastedduck_planner::ClientContext as BinderContext;
 
 use crate::helper::{opt_str, to_cstring};
 use crate::open::{DuckdbClientContext, client_context_ref};

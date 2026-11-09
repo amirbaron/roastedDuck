@@ -1,9 +1,9 @@
 //! Native C++ AST/type/value/map binary round trips and byte rendering.
-use rustdb_ast::SelectStatement;
-use rustdb_common::{ByteString, CaseInsensitiveMap};
-use rustdb_serde::binary::{BinaryDeserializer, BinarySerializer};
-use rustdb_serde::{Deserialize, Deserializer, SerializationOptions, Serialize, Serializer};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_ast::SelectStatement;
+use roastedduck_common::{ByteString, CaseInsensitiveMap};
+use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
+use roastedduck_serde::{Deserialize, Deserializer, SerializationOptions, Serialize, Serializer};
+use roastedduck_types::{LogicalType, Value};
 use std::io::{self, BufRead};
 
 fn decode(hex: &str) -> Vec<u8> {
@@ -49,7 +49,10 @@ fn check<T: Deserialize + Serialize>(
                 .take(1024)
                 .flat_map(|byte| {
                     let digits = b"0123456789abcdef";
-                    [char::from(digits[usize::from(byte >> 4)]), char::from(digits[usize::from(byte & 15)])]
+                    [
+                        char::from(digits[usize::from(byte >> 4)]),
+                        char::from(digits[usize::from(byte & 15)]),
+                    ]
                 })
                 .collect::<String>()
         };

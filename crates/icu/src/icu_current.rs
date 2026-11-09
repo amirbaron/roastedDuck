@@ -4,11 +4,11 @@
 use std::any::Any;
 use std::sync::Arc;
 
-use rustdb_common::{Error, Result};
-use rustdb_function::{
+use roastedduck_common::{Error, Result};
+use roastedduck_function::{
     FunctionClient, FunctionData, FunctionState, ScalarFunction, ScalarFunctionSet, Stability,
 };
-use rustdb_types::{LogicalType, Time, TimeTz, Timestamp, Value, Vector};
+use roastedduck_types::{LogicalType, Time, TimeTz, Timestamp, Value, Vector};
 
 use crate::icu_datefunc::BindData;
 use crate::icu_makedate;

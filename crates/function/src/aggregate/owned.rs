@@ -6,8 +6,8 @@ use std::fmt;
 use std::ptr::NonNull;
 use std::sync::Arc;
 
-use rustdb_common::Result;
-use rustdb_types::Vector;
+use roastedduck_common::Result;
+use roastedduck_types::Vector;
 
 use super::{AggregateFunction, AggregateInput, AggregateOps, StatePtr};
 
@@ -60,7 +60,7 @@ impl AggregateState {
     /// Merges this state into `target`, a state of the same aggregate.
     pub fn combine_into(&self, target: &mut Self, input: AggregateInput<'_>) -> Result<()> {
         if !Arc::ptr_eq(&self.ops, &target.ops) {
-            return Err(rustdb_common::Error::internal(
+            return Err(roastedduck_common::Error::internal(
                 "combining states of different aggregates",
             ));
         }

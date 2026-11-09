@@ -11,9 +11,9 @@
 
 use std::sync::Arc;
 
-use rustdb_buffer::{MAXIMUM_BLOCK, MemoryTag};
-use rustdb_common::{Error, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{LogicalType, LogicalTypeId, PhysicalType, Sel, StringT, ValidityMask, Vector};
+use roastedduck_buffer::{MAXIMUM_BLOCK, MemoryTag};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::{LogicalType, LogicalTypeId, PhysicalType, Sel, StringT, ValidityMask, Vector};
 
 use super::{Analyzer, CompressionInfo, CompressionType, Compressor};
 use crate::checkpoint::column_checkpointer::{FinishedSegment, SegmentSink};

@@ -13,10 +13,10 @@ mod window;
 
 use std::collections::BTreeSet;
 
-use rustdb_ast::JoinType;
-use rustdb_common::Result;
-use rustdb_planner::operator::split_predicates;
-use rustdb_planner::{BoundLimitNode, Expression, LogicalKind, LogicalOperator, LogicalOperatorType};
+use roastedduck_ast::JoinType;
+use roastedduck_common::Result;
+use roastedduck_planner::operator::split_predicates;
+use roastedduck_planner::{BoundLimitNode, Expression, LogicalKind, LogicalOperator, LogicalOperatorType};
 
 use crate::expression_util::{enumerate_expression, table_indexes};
 use crate::filter_combiner::{FilterCombiner, FilterResult};
@@ -246,7 +246,7 @@ impl<'a> FilterPushdown<'a> {
         let child = op
             .children
             .pop()
-            .ok_or_else(|| rustdb_common::Error::internal("filter without input"))?;
+            .ok_or_else(|| roastedduck_common::Error::internal("filter without input"))?;
         self.rewrite(child)
     }
 

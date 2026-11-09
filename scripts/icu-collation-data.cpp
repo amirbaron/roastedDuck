@@ -1,5 +1,5 @@
 // Exports the collation data of DuckDB's ICU 66 (extension/icu/third_party/icu, with the
-// data DuckDB embeds in stubdata.cpp) for rustdb's port of ICU's collation runtime
+// data DuckDB embeds in stubdata.cpp) for roastedduck's port of ICU's collation runtime
 // (crates/icu/src/icu4c/collation*.rs). Built and run by scripts/icu-collation-data.sh.
 //
 //   icu-collation-data types                  the collation types of the coll tree

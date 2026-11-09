@@ -31,11 +31,11 @@ pub fn render_width(text: &str) -> usize {
 }
 
 /// Native `Utf8Proc` glyph widths, without terminal tab/newline/ANSI interpretation.
-pub fn native_render_width(bytes: &[u8]) -> rustdb::Result<usize> {
+pub fn native_render_width(bytes: &[u8]) -> roastedduck::Result<usize> {
     let mut width = 0;
     let mut position = 0;
     while position < bytes.len() {
-        let (next, cluster_width) = rustdb_common::utf8::native_grapheme_cluster(bytes, position)?;
+        let (next, cluster_width) = roastedduck_common::utf8::native_grapheme_cluster(bytes, position)?;
         width += cluster_width;
         position = next;
     }
@@ -120,7 +120,7 @@ pub fn previous_grapheme_cluster_bytes(bytes: &[u8], pos: usize) -> usize {
 /// the shell's `RenderLength`): a newline restarts the count, tabs advance to the next
 /// multiple of 8, ANSI escape sequences take no space and every byte of invalid UTF-8
 /// takes one column.
-pub fn native_terminal_render_width(bytes: &[u8]) -> rustdb::Result<usize> {
+pub fn native_terminal_render_width(bytes: &[u8]) -> roastedduck::Result<usize> {
     let mut width = 0;
     let mut pos = 0;
     while pos < bytes.len() {
@@ -135,7 +135,7 @@ pub fn native_terminal_render_width(bytes: &[u8]) -> rustdb::Result<usize> {
             }
             _ if skip_ansi_escape(bytes, &mut pos) => {}
             _ => {
-                let (next, cluster_width) = rustdb_common::utf8::native_grapheme_cluster(bytes, pos)?;
+                let (next, cluster_width) = roastedduck_common::utf8::native_grapheme_cluster(bytes, pos)?;
                 width += cluster_width;
                 pos = next;
             }

@@ -50,7 +50,7 @@ do {
     try manager.createDirectory(at: cache, withIntermediateDirectories: true)
     let replacement: URL
     if dedicatedFixtures {
-        guard let directory = ProcessInfo.processInfo.environment["RUSTDB_SWIFT_TEST_DIRECTORY"],
+        guard let directory = ProcessInfo.processInfo.environment["ROASTEDDUCK_SWIFT_TEST_DIRECTORY"],
               contained(canonical(URL(fileURLWithPath: directory, isDirectory: true))) else {
             emit(report.merging(["status": "fixture environment escapes dedicated root"]) { _, new in new })
             exit(2)
@@ -68,7 +68,7 @@ do {
         emit(report.merging(["status": "temporary or replacement path escapes dedicated root"]) { _, new in new })
         exit(2)
     }
-    let marker = replacement.appendingPathComponent("rustdb-storage-probe-" + UUID().uuidString)
+    let marker = replacement.appendingPathComponent("roastedduck-storage-probe-" + UUID().uuidString)
     let bytes = Data("duckdb-swift-storage".utf8)
     try bytes.write(to: marker, options: .withoutOverwriting)
     guard try Data(contentsOf: marker) == bytes else {

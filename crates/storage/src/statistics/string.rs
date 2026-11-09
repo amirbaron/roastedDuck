@@ -2,9 +2,9 @@
 
 use std::cmp::Ordering;
 
-use rustdb_common::Result;
-use rustdb_common::utf8::{UnicodeType, analyze, invalid_unicode_error};
-use rustdb_types::compare::CompareOp;
+use roastedduck_common::Result;
+use roastedduck_common::utf8::{UnicodeType, analyze, invalid_unicode_error};
+use roastedduck_types::compare::CompareOp;
 
 use super::FilterPropagateResult;
 

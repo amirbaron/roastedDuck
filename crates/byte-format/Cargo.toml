@@ -1,5 +1,5 @@
 [package]
-name = "rustdb-byte-format"
+name = "roastedduck-byte-format"
 description = "Native byte formatting macros for DuckDB string representations."
 version.workspace = true
 edition.workspace = true

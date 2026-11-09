@@ -3,7 +3,7 @@
 //! `transform_drop.cpp`, `transform_alter_*.cpp`, `transform_rename.cpp`,
 //! `transform_comment_on.cpp`, `transform_secret.cpp`, `transform_constraint.cpp`).
 
-use rustdb_ast::{
+use roastedduck_ast::{
     AddColumnInfo, AddConstraintInfo, AddFieldInfo, AlterDatabaseInfo, AlterInfo, AlterInfoKind,
     AlterTableInfo, AlterViewInfo, BaseTableRef, CatalogType, ChangeColumnTypeInfo, ChangeOwnershipInfo,
     CheckConstraint, ColumnDefinition, ColumnList, CommonTableExpressionMap, CompressionType, Constraint,
@@ -20,9 +20,9 @@ use rustdb_ast::{
 };
 use std::collections::HashSet;
 
-use rustdb_common::{ByteString, CaseInsensitiveMap, CaseInsensitiveSet, Error, LogicalIndex, Result};
-use rustdb_function::cast::{CastFunctionSet, ValueCast};
-use rustdb_pg_parser::nodes::{
+use roastedduck_common::{ByteString, CaseInsensitiveMap, CaseInsensitiveSet, Error, LogicalIndex, Result};
+use roastedduck_function::cast::{CastFunctionSet, ValueCast};
+use roastedduck_pg_parser::nodes::{
     AConst, AlterDatabaseStmt, AlterDatabaseType, AlterSeqStmt, AlterTableCmd, AlterTableStmt,
     AlterTableType, ColumnCategory, ColumnDef, CommentOnStmt, ConstrType, Constraint as PgConstraint,
     CreateFunctionStmt, CreateSchemaStmt, CreateSecretStmt, CreateSeqStmt, CreateStmt, CreateTableAsStmt,
@@ -30,7 +30,7 @@ use rustdb_pg_parser::nodes::{
     FunctionParameter, IndexElem, IndexStmt, List, NewTypeKind, Node, ObjectType, OnCommitAction, RangeVar,
     RelPersistence, RenameStmt, Value as PgValue, ViewCheckOption, ViewStmt, foreign_key,
 };
-use rustdb_types::{LogicalType, LogicalTypeId, TypeParameter, TypeParameterValue, Value};
+use roastedduck_types::{LogicalType, LogicalTypeId, TypeParameter, TypeParameterValue, Value};
 
 use super::build;
 use super::helpers::{
@@ -71,7 +71,7 @@ fn column_definition(name: ByteString, logical_type: LogicalType) -> ColumnDefin
         category: TableColumnType::Standard,
         compression_type: CompressionType::CompressionAuto,
         comment: Value::default(),
-        tags: rustdb_common::OrderedMap::default(),
+        tags: roastedduck_common::OrderedMap::default(),
     }
 }
 
@@ -117,7 +117,7 @@ fn set_generated_expression(column: &mut ColumnDefinition, expr: ParsedExpressio
     column.category = TableColumnType::Generated;
     if has_subquery(&expr) {
         return Err(Error::new_bytes(
-            rustdb_common::ErrorKind::Parser,
+            roastedduck_common::ErrorKind::Parser,
             [
                 b"Expression of generated column \"".as_slice(),
                 column.name.as_bytes(),
@@ -140,7 +140,7 @@ fn set_generated_expression(column: &mut ColumnDefinition, expr: ParsedExpressio
 #[derive(Default)]
 struct ColumnListBuilder {
     list: ColumnList,
-    names: HashSet<rustdb_common::ByteString>,
+    names: HashSet<roastedduck_common::ByteString>,
 }
 
 impl ColumnListBuilder {
@@ -153,7 +153,7 @@ impl ColumnListBuilder {
     fn add(&mut self, column: ColumnDefinition) -> Result<()> {
         if !self.names.insert(column.name.to_ascii_lowercase()) {
             return Err(Error::new_bytes(
-                rustdb_common::ErrorKind::Catalog,
+                roastedduck_common::ErrorKind::Catalog,
                 [
                     b"Column with name ".as_slice(),
                     column.name.as_bytes(),
@@ -224,7 +224,7 @@ fn transform_foreign_key_constraint(
 /// `TransformTypeName` for the parsed element values of `CREATE TYPE ... AS ENUM (...)`:
 /// string constants, unique.
 fn transform_enum_values(values: &List) -> Result<LogicalType> {
-    let mut names: Vec<rustdb_common::ByteString> = Vec::with_capacity(values.len());
+    let mut names: Vec<roastedduck_common::ByteString> = Vec::with_capacity(values.len());
     for node in values {
         let constant: &AConst = cast_node(node)?;
         let PgValue::String(text) = &constant.val else {
@@ -235,7 +235,7 @@ fn transform_enum_values(values: &List) -> Result<LogicalType> {
     let mut seen = std::collections::HashSet::with_capacity(names.len());
     for name in &names {
         if !seen.insert(name.as_bytes()) {
-            return Err(Error::invalid_input(rustdb_common::byte_format!(
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
                 "Attempted to create ENUM type with duplicate value {name}"
             )));
         }
@@ -325,7 +325,7 @@ impl<'a> Transformer<'a> {
     /// are rejected (RESET).
     fn transform_table_options(
         &mut self,
-        options: &mut CiHashMap<ParsedExpression, rustdb_common::ByteString>,
+        options: &mut CiHashMap<ParsedExpression, roastedduck_common::ByteString>,
         list: &'a List,
         throw_if_value: bool,
     ) -> Result<()> {
@@ -337,7 +337,7 @@ impl<'a> Transformer<'a> {
                 .unwrap_or_default()
                 .to_ascii_lowercase();
             if options.contains_key(&lower_name) {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Duplicate table property \"{lower_name}\""
                 )));
             }
@@ -347,7 +347,7 @@ impl<'a> Transformer<'a> {
             };
             let expr = self.transform_expression(arg)?;
             if throw_if_value {
-                return Err(Error::parser(rustdb_common::byte_format!("\"{expr}\"")));
+                return Err(Error::parser(roastedduck_common::byte_format!("\"{expr}\"")));
             }
             options.insert(lower_name, expr);
         }
@@ -430,7 +430,7 @@ impl<'a> Transformer<'a> {
             ConstrType::GeneratedVirtual => {
                 if has_default_value(column) {
                     return Err(Error::new_bytes(
-                        rustdb_common::ErrorKind::InvalidInput,
+                        roastedduck_common::ErrorKind::InvalidInput,
                         [
                             b"\"".as_slice(),
                             column.name.as_bytes(),
@@ -468,7 +468,7 @@ impl<'a> Transformer<'a> {
                         | CompressionType::CompressionConstant
                         | CompressionType::CompressionEmpty
                 ) {
-                    return Err(Error::invalid_input(rustdb_common::byte_format!(
+                    return Err(Error::invalid_input(roastedduck_common::byte_format!(
                         "Compression method {name} cannot be forced"
                     )));
                 }
@@ -654,7 +654,7 @@ impl<'a> Transformer<'a> {
             types: Vec::new(),
             query: Box::new(query),
             names: Vec::new(),
-            column_comments: rustdb_common::OrderedMap::default(),
+            column_comments: roastedduck_common::OrderedMap::default(),
         };
         let mut info = create_info("", CreateInfoKind::View(Box::new(view_info)));
         info.catalog = catalog;
@@ -697,13 +697,13 @@ impl<'a> Transformer<'a> {
                             .and_then(|value| value.as_i128())
                             .and_then(|value| i64::try_from(value).ok())
                             .ok_or_else(|| {
-                                Error::parser(rustdb_common::byte_format!(
+                                Error::parser(roastedduck_common::byte_format!(
                                     "Expected an integer argument for option {option_name}"
                                 ))
                             })?;
                     }
                     Some(_) => {
-                        return Err(Error::parser(rustdb_common::byte_format!(
+                        return Err(Error::parser(roastedduck_common::byte_format!(
                             "Expected an integer argument for option {option_name}"
                         )));
                     }
@@ -715,13 +715,13 @@ impl<'a> Transformer<'a> {
                     b"start" => ("start", "Start"),
                     b"cycle" => ("cycle", "Cycle"),
                     _ => {
-                        return Err(Error::parser(rustdb_common::byte_format!(
+                        return Err(Error::parser(roastedduck_common::byte_format!(
                             "Unrecognized option \"{option_name}\" for CREATE SEQUENCE"
                         )));
                     }
                 };
                 if used.contains(&key) {
-                    return Err(Error::parser(rustdb_common::byte_format!(
+                    return Err(Error::parser(roastedduck_common::byte_format!(
                         "{label} should be passed at most once"
                     )));
                 }
@@ -770,21 +770,21 @@ impl<'a> Transformer<'a> {
         }
         let temporary = sequence_var.relpersistence == RelPersistence::Temp;
         if sequence.max_value <= sequence.min_value {
-            return Err(Error::parser(rustdb_common::byte_format!(
+            return Err(Error::parser(roastedduck_common::byte_format!(
                 "MINVALUE ({}) must be less than MAXVALUE ({})",
                 sequence.min_value,
                 sequence.max_value
             )));
         }
         if sequence.start_value < sequence.min_value {
-            return Err(Error::parser(rustdb_common::byte_format!(
+            return Err(Error::parser(roastedduck_common::byte_format!(
                 "START value ({}) cannot be less than MINVALUE ({})",
                 sequence.start_value,
                 sequence.min_value
             )));
         }
         if sequence.start_value > sequence.max_value {
-            return Err(Error::parser(rustdb_common::byte_format!(
+            return Err(Error::parser(roastedduck_common::byte_format!(
                 "START value ({}) cannot be greater than MAXVALUE ({})",
                 sequence.start_value,
                 sequence.max_value
@@ -802,7 +802,7 @@ impl<'a> Transformer<'a> {
     fn transform_index_parameters(
         &mut self,
         list: &'a List,
-        relation_name: &rustdb_common::ByteString,
+        relation_name: &roastedduck_common::ByteString,
     ) -> Result<Vec<ParsedExpression>> {
         let mut expressions = Vec::with_capacity(list.len());
         for node in list {
@@ -913,7 +913,8 @@ impl<'a> Transformer<'a> {
             kind,
         };
         let mut parameter_names = CaseInsensitiveSet::<ByteString>::default();
-        let mut defaults: CiHashMap<ParsedExpression, rustdb_common::ByteString> = CiHashMap::new_with_keys();
+        let mut defaults: CiHashMap<ParsedExpression, roastedduck_common::ByteString> =
+            CiHashMap::new_with_keys();
         for node in &def.params {
             let Node::FunctionParameter(param) = node else {
                 return Err(Error::internal("TODO"));
@@ -921,7 +922,7 @@ impl<'a> Transformer<'a> {
             let param: &'a FunctionParameter = param;
             let name = param.name.clone().unwrap_or_default();
             if !parameter_names.insert(name.clone()) {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Duplicate parameter '{name}' in macro definition"
                 )));
             }
@@ -966,7 +967,7 @@ impl<'a> Transformer<'a> {
         let temporary = match name.relpersistence {
             RelPersistence::Temp => true,
             RelPersistence::Unlogged => {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Unlogged flag not supported for macros: '{}'",
                     qname.name
                 )));
@@ -1030,7 +1031,8 @@ impl<'a> Transformer<'a> {
         info: &mut CreateSecretInfo,
         options: &'a List,
     ) -> Result<()> {
-        let mut generic: CiHashMap<ParsedExpression, rustdb_common::ByteString> = CiHashMap::new_with_keys();
+        let mut generic: CiHashMap<ParsedExpression, roastedduck_common::ByteString> =
+            CiHashMap::new_with_keys();
         for node in options {
             let def_elem: &'a DefElem = cast_node(node)?;
             let lower_name = def_elem
@@ -1054,7 +1056,7 @@ impl<'a> Transformer<'a> {
                 }
                 _ => {
                     if generic.contains_key(&lower_name) {
-                        return Err(Error::binder(rustdb_common::byte_format!(
+                        return Err(Error::binder(roastedduck_common::byte_format!(
                             "Duplicate query param found while parsing create secret: '{lower_name}'"
                         )));
                     }
@@ -1109,8 +1111,10 @@ impl<'a> Transformer<'a> {
                      Either provide an explicit secret name or use a constant expression for the secret type.",
                 ));
             }
-            secret.name =
-                rustdb_common::byte_format!("__default_{}", value.to_varchar_bytes()?.to_ascii_lowercase());
+            secret.name = roastedduck_common::byte_format!(
+                "__default_{}",
+                value.to_varchar_bytes()?.to_ascii_lowercase()
+            );
         }
         let mut info = create_info(DEFAULT_SCHEMA, CreateInfoKind::Secret(Box::new(secret)));
         info.on_conflict = on_conflict;
@@ -1478,12 +1482,12 @@ impl<'a> Transformer<'a> {
             }
             owned_by_seen = true;
             let Some(arg) = &def_elem.arg else {
-                return Err(Error::internal(rustdb_common::byte_format!(
+                return Err(Error::internal(roastedduck_common::byte_format!(
                     "Expected an argument for option {option_name}"
                 )));
             };
             let Node::List(values) = arg else {
-                return Err(Error::internal(rustdb_common::byte_format!(
+                return Err(Error::internal(roastedduck_common::byte_format!(
                     "Expected a string argument for option {option_name}"
                 )));
             };
@@ -1495,7 +1499,7 @@ impl<'a> Transformer<'a> {
                 [schema, name] => (schema.clone(), name.clone()),
                 [name] => (DEFAULT_SCHEMA.into(), name.clone()),
                 _ => {
-                    return Err(Error::internal(rustdb_common::byte_format!(
+                    return Err(Error::internal(roastedduck_common::byte_format!(
                         "Wrong argument for {option_name}. Expected either <schema>.<name> or <name>"
                     )));
                 }
@@ -1577,19 +1581,19 @@ impl<'a> Transformer<'a> {
         if stmt.object_type == ObjectType::Column {
             let expr = self.transform_required(stmt.column_expr.as_ref(), "column")?;
             let ParsedExpressionKind::ColumnRef(column_ref) = &expr.kind else {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Unexpected expression found, expected column reference to comment on (e.g. \
                      'schema.table.column'), found '{expr}'"
                 )));
             };
             let names = &column_ref.column_names;
             if names.len() > 4 {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Invalid column reference: '{expr}', too many dots"
                 )));
             }
             if names.len() < 2 {
-                return Err(Error::parser(rustdb_common::byte_format!(
+                return Err(Error::parser(roastedduck_common::byte_format!(
                     "Invalid column reference: '{expr}', please specify a table"
                 )));
             }

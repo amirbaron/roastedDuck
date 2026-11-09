@@ -9,8 +9,8 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use rustdb_common::{ByteString, CaseInsensitiveMap, Error, Result};
-use rustdb_types::Value;
+use roastedduck_common::{ByteString, CaseInsensitiveMap, Error, Result};
+use roastedduck_types::Value;
 
 use super::iterator::{ArtIterator, RowIdSetOutput};
 use super::node::{
@@ -352,7 +352,7 @@ impl Art {
         &mut self,
         options: &CaseInsensitiveMap<Value>,
         writer: &mut dyn IndexBufferWriter,
-        keep: &mut dyn FnMut(rustdb_buffer::BlockId),
+        keep: &mut dyn FnMut(roastedduck_buffer::BlockId),
     ) -> Result<ArtStorageInfo> {
         let mut info = self.prepare_serialize(options)?;
         let count = Self::serialized_allocators(options);

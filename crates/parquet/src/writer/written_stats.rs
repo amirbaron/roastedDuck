@@ -6,8 +6,10 @@
 use std::cmp::Ordering;
 use std::fmt::Write as _;
 
-use rustdb_function::copy::CopyFunctionFileStatistics;
-use rustdb_types::{Date, LogicalType, LogicalTypeId, PhysicalType, Time, TimeNs, TimeTz, Timestamp, Value};
+use roastedduck_function::copy::CopyFunctionFileStatistics;
+use roastedduck_types::{
+    Date, LogicalType, LogicalTypeId, PhysicalType, Time, TimeNs, TimeTz, Timestamp, Value,
+};
 
 use super::column::{ColumnWriter, FinishedColumn};
 use crate::column_reader::values::DecimalTarget;
@@ -175,7 +177,7 @@ fn stats_kind(ty: &LogicalType) -> StatsKind {
 #[derive(Debug)]
 #[allow(clippy::struct_excessive_bools, reason = "DuckDB's ColumnStatsUnifier flags")]
 struct Unifier {
-    column_name: rustdb_common::ByteString,
+    column_name: roastedduck_common::ByteString,
     kind: StatsKind,
     global_min: Option<Vec<u8>>,
     global_max: Option<Vec<u8>>,
@@ -193,7 +195,7 @@ struct Unifier {
 }
 
 impl Unifier {
-    fn new(column_name: rustdb_common::ByteString, kind: StatsKind) -> Self {
+    fn new(column_name: roastedduck_common::ByteString, kind: StatsKind) -> Self {
         Self {
             column_name,
             kind,
@@ -304,8 +306,8 @@ impl Unifier {
 }
 
 /// `KeywordHelper::WriteQuoted(name, '"')`.
-fn quoted(name: &[u8]) -> rustdb_common::ByteString {
-    let mut out = rustdb_common::ByteString::from(b"\"");
+fn quoted(name: &[u8]) -> roastedduck_common::ByteString {
+    let mut out = roastedduck_common::ByteString::from(b"\"");
     for &byte in name {
         if byte == b'"' {
             out.push(byte);
@@ -320,7 +322,7 @@ fn quoted(name: &[u8]) -> rustdb_common::ByteString {
 /// repeated groups.
 fn collect_unifiers(
     writer: &ColumnWriter,
-    mut base_name: rustdb_common::ByteString,
+    mut base_name: roastedduck_common::ByteString,
     unifiers: &mut Vec<Unifier>,
 ) {
     let schema = writer.schema();
@@ -370,7 +372,7 @@ pub fn gather(
 ) -> CopyFunctionFileStatistics {
     let mut unifiers = Vec::new();
     for column in columns {
-        collect_unifiers(column, rustdb_common::ByteString::new(), &mut unifiers);
+        collect_unifiers(column, roastedduck_common::ByteString::new(), &mut unifiers);
     }
     // `FlushColumnStats` for every column chunk.
     for (group_index, group) in metadata.row_groups.iter().enumerate() {

@@ -21,8 +21,8 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use rustdb_common::profiling::{MetricType, start_timer};
-use rustdb_common::{Error, Result};
+use roastedduck_common::profiling::{MetricType, start_timer};
+use roastedduck_common::{Error, Result};
 
 use crate::data_table::DataTable;
 use crate::table::{DeleteRecord, UpdateRecord};
@@ -80,11 +80,11 @@ pub struct Transaction {
     local_storage: Arc<LocalStorage>,
     /// The attached database the transaction writes to, and its WAL
     /// (`MetaTransaction::modified_database`).
-    modified_database: Mutex<Option<(rustdb_common::ByteString, Option<Arc<WriteAheadLog>>)>>,
+    modified_database: Mutex<Option<(roastedduck_common::ByteString, Option<Arc<WriteAheadLog>>)>>,
     /// The attached databases the transaction looked into (DuckDB's `MetaTransaction`
     /// has a transaction of each), by lower-cased name; shared with the manager's list of
     /// running transactions.
-    accessed_databases: Arc<Mutex<Vec<rustdb_common::ByteString>>>,
+    accessed_databases: Arc<Mutex<Vec<roastedduck_common::ByteString>>>,
     /// The shared hold of the written database's checkpoint lock, until the transaction
     /// ends (`DuckTransaction::write_lock`).
     checkpoint_guard: Mutex<Option<crate::checkpoint_lock::SharedCheckpointGuard>>,
@@ -181,8 +181,8 @@ impl Transaction {
             }
             Some((current, _)) if current.eq_ignore_ascii_case(name) => {}
             Some((current, _)) => Err(Error::new_bytes(
-                rustdb_common::ErrorKind::Transaction,
-                rustdb_common::byte_format!(
+                roastedduck_common::ErrorKind::Transaction,
+                roastedduck_common::byte_format!(
                     "Attempting to write to database \"{name}\" in a transaction that has already modified database \"{current}\" - a single transaction can only write to a single attached database."
                 ),
             ))?,
@@ -238,7 +238,7 @@ impl Transaction {
     }
 
     /// The database the transaction writes to (`MetaTransaction::ModifiedDatabase`).
-    pub fn modified_database(&self) -> Option<rustdb_common::ByteString> {
+    pub fn modified_database(&self) -> Option<roastedduck_common::ByteString> {
         self.modified_database
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -367,7 +367,7 @@ struct CommittedUndo {
     blocks_checkpoint: bool,
     /// The database the transaction wrote to; every attached database has its own
     /// recently committed transactions in DuckDB. `None` blocks every checkpoint.
-    database: Option<rustdb_common::ByteString>,
+    database: Option<roastedduck_common::ByteString>,
 }
 
 /// A running transaction as its manager sees it.
@@ -377,7 +377,7 @@ struct ActiveTransaction {
     start: u64,
     /// The databases it looked into (its `accessed_databases`): in DuckDB it runs in the
     /// transaction manager of each of them only.
-    databases: Arc<Mutex<Vec<rustdb_common::ByteString>>>,
+    databases: Arc<Mutex<Vec<roastedduck_common::ByteString>>>,
 }
 
 impl ActiveTransaction {
@@ -644,7 +644,7 @@ impl TransactionManager {
                     .and_then(|()| undo.rollback());
                 if let Err(rollback_error) = rolled_back {
                     return Err(Error::new(
-                        rustdb_common::ErrorKind::Fatal,
+                        roastedduck_common::ErrorKind::Fatal,
                         format!(
                             "Failed to rollback transaction. Cannot continue operation.\nOriginal Error: {}\nRollback Error: {}",
                             error.raw_message(),

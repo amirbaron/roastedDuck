@@ -6,8 +6,8 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use rustdb_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
-use rustdb_types::{DataChunk, LogicalType, Vector};
+use roastedduck_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_types::{DataChunk, LogicalType, Vector};
 
 use super::{DataTable, TableConstraints, constraint_error, has_null};
 use crate::index::art::IndexScanPredicate;
@@ -28,12 +28,12 @@ use crate::transaction::{LocalStorage, LocalTableStorage, Transaction, Transacti
 /// decryption happen when it pins the persisted block, not during catalog loading.
 #[derive(Debug)]
 struct IndexBufferLoader {
-    buffer_manager: rustdb_buffer::BufferManager,
-    block_manager: Arc<dyn rustdb_buffer::BlockManager>,
+    buffer_manager: roastedduck_buffer::BufferManager,
+    block_manager: Arc<dyn roastedduck_buffer::BlockManager>,
 }
 
 impl BufferLoader for IndexBufferLoader {
-    fn register(&self, pointer: BufferPointer) -> Option<Arc<rustdb_buffer::BlockHandle>> {
+    fn register(&self, pointer: BufferPointer) -> Option<Arc<roastedduck_buffer::BlockHandle>> {
         Some(
             self.buffer_manager
                 .register_block(&self.block_manager, pointer.block_id),
@@ -279,7 +279,8 @@ impl DataTable {
         column_ids: &[usize],
         constraint_index: usize,
     ) -> Result<()> {
-        let name = rustdb_common::byte_format!("{}_{}_{constraint_index}", constraint.name(), self.name());
+        let name =
+            roastedduck_common::byte_format!("{}_{}_{constraint_index}", constraint.name(), self.name());
         let art = self.new_art(&name, constraint, column_ids)?;
         self.add_index(art)
     }
@@ -292,7 +293,8 @@ impl DataTable {
         column_ids: &[usize],
         constraint_index: usize,
     ) -> Result<()> {
-        let name = rustdb_common::byte_format!("{}_{}_{constraint_index}", constraint.name(), self.name());
+        let name =
+            roastedduck_common::byte_format!("{}_{}_{constraint_index}", constraint.name(), self.name());
         let mut art = self.new_art(&name, constraint, column_ids)?;
         self.build_index(&Transaction::system(), &mut art, false)?;
         self.add_index(art)
@@ -308,7 +310,7 @@ impl DataTable {
         info: &crate::index::art::ArtStorageInfo,
     ) -> Result<bool> {
         let generated =
-            rustdb_common::byte_format!("{}_{}_{constraint_index}", constraint.name(), self.name());
+            roastedduck_common::byte_format!("{}_{}_{constraint_index}", constraint.name(), self.name());
         let name = if info.name.is_empty() {
             &generated
         } else {
@@ -378,7 +380,7 @@ impl DataTable {
         if check_unique_name && self.indexes().contains(index.name()) {
             return Err(Error::new_bytes(
                 ErrorKind::Catalog,
-                rustdb_common::byte_format!("An index with the name {} already exists!", index.name())
+                roastedduck_common::byte_format!("An index with the name {} already exists!", index.name())
                     .into_bytes(),
             ));
         }
@@ -414,7 +416,7 @@ impl DataTable {
             let row_ids = row_id_column.values::<i64>()[..chunk.len()].to_vec();
             let data = DataChunk::new(chunk.columns()[..columns.len()].to_vec(), chunk.len());
             if reject_nulls && data.columns().iter().any(|column| has_null(column, data.len())) {
-                return Err(constraint_error(rustdb_common::byte_format!(
+                return Err(constraint_error(roastedduck_common::byte_format!(
                     "NOT NULL constraint failed: {}",
                     index.name()
                 )));
@@ -486,7 +488,7 @@ impl DataTable {
                         .map_err(|error| {
                             Error::new_bytes(
                                 ErrorKind::Internal,
-                                rustdb_common::byte_format!(
+                                roastedduck_common::byte_format!(
                                     "Failed to rebuild index '{}' after vacuum: {}",
                                     index.name(),
                                     error.raw_message_bytes()

@@ -1,7 +1,7 @@
 //! Frozen C++ parser AST bytes and original SQL rendering, including Unicode names.
-use rustdb_ast::SqlStatementKind;
-use rustdb_serde::binary::BinarySerializer;
-use rustdb_serde::{SerializationOptions, Serializer};
+use roastedduck_ast::SqlStatementKind;
+use roastedduck_serde::binary::BinarySerializer;
+use roastedduck_serde::{SerializationOptions, Serializer};
 fn decode(hex: &str) -> Vec<u8> {
     hex.as_bytes()
         .as_chunks::<2>()
@@ -23,7 +23,7 @@ fn parsed_name_wires_and_sql_match_cpp() -> Result<(), Box<dyn std::error::Error
     for line in include_str!("fixtures/native_names_1.5.6.tsv").lines() {
         let fields: Vec<_> = line.split('\t').collect();
         let bytes = decode(fields[1]);
-        let statements = rustdb_parser::parse(std::str::from_utf8(&bytes)?)?;
+        let statements = roastedduck_parser::parse(std::str::from_utf8(&bytes)?)?;
         let [statement] = statements.as_slice() else {
             return Err("expected one statement".into());
         };

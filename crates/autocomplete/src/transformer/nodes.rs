@@ -5,12 +5,12 @@
 
 use std::collections::BTreeSet;
 
-use rustdb_ast::{
+use roastedduck_ast::{
     ColumnDefinition, ColumnList, Constraint, ConstraintType, JoinRefType, JoinType, ParsedExpression,
     PivotColumn, QueryNode, SelectStatement, SetScope, TableRef, WindowBoundary, WindowExcludeMode,
 };
-use rustdb_common::{ByteString, CaseInsensitiveMap, Error, Result};
-use rustdb_types::{LogicalType, Value};
+use roastedduck_common::{ByteString, CaseInsensitiveMap, Error, Result};
+use roastedduck_types::{LogicalType, Value};
 
 /// A possibly qualified name, `[catalog.][schema.]name` (DuckDB's `QualifiedName`);
 /// missing parts are empty (`INVALID_CATALOG` / `INVALID_SCHEMA`).
