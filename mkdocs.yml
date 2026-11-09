@@ -50,7 +50,7 @@ extra_css:
   - assets/roastedduck.css?v=1.5.6.post1
 extra_javascript:
   - assets/benchmarks.js
-  - assets/accessibility.js
+  - assets/accessibility.js?v=2
 nav:
   - Overview: index.md
   - Get started:
