@@ -1,6 +1,6 @@
 #!/bin/bash
 # Creates the benchmark databases of scripts/perf/bench.py with DuckDB's CLI, in
-# $RUSTDB_PERF_DIR (default .context/perf). Both engines read the same files.
+# $ROASTEDDUCK_PERF_DIR (default .context/perf). Both engines read the same files.
 #
 # usage: scripts/perf/data.sh tpch SF          TPC-H, CALL dbgen(sf=SF) -> tpchSF.duckdb
 #        scripts/perf/data.sh tpcds SF         TPC-DS, CALL dsdgen(sf=SF) -> tpcdsSF.duckdb
@@ -12,7 +12,7 @@
 set -euo pipefail
 SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-DIR="${RUSTDB_PERF_DIR:-$ROOT/.context/perf}"
+DIR="${ROASTEDDUCK_PERF_DIR:-${RUSTDB_PERF_DIR:-$ROOT/.context/perf}}"
 REF="${DUCKDB_SRC:-$ROOT/.context/duckdb-download/duckdb-1.5.6}"
 DUCK="$REF/build/release/duckdb"
 mkdir -p "$DIR/dl"

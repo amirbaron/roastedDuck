@@ -1,19 +1,19 @@
-"""Runs a benchmark suite on DuckDB 1.5.6 and rustdb; per query: best wall time of the
+"""Runs a benchmark suite on DuckDB 1.5.6 and roastedDuck; per query: best wall time of the
 timed runs, its CPU time, the process's peak RSS, and a result check.
 
 usage: python3 -I scripts/perf/bench.py SUITE [--threads N] [--reps 5] [--queries a,b]
        [--engines duck,rust] [--out results.json] [--no-check] [--memory-limit X] [--dump DIR]
 SUITE: tpch1 | tpch3 | tpch10 (`tpchSF.duckdb`) | tpcds1 (`tpcdsSF.duckdb`) | h2og (`h2o_g.duckdb`)
        | h2oj (`h2o_j.duckdb`)
-       | hits (`hits.duckdb`) | any `NAME.duckdb` with one or more `--sql QUERY`, in the data directory (`RUSTDB_PERF_DIR`, default
+       | hits (`hits.duckdb`) | any `NAME.duckdb` with one or more `--sql QUERY`, in the data directory (`ROASTEDDUCK_PERF_DIR`, default
        `.context/perf`); `scripts/perf/data.sh` creates them with DuckDB's CLI.
 
-Needs `cargo build --release -p rustdb-capi` (rustdb's `libduckdb`) and the reference tree
+Needs `cargo build --release --manifest-path crates/capi/Cargo.toml` (roastedDuck's `libduckdb`) and the reference tree
 (`DUCKDB_SRC`, default `.context/duckdb-download/duckdb-1.5.6`) with its release build
 (`build/release/duckdb`, `build/release/src/libduckdb.dylib`).
 
 Each (engine, query) runs in its own Python process that loads the engine's libduckdb
-(DuckDB's C API; rustdb's `crates/capi`) through ctypes, on the same database file: one
+(DuckDB's C API; roastedDuck's `crates/capi`) through ctypes, on the same database file: one
 untimed warm-up run (whose result is checked), then REPS timed runs; peak RSS is the
 process's `ru_maxrss`. h2oai queries are `CREATE TEMP TABLE ans AS ...` (dropped after
 each run) and are checked with DuckDB's benchmark `RESULT_QUERY`.
@@ -27,7 +27,7 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-PERF = os.environ.get("RUSTDB_PERF_DIR", os.path.join(ROOT, ".context/perf"))
+PERF = os.environ.get("ROASTEDDUCK_PERF_DIR") or os.environ.get("RUSTDB_PERF_DIR") or os.path.join(ROOT, ".context/perf")
 REF = os.environ.get("DUCKDB_SRC", os.path.join(ROOT, ".context/duckdb-download/duckdb-1.5.6"))
 LIBS = {"duck": os.path.join(REF, "build/release/src/libduckdb.dylib"),
         "rust": os.environ.get("RUST_LIB", os.path.join(ROOT, "target/release/libduckdb.dylib"))}

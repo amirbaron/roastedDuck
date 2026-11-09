@@ -30,7 +30,8 @@ a native supported Python and the pinned maturin from the root `pyproject.toml`.
 
 ```sh
 cargo build --locked --bin roastedDuck -j 1
-cargo test --locked -p rustdb-types -p rustdb-common -j 1
+cargo test --locked --manifest-path crates/types/Cargo.toml -j 1
+cargo test --locked --manifest-path crates/common/Cargo.toml -j 1
 ./target/debug/roastedDuck -c 'SELECT sum(i) FROM range(10) t(i);'
 ```
 

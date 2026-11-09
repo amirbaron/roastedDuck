@@ -2,8 +2,8 @@
 
 usage: python3 -I scripts/perf/table.py RESULT.json [MORE.json ...]       per-query table
        python3 -I scripts/perf/table.py --summary RESULT.json [...]       one line per file
-With several files, the per-query table shows speed (DuckDB wall / rustdb wall) and memory
-(rustdb peak RSS / DuckDB peak RSS) of each, in order (e.g. before / after).
+With several files, the per-query table shows speed (DuckDB wall / roastedDuck wall) and memory
+(roastedDuck peak RSS / DuckDB peak RSS) of each, in order (e.g. before / after).
 """
 import json
 import math
@@ -27,7 +27,7 @@ def load(path):
 
 
 def summary(paths):
-    print("| run | suite | threads | DuckDB wall s | rustdb wall s | speed geomean | slowest | mem geomean | max mem |")
+    print("| run | suite | threads | DuckDB wall s | roastedDuck wall s | speed geomean | slowest | mem geomean | max mem |")
     print("|---|---|---:|---:|---:|---:|---:|---:|---:|")
     for path in paths:
         data, rows = load(path)
@@ -45,7 +45,7 @@ def per_query(paths):
     runs = [load(p) for p in paths]
     tags = [os.path.basename(p).split("-")[0] for p in paths]
     last = runs[-1][1]
-    head = "| query | DuckDB ms | rustdb ms | DuckDB MB | rustdb MB |"
+    head = "| query | DuckDB ms | roastedDuck ms | DuckDB MB | roastedDuck MB |"
     sep = "|---|---:|---:|---:|---:|"
     for t in tags:
         head += f" speed {t} | mem {t} |"

@@ -77,7 +77,7 @@ build, and point the environment at your data and Rust library:
 
 ```sh
 export DUCKDB_SRC=/absolute/path/to/duckdb-1.5.6
-export RUSTDB_PERF_DIR=/absolute/path/to/benchmark-data
+export ROASTEDDUCK_PERF_DIR=/absolute/path/to/benchmark-data
 export RUST_LIB=/absolute/path/to/roastedduck/lib/libduckdb.dylib
 
 # Prepare your TPC-H dataset with the reference engine.
