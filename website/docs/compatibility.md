@@ -1,6 +1,8 @@
 # Compatibility and preview status
 
-roastedDuck targets **DuckDB 1.5.6**, with the same release version and version-family branch naming.
+roastedDuck targets **DuckDB 1.5.6**, with matching version-family branch naming.
+The `1.5.6.post1` package revision fixes security and packaging issues while
+retaining the 1.5.6 engine compatibility identifiers.
 It is an experimental public preview. Evaluate your own workload and retain
 backups before using it with important data.
 
@@ -10,8 +12,8 @@ backups before using it with important data.
 | --- | --- | --- |
 | macOS arm64 | Native SQL, shell, C API/ADBC, Python, Go, Swift | Other Mac architectures are outside the preview |
 | Linux arm64 | SQL, shell, C API/ADBC, Python, Go, Swift | No Linux benchmark headline |
-| Linux x86_64 | Same functional target | Original qualification used translation; native-run CI is a separate check |
-| Python | Normal CPython 3.10–3.14, 15 ABI/platform cells | Matching skips/xfails retained; new packaging has separate checks |
+| Linux x86_64 | Same functional target | Current package/client CI runs natively; historical full-corpus qualification used translation |
+| Python | Normal CPython 3.10–3.14, 15 ABI/platform cells | Fresh source-built wheel qualification and ordinary PyPI installs; matching nonpasses retained |
 | iOS arm64 simulator | 133 Swift cases, typed consumer, WAL journeys | Simulator evidence only |
 | iOS arm64 device | Signed build | Physical execution/provisioning unverified |
 | Windows, Intel Mac, other clients | Outside release scope | No support claim |
@@ -31,9 +33,10 @@ backups before using it with important data.
 | Distribution | 300 original payload files and symlink targets preserved after extraction |
 
 These results describe the frozen source2551 candidate, not every future
-commit. Preview packaging preserves its native bytes. Additional installation
-checks and CI have their own reports and must not be confused with rerunning
-the entire historical qualification.
+commit. The original 1.5.6 preview preserved those native bytes. The security
+revision 1.5.6.post1 uses new source builds with its own client, encryption and
+installation reports. It does not claim a rerun of the entire historical corpus
+or benchmark matrix.
 
 ## Known exceptions
 

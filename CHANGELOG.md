@@ -1,12 +1,14 @@
 # Changelog
 
-## 1.5.6.post1 — candidate, not yet published
+## 1.5.6.post1 — November 9, 2026
 
 - Source-built PyPI packages with complete metadata, README, licenses and tested source archives.
 - PyO3 0.30.1, rsa 0.10.0 and ctutils 0.4.8 address the identified dependency advisories.
 - Explicit GIL requirement preserves normal-CPython scope during the PyO3 upgrade.
-- Fresh native security/persistence and selected-client qualification; historical results stay dated.
-- Trusted publishing and official-index installation verification, pending completed launch gates and PyPI owner setup.
+- Fresh native security/persistence, C API/ADBC, Go, Swift, and 15-cell Python qualification; historical results stay dated.
+- Published to PyPI through trusted publishing; all 15 ordinary official-index installations passed, with installed native hashes, SQL, and encryption verified.
+- Native SDKs include shared/static libraries, public C/ADBC headers, pinned Go sources, and complete notices. Linux Swift archives are verified after extraction and relocation.
+- Original producer, recovery after a GitHub internal error, and successful observer results remain separately recorded in the release evidence.
 
 ## 1.5.6
 

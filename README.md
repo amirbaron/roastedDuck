@@ -36,18 +36,22 @@ import remains **`duckdb`**. Use a separate virtual environment; the official
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-# Download the wheel matching your Python version and platform from Releases.
-python -m pip install /path/to/roastedduck-1.5.6-<python>-<abi>-<platform>.whl
+python -m pip install roastedduck
 python -c "import duckdb; print(duckdb.sql('SELECT 42').fetchall())"
 ```
 
 See the [installation guide](https://amirbaron.github.io/roastedDuck/install/)
 for exact platform names, verification, Go linkage, and Swift packages. Packages
-are available through GitHub Releases; no PyPI or crates.io publication is claimed.
+are available through GitHub Releases and [PyPI](https://pypi.org/project/roastedduck/).
+No crates.io publication is claimed.
 
 ## What is verified
 
-The November 6, 2026 software candidate records:
+The 1.5.6.post1 release has fresh native client, security, encryption, and
+15-cell Python qualification. Its source archive is rebuilt outside the checkout,
+and ordinary PyPI installs are checked on every advertised cell.
+
+The separate November 6, 2026 software candidate records:
 
 - All 4,870 SQL corpus files exercised on macOS arm64 and Linux arm64/x86_64,
   retaining 14 classified raw failures on each platform.
@@ -62,7 +66,7 @@ Intel Macs, and other clients are outside the preview's supported scope.
 
 ## The memory tradeoff
 
-On the recorded macOS arm64 TPC-H SF10 and ClickBench workloads, at 1 and 14
+For the November 6, 2026 candidate, on macOS arm64 TPC-H SF10 and ClickBench workloads, at 1 and 14
 threads, geometric-mean whole-process peak RSS was **60–76% lower**, with
 geometric-mean best execution times **7–16% longer**, versus the pinned C++
 reference. These are per-query geometric means, not maximum-memory guarantees.

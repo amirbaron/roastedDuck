@@ -1,12 +1,13 @@
 # roastedDuck Python package
 
-The current source candidate is `roastedduck==1.5.6.post1`, targeting DuckDB 1.5.6.
+The current public preview is `roastedduck==1.5.6.post1`, targeting DuckDB 1.5.6.
 The compatibility import remains `duckdb`; use a fresh environment and do not
 co-install the official `duckdb` distribution.
 
-The first PyPI publication is still being qualified. Until publication is verified,
-use the currently published [GitHub releases](https://github.com/amirbaron/roastedDuck/releases).
-See [PYPI_README.md](PYPI_README.md) for the candidate's package documentation.
+Install from [PyPI](https://pypi.org/project/roastedduck/) with
+`python -m pip install roastedduck`. The identical release files and checksums
+are on [GitHub Releases](https://github.com/amirbaron/roastedDuck/releases).
+See [PYPI_README.md](PYPI_README.md) for usage and scope.
 
 Build from the repository root with the pinned Rust toolchain:
 

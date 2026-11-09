@@ -47,9 +47,10 @@ markdown_extensions:
   - toc:
       permalink: true
 extra_css:
-  - assets/roastedduck.css
+  - assets/roastedduck.css?v=1.5.6.post1
 extra_javascript:
   - assets/benchmarks.js
+  - assets/accessibility.js
 nav:
   - Overview: index.md
   - Get started:

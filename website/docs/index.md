@@ -27,7 +27,7 @@ it is not an official DuckDB release or an endorsed replacement.
 
 ## Less memory on the measured workloads
 
-The recorded macOS arm64 TPC-H SF10 and ClickBench configurations show
+The recorded November 6, 2026 macOS arm64 TPC-H SF10 and ClickBench configurations show
 **60–76% lower geometric-mean whole-process peak RSS**, with **7–16% longer
 geometric-mean best query times**, at 1 and 14 threads. Individual workloads
 vary substantially: ClickBench summed times are 23–25% longer, and its largest

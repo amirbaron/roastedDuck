@@ -1,40 +1,46 @@
 # Releases
 
-Download the preview from
-[GitHub Releases](https://github.com/amirbaron/roastedDuck/releases).
+Install Python from [PyPI](https://pypi.org/project/roastedduck/) with
+`python -m pip install roastedduck`. Native SDKs, Swift packages, exact Python
+files and verification receipts are on [GitHub Releases](https://github.com/amirbaron/roastedDuck/releases).
 
-## 1.5.6
+## 1.5.6.post1
 
-The first roastedDuck preview targets the DuckDB 1.5.6 compatibility contract.
-Its engine payload is the recorded November 6, 2026 source2551 candidate;
-public packaging adds project identity, notices, documentation, and installation
-checks. The Python distribution version is `1.5.6`.
+This security and packaging revision targets DuckDB 1.5.6. It updates PyO3 to
+0.30.1, rsa to 0.10.0, and ctutils to 0.4.8, and builds new native images from the
+fixed dependency graph. The prior 1.5.6 assets remain immutable.
 
-Versions and version-family branch names mirror the compatibility target:
-`main` for integration, `v1.5-variegata` for maintenance, and the `v1.5.6` tag.
-The release is still marked as a preview; a matching version is not a claim
-that every feature or platform is equivalent to upstream.
+Qualification covers all 15 normal CPython/platform wheels, the extracted source
+archive, native C API/ADBC, Go/Swift, and encrypted checkpoint/WAL interoperability.
+The official-index matrix verifies ordinary pip resolution and installed native
+hashes on every advertised cell. Matching nonpasses remain recorded.
+
+The [PyPI publication and 15-cell installation run](https://github.com/amirbaron/roastedDuck/actions/runs/42691444784)
+and [GitHub-download installation run](https://github.com/amirbaron/roastedDuck/actions/runs/42691434280)
+both passed. All 16 files on PyPI have the same SHA-256 digests as the accepted
+GitHub release distributions.
 
 | Asset | Contents |
 | --- | --- |
-| Native platform archive | CLI, dynamic library, C headers, pinned Go source, notices |
-| Static platform archive | Optional static library and notices |
-| Python wheel | One CPython/platform combination; `roastedduck` distribution, `duckdb` import |
-| Swift package archive | Apple XCFramework or Linux package, sources and notices |
-| `SHA256SUMS` | SHA-256 for every uploaded payload asset |
-| `provenance.json` | Original candidate identity, source commit, packaging changes, native-byte checks |
+| Native platform archive | CLI, shared/static libraries, C/ADBC headers, pinned Go source, notices |
+| Python wheel / source archive | Source-built distribution; `roastedduck` package, `duckdb` import |
+| Swift package archive | Apple XCFramework or extracted/relocated-tested Linux package |
+| `SHA256SUMS` | Exact uploaded-file digests |
+| `python-distributions.json` | Wheel/source identities and native image hashes |
+| `apple-distribution.json` | Signed Apple archive, source-equivalence and runtime evidence |
+| `launch-acceptance.json` | Pre-publication artifact acceptance; subsequent publication is verified by the linked install runs |
 
-Checksums and reproducible provenance are distinct from platform trust.
-Historical macOS development signatures are not Developer ID notarization.
-The preview is not published to PyPI or crates.io; use these assets or build
-from source. Installation checks are separate from the historical full-suite
-qualification.
+`main` remains the integration branch and `v1.5-variegata` the maintenance
+branch; this revision is tagged `v1.5.6.post1`. Public-preview status remains
+explicit. Development signatures are not Apple notarization; physical iOS
+execution remains unverified. No crates.io publication is claimed.
+
+## Historical previews
+
+The [1.5.6 preview](https://github.com/amirbaron/roastedDuck/releases/tag/v1.5.6)
+and [0.1.0-alpha.1 preview](https://github.com/amirbaron/roastedDuck/releases/tag/v0.1.0-alpha.1)
+retain their original files and checksums. Their source2551 corpus and performance
+results remain dated; use the current security revision for new installations.
 
 See the [changelog](https://github.com/amirbaron/roastedDuck/blob/main/CHANGELOG.md),
 [compatibility boundaries](compatibility.md), and [performance evidence](benchmarks.md).
-
-## Superseded initial preview
-
-The initial [0.1.0-alpha.1 release](https://github.com/amirbaron/roastedDuck/releases/tag/v0.1.0-alpha.1)
-is retained with its original assets and checksums. Use 1.5.6 for new installations.
-Renumbering changes packaging metadata; it does not rebuild the native engine.

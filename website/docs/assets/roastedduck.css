@@ -10,7 +10,7 @@
   --md-default-bg-color: #ffffff;
   --md-default-fg-color: #322b35;
   --md-typeset-a-color: #7b2949;
-  --md-code-bg-color: #f3f1f6;
+  --md-code-bg-color: #fcfaff;
 }
 [data-md-color-scheme="slate"] {
   --md-hue: 275;
@@ -52,3 +52,20 @@
 a:focus-visible, button:focus-visible, select:focus-visible { outline: 3px solid #bb8c18; outline-offset: 4px; }
 @media (max-width: 850px) { .rd-hero-inner { grid-template-columns: 1fr; gap: 2rem; }.rd-hero { padding: 2rem 1.2rem; }.rd-console { transform: none; max-width: 34rem; }.rd-hero h1 { font-size: 2.7rem; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; } }
+
+/* Keep documentation examples and links readable and keyboard-accessible. */
+[data-md-color-scheme="default"] {
+  --md-code-hl-comment-color: #625a68;
+  --md-code-hl-number-color: #ad2332;
+}
+.md-typeset :is(p, li, td) a:not(.md-button), .md-copyright a {
+  text-decoration: underline;
+  text-underline-offset: .15em;
+}
+.md-copyright { color: #bfb7c5; }
+.md-typeset pre > code:focus-visible, .rd-console pre:focus-visible, .md-typeset__scrollwrap:focus-visible {
+  outline: 2px solid var(--md-accent-fg-color);
+  outline-offset: -2px;
+}
+
+[data-md-color-scheme="slate"] { --md-code-hl-number-color: #ff9384; }
