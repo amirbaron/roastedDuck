@@ -12,6 +12,12 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--target", required=True)
 parser.add_argument("--out", type=Path, required=True)
 args = parser.parse_args()
+# The manylinux container runs as root over the runner-owned checkout. Trust
+# only this explicitly selected source directory, without changing Git config.
+# Resolve provenance before spending time compiling the test-only bridge.
+source_commit = subprocess.check_output(
+    ["git", "-c", "safe.directory=" + str(ROOT), "rev-parse", "HEAD"], cwd=ROOT, text=True
+).strip()
 args.out.mkdir(parents=True, exist_ok=False)
 library = "libduckdb.dylib" if "apple" in args.target else "libduckdb.so"
 command = ["cargo", "build", "--locked", "--release", "-j", "1", "--target", args.target, "-p", "rustdb-capi"]
@@ -27,6 +33,6 @@ try:
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
     (args.out / "provenance.json").write_text(json.dumps({"test_only": True, "feature": "adbc-test-api",
         "library": library, "sha256": digest, "target": args.target,
-        "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()}, indent=2) + "\n")
+        "source_commit": source_commit}, indent=2) + "\n")
 finally:
     subprocess.run(command, cwd=ROOT, check=True)
