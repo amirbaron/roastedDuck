@@ -5,7 +5,7 @@ import json
 import tomllib
 
 root = Path(__file__).resolve().parents[2]
-project = tomllib.loads((root / "python/pyproject.toml").read_text())["project"]
+project = tomllib.loads((root / "pyproject.toml").read_text())["project"]
 release = json.loads((root / "release.json").read_text())
 workspace = tomllib.loads((root / "Cargo.toml").read_text())["workspace"]["package"]
 assert project["name"] == "roastedduck" and project["version"] == release["version"]

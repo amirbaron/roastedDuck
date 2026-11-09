@@ -93,7 +93,7 @@ else:
         parts = line.split(None, 5)
         if len(parts) == 6:
             images.append(re.sub('\\\\([0-7]{3})', lambda m: chr(int(m[1], 8)), parts[5]))
-engines = sorted({str(Path(x).resolve()) for x in images if Path(x).name.startswith('libduckdb.')})
+engines = sorted({str(Path(x).resolve()) for x in images if Path(x).name.startswith(('libduckdb.', '_duckdb'))})
 assert engines == [str(library.resolve())], engines
 (case / (stage + '-result.json')).write_text(json.dumps({'stage': stage, 'mode': mode, 'cipher': cipher, 'version': version, 'library': str(library), 'engine_images': engines, 'queries': records, 'expected_checked': True, 'hard_exit_to_preserve_wal': stage == 'create'}, indent=2) + '\n')
 if stage == 'create':

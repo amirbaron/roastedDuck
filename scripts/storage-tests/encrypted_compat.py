@@ -38,10 +38,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ['rust_bundle', 'cpp_bundle', 'httpfs_bundle', 'out']:
         parser.add_argument(name, type=Path)
-    parser.add_argument('--certificate-sha256', required=True)
+    authentication = parser.add_mutually_exclusive_group(required=True)
+    authentication.add_argument('--certificate-sha256')
+    authentication.add_argument('--input-manifest', type=Path)
+    parser.add_argument('--input-manifest-sha256')
     parser.add_argument('--cipher', choices=['GCM', 'CTR'], default='GCM')
     parser.add_argument('--encryption-version', choices=['v0', 'v1'], default='v1')
     args = parser.parse_args()
+    if args.input_manifest and not args.input_manifest_sha256:
+        parser.error('--input-manifest requires its independently supplied SHA256')
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=False)
     bundles = {name: getattr(args, name + '_bundle').resolve() for name in ['rust', 'cpp', 'httpfs']}
@@ -51,6 +56,26 @@ def main():
     env.update(TZ='UTC', TMPDIR=str(out), PYTHONDONTWRITEBYTECODE='1')
 
     def authenticate(label):
+        if args.input_manifest:
+            manifest = args.input_manifest.resolve()
+            assert sha(manifest) == args.input_manifest_sha256, 'Pinned input manifest changed'
+            inputs = json.loads(manifest.read_text())
+            assert set(inputs['artifacts']) == {'rust', 'cpp', 'httpfs'}
+            checked = {}
+            for name, record in inputs['artifacts'].items():
+                selected = package if name == 'httpfs' else libs[name]
+                expected_path = (manifest.parent / record['path']).resolve()
+                assert expected_path.is_relative_to(manifest.parent)
+                assert selected.resolve() == expected_path, 'Selected runtime differs from pinned input'
+                assert sha(selected) == record['sha256'], 'Pinned native input changed: ' + name
+                if sys.platform == 'darwin' and name != 'httpfs':
+                    subprocess.run(['codesign', '--verify', '--strict', str(selected)], check=True, capture_output=True)
+                checked[name] = record
+            (out / (label + '-pinned-inputs.json')).write_text(json.dumps({
+                'manifest_sha256': args.input_manifest_sha256, 'checked': checked,
+                'authentication': 'independently pinned build/release artifact identities',
+            }, indent=2) + '\n')
+            return
         for name, bundle in bundles.items():
             command = [sys.executable, '-B', str(ROOT / 'scripts/signing/verify_detached_manifest.py'),
                        str(bundle / 'SHA256SUMS'), str(bundle / 'SHA256SUMS.csig'),

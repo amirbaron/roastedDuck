@@ -19,7 +19,7 @@ inputs = {}
 for name in paths:
     if not name:
         continue
-    if name.startswith(("crates/", "python/", "third_party/", "include/", ".github/workflows/", "scripts/release/")) or name in {"Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "release.json"}:
+    if name.startswith(("crates/", "python/", "third_party/", "include/", ".github/workflows/", "scripts/release/")) or name in {"Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "release.json", "pyproject.toml"}:
         path = ROOT / name
         inputs[name] = hashlib.sha256(path.read_bytes()).hexdigest()
 report = {

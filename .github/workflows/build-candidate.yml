@@ -8,17 +8,7 @@ on:
       - 'crates/**'
       - 'third_party/**'
       - 'python/**'
-      - 'include/**'
-      - 'release.json'
-      - 'scripts/release/**'
-      - '.github/workflows/build-candidate.yml'
-  pull_request:
-    paths:
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'crates/**'
-      - 'third_party/**'
-      - 'python/**'
+      - 'pyproject.toml'
       - 'include/**'
       - 'release.json'
       - 'scripts/release/**'
@@ -71,9 +61,7 @@ jobs:
           rustup show
           python -m pip install maturin==1.16.0 packaging==26.3 twine==7.0.0
           python scripts/release/record_build_inputs.py --out source-dist/build-inputs.json
-          cd python
-          maturin sdist --out ../source-dist
-          cd ..
+          maturin sdist --out source-dist
           python scripts/release/inspect_distribution.py source-dist --report source-dist/metadata.json
           python -m twine check --strict source-dist/*.tar.gz
       - id: source
@@ -89,6 +77,7 @@ jobs:
           working-directory: ${{ steps.source.outputs.source_root }}
           docker-options: -v ${{ runner.temp }}/roastedduck-source-rebuild:${{ runner.temp }}/roastedduck-source-rebuild
           args: --release --locked -j 1 --compatibility pypi --interpreter python3.12 --out ${{ github.workspace }}/sdist-rebuilt-wheels
+          before-script-linux: yum install -y perl-IPC-Cmd perl-Time-Piece
       - name: Install the independently rebuilt wheel
         run: |
           python -m venv source-test
@@ -154,11 +143,11 @@ jobs:
           rust-toolchain: '1.99.0'
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
-          working-directory: python
-          args: --release --locked -j 1 --compatibility pypi --out ../raw-wheels --interpreter python3.10 python3.11 python3.12 python3.13 python3.14
+          working-directory: .
+          args: --release --locked -j 1 --compatibility pypi --out raw-wheels --interpreter python3.10 python3.11 python3.12 python3.13 python3.14
           before-script-linux: |
+            yum install -y perl-IPC-Cmd perl-Time-Piece
             (
-              cd ..
               cargo build --locked --release -j 1 --target ${{ matrix.target }} -p rustdb-shell -p rustdb-capi -p slt
               python3 scripts/release/compile_harnesses.py --target ${{ matrix.target }} --out compiled-harnesses
             )
@@ -233,6 +222,20 @@ jobs:
         run: python scripts/release/fetch_validation_source.py --out upstream
       - name: Qualify all five Python ABI cells
         run: python scripts/release/validate_python_matrix.py --wheels candidate/wheelhouse --source upstream/duckdb-python-802a345bb627435d2a05d63cb74454fa98b60b5e --out qualification
+      - name: Qualify encrypted checkpoint and WAL interoperability
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          library="$PWD/native/sdk/lib/libduckdb.so"
+          if [ "$RUNNER_OS" = macOS ]; then library="$PWD/native/sdk/lib/libduckdb.dylib"; fi
+          digest=$(python -c 'import hashlib,sys; print(hashlib.file_digest(open(sys.argv[1],"rb"),"sha256").hexdigest())' "$library")
+          python scripts/release/prepare_encrypted_inputs.py --platform "$PLATFORM" --rust-library "$library" --rust-sha256 "$digest" --cpp-python "$PWD/qualification/cp314/cpp/venv/bin/python" --out "$RUNNER_TEMP/encrypted-inputs"
+          pin=$(python -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$RUNNER_TEMP/encrypted-inputs/input-manifest.json")
+          for cipher in GCM CTR; do
+            for version in v0 v1; do
+              python scripts/storage-tests/encrypted_compat.py "$RUNNER_TEMP/encrypted-inputs/rust" "$RUNNER_TEMP/encrypted-inputs/cpp" "$RUNNER_TEMP/encrypted-inputs/httpfs" "native-qualification/encrypted-$cipher-$version" --input-manifest "$RUNNER_TEMP/encrypted-inputs/input-manifest.json" --input-manifest-sha256 "$pin" --cipher "$cipher" --encryption-version "$version"
+            done
+          done
       - name: Retain raw qualification outcomes
         if: always()
         uses: actions/upload-artifact@v4
