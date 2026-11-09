@@ -169,6 +169,7 @@ def main():
     report = {'passed_apple_swift_typed_persistence_gate': True, 'architecture': architecture,
               'inherited_nice': inherited_priority,
               'versions': versions, 'normal_runs': normal, 'journeys': 4, 'cases': cases,
+              'native_images': {engine: {'path': str(image), 'sha256': digest(image)} for engine, image in images.items()},
               'signed_payloads_and_links_unchanged': True,
               'execution': 'native arm64' if architecture == platform.machine() else 'Intel under Rosetta on arm64 host',
               'scope': 'Independent deployed Mac Swift consumers, both checkpoint/nonempty WAL directions, typed values, receiver mutation/checkpoint and original readback. Not iOS or performance acceptance.',

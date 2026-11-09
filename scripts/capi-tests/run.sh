@@ -24,12 +24,14 @@ CXX="${CXX:-clang++}"
 SYSTEM="$(uname)"
 LIBRARY_NAME=libduckdb.so
 LINK_STRIP_FLAGS=(-Wl,--gc-sections)
+PLATFORM_LINK_FLAGS=(-ldl)
 # Stand-in C++ helpers share names with DuckDB internals but have different layouts.
 # Keep them out of ELF's dynamic symbol table so they cannot preempt the reference DLL.
 PLATFORM_FLAGS=(-ffunction-sections -fdata-sections -pthread -fvisibility=hidden -fvisibility-inlines-hidden)
 if [[ "$SYSTEM" == Darwin ]]; then
   LIBRARY_NAME=libduckdb.dylib
   LINK_STRIP_FLAGS=(-Wl,-dead_strip)
+  PLATFORM_LINK_FLAGS=()
   PLATFORM_FLAGS=()
 fi
 LIB=rust
@@ -142,7 +144,7 @@ for file in "${FILES[@]}"; do
     continue
   fi
   if ! "$CXX" "$OBJ/main.o" "$OBJ/capi_tester.o" "$OBJ/$name.o" -L "$LIBDIR" -lduckdb \
-    -Wl,-rpath,"$LIBDIR" "${LINK_STRIP_FLAGS[@]}" ${PLATFORM_FLAGS[@]+"${PLATFORM_FLAGS[@]}"} ${LINK_HEADER_FLAGS[@]+"${LINK_HEADER_FLAGS[@]}"} \
+    -Wl,-rpath,"$LIBDIR" "${LINK_STRIP_FLAGS[@]}" ${PLATFORM_LINK_FLAGS[@]+"${PLATFORM_LINK_FLAGS[@]}"} ${PLATFORM_FLAGS[@]+"${PLATFORM_FLAGS[@]}"} ${LINK_HEADER_FLAGS[@]+"${LINK_HEADER_FLAGS[@]}"} \
     -o "$BIN/$name" 2>"$BIN/$name.link.log"; then
     missing="$(grep -c '^  "_' "$BIN/$name.link.log" || true)"
     printf '%-36s does not link: %s missing symbols (see %s)\n' "$name" "$missing" "$BIN/$name.link.log"
@@ -168,7 +170,7 @@ for file in "${FILES[@]}"; do
     RUN_COMMAND=(env DYLD_PRINT_LIBRARIES=1 "$BIN/$name")
   fi
   if (cd "$REF" && "${RUN_COMMAND[@]}" ${CATCH_ARGS[@]+"${CATCH_ARGS[@]}"}) >"$log" 2>&1; then
-    tail -n 2 "$log" | grep -E "passed|test cases" | tr '\n' ' '
+    grep -E '^All tests passed|^test cases' "$log" | tail -n 2 | tr '\n' ' '
     echo
   else
     status=1

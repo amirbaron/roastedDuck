@@ -30,8 +30,9 @@ assert sha(args.library) == args.expected_sha256
 env = dict(os.environ, REF=str(args.source.resolve()), RUSTDB_CAPI_LIBRARY_DIR=str(args.library.parent),
            RUSTDB_CAPI_TEST_OUTPUT_DIR=str(args.out / "build"), RUSTDB_CAPI_TEST_BIN_DIR=str(args.out / "bin"),
            CAPI_TEST_DIR=str(args.out / "data"), TMPDIR=str(args.out / "tmp"), TZ="UTC",
-           RUSTDB_TEST_ADHOC_SIGNING="1")
+           RUSTDB_TEST_ADHOC_SIGNING="1", DUCKDB_INSTALL_LIB=str(args.library))
 env.pop("LD_LIBRARY_PATH", None)
+env.pop("LD_PRELOAD", None)
 if sys.platform != "darwin":
     env["LD_DEBUG"] = "libs"
 with (args.out / "build-run.log").open("w") as log:
@@ -44,7 +45,7 @@ for path in sorted((args.out / "bin").glob("*.log")):
         continue
     text = path.read_text()
     match = re.search(r"All tests passed \((\d+) assertions? in (\d+) test cases?\)", text)
-    assert match and str(args.library) in text, path
+    assert match and text.count("Verified selected DuckDB image: " + str(args.library)) == 2, path
     binary = path.with_suffix("")
     cases = subprocess.run([str(binary), "--list-test-names-only"], cwd=args.source, env=env,
                            capture_output=True, text=True)

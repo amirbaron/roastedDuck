@@ -13,7 +13,9 @@ targets, compares the pinned Python fast suite with the official C++ control,
 and rebuilds an extracted source archive outside the checkout. Each native target
 also runs the full public C API (155 cases), isolated ADBC (64 cases), Go (652
 cases), and Swift (132 upstream cases plus one image-identity case) suites.
-The ADBC test bridge is isolated from the 547-export shipping library.
+The ADBC test bridge is isolated from the 547-export shipping library. A separate
+public ADBC 1.0/1.1 consumer uses the shipped header and feature-free library and
+checks Arrow schema/batch ownership after releasing the result stream.
 
 `inspect_distribution.py` validates the actual metadata, README, URLs, platform/ABI
 tags, native architecture, wheel RECORD, and source closure prerequisites.
@@ -41,6 +43,14 @@ source archive using the PyPI trusted publisher for `amirbaron/roastedDuck`,
 workflow `pypi-publish.yml`, environment `pypi`. No long-lived token is needed.
 The workflow checks ordinary PyPI resolution and installed native hashes on all
 15 advertised cells. Live install documentation changes only after those pass.
+
+`archive_native_sdk.py` checks complete shipping inventories, including the CLI,
+static libraries, headers and notices. `package_apple_release.py` preserves the
+qualified Apple framework bytes, signs their evidence and notices, and records
+engine-source equivalence separately from build-checkout timing. The publisher
+checks the Apple archive's pinned signature, three ARM slices, full Mac and
+simulator runtime receipts, and device build-only identity. It never upgrades
+the physical-device exception into a runtime pass.
 
 An already-uploaded PyPI filename must have the exact accepted digest. Never
 replace or silently relabel a previously published native build. Use a post

@@ -59,6 +59,11 @@ def verify(inputs, manifest, commit):
         adbc = read(native / "adbc/verification.json")
         assert adbc["passed"] is True and adbc["test_only_bridge"] is True and adbc["cases"] == 64 and adbc["assertions"] == 3040
         assert adbc["test_bridge_sha256"] == bridge_hash
+        public_adbc = read(native / "public-adbc/verification.json")
+        assert public_adbc["passed"] is True and public_adbc["test_only_bridge"] is False
+        assert public_adbc["native_sha256"] == native_hash and public_adbc["adbc_versions"] == ["1.0", "1.1"]
+        assert public_adbc["public_header_sha256"] == producer["files_sha256"]["sdk/include/adbc.h"]
+        assert set(public_adbc["checks"]) == {"initialize", "connect", "query", "arrow-schema", "arrow-batch", "stream-end", "independent-arrow-ownership", "release"}
         encrypted_input = read(native / "input-manifest.json")
         assert encrypted_input["rust_original_sha256"] == encrypted_input["artifacts"]["rust"]["sha256"] == native_hash
         for cipher in ["GCM", "CTR"]:

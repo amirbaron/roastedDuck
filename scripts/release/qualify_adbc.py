@@ -29,13 +29,14 @@ assert sha(args.library) == args.expected_sha256
 env = dict(os.environ, REF=str(args.source.resolve()), ADBC_TEST_LIB_DIR=str(args.library.parent),
            ADBC_TEST_OUTPUT_DIR=str(args.out / "harness"), TMPDIR=str(args.out / "tmp"), TZ="UTC", ADBC_TEST_BACKEND="rust")
 env.pop("LD_LIBRARY_PATH", None)
+env.pop("LD_PRELOAD", None)
 env["DYLD_PRINT_LIBRARIES" if sys.platform == "darwin" else "LD_DEBUG"] = "1" if sys.platform == "darwin" else "libs"
 with (args.out / "build-run.log").open("w") as log:
     run = subprocess.run(["bash", str(ROOT / "scripts/adbc-tests/run.sh")], env=env, stdout=log, stderr=subprocess.STDOUT)
 text = (args.out / "harness/test.log").read_text()
 match = re.search(r"All tests passed \((\d+) assertions? in (\d+) test cases?\)", text)
 assert run.returncode == 0 and match and (int(match[1]), int(match[2])) == (3040, 64)
-assert str(args.library) in text
+assert text.count("Verified selected DuckDB image: " + str(args.library)) == 2
 binary = args.out / "harness/adbc-tests"
 listed = subprocess.run([str(binary), "--list-test-names-only"], cwd=args.source,
                         env=dict(env, DUCKDB_INSTALL_LIB=str(args.library)), capture_output=True, text=True)

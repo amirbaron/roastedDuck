@@ -47,7 +47,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include "duckdb/common/arrow/arrow.hpp"
+// roastedDuck distribution adaptation: the public Arrow C ABI declarations
+// below are self-contained; no DuckDB-private C++ header is required.
 
 /// \defgroup Arrow C Data Interface
 /// Definitions for the C Data Interface/C Stream Interface.

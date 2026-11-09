@@ -166,6 +166,7 @@ jobs:
           python scripts/release/inspect_distribution.py wheelhouse --report receipts/distributions.json
           python -m twine check --strict wheelhouse/*
           python scripts/release/stage_native.py --target ${{ matrix.target }} --platform ${{ matrix.platform }} --notices notices --harnesses compiled-harnesses --out native
+          python scripts/release/archive_native_sdk.py --native native --out .
           tar -czf native-${{ matrix.platform }}.tar.gz native
       - uses: actions/upload-artifact@v4
         with:
@@ -180,6 +181,7 @@ jobs:
           path: |
             wheelhouse/
             native-${{ matrix.platform }}.tar.gz
+            roastedduck-*.tar.gz
             receipts/
           if-no-files-found: error
           retention-days: 14
@@ -234,6 +236,12 @@ jobs:
           ./smoke-c
       - name: Fetch immutable upstream test inputs
         run: python scripts/release/fetch_validation_source.py --out upstream
+      - name: Exercise public ADBC on the feature-free SDK
+        run: |
+          library="$PWD/native/sdk/lib/libduckdb.so"
+          if [ "$RUNNER_OS" = macOS ]; then library="$PWD/native/sdk/lib/libduckdb.dylib"; fi
+          digest=$(python -c 'import json,pathlib,sys; p=pathlib.Path(sys.argv[1]); j=json.load(open("native/build-provenance.json")); print(j["files_sha256"]["sdk/lib/"+p.name])' "$library")
+          python scripts/release/qualify_public_adbc.py --library "$library" --expected-sha256 "$digest" --headers native/sdk/include --out native-qualification/public-adbc
       - name: Qualify all five Python ABI cells
         run: python scripts/release/validate_python_matrix.py --wheels candidate/wheelhouse --source upstream/duckdb-python-802a345bb627435d2a05d63cb74454fa98b60b5e --out qualification
       - name: Fetch the pinned native-client fixtures
@@ -309,9 +317,18 @@ jobs:
               python scripts/storage-tests/encrypted_compat.py "$RUNNER_TEMP/encrypted-inputs/rust" "$RUNNER_TEMP/encrypted-inputs/cpp" "$RUNNER_TEMP/encrypted-inputs/httpfs" "native-qualification/encrypted-$cipher-$version" --input-manifest "$RUNNER_TEMP/encrypted-inputs/input-manifest.json" --input-manifest-sha256 "$pin" --cipher "$cipher" --encryption-version "$version"
             done
           done
-          cp "$RUNNER_TEMP/encrypted-inputs/input-manifest.json" native-qualification/
-          cp "$RUNNER_TEMP/encrypted-inputs/httpfs-fetch.json" native-qualification/
-          cp "$RUNNER_TEMP/encrypted-inputs/httpfs-fetch.log" native-qualification/
+      - name: Retain encrypted-input diagnostics even after failures
+        if: always()
+        run: |
+          python - <<'PY'
+          import os, pathlib, shutil
+          source = pathlib.Path(os.environ['RUNNER_TEMP']) / 'encrypted-inputs'
+          output = pathlib.Path('native-qualification')
+          output.mkdir(exist_ok=True)
+          for name in ['input-manifest.json', 'httpfs-fetch.json', 'httpfs-fetch.log']:
+              if (source / name).is_file():
+                  shutil.copy2(source / name, output / name)
+          PY
       - name: Retain raw qualification outcomes
         if: always()
         uses: actions/upload-artifact@v4

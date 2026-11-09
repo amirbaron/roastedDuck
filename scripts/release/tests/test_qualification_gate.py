@@ -23,6 +23,7 @@ class QualificationGateTests(unittest.TestCase):
             bridge = hashlib.sha256((platform + "bridge").encode()).hexdigest()
             groups = ["crypto", "extension-signatures", "parquet-encryption", "persistence"]
             hashes = {"sdk/lib/" + library: native, "harnesses/adbc/" + library: bridge}
+            hashes["sdk/include/adbc.h"] = "c" * 64
             hashes.update({"harnesses/" + name: hashlib.sha256(name.encode()).hexdigest() for name in groups})
             producer = self.root / ("candidate-native-manifest-" + platform) / "build-provenance.json"
             self.write(producer, {"source_commit": self.commit, "platform": platform, "export_count": 547,
@@ -54,6 +55,9 @@ class QualificationGateTests(unittest.TestCase):
                 self.write(n / client / "verification.json", {"passed": True, "cases": cases, "native_sha256": native})
             self.write(n / "adbc/verification.json", {"passed": True, "test_only_bridge": True, "cases": 64,
                        "assertions": 3040, "test_bridge_sha256": bridge})
+            self.write(n / "public-adbc/verification.json", {"passed": True, "test_only_bridge": False, "adbc_versions": ["1.0", "1.1"],
+                "native_sha256": native, "public_header_sha256": "c" * 64,
+                "checks": ["initialize", "connect", "query", "arrow-schema", "arrow-batch", "stream-end", "independent-arrow-ownership", "release"]})
             self.write(n / "input-manifest.json", {"rust_original_sha256": native, "artifacts": {"rust": {"sha256": native}}})
             for cipher in ["GCM", "CTR"]:
                 for version in ["v0", "v1"]:
@@ -97,6 +101,12 @@ class QualificationGateTests(unittest.TestCase):
 
     def test_wrong_bridge(self):
         self.reject_change("qualification-linux-arm64/native-qualification/adbc/verification.json", lambda v: v.update(test_bridge_sha256="0" * 64))
+
+    def test_bridge_substituted_for_public_adbc(self):
+        self.reject_change("qualification-linux-arm64/native-qualification/public-adbc/verification.json", lambda v: v.update(test_only_bridge=True))
+
+    def test_wrong_public_header(self):
+        self.reject_change("qualification-linux-arm64/native-qualification/public-adbc/verification.json", lambda v: v.update(public_header_sha256="0" * 64))
 
     def test_missing_crypto_headers(self):
         self.reject_change("qualification-linux-arm64/native-qualification/encrypted-CTR-v1/verification.json", lambda v: v.update(physical_encrypted_headers=[]))

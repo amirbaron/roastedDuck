@@ -40,7 +40,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: accepted-pypi-manifests
-          path: receipts/
+          path: |
+            receipts/*.json
+            receipts/SHA256SUMS
           if-no-files-found: error
           retention-days: 14
   publish:
