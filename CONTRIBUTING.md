@@ -26,7 +26,7 @@ to the relevant release branch.
 Install the toolchain pinned in `rust-toolchain.toml` using rustup, a C compiler,
 and platform development headers. Linux native dependencies may require
 `pkg-config`, `perl`, and OpenSSL development headers. Python bindings also need
-a native supported Python and the pinned maturin from `python/pyproject.toml`.
+a native supported Python and the pinned maturin from the root `pyproject.toml`.
 
 ```sh
 cargo build --locked --bin roastedDuck -j 1

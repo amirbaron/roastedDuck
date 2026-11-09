@@ -34,7 +34,8 @@ this is not a claim that the complete dependency graph is Rust or free of unsafe
 code. The upstream C++ engine is used as a reference for testing, not as the
 runtime engine in the release payload.
 
-Internal crate names remain `rustdb-*` for continuity. Public branding is independent; release versions match the targeted DuckDB
+The public CLI package is `roastedduck-cli`, producing `roastedDuck`. Internal
+engine crate names remain `rustdb-*` for continuity; release versions match the targeted DuckDB
 compatibility version.
 
 Read the [detailed engineering conventions](https://github.com/amirbaron/roastedDuck/blob/main/docs/architecture.md)

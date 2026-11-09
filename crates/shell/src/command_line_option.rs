@@ -149,7 +149,7 @@ fn allow_unsigned(shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
 
 fn show_version_and_exit(_shell: &mut Shell, _args: &[ByteString]) -> MetadataResult {
     ShellState::printf_stdout(format!(
-        "{} ({}) {}\n",
+        "roastedDuck {} ({}) {}\n",
         rustdb::Database::library_version(),
         rustdb::Database::release_codename(),
         rustdb::Database::source_id()
@@ -603,7 +603,7 @@ pub static COMMAND_LINE_OPTIONS: [CommandLineOption; 39] = [
         "",
         None,
         Some(show_version_and_exit),
-        "show DuckDB version",
+        "show roastedDuck compatibility version",
     ),
 ];
 

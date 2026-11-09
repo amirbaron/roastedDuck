@@ -25,7 +25,7 @@ Dependencies point downwards only.
 | `crates/execution` | `rustdb-execution` | `execution/*` (physical operators, pipelines, executor) |
 | `crates/rustdb` | `rustdb` | `main/*` (DuckDB, Connection, ClientContext, results) |
 | `crates/capi` | `rustdb-capi` (`libduckdb`) | `main/capi` |
-| `crates/shell` | `rustdb-shell` (`rustdb` binary) | `tools/shell` |
+| `crates/shell` | `roastedduck-cli` (`roastedDuck` binary; internal `rustdb_shell` library) | `tools/shell` |
 | `tools/slt` | conformance runner | `test/sqlite` |
 | `tools/bench` | benchmark harness | `benchmark/` |
 

@@ -166,7 +166,7 @@ fn run_shell(shell: &mut Shell, args: &[ByteString]) -> i32 {
 /// The version and hint shown when the shell starts on a terminal.
 fn print_startup_text(state: &ShellState) {
     let mut startup_version = format!(
-        "DuckDB {} ({}",
+        "roastedDuck {} (DuckDB-compatible, {}",
         rustdb::Database::library_version(),
         rustdb::Database::release_codename()
     );

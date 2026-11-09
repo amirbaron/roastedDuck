@@ -85,7 +85,8 @@ cargo build --locked --release --bin roastedDuck -j 1
 ./target/release/roastedDuck -c 'SELECT 42;'
 ```
 
-The repository pins Rust 1.99.0. The internal crate and native ABI names remain
+The repository pins Rust 1.99.0. The CLI package is `roastedduck-cli` and its
+executable is `roastedDuck`. Internal engine crate and native ABI names retain
 `rustdb`/`duckdb` for continuity and compatibility. Public release versions follow the targeted DuckDB version. Preview status
 is recorded separately from version compatibility. See [CONTRIBUTING.md](CONTRIBUTING.md)
 for prerequisites, tests, and the existing branch workflow.

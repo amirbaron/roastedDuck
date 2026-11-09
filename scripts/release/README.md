@@ -115,9 +115,12 @@ continues to be reported as failed; recovery does not rewrite its result.
 
 `validate-published-python.yml` requalifies the immutable 1.5.6.post1 wheels when
 validation dependencies change. It verifies release checksums and native hashes,
-requires unchanged engine/build sources, and runs all five ABIs on each of the
+binds the artifact source to its immutable release tag, and runs all five ABIs on each of the
 three supported platforms against the same pinned upstream corpus. It does not
-rebuild or repack release files.
+rebuild or repack release files. The corpus fetcher and runtime identity guard
+must match the release source. The recorded tooling commit may contain newer
+engine or CLI work, but these jobs execute only the installed published images;
+they do not qualify those unpublished source changes.
 
 Each C++ environment is resolved first; its exact versions constrain the Rust
 environment. Both full `pip inspect` inventories and `pip freeze` records are

@@ -54,7 +54,9 @@ jobs:
           mkdir wheels
           gh release download "$RELEASE_TAG" --dir wheels --pattern "roastedduck-${RELEASE_TAG#v}-cp*-cp*-$WHEEL_PLATFORM.whl" --pattern python-distributions.json --pattern SHA256SUMS
           python scripts/release/verify_downloads.py wheels
-          git diff --exit-code "$RELEASE_TAG^{commit}" HEAD -- Cargo.toml Cargo.lock crates third_party rust-toolchain.toml .cargo pyproject.toml python/duckdb python/adbc_driver_duckdb python/_duckdb.py python/_duckdb-stubs include go swift
+          # This validates the published artifacts, whose source is the release
+          # tag, not unpublished engine/CLI changes in the tooling checkout.
+          git diff --exit-code "$RELEASE_TAG^{commit}" HEAD -- scripts/release/fetch_validation_source.py scripts/release/pytest_release_guard.py
           python - <<'PY'
           import json, subprocess
           manifest = json.load(open('wheels/python-distributions.json'))
