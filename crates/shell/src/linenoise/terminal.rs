@@ -462,8 +462,8 @@ pub fn try_get_background_color() -> Option<TerminalColor> {
             if !has_more_data(ifd, 5_000_000) {
                 crate::printer::write_stderr(
                     b"Timeout trying to read terminal background color (> 5s elapsed).\nDisable terminal \
-                      background color detection by using duckdb -dark-mode or duckdb -light-mode.\nThis likely \
-                      means duckdb does not correctly support your CLI.\nPlease file an issue.\n",
+                      background color detection by using roastedDuck -dark-mode or roastedDuck -light-mode.\nThis likely \
+                      means roastedDuck does not correctly support your CLI.\nPlease file an issue.\n",
                 );
                 break;
             }

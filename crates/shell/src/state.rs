@@ -382,7 +382,7 @@ impl ShellState {
             stdin_is_interactive: true,
             stdout_is_console: true,
             stderr_is_console: true,
-            program_name: "duckdb".into(),
+            program_name: "roastedDuck".into(),
             safe_mode: false,
             highlight_errors: OptionType::Default,
             highlight_results: OptionType::Default,

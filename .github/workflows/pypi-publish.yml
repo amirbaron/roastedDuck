@@ -5,7 +5,7 @@ on:
       tag:
         description: Qualified public GitHub release tag
         required: true
-        default: v1.5.6.post1
+        default: v1.5.6.post2
 permissions:
   contents: read
 concurrency:

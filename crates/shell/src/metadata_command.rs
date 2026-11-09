@@ -576,7 +576,7 @@ fn set_startup_text(shell: &mut Shell, args: &[String]) -> Result<MetadataResult
 /// `.version`: the library version, then the compiler that built the shell.
 fn show_version(shell: &mut Shell, _args: &[String]) -> Result<MetadataResult> {
     shell.state.print(format!(
-        "DuckDB {} ({}) {}\n",
+        "roastedDuck {} ({}) {}\n",
         roastedduck::Database::library_version(),
         roastedduck::Database::release_codename(),
         roastedduck::Database::source_id()
