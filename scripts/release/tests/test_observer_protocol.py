@@ -11,14 +11,17 @@ from observer_protocol import REQUIRED_JOBS, validate_producer, verification_onl
 
 class ObserverProtocolTests(unittest.TestCase):
     def setUp(self):
+        policy = patch("observer_protocol.producer_job_names", return_value=REQUIRED_JOBS | {"mac-native", "mac-package"})
+        policy.start()
+        self.addCleanup(policy.stop)
         self.commit = "a" * 40
         self.repo = "amirbaron/roastedDuck"
         self.run = {"id": 123, "run_attempt": 1, "head_sha": self.commit,
                     "head_repository": {"full_name": self.repo}, "path": ".github/workflows/build-candidate.yml",
                     "status": "completed", "conclusion": "failure"}
         self.jobs = [{"id": i, "name": name, "status": "completed", "conclusion": "success", "steps": []}
-                     for i, name in enumerate(sorted(REQUIRED_JOBS), 1)]
-        self.jobs.append({"id": 9, "name": "assemble", "status": "completed", "conclusion": "failure",
+                     for i, name in enumerate(sorted(REQUIRED_JOBS | {"mac-native", "mac-package"}), 1)]
+        self.jobs.append({"id": len(self.jobs) + 1, "name": "assemble", "status": "completed", "conclusion": "failure",
                           "steps": [{"name": "Run python scripts/release/verify_qualification.py", "conclusion": "failure"}]})
         self.log = "scripts/release/verify_qualification.py\nKeyError: 'hashes'\n"
 
@@ -42,6 +45,16 @@ class ObserverProtocolTests(unittest.TestCase):
 
     def test_missing_platform_cannot_be_accepted(self):
         self.jobs.pop(0)
+        with self.assertRaises(AssertionError):
+            self.verify()
+
+    def test_missing_mac_component_gate_cannot_be_accepted(self):
+        self.jobs = [j for j in self.jobs if j['name'] != 'mac-native']
+        with self.assertRaises(AssertionError):
+            self.verify()
+
+    def test_failed_mac_join_cannot_be_accepted(self):
+        next(j for j in self.jobs if j['name'] == 'mac-package')['conclusion'] = 'failure'
         with self.assertRaises(AssertionError):
             self.verify()
 

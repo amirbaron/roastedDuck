@@ -134,14 +134,6 @@ jobs:
         run: |
           echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
           python scripts/release/record_build_inputs.py --out receipts/build-inputs.json
-      - name: Cross-build Apple libraries on the larger-memory Intel runner
-        if: runner.os == 'macOS'
-        run: |
-          rustup show
-          rustup target add ${{ matrix.target }}
-          cargo build --locked --release -j 1 --target ${{ matrix.target }} -p roastedduck-cli -p roastedduck-capi -p slt
-          python scripts/release/compile_harnesses.py --target ${{ matrix.target }} --out compiled-harnesses
-          python scripts/release/compile_adbc_bridge.py --target ${{ matrix.target }} --out compiled-harnesses/adbc
       - name: Build five normal Python ABI wheels
         uses: PyO3/maturin-action@86b9d133d34bc1b40018696f782949dac11bd380 # v1.49.4
         with:
@@ -165,11 +157,15 @@ jobs:
           python scripts/release/complete_wheels.py --input raw-wheels --notices notices --out wheelhouse --report receipts/wheel-transforms.json
           python scripts/release/inspect_distribution.py wheelhouse --report receipts/distributions.json
           python -m twine check --strict wheelhouse/*
+      - name: Stage Linux native SDK and harnesses
+        if: runner.os == 'Linux'
+        run: |
           go_source=$(python scripts/release/fetch_go_source.py --out "$RUNNER_TEMP/go-sdk-source")
           python scripts/release/stage_native.py --target ${{ matrix.target }} --platform ${{ matrix.platform }} --notices notices --harnesses compiled-harnesses --go-source "$go_source" --out native
           python scripts/release/archive_native_sdk.py --native native --out .
           tar -czf native-${{ matrix.platform }}.tar.gz native
       - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
         with:
           name: candidate-native-manifest-${{ matrix.platform }}
           path: native/build-provenance.json
@@ -178,7 +174,7 @@ jobs:
       - name: Retain wheel and native inputs
         uses: actions/upload-artifact@v4
         with:
-          name: candidate-${{ matrix.platform }}
+          name: ${{ runner.os == 'macOS' && 'candidate-wheels-macos-arm64' || format('candidate-{0}', matrix.platform) }}
           path: |
             wheelhouse/
             native-${{ matrix.platform }}.tar.gz
@@ -194,8 +190,84 @@ jobs:
           path: |
             receipts/
           retention-days: 14
+  mac-native:
+    runs-on: macos-26-intel
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Record exact native build inputs
+        run: |
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+          python scripts/release/record_build_inputs.py --out receipts/build-inputs.json
+      - name: Cross-build Apple libraries on the larger-memory Intel runner
+        run: |
+          rustup show
+          rustup target add aarch64-apple-darwin
+          cargo build --locked --release -j 1 --target aarch64-apple-darwin -p roastedduck-cli -p roastedduck-capi -p slt
+          python scripts/release/compile_harnesses.py --target aarch64-apple-darwin --out compiled-harnesses
+          python scripts/release/compile_adbc_bridge.py --target aarch64-apple-darwin --out compiled-harnesses/adbc
+      - name: Package native SDK and compiled harnesses
+        run: |
+          python scripts/release/collect_notices.py --out notices
+          go_source=$(python scripts/release/fetch_go_source.py --out "$RUNNER_TEMP/go-sdk-source")
+          python scripts/release/stage_native.py --target aarch64-apple-darwin --platform macos-arm64 --notices notices --harnesses compiled-harnesses --go-source "$go_source" --out native
+          python scripts/release/archive_native_sdk.py --native native --out .
+          tar -czf native-macos-arm64.tar.gz native
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-native-manifest-macos-arm64
+          path: native/build-provenance.json
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-native-bundle-macos-arm64
+          path: |
+            native-macos-arm64.tar.gz
+            roastedduck-*.tar.gz
+            receipts/build-inputs.json
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-build-receipts-macos-arm64
+          path: receipts/
+          retention-days: 14
+  mac-package:
+    needs: [build, mac-native]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: python -m pip install packaging==26.3
+      - name: Verify component identities and assemble the Mac candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/release/join_macos_candidate.py --run "$GITHUB_RUN_ID" --commit "$(git rev-parse HEAD)" --out candidate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-macos-arm64
+          path: candidate/
+          if-no-files-found: error
+          retention-days: 14
   qualify:
-    needs: build
+    needs: [build, mac-package]
     strategy:
       fail-fast: false
       max-parallel: 3

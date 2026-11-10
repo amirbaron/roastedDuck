@@ -52,13 +52,21 @@ def verification_only_changes(candidate, observer):
     assert changed and set(changed) <= VERIFICATION_ONLY_PATHS, "Product/build-input changes require a new producer: " + repr(changed)
     return changed
 
+def producer_job_names(commit):
+    workflow = subprocess.check_output(['git', 'show', commit + ':.github/workflows/build-candidate.yml'], cwd=ROOT, text=True)
+    split = {name for name in ('mac-native', 'mac-package') if re.search(r'^  ' + name + r':\s*$', workflow, re.MULTILINE)}
+    assert not split or split == {'mac-native', 'mac-package'}, 'Incomplete split Mac build policy'
+    return REQUIRED_JOBS | split
+
+
 def validate_producer(run, jobs, repository, commit, aggregate_log=None):
     assert run["head_sha"] == commit and run["head_repository"]["full_name"] == repository
     assert run["path"].split("@", 1)[0] == ".github/workflows/build-candidate.yml"
     assert run["status"] == "completed"
+    required_jobs = producer_job_names(commit)
     by_name = {job["name"]: job for job in jobs}
-    assert len(by_name) == len(jobs) and set(by_name) == REQUIRED_JOBS | {"assemble"}
-    for name in REQUIRED_JOBS:
+    assert len(by_name) == len(jobs) and set(by_name) == required_jobs | {"assemble"}
+    for name in required_jobs:
         job = by_name[name]
         assert job["status"] == "completed" and job["conclusion"] == "success", "Unqualified producer gate: " + name
     aggregate = by_name["assemble"]
@@ -76,7 +84,7 @@ def validate_producer(run, jobs, repository, commit, aggregate_log=None):
                      "log_sha256": hashlib.sha256(aggregate_log.encode()).hexdigest()}
     return {"producer_run": run["id"], "producer_attempt": run["run_attempt"],
             "candidate_source_commit": commit, "producer_run_conclusion": run["conclusion"],
-            "required_producer_jobs": [{"id": by_name[name]["id"], "name": name, "conclusion": "success"} for name in sorted(REQUIRED_JOBS)],
+            "required_producer_jobs": [{"id": by_name[name]["id"], "name": name, "conclusion": "success"} for name in sorted(required_jobs)],
             "original_aggregate_diagnosis": diagnosis}
 
 def download_artifact(repository, record, run_id, commit, destination, temporary):
