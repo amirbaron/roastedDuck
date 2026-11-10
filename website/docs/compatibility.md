@@ -14,7 +14,7 @@ backups before using it with important data.
 | Linux arm64 | SQL, shell, C API/ADBC, Python, Go, Swift | No Linux benchmark headline |
 | Linux x86_64 | Same functional target | Current package/client CI runs natively; historical full-corpus qualification used translation |
 | Python | Normal CPython 3.10–3.14, 15 ABI/platform cells | Fresh source-built wheel qualification and ordinary PyPI installs; matching nonpasses retained |
-| iOS arm64 simulator | 133 Swift cases, typed consumer, WAL journeys | Simulator evidence only |
+| iOS arm64 simulator | 133 Swift cases and four encrypted checkpoint/reopen profiles | Simulator evidence only |
 | iOS arm64 device | Signed build | Physical execution/provisioning unverified |
 | Windows, Intel Mac, other clients | Outside release scope | No support claim |
 
