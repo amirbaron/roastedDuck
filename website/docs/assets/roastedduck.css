@@ -69,3 +69,6 @@ a:focus-visible, button:focus-visible, select:focus-visible { outline: 3px solid
 }
 
 [data-md-color-scheme="slate"] { --md-code-hl-number-color: #ff9384; }
+
+/* Keep search result counts readable in both color schemes. */
+.md-search-result__meta { color: var(--md-default-fg-color); }
