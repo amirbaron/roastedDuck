@@ -1,16 +1,5 @@
 name: Observe immutable release candidate
 on:
-  push:
-    branches: [amirbaron/rust-duckdb-port]
-    paths:
-      - 'scripts/release/observer-inputs.json'
-      - 'scripts/release/observer_protocol.py'
-      - 'scripts/release/observe_candidate.py'
-      - 'scripts/release/fetch_observer_inputs.py'
-      - 'scripts/release/pip_report.py'
-      - 'scripts/release/tests/test_observer_protocol.py'
-      - 'scripts/release/tests/test_pip_report.py'
-      - '.github/workflows/observe-candidate.yml'
   workflow_dispatch:
 permissions:
   contents: read

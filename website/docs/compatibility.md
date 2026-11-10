@@ -1,8 +1,8 @@
 # Compatibility and preview status
 
 roastedDuck targets **DuckDB 1.5.6**, with matching version-family branch naming.
-The `1.5.6.post1` package revision fixes security and packaging issues while
-retaining the 1.5.6 engine compatibility identifiers.
+The current `1.5.6.post2` revision completes the roastedDuck naming and updates
+validation tooling while retaining the 1.5.6 engine compatibility identifiers.
 It is an experimental public preview. Evaluate your own workload and retain
 backups before using it with important data.
 
@@ -17,6 +17,15 @@ backups before using it with important data.
 | iOS arm64 simulator | 133 Swift cases, typed consumer, WAL journeys | Simulator evidence only |
 | iOS arm64 device | Signed build | Physical execution/provisioning unverified |
 | Windows, Intel Mac, other clients | Outside release scope | No support claim |
+
+## Current post2 qualification
+
+The [post2 producer](https://github.com/amirbaron/roastedDuck/actions/runs/42760325168)
+passed native-client and encryption gates on all three platforms and all 15 paired
+Python ABI cells. Each Python cell recorded 3,455 regular passes, 28 skips,
+8 expected failures and 1 unexpected pass, with matching C++/Rust verdicts.
+The [official-index installation run](https://github.com/amirbaron/roastedDuck/actions/runs/42785009114)
+verified all 15 published wheels in fresh environments.
 
 ## Recorded November 6 qualification
 
@@ -33,9 +42,9 @@ backups before using it with important data.
 | Distribution | 300 original payload files and symlink targets preserved after extraction |
 
 These results describe the frozen source2551 candidate, not every future
-commit. The original 1.5.6 preview preserved those native bytes. The security
-revision 1.5.6.post1 uses new source builds with its own client, encryption and
-installation reports. It does not claim a rerun of the entire historical corpus
+commit. The original 1.5.6 preview preserved those native bytes. The post1 security
+revision and post2 branding/validation revision have their own client, encryption
+and installation reports. Neither claims a rerun of the entire historical corpus
 or benchmark matrix.
 
 ## Known exceptions

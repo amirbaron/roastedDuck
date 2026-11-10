@@ -1,11 +1,13 @@
 # Changelog
 
-## 1.5.6.post2 — candidate, not yet published
+## 1.5.6.post2 — November 10, 2026
 
-- Rename all internal Rust crates/modules to `roastedduck-*`/`roastedduck_*`, retaining DuckDB-compatible public interfaces.
+- Rename legacy Rust crate/module identifiers to `roastedduck-*`/`roastedduck_*`, retaining DuckDB-compatible public interfaces.
 - Name the public Cargo CLI package `roastedduck-cli` and source-built executable `roastedDuck`; build it with `cargo build --locked --release --bin roastedDuck -j 1`.
 - Update pytest, PyArrow, and fsspec test dependencies to patched releases and pin current pip/setuptools bootstrap tools.
-- Recheck published wheel/native hashes and paired Python outcomes without rebuilding release payloads; retain and audit complete resolved validation environments.
+- Add artifact-scoped rechecks that preserve published payloads; retain and audit complete resolved validation environments.
+- Publish post2 to PyPI; all 15 ordinary-index installations and three-platform GitHub download checks passed.
+- Build macOS native SDKs and Python wheels in separate jobs, then verify their source and artifact identities before packaging.
 - The immutable 1.5.6.post1 source archive retains historical test requirements. Use current repository tooling for developer validation; these packages are not mandatory runtime dependencies of roastedduck.
 
 ## 1.5.6.post1 — November 9, 2026

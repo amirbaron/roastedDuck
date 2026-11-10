@@ -1,6 +1,6 @@
 # roastedDuck Python package
 
-The current public preview is `roastedduck==1.5.6.post1`, targeting DuckDB 1.5.6.
+The current public preview is `roastedduck==1.5.6.post2`, targeting DuckDB 1.5.6.
 The compatibility import remains `duckdb`; use a fresh environment and do not
 co-install the official `duckdb` distribution.
 

@@ -19,7 +19,7 @@ with duckdb.connect("example.duckdb") as connection:
 from importlib.metadata import version
 import duckdb
 
-print(version("roastedduck"))  # 1.5.6.post1: public Python distribution
+print(version("roastedduck"))  # 1.5.6.post2: public Python distribution
 print(duckdb.__duckdb_version__)  # separately reported compatibility engine version
 ```
 
@@ -27,7 +27,7 @@ print(duckdb.__duckdb_version__)  # separately reported compatibility engine ver
 version-gated client compatibility. Use `version("roastedduck")` for the public
 distribution version; `duckdb.version()` reports both. The package
 metadata distinguishes security/packaging revisions from the compatibility
-target. Version 1.5.6.post1 is rebuilt from the fixed source and dependency graph.
+target. Version 1.5.6.post2 is rebuilt from the fixed source and dependency graph.
 Release manifests bind the tested wheel bytes and their installed native images.
 
 ## Optional integrations

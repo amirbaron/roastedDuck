@@ -47,7 +47,7 @@ No crates.io publication is claimed.
 
 ## What is verified
 
-The 1.5.6.post1 release has fresh native client, security, encryption, and
+The 1.5.6.post2 release has fresh native client, security, encryption, and
 15-cell Python qualification. Its source archive is rebuilt outside the checkout,
 and ordinary PyPI installs are checked on every advertised cell.
 
@@ -60,7 +60,8 @@ The separate November 6, 2026 software candidate records:
 - Bidirectional persistence/WAL checks and final relocated-artifact checks.
 
 These are recorded candidate results, not a claim that every commit reruns every
-suite. Linux x86_64 qualification used translation. iOS simulator testing and
+suite. Historical Linux x86_64 full-corpus qualification used translation; current
+package/client CI runs natively. iOS simulator testing and
 device builds are recorded; **physical iOS execution is unverified**. Windows,
 Intel Macs, and other clients are outside the preview's supported scope.
 
