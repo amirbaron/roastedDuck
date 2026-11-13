@@ -1,0 +1,13 @@
+[package]
+name = "roastedduck-snowball"
+description = "Pinned pure Rust Snowball stemmers for roastedDuck's compatible FTS implementation."
+version.workspace = true
+edition.workspace = true
+license = "BSD-3-Clause"
+rust-version.workspace = true
+
+[dependencies]
+roastedduck-common.workspace = true
+
+[lints]
+workspace = true

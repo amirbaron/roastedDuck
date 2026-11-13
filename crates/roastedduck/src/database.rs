@@ -264,6 +264,7 @@ pub(crate) fn static_extension_loaded(cache: &roastedduck_function::ObjectCache,
 /// An extension linked into the engine whose functions are registered on load.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StaticExtension {
+    Fts,
     Parquet,
     Json,
     Tpch,
@@ -273,6 +274,8 @@ enum StaticExtension {
 }
 
 impl StaticExtension {
+    // Extensions preloaded by the reference default configuration. FTS is
+    // compiled in, but loaded explicitly or through provider autoload.
     const ALL: [Self; 6] = [
         Self::Json,
         Self::Icu,
@@ -284,6 +287,7 @@ impl StaticExtension {
 
     fn from_name(name: &str) -> Option<Self> {
         match name {
+            "fts" => Some(Self::Fts),
             "parquet" => Some(Self::Parquet),
             "json" => Some(Self::Json),
             roastedduck_tpch::EXTENSION_NAME => Some(Self::Tpch),
@@ -299,6 +303,7 @@ impl StaticExtension {
     fn pragma_functions(self) -> Vec<roastedduck_function::PragmaFunctionSet> {
         use roastedduck_function::{PragmaFunction, PragmaFunctionSet};
         let function = match self {
+            Self::Fts => return crate::fts::pragma_functions(),
             Self::Parquet => PragmaFunction::call(
                 "add_parquet_key",
                 vec![LogicalType::VARCHAR, LogicalType::VARCHAR],
@@ -319,7 +324,7 @@ impl StaticExtension {
         match self {
             Self::Tpch => name.eq_ignore_ascii_case(b"tpch"),
             Self::Tpcds => name.eq_ignore_ascii_case(b"tpcds"),
-            Self::Parquet | Self::Json | Self::Autocomplete | Self::Icu => false,
+            Self::Fts | Self::Parquet | Self::Json | Self::Autocomplete | Self::Icu => false,
         }
     }
 
@@ -329,7 +334,7 @@ impl StaticExtension {
         match self {
             Self::Tpch => roastedduck_tpch::pragma_tpch_query(parameters),
             Self::Tpcds => roastedduck_tpcds::pragma_tpcds_query(parameters),
-            Self::Parquet | Self::Json | Self::Autocomplete | Self::Icu => Err(Error::internal(
+            Self::Fts | Self::Parquet | Self::Json | Self::Autocomplete | Self::Icu => Err(Error::internal(
                 roastedduck_common::byte_format!("no pragma {name}"),
             )),
         }
@@ -342,6 +347,9 @@ impl StaticExtension {
             system.register_pragma_functions(set)?;
         }
         match self {
+            Self::Fts => {
+                system.register_scalar_functions(crate::fts::stem_function())?;
+            }
             Self::Parquet => {
                 system.register_copy_function(roastedduck_parquet::copy::parquet_copy_function())?;
                 for set in roastedduck_parquet::parquet_table_functions() {
@@ -2551,9 +2559,9 @@ impl Database {
             // The core function library is part of the system catalog, loaded at start-up
             // as the reference build's statically linked `core_functions` is.
             "core_functions" => ExtensionLoad::Loaded,
-            "icu" | "httpfs" | "fts" | "inet" | "excel" | "sqlsmith" | "spatial" | "delta" | "iceberg"
-            | "aws" | "azure" | "motherduck" | "postgres_scanner" | "mysql_scanner" | "sqlite_scanner"
-            | "vss" | "ui" | "encodings" | "ducklake" | "avro" | "demo_capi" => ExtensionLoad::NotAvailable,
+            "icu" | "httpfs" | "inet" | "excel" | "sqlsmith" | "spatial" | "delta" | "iceberg" | "aws"
+            | "azure" | "motherduck" | "postgres_scanner" | "mysql_scanner" | "sqlite_scanner" | "vss"
+            | "ui" | "encodings" | "ducklake" | "avro" | "demo_capi" => ExtensionLoad::NotAvailable,
             _ => ExtensionLoad::Unknown,
         })
     }
@@ -3894,6 +3902,17 @@ impl Connection {
                     .with_return_type(roastedduck_planner::StatementReturnType::Nothing),
             ));
         }
+        // Bind first so catalog lookup can autoload FTS and validate named options.
+        if let roastedduck_ast::SqlStatementKind::Pragma(pragma) = &statement.kind
+            && crate::fts::is_pragma(&pragma.name)
+        {
+            let name = pragma.name.clone();
+            let parameters = self.bind_pragma_parameters(statement)?;
+            let transaction = self.transactions.current();
+            let context = self.client_context(transaction);
+            let query = crate::fts::pragma_query(&context, &name, &parameters)?;
+            return self.run_pragma_query(&query).map(StatementRun::Done);
+        }
         // Pragmas that stand for a query run that query (DuckDB's `PragmaHandler`).
         if let roastedduck_ast::SqlStatementKind::Pragma(pragma) = &statement.kind
             && self.database.instance.has_extension_pragma(&pragma.name)
@@ -3904,7 +3923,7 @@ impl Connection {
             let query = self
                 .database
                 .instance
-                .extension_pragma_query(&name, &parameters)?;
+                .extension_pragma_query(&name, &parameters.parameters)?;
             return self.run_pragma_query(&query).map(StatementRun::Done);
         }
         if let roastedduck_ast::SqlStatementKind::Pragma(pragma) = &statement.kind {
@@ -3974,9 +3993,9 @@ impl Connection {
 
     /// Runs the statements of the query a pragma stands for; the result is the last
     /// statement's.
-    fn run_pragma_query(&mut self, query: &str) -> Result<MaterializedResult> {
+    fn run_pragma_query(&mut self, query: impl AsRef<[u8]>) -> Result<MaterializedResult> {
         let mut result = MaterializedResult::default();
-        for statement in roastedduck_parser::parse(query)? {
+        for statement in roastedduck_parser::parse_bytes(query.as_ref())? {
             result = self.run_statement(statement)?;
         }
         Ok(result)
@@ -3984,7 +4003,10 @@ impl Connection {
 
     /// The values of a `PRAGMA`'s parameters, bound and evaluated as constants
     /// (`Binder::BindPragma`).
-    fn bind_pragma_parameters(&mut self, statement: SqlStatement) -> Result<Vec<Value>> {
+    fn bind_pragma_parameters(
+        &mut self,
+        statement: SqlStatement,
+    ) -> Result<roastedduck_planner::BoundPragmaInfo> {
         let roastedduck_ast::SqlStatementKind::Pragma(mut pragma) = statement.kind else {
             return Err(Error::internal("expected a PRAGMA"));
         };
@@ -3994,7 +4016,7 @@ impl Connection {
             .set_settings(Arc::new(self.settings_snapshot()));
         let transaction = self.transactions.current();
         let planner = Planner::new(self.client_context(transaction));
-        Ok(planner.bind_pragma(&mut pragma)?.parameters)
+        planner.bind_pragma(&mut pragma)
     }
 
     /// Records that the transaction uses `database` (`MetaTransaction::UseDatabase`).

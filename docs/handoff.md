@@ -1,3 +1,13 @@
+Current extension work, November 14, 2026: roastedDuck's compatible FTS
+implementation passes the recorded stemming, SQL, and bidirectional storage gates
+in [the FTS spec](fts-extension-spec.md#verified-fts-milestone-2026-11-14).
+The original upstream suite retains two shared directive skips; separately hashed
+supplemental copies execute their unchanged SQL/assertions. Workspace-wide all-target checking passes; full-core
+conformance is still pending. VSS hooks and Rust HNSW remain unimplemented;
+[the VSS spec](vss-extension-spec.md) retains the in-memory-only scope and deferred
+persistence obligations. The earlier release dispositions below remain historical
+and do not accept this new extension work.
+
 Current disposition, November 6, 2026: the owner explicitly approved a physical-device test exception. The goal is complete under that scope: all 22 scoped software collection/review requirements are evidenced; actual iPhone/iPad execution and provisioning remain **unverified, excepted by the owner**. Device builds, signatures and simulator tests retain their verified status. The [delivery index](release-candidate-index-20261106.md) links the new signed disposition, unchanged archive and all known limitations. Older dated statuses below are historical.
 
 The exact Mac2556 and Linux2663 engine images have completed the recorded SQL, shell, C API/ADBC, Python, Go, Swift, storage and codec checks. All 15 normal Python wheels are qualified. Final relocation/runtime audit2921 passed, and the signed candidate archive2924 extracted with all 300 payload files and symlink targets unchanged. Known SQL failures, matching skips, reference crashes and shell differences remain explicit; this is scoped verification, not a universal no-exception claim.

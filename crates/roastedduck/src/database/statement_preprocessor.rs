@@ -136,14 +136,19 @@ impl Connection {
                 SqlStatementKind::Pragma(ref pragma) => {
                     let name = pragma.name.clone();
                     let parameters = self.bind_pragma_parameters(statement.clone())?;
-                    let body = if name.eq_ignore_ascii_case("import_database") {
-                        self.import_database_statements(&parameters)?
+                    let body = if crate::fts::is_pragma(&name) {
+                        let transaction = self.transactions.current();
+                        let context = self.client_context(transaction);
+                        let query = crate::fts::pragma_query(&context, &name, &parameters)?;
+                        roastedduck_parser::parse_bytes(&query)?
+                    } else if name.eq_ignore_ascii_case("import_database") {
+                        self.import_database_statements(&parameters.parameters)?
                     } else {
                         let instance = self.database.instance();
                         let query = if instance.has_extension_pragma(&name) {
-                            Some(instance.extension_pragma_query(&name, &parameters)?)
+                            Some(instance.extension_pragma_query(&name, &parameters.parameters)?)
                         } else {
-                            crate::system_functions::pragma_query(&name, &parameters)?
+                            crate::system_functions::pragma_query(&name, &parameters.parameters)?
                         };
                         let Some(query) = query else {
                             result.push(statement);

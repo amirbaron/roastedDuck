@@ -304,7 +304,7 @@ fn bind_list_zip(function: &mut ScalarFunction, input: &BindInput<'_>) -> BindRe
                 children.push((roastedduck_common::ByteString::new(), child));
             }
             LogicalTypeId::SqlNull => {
-                children.push((roastedduck_common::ByteString::new(), LogicalType::SQLNULL))
+                children.push((roastedduck_common::ByteString::new(), LogicalType::SQLNULL));
             }
             LogicalTypeId::Unknown => return Err(crate::parameter_not_resolved()),
             _ => return Err(Error::binder("Parameter type needs to be List")),

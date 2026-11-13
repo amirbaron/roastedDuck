@@ -5,6 +5,7 @@
 
 #include "duckdb.hpp"
 #include "duckdb/catalog/catalog_search_path.hpp"
+#include "duckdb/common/file_system.hpp"
 #include "duckdb/common/serializer/buffered_file_writer.hpp"
 #include "duckdb/common/sql_identifier.hpp"
 #include "duckdb/main/client_context.hpp"
@@ -223,14 +224,43 @@ void slt_db_free(slt_db *db) {
 
 int32_t slt_db_load_extension(slt_db *db, const char *name, size_t name_len, char **error) {
 	try {
-		switch (ExtensionHelper::LoadExtension(*db->db, MakeString(name, name_len))) {
+		auto extension = MakeString(name, name_len);
+		switch (ExtensionHelper::LoadExtension(*db->db, extension)) {
 		case ExtensionLoadResult::LOADED_EXTENSION:
 			return SLT_EXTENSION_LOADED;
 		case ExtensionLoadResult::EXTENSION_UNKNOWN:
 			return SLT_EXTENSION_UNKNOWN;
 		default:
+			break;
+		}
+		// Reference tooling only: official release libraries need not statically link
+		// FTS/VSS. An explicit directory lets unchanged "require" statements load the
+		// pinned oracle artifacts using ordinary signature and version validation.
+		// Other extensions and callers without this opt-in retain their old verdict.
+		auto directory_env = std::getenv("SLT_ORACLE_EXTENSION_DIRECTORY");
+		if (!directory_env || (extension != "fts" && extension != "vss")) {
 			return SLT_EXTENSION_NOT_LOADED;
 		}
+		string directory(directory_env);
+		auto &fs = FileSystem::GetFileSystem(*db->db->instance);
+		if (directory.empty() || !fs.IsPathAbsolute(directory) || !fs.DirectoryExists(directory)) {
+			throw InvalidInputException("SLT_ORACLE_EXTENSION_DIRECTORY must name an existing absolute directory");
+		}
+		auto path = fs.JoinPath(directory, extension + ".duckdb_extension");
+		string quoted;
+		for (auto c : path) {
+			quoted += c;
+			if (c == '\'') {
+				quoted += '\'';
+			}
+		}
+		Connection connection(*db->db);
+		auto result = connection.Query("LOAD '" + quoted + "'");
+		if (result->HasError()) {
+			SetError(error, result->GetError());
+			return SLT_EXTENSION_ERROR;
+		}
+		return SLT_EXTENSION_LOADED;
 	} catch (std::exception &ex) {
 		SetError(error, ex);
 		return SLT_EXTENSION_ERROR;

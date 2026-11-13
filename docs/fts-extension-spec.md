@@ -1,7 +1,8 @@
 # FTS: roastedDuck's compatible implementation
 
-Status: specification; implementation and acceptance are pending. Features will be
-available in normal builds, without a default-off feature gate. No C/C++ dependency
+Status: implementation present; scoped stemming, SQL, and database-interchange
+gates pass. Full core conformance remains pending. Features are available in normal
+builds, without a default-off feature gate. No C/C++ dependency
 or private C++ extension binary loading is introduced.
 
 ## Pinned contract
@@ -80,3 +81,81 @@ oracle reports v1.5.6, loads FTS version 6814ec9, and stems `connections` to
 `connect`. The historical source-built CLI reports v0.0.1 and rejects the official
 extension's version; its failed probe remains in `oracle/identity.json` and is not
 used to claim extension acceptance.
+
+## Implementation checkpoint (2026-11-13)
+
+The pure Rust Snowball crate is generated from
+`snowballstem/snowball@896281c2d89c9347f83426d37ad9b36fc4742d5b`. Regenerating all
+27 algorithms as C produces the same tokens as DuckDB 1.5.6's bundled sources;
+only comments and layout differ. This pins the algorithms more precisely than
+Snowball's 2.0.0 version label. The one-time upstream generator is development
+verification tooling only; Cargo neither builds nor links it. Generated Rust,
+its byte-oriented runtime, license, hashes, and regeneration tooling are checked in.
+
+The signed Rust stemmer executable matches **10,819,519 output byte strings**
+against official C++ DuckDB v1.5.6 / FTS 6814ec9, with zero differences. Coverage
+includes all 27 complete pinned vocabulary inputs, all 86 registered names, `none`,
+an embedded-NUL alias, and boundary inputs. Per-case counts and hashes are in
+`.context/artifacts/vss-fts/snowball/diff-full-1/verification.json`. This accepts the
+measured stemming corpus; SQL integration, upstream SQL files, cross-engine FTS
+storage, and full conformance remain separate pending gates.
+
+An oracle-only shim fallback now loads pinned FTS/VSS artifacts for unchanged
+`require` statements when explicitly configured. Its seven loader checks pass
+against exactly one loaded official v1.5.6 library, without unsigned or metadata
+mismatch bypasses. The database-interchange fixture calibration passes 24 C++
+invocations. Neither result is a Rust SQL/interchange acceptance claim.
+
+## Verified FTS milestone (2026-11-14)
+
+The corrected signed release passes the three FTS integration tests and the CTE
+scope regression (result, genuine-correlation, and plan assertions). The unchanged
+pinned upstream suite has **8 PASS / 2 SKIP on each engine**. Both skipped files
+(`issue_12330.test`, `issue_13866.test`) contain `require noalternativeverify`, an
+unrecognized directive in the pinned C++ runner. Their original files and raw
+verdicts remain unchanged. Separately hashed supplemental copies replace only
+that directive with `no_alternative_verify`; both complete SQL/assertion bodies
+pass on each engine. Skips are not reported as passes.
+
+The original `deliminator.test` now passes its negative DELIM_JOIN assertion.
+The fix retains CTE scope during recursive decorrelation; no operator was renamed,
+SQL rewritten, or assertion weakened. The Rust SLT backend now matches the pinned
+C++ generated loader's NOT_LOADED result for absent names, while the public Rust
+Database API retains its Unknown distinction.
+
+Bidirectional persisted-index interchange passes all **24 checks**: C++ creates
+and Rust reads, Rust creates and C++ reads, explicit LOAD, enabled provider
+autoload (network installation disabled), ATTACH, exact table/macro/token/score
+snapshots, rebuild in the opposite engine, and drop/reopen. This is actual
+CROSS_ENGINE verification, not oracle-only fixture calibration.
+
+Final-source Snowball verification repeats **10,819,519 exact byte matches / zero
+mismatches**, with all 27 complete vocabularies and all 86 names plus boundary
+cases. Both signed Snowball unit tests pass. Strict all-target Clippy passes for
+Snowball, roastedduck, and slt. Evidence:
+
+- `.context/artifacts/vss-fts/fts-verification/fixed-fts-1/controller.json`
+  and its per-file JSONL, signed-binary hashes, and source manifest.
+- `fixed-fts-1/interchange/verification.json` beneath the same parent.
+- `.context/artifacts/vss-fts/fts-verification/supplemental-directives/provenance.json`.
+- `.context/artifacts/vss-fts/snowball/diff-full-2/verification.json`.
+- `.context/artifacts/vss-fts/fts-clippy-3.log` and Snowball's `clippy-3.log`.
+
+Workspace-wide all-target checking also passes (`fts-workspace-check-1.log`).
+`scripts/conformance.sh` remains required before the broader integration gate closes. VSS implementation remains a separate next step.
+
+## Usage
+
+```sql
+LOAD fts;
+CREATE TABLE documents(id INTEGER, body VARCHAR);
+INSERT INTO documents VALUES (1, 'a duck swims'), (2, 'a bird flies');
+PRAGMA create_fts_index('documents', 'id', 'body');
+SELECT id, fts_main_documents.match_bm25(id, 'duck') AS score
+FROM documents WHERE score IS NOT NULL ORDER BY score DESC;
+```
+
+`INSTALL fts` is also accepted; no download is needed for roastedDuck's compatible
+implementation. An index is a snapshot: rebuild with `overwrite=true` after source
+table changes. Existing global autoload policy is preserved; explicit LOAD works
+regardless of whether provider autoload is enabled.

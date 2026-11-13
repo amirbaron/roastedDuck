@@ -272,8 +272,13 @@ impl Engine for RustEngine {
         Ok(
             match database.load_extension(name).map_err(|error| error.to_string())? {
                 roastedduck::ExtensionLoad::Loaded => ExtensionLoad::Loaded,
-                roastedduck::ExtensionLoad::NotAvailable => ExtensionLoad::NotLoaded,
-                roastedduck::ExtensionLoad::Unknown => ExtensionLoad::Unknown,
+                // The pinned C++ generated ExtensionHelper::LoadExtension returns
+                // NOT_LOADED for every name absent from its linked provider list,
+                // including unknown names. Preserve that harness behavior without
+                // changing the public Rust Database API's Unknown distinction.
+                roastedduck::ExtensionLoad::NotAvailable | roastedduck::ExtensionLoad::Unknown => {
+                    ExtensionLoad::NotLoaded
+                }
             },
         )
     }
@@ -379,6 +384,23 @@ mod tests {
         assert_eq!(convert_value(&Value::double(2.5), true).unwrap(), "2");
         assert_eq!(convert_value(&Value::decimal(250, 18, 2), true).unwrap(), "3");
         assert_eq!(convert_value(&Value::integer(7), true).unwrap(), "7");
+    }
+
+    #[test]
+    fn absent_extension_requirements_match_generated_reference_loader() {
+        let engine = RustEngine::new("build");
+        let config = engine.test_config().unwrap();
+        let db = engine.open("", &config).unwrap();
+        for name in ["noalternativeverify", "not_a_real_extension"] {
+            assert!(matches!(
+                engine.load_extension(&db, name).unwrap(),
+                ExtensionLoad::NotLoaded
+            ));
+            assert!(matches!(
+                db.load_extension(name).unwrap(),
+                roastedduck::ExtensionLoad::Unknown
+            ));
+        }
     }
 
     #[test]
