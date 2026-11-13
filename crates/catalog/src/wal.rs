@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use roastedduck_ast::{AlterInfo, AlterInfoKind, AlterTableInfo, Constraint, CreateInfoKind, ParseInfo};
-use roastedduck_common::{ByteString, CaseInsensitiveMap, Result};
+use roastedduck_common::{ByteString, CaseInsensitiveMap, Error, Result};
 use roastedduck_serde::Serializer;
 use roastedduck_storage::checkpoint::pointers::serialize_index_storage_info;
 use roastedduck_storage::index::art::ArtStorageInfo;
@@ -60,7 +60,11 @@ fn serialize_index(
         return Ok((info, Vec::new()));
     };
     let mut state = entry.lock();
-    state.index.serialize_to_wal(&options)
+    state
+        .index
+        .as_art_mut()
+        .ok_or_else(|| Error::not_implemented("Persistence of secondary indexes is not supported"))?
+        .serialize_to_wal(&options)
 }
 
 /// Writes the storage of an index (`index_storage_info` and `index_storage`).

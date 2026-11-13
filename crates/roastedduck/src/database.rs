@@ -116,6 +116,10 @@ pub(crate) struct DatabaseInstance {
     global_settings: Mutex<GlobalSettings>,
     /// The statically linked extensions whose catalog entries are registered.
     loaded_extensions: Arc<Mutex<Vec<StaticExtension>>>,
+    /// Compiled-in optimizer callbacks, scoped to this database instance.
+    optimizer_rules: Arc<roastedduck_optimizer::OptimizerRuleRegistry>,
+    /// Compiled-in index type factories, never a binary plugin interface.
+    index_types: Arc<roastedduck_storage::index::IndexTypeRegistry>,
     external_extensions: Arc<crate::external_extensions::ExternalExtensionState>,
     /// The replacement scans clients added (DuckDB's `DBConfig::replacement_scans` after
     /// the built-in ones).
@@ -1837,6 +1841,8 @@ impl Database {
             log_manager,
             global_settings: Mutex::default(),
             loaded_extensions: Arc::default(),
+            optimizer_rules: Arc::default(),
+            index_types: Arc::default(),
             external_extensions: Arc::default(),
             replacement_scans: std::sync::RwLock::default(),
         };
@@ -1884,6 +1890,14 @@ impl Database {
         let database = Self {
             instance: Arc::new(instance),
         };
+        database
+            .instance
+            .optimizer_rules
+            .attach(&database.instance.object_cache)?;
+        database
+            .instance
+            .index_types
+            .attach(&database.instance.object_cache)?;
         database.load_extension_settings()?;
         {
             let mut connection = database.connect()?;
@@ -3342,7 +3356,11 @@ impl Connection {
                     continue;
                 };
                 for table in schema_entry.tables.scan(&system) {
-                    roastedduck_execution::operators::bind_table_indexes(&client, &table)?;
+                    roastedduck_execution::operators::bind_table_indexes_with_intent(
+                        &client,
+                        &table,
+                        roastedduck_execution::operators::IndexBindIntent::Checkpoint,
+                    )?;
                 }
             }
         }

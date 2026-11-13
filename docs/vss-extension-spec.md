@@ -1,6 +1,7 @@
 # VSS compatible implementation specification
 
-Status: specification only. This defines roastedDuck's compatible implementation
+Status: internal hooks implemented and scoped-tested; HNSW/SQL integration is
+pending. This defines roastedDuck's compatible implementation
 of the VSS extension for DuckDB **1.5.6**. It does not load official C++ extension
 binaries. HNSW and its engine integration are Rust, with no C/C++ dependencies and
 no USearch dependency. Features are enabled in normal builds.
@@ -115,3 +116,41 @@ criterion, not a claim that upstream promises this threshold.
 Run `scripts/conformance.sh` after every merge. Keep builds/tests serial and place
 large artifacts on the workspace's external artifact directory. Existing release
 receipts do not accept the new extension implementation.
+
+## Internal hooks milestone (2026-11-14)
+
+Implemented database-scoped internal index-type and optimizer-rule registries;
+ART/secondary bound-index dispatch; generic build/publication and mutation,
+rollback, retained-delete cleanup and vacuum hooks; and explicit read/mutation/
+checkpoint binding intents. ART constraints and serialized bytes remain specialized.
+Optimizer snapshots are discovered through the per-database cache, including the
+ordinary, prepared-statement, and JSON-plan constructor paths. There is no public
+plugin SDK or C API registration surface.
+
+Scoped verification passes:
+
+- All workspace targets compile; strict Clippy for storage, optimizer, and runtime.
+- All eight signed storage harnesses: **101 PASS, zero failures or ignores**,
+  including six secondary-lifecycle tests and the selective-binding regression.
+- Signed optimizer-hook tests: **6 PASS**, including ordering, isolation,
+  binding allocation, disabled rules, and registration during a callback.
+- All **144 unchanged ART SQL files pass** on the rebuilt signed runner.
+- A real C++ v1.5.6/b833341 clean checkpoint containing HNSW and ART indexes:
+  **18 CLI executions validate read compatibility and rejected writes**. Rust
+  opens it in read-only and ordinary modes, executes filtered/unfiltered/exact
+  distance queries, and closes without changing file bytes. INSERT/UPDATE/DELETE
+  and explicit CHECKPOINT fail before changing data; C++ then reopens each copy
+  with its original graph intact. The old Rust binary's FLOAT[3]-as-ART open
+  failure is retained as the red control. This verifies opaque/unbound handling,
+  not Rust HNSW persistence or HNSW query acceleration.
+
+Evidence: `.context/artifacts/vss-fts/vss-hooks/verification-1/` contains the source
+manifest, controller, storage-test review (post-signature binary hashes), ART
+verdicts, and `unbound-hnsw/verification.json`. The controller's initial
+`test_binaries` hashes precede signing; use `storage-test-review.json` for the
+signed test identities. `optimizer-tests-1.json`, `hooks-workspace-check-1.log`,
+and `hooks-clippy-5.log` are in the task artifact directory.
+
+The hooks' required full conformance run is pending. Standalone HNSW and pinned SQL
+macro source are subsequent, unlinked work; none of these hook receipts accepts
+HNSW behavior, recall, VSS planner rewrites, or the complete extension surface.

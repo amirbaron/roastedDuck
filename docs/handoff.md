@@ -4,7 +4,8 @@ in [the FTS spec](fts-extension-spec.md#verified-fts-milestone-2026-11-14).
 The original upstream suite retains two shared directive skips; separately hashed
 supplemental copies execute their unchanged SQL/assertions. Workspace-wide all-target checking and the full conformance ratchet pass. The
 4,880-file run retains 4,789 passes, 76 skips, and 15 documented failures, with zero
-ratchet regressions. VSS hooks are work in progress; Rust HNSW remains unimplemented;
+ratchet regressions. VSS hooks pass their scoped storage, optimizer, ART, and opaque-file checks; their
+full conformance run is pending. Rust HNSW/SQL integration remains in progress;
 [the VSS spec](vss-extension-spec.md) retains the in-memory-only scope and deferred
 persistence obligations. The earlier release dispositions below remain historical
 and do not accept this new extension work.

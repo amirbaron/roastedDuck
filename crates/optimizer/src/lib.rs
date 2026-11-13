@@ -30,6 +30,7 @@ pub mod expression_heuristics;
 pub mod expression_nullability;
 pub mod expression_rewriter;
 pub mod expression_util;
+mod extension;
 pub mod filter_combiner;
 pub mod filter_pullup;
 pub mod filter_pushdown;
@@ -53,4 +54,6 @@ pub mod topn_window_elimination;
 pub mod unnest_rewriter;
 pub mod window_self_join;
 
+#[doc(hidden)]
+pub use extension::{OptimizerRule, OptimizerRuleRegistry, OptimizerRules};
 pub use optimizer::{Optimizer, OptimizerConfig, OptimizerType};

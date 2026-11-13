@@ -823,7 +823,7 @@ pub fn checkpoint_in_memory(
 /// index fills its own partial blocks.
 fn serialize_indexes(
     table: &DataTable,
-    mut rebuilt: Option<&mut [roastedduck_storage::index::art::Art]>,
+    mut rebuilt: Option<&mut [roastedduck_storage::index::BoundIndex]>,
     storage: &StorageManager,
     options: &roastedduck_serde::SerializationOptions,
     blocks: &mut BlockWriter,
@@ -847,13 +847,22 @@ fn serialize_indexes(
                 if let Some(index) = rebuilt.as_deref_mut().and_then(|rebuilt| rebuilt.get_mut(bound)) =>
             {
                 bound += 1;
-                index.serialize_to_disk(&index_options, &mut index_blocks, &mut |block| kept.push(block))?
+                index
+                    .as_art_mut()
+                    .ok_or_else(|| {
+                        Error::not_implemented("Persistence of secondary indexes is not supported")
+                    })?
+                    .serialize_to_disk(&index_options, &mut index_blocks, &mut |block| kept.push(block))?
             }
             IndexSlot::Bound(entry) => {
                 bound += 1;
                 entry
                     .lock()
                     .index
+                    .as_art_mut()
+                    .ok_or_else(|| {
+                        Error::not_implemented("Persistence of secondary indexes is not supported")
+                    })?
                     .serialize_to_disk(&index_options, &mut index_blocks, &mut |block| kept.push(block))?
             }
             IndexSlot::Unbound(index) => {
@@ -1275,7 +1284,11 @@ fn build_index_entry(
         AstIndexConstraintType::None => IndexConstraintType::None,
     };
     match plain_columns {
-        Some(columns) if !columns.is_empty() => {
+        Some(columns)
+            if !columns.is_empty()
+                && (index.index_type_name.is_empty()
+                    || index.index_type_name.eq_ignore_ascii_case("ART")) =>
+        {
             let mut art = storage.new_art(&index.name, constraint, &columns)?;
             let restored = match &stored {
                 UnboundIndexStorage::Disk(info) => storage.restore_index(&mut art, info)?,

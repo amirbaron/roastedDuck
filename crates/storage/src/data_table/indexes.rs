@@ -15,7 +15,7 @@ use crate::index::conflict_manager::ConflictManager;
 use crate::index::table_index_list::ForeignKeyType;
 use crate::index::unbound_index::BufferedIndexReplay as Replay;
 use crate::index::{
-    Art, BufferLoader, BufferPointer, IndexAppendMode, IndexConstraintType, IndexKeyExpressions,
+    Art, BoundIndex, BufferLoader, BufferPointer, IndexAppendMode, IndexConstraintType, IndexKeyExpressions,
     IndexRemovalType, TableIndexList, VerifyExistenceType,
 };
 use crate::table::{
@@ -115,8 +115,12 @@ impl TableIndexList {
         let state = entry.lock();
         let delete_entry = storage.and_then(|s| s.delete_indexes.find(entry.name()));
         let delete_guard = delete_entry.as_ref().map(|e| e.lock());
-        let delete_arts: Vec<&Art> = delete_guard.iter().map(|g| &g.index).collect();
-        state.index.verify_constraint(chunk, &delete_arts, manager)
+        let delete_arts: Vec<&Art> = delete_guard.iter().filter_map(|g| g.index.as_art()).collect();
+        state
+            .index
+            .as_art()
+            .ok_or_else(|| Error::internal("foreign-key index is not ART"))?
+            .verify_constraint(chunk, &delete_arts, manager)
     }
 }
 
@@ -325,7 +329,7 @@ impl DataTable {
     }
 
     /// Adds a built index to the table (`DataTable::AddIndex`).
-    pub fn add_index(&self, index: Art) -> Result<()> {
+    pub fn add_index(&self, index: impl Into<BoundIndex>) -> Result<()> {
         self.check_main_table("add an index to")?;
         self.indexes().add(index);
         Ok(())
@@ -368,14 +372,15 @@ impl DataTable {
     pub fn create_index(
         self: &Arc<Self>,
         transaction: &Transaction,
-        mut index: Art,
+        index: impl Into<BoundIndex>,
         check_unique_name: bool,
     ) -> Result<()> {
         // A commit appends rows and updates the published indexes under this lock.
         // Keep it until publication so no append can escape both the build scan
         // and the normal maintenance of the new index.
         let _append_lock = self.append_lock();
-        self.build_index(transaction, &mut index, false)?;
+        let mut index = index.into();
+        self.build_bound_index(transaction, &mut index, false)?;
         self.check_main_table_for_index_creation()?;
         if check_unique_name && self.indexes().contains(index.name()) {
             return Err(Error::new_bytes(
@@ -391,7 +396,37 @@ impl DataTable {
     /// Fills `index` with the table's committed rows. With `reject_nulls` (ALTER TABLE
     /// ADD PRIMARY KEY), a NULL key is an error naming the index.
     pub fn build_index(&self, transaction: &Transaction, index: &mut Art, reject_nulls: bool) -> Result<()> {
-        let columns = Self::index_columns(index);
+        let columns = Self::index_columns(index.column_ids());
+        let name = index.name().clone();
+        self.scan_index_rows(transaction, &name, &columns, reject_nulls, &mut |chunk, rows| {
+            index.append(chunk, rows, &[], IndexAppendMode::Default)
+        })?;
+        index.vacuum()
+    }
+
+    /// Build any bound index through the same committed-row and old-snapshot scan.
+    pub fn build_bound_index(
+        &self,
+        transaction: &Transaction,
+        index: &mut BoundIndex,
+        reject_nulls: bool,
+    ) -> Result<()> {
+        let columns = Self::index_columns(index.column_ids());
+        let name = index.name().clone();
+        self.scan_index_rows(transaction, &name, &columns, reject_nulls, &mut |chunk, rows| {
+            index.append(chunk, rows, &[], IndexAppendMode::Default)
+        })?;
+        index.vacuum()
+    }
+
+    fn scan_index_rows(
+        &self,
+        transaction: &Transaction,
+        name: &roastedduck_common::ByteString,
+        columns: &[usize],
+        reject_nulls: bool,
+        append: &mut dyn FnMut(&DataChunk, &[i64]) -> Result<()>,
+    ) -> Result<()> {
         let column_ids: Vec<StorageIndex> = columns
             .iter()
             .map(|&c| StorageIndex::from(c))
@@ -418,11 +453,11 @@ impl DataTable {
             if reject_nulls && data.columns().iter().any(|column| has_null(column, data.len())) {
                 return Err(constraint_error(roastedduck_common::byte_format!(
                     "NOT NULL constraint failed: {}",
-                    index.name()
+                    name
                 )));
             }
-            let table_chunk = self.index_table_chunk(&columns, &data);
-            if let Err(error) = index.append(&table_chunk, &row_ids, &[], IndexAppendMode::Default) {
+            let table_chunk = self.index_table_chunk(columns, &data);
+            if let Err(error) = append(&table_chunk, &row_ids) {
                 if error.kind() == ErrorKind::Constraint {
                     return Err(constraint_error(
                         "Data contains duplicates on indexed column(s)".to_owned(),
@@ -431,14 +466,13 @@ impl DataTable {
                 return Err(error);
             }
         }
-        // `PhysicalCreateIndex::Finalize`: vacuum the excess memory of the build.
-        index.vacuum()
+        Ok(())
     }
 
     /// `DataTable::RebuildIndexes`: the table's indexes built anew over the committed rows
     /// of `layout`, the row groups a vacuum leaves with their first rows (relative to the
     /// base row id), so that they hold the row ids the rows have after it.
-    pub(crate) fn rebuild_indexes(&self, layout: &[(Arc<RowGroup>, u64)]) -> Result<Vec<Art>> {
+    pub(crate) fn rebuild_indexes(&self, layout: &[(Arc<RowGroup>, u64)]) -> Result<Vec<BoundIndex>> {
         let base = self.row_groups.row_groups().base_row_id();
         let options = RowGroup::scan_options(
             TableScanType::CommittedRows,
@@ -447,7 +481,7 @@ impl DataTable {
         let mut rebuilt = Vec::new();
         for entry in self.indexes().entries() {
             let mut index = entry.lock().index.empty_like()?;
-            let columns = Self::index_columns(&index);
+            let columns = Self::index_columns(index.column_ids());
             let column_ids: Vec<StorageIndex> = columns
                 .iter()
                 .map(|&c| StorageIndex::from(c))
@@ -505,7 +539,7 @@ impl DataTable {
 
     /// Replaces the table's indexes by `rebuilt` (from [`DataTable::rebuild_indexes`], in
     /// the same order) once the vacuumed row groups are the table's.
-    pub(crate) fn install_rebuilt_indexes(&self, rebuilt: Vec<Art>) {
+    pub(crate) fn install_rebuilt_indexes(&self, rebuilt: Vec<BoundIndex>) {
         for (entry, index) in self.indexes().entries().into_iter().zip(rebuilt) {
             let mut state = entry.lock();
             state.index = index;
@@ -514,8 +548,8 @@ impl DataTable {
     }
 
     /// The distinct columns an index reads, sorted.
-    fn index_columns(index: &Art) -> Vec<usize> {
-        let mut columns = index.column_ids().to_vec();
+    fn index_columns(column_ids: &[usize]) -> Vec<usize> {
+        let mut columns = column_ids.to_vec();
         columns.sort_unstable();
         columns.dedup();
         columns
@@ -589,14 +623,16 @@ impl DataTable {
                     None
                 };
                 let delete_guard = delete_entry.as_ref().map(|e| e.lock());
-                let delete_arts: Vec<&Art> = delete_guard.iter().map(|g| &g.index).collect();
+                let delete_arts: Vec<&Art> = delete_guard.iter().filter_map(|g| g.index.as_art()).collect();
                 state.index.append(table_chunk, &row_ids, &delete_arts, mode)
             };
             if let Err(error) = result {
-                for previous in &appended {
-                    previous.lock().index.try_delete(table_chunk, &row_ids)?;
-                }
-                return Err(error);
+                return Err(Self::revert_appended_indexes(
+                    &appended,
+                    table_chunk,
+                    &row_ids,
+                    error,
+                ));
             }
             appended.push(entry);
         }
@@ -605,12 +641,40 @@ impl DataTable {
             &row_ids,
             crate::index::unbound_index::BufferedIndexReplay::Insert,
         ) {
-            for previous in &appended {
-                previous.lock().index.try_delete(table_chunk, &row_ids)?;
-            }
-            return Err(error);
+            return Err(Self::revert_appended_indexes(
+                &appended,
+                table_chunk,
+                &row_ids,
+                error,
+            ));
         }
         Ok(())
+    }
+
+    fn revert_appended_indexes(
+        appended: &[Arc<crate::index::IndexEntry>],
+        chunk: &DataChunk,
+        row_ids: &[i64],
+        original: Error,
+    ) -> Error {
+        let mut rollback_error = None;
+        for previous in appended.iter().rev() {
+            if let Err(error) = previous.lock().index.try_delete(chunk, row_ids) {
+                rollback_error.get_or_insert(error);
+            }
+        }
+        match rollback_error {
+            None => original,
+            Some(error) => Error::new_bytes(
+                original.kind(),
+                roastedduck_common::byte_format!(
+                    "{}; index append compensation failed: {}",
+                    original.raw_message_bytes(),
+                    error.raw_message_bytes()
+                )
+                .into_bytes(),
+            ),
+        }
     }
 
     /// Verifies that the rows of `chunk` do not violate a unique index; keys deleted by
@@ -628,8 +692,12 @@ impl DataTable {
             let state = entry.lock();
             let delete_entry = storage.and_then(|s| s.delete_indexes.find(entry.name()));
             let delete_guard = delete_entry.as_ref().map(|e| e.lock());
-            let delete_arts: Vec<&Art> = delete_guard.iter().map(|g| &g.index).collect();
-            state.index.verify_append(chunk, &delete_arts, None)?;
+            let delete_arts: Vec<&Art> = delete_guard.iter().filter_map(|g| g.index.as_art()).collect();
+            state
+                .index
+                .as_art()
+                .ok_or_else(|| Error::internal("unique index is not ART"))?
+                .verify_append(chunk, &delete_arts, None)?;
         }
         Ok(())
     }
@@ -677,9 +745,11 @@ impl DataTable {
                 let state = entry.lock();
                 let delete_entry = storage.as_ref().and_then(|s| s.delete_indexes.find(entry.name()));
                 let delete_guard = delete_entry.as_ref().map(|e| e.lock());
-                let delete_arts: Vec<&Art> = delete_guard.iter().map(|g| &g.index).collect();
+                let delete_arts: Vec<&Art> = delete_guard.iter().filter_map(|g| g.index.as_art()).collect();
                 state
                     .index
+                    .as_art()
+                    .ok_or_else(|| Error::internal("unique index is not ART"))?
                     .verify_append(chunk, &delete_arts, Some(&mut manager))?;
             }
         }
@@ -749,6 +819,8 @@ impl DataTable {
             let text = entry
                 .lock()
                 .index
+                .as_art()
+                .ok_or_else(|| Error::internal("foreign-key index is not ART"))?
                 .constraint_violation_message(verify_type, conflict, &dst_chunk)?;
             Ok(constraint_error(text))
         };
@@ -866,28 +938,32 @@ impl DataTable {
         for entry in self.indexes().entries() {
             let mut state = entry.lock();
             let state = &mut *state;
+            if let Some(secondary) = state.index.as_secondary_mut() {
+                secondary.remove(&table_chunk, row_ids, removal)?;
+                continue;
+            }
+            let index = state
+                .index
+                .as_art_mut()
+                .ok_or_else(|| Error::internal("bound ART index missing"))?;
             match removal {
                 IndexRemovalType::MainIndexOnly => {
-                    state.index.delete(&table_chunk, row_ids)?;
+                    index.delete(&table_chunk, row_ids)?;
                 }
                 IndexRemovalType::RevertMainIndexOnly => {
-                    state
-                        .index
-                        .append(&table_chunk, row_ids, &[], IndexAppendMode::InsertDuplicates)?;
+                    index.append(&table_chunk, row_ids, &[], IndexAppendMode::InsertDuplicates)?;
                 }
                 IndexRemovalType::MainIndex => {
                     if state.deleted_rows_in_use.is_none() {
-                        state.deleted_rows_in_use = Some(state.index.delta(true)?);
+                        state.deleted_rows_in_use = Some(index.delta(true)?);
                     }
                     if let Some(in_use) = state.deleted_rows_in_use.as_mut() {
                         in_use.append(&table_chunk, row_ids, &[], IndexAppendMode::Default)?;
                     }
-                    state.index.delete(&table_chunk, row_ids)?;
+                    index.delete(&table_chunk, row_ids)?;
                 }
                 IndexRemovalType::RevertMainIndex => {
-                    state
-                        .index
-                        .append(&table_chunk, row_ids, &[], IndexAppendMode::InsertDuplicates)?;
+                    index.append(&table_chunk, row_ids, &[], IndexAppendMode::InsertDuplicates)?;
                     if let Some(in_use) = state.deleted_rows_in_use.as_mut() {
                         in_use.delete(&table_chunk, row_ids)?;
                     }
@@ -960,8 +1036,11 @@ impl DataTable {
                 continue;
             }
             let state = entry.lock();
+            let Some(index) = state.index.as_art() else {
+                continue;
+            };
             // No index scans on compound keys.
-            if state.index.key_types().len() != 1 {
+            if index.key_types().len() != 1 {
                 continue;
             }
             let indexed = entry.column_ids()[0];
@@ -974,7 +1053,7 @@ impl DataTable {
             let Some(filter) = filters.filters.get(&position) else {
                 continue;
             };
-            let predicates = match state.index.expressions() {
+            let predicates = match index.expressions() {
                 IndexKeyExpressions::Columns(_) => IndexScanPredicate::from_filter(filter),
                 IndexKeyExpressions::Custom(executor) => executor.scan_predicates(filter),
             };
@@ -984,7 +1063,7 @@ impl DataTable {
             let mut row_ids = BTreeSet::new();
             let mut complete = true;
             for predicate in &predicates {
-                let arts = std::iter::once(&state.index).chain(state.deleted_rows_in_use.as_ref());
+                let arts = std::iter::once(index).chain(state.deleted_rows_in_use.as_ref());
                 for art in arts {
                     if !art.scan(predicate, max_count, &mut row_ids)? {
                         complete = false;
