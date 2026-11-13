@@ -1,7 +1,7 @@
 # FTS: roastedDuck's compatible implementation
 
 Status: implementation present; scoped stemming, SQL, and database-interchange
-gates pass. Full core conformance remains pending. Features are available in normal
+gates pass. Full conformance passes the existing ratchet with documented baseline nonpasses. Features are available in normal
 builds, without a default-off feature gate. No C/C++ dependency
 or private C++ extension binary loading is introduced.
 
@@ -142,7 +142,7 @@ Snowball, roastedduck, and slt. Evidence:
 - `.context/artifacts/vss-fts/fts-clippy-3.log` and Snowball's `clippy-3.log`.
 
 Workspace-wide all-target checking also passes (`fts-workspace-check-1.log`).
-`scripts/conformance.sh` remains required before the broader integration gate closes. VSS implementation remains a separate next step.
+`scripts/conformance.sh` also passes its existing ratchet; the raw results below retain all nonpasses. VSS implementation remains a separate next step.
 
 ## Usage
 
@@ -159,3 +159,24 @@ FROM documents WHERE score IS NOT NULL ORDER BY score DESC;
 implementation. An index is a snapshot: rebuild with `overwrite=true` after source
 table changes. Existing global autoload policy is preserved; explicit LOAD works
 regardless of whether provider autoload is enabled.
+
+## Full conformance (FTS commit e06dd2c4)
+
+`JOBS=1 scripts/conformance.sh` completed with exit 0 over 4,880 files:
+**4,789 PASS / 76 SKIP / 15 FAIL; zero ratchet regressions; eight newly passing FTS
+files.** The passing ratchet was not weakened or rewritten. Core skip membership
+matches the recorded C++ reference; the only additional skips are the two FTS
+directive cases described above.
+
+All 15 raw failures are documented in `conformance/divergences.md`: eleven private
+C++ fixture cases and four tests expecting an allocation failure where Rust succeeds
+within the configured limit. The private fixture INSTALL case stops at its historical
+v0.0.1/v1.5.6 version mismatch, before loading. These are retained exceptions, not
+newly accepted C++ ABI behavior or proof of peak-memory equivalence.
+
+The runner signature, source commit, fixture-manifest hash, and detailed verdicts
+are recorded in `.context/artifacts/vss-fts/fts-conformance-1-identity.json` and
+`fts-conformance-1-verification.json`; the full raw log is `fts-conformance-1.log`.
+Fixtures were copied and hash-verified under `reference-corpus` so canonical test
+keys match the baseline and scratch writes remain on this workspace's SSD.
+Subsequent VSS working-tree hooks are not covered by this FTS receipt.

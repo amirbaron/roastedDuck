@@ -2,8 +2,9 @@ Current extension work, November 14, 2026: roastedDuck's compatible FTS
 implementation passes the recorded stemming, SQL, and bidirectional storage gates
 in [the FTS spec](fts-extension-spec.md#verified-fts-milestone-2026-11-14).
 The original upstream suite retains two shared directive skips; separately hashed
-supplemental copies execute their unchanged SQL/assertions. Workspace-wide all-target checking passes; full-core
-conformance is still pending. VSS hooks and Rust HNSW remain unimplemented;
+supplemental copies execute their unchanged SQL/assertions. Workspace-wide all-target checking and the full conformance ratchet pass. The
+4,880-file run retains 4,789 passes, 76 skips, and 15 documented failures, with zero
+ratchet regressions. VSS hooks are work in progress; Rust HNSW remains unimplemented;
 [the VSS spec](vss-extension-spec.md) retains the in-memory-only scope and deferred
 persistence obligations. The earlier release dispositions below remain historical
 and do not accept this new extension work.
