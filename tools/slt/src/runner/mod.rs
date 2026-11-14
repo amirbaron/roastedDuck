@@ -875,6 +875,36 @@ impl<'a, E: Engine> Runner<'a, E> {
                 return Err(error.to_owned());
             }
         }
+        if loaded == ExtensionLoad::Loaded
+            && name == "httpfs"
+            && let Ok(style) = std::env::var("SLT_S3_URL_STYLE")
+        {
+            if !matches!(style.as_str(), "path" | "vhost") {
+                return Err("Invalid SLT_S3_URL_STYLE".to_owned());
+            }
+            let connection = self.con.as_mut().ok_or("no open connection")?;
+            let result = self.engine.query(
+                connection,
+                &format!("SET GLOBAL s3_url_style='{style}'; SET SESSION s3_url_style='{style}'"),
+            );
+            if let Some(error) = crate::backend::QueryResult::error(&result) {
+                return Err(error.to_owned());
+            }
+        }
+        if loaded == ExtensionLoad::Loaded
+            && name == "httpfs"
+            && let Ok(proxy) = std::env::var("SLT_HTTP_PROXY")
+        {
+            let proxy = proxy.replace('\'', "''");
+            let connection = self.con.as_mut().ok_or("no open connection")?;
+            let result = self.engine.query(
+                connection,
+                &format!("SET GLOBAL http_proxy='{proxy}'"),
+            );
+            if let Some(error) = crate::backend::QueryResult::error(&result) {
+                return Err(error.to_owned());
+            }
+        }
         Ok(loaded)
     }
 

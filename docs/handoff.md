@@ -1,3 +1,17 @@
+AWS local-original checkpoint, November 15, 2026: 18/21 unchanged originals now
+pass on both engines: eleven metadata/profile, three signed S3, two environment,
+and two proxy files. The independent loopback fixtures validate S3 signatures,
+malformed-region/invalid-key rejection and authenticated proxy traffic. Fresh
+storage is used for each engine. The refresh original retains an identical raw
+failure on both engines: unchanged credentials produce no refresh log in pinned
+HTTPFS; the separate rotating-process control passes actual refresh and logging.
+Final environment fixture records identical local 403 HEAD/GET traffic. RDS and
+web-identity originals remain, along with Azure, PostgreSQL, full conformance and
+package/release gates. The all-five goal is active and incomplete. Receipts:
+`.context/artifacts/popular-extensions/aws-upstream-data-1/`,
+`aws-upstream-proxy-1/`, `aws-upstream-env-4/`; see extensions/aws/SPEC.md.
+Runner strict Clippy and Python syntax checks pass. No release made.
+
 AWS integration checkpoint, November 15, 2026: the active all-five goal remains
 incomplete. AWS now has normal LOAD/INSTALL, credential_chain secret binding,
 legacy load_aws_credentials, type/provider autoload and query cancellation. Current

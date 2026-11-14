@@ -74,3 +74,28 @@ localhost-refusal test, which must actually attempt that local connection.
 Remaining: all other original AWS files and advanced network providers, RDS SQL
 and PostgreSQL integration, cross-platform/native package qualification, full
 conformance and publication. This checkpoint is not full AWS acceptance.
+
+## Local original data/environment/proxy tests (November 15)
+
+Eighteen of 21 unchanged original files now pass on both engines: the eleven
+metadata/profile cases above, three S3 data cases, two environment cases and two
+proxy cases. The local S3 fixture independently verifies SigV4, rejects malformed
+regions and invalid keys, and starts fresh storage for each engine. The proxy
+fixture restricts forwarding to that loopback service and enforces Basic auth
+for the authenticated original. No cloud accounts or real credentials are used.
+
+`aws_secret_refresh.test` retains the same raw failure on both engines: it expects
+a successful-refresh log after retrying unchanged environment credentials. The
+pinned HTTPFS source logs only when credentials actually change. Identical local
+403 HEAD/GET traffic is recorded for both engines. The separate credential-process
+rotation control proves the real changed-credentials retry and log. The original
+test has not been edited or relabeled as a pass.
+
+Receipts: `.context/artifacts/popular-extensions/aws-upstream-data-1/`,
+`aws-upstream-proxy-1/`, and `aws-upstream-env-4/`. Reproduce with
+`scripts/aws-tests/upstream_{data,proxy,environment}.py --help` and the pinned
+sources, signed SLT image and C++ shim. Runner-only `SLT_S3_URL_STYLE` and
+`SLT_HTTP_PROXY` select ordinary SQL settings equally for both engines.
+The environment script exits nonzero while the raw upstream failure remains.
+Web-identity and RDS originals, advanced provider controls, other extensions,
+full conformance and package/release qualification remain incomplete.
