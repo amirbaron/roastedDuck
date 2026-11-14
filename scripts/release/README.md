@@ -1,13 +1,10 @@
-The upcoming candidate is `1.5.6.post3`, adding bundled FTS/VSS and Homebrew
-distribution. Publish only after the existing qualification and artifact gates
-pass. `render_homebrew.py` renders the tap formula from the accepted release's
-SHA256SUMS; it does not publish or invent checksums.
-
 # Release pipeline
 
-The current source candidate is `1.5.6.post2`, a branding and validation-tooling revision
-of the DuckDB 1.5.6 compatibility target. Public API compatibility version
-identifiers remain 1.5.6.
+The current release is `1.5.6.post3`, adding bundled FTS/VSS and Homebrew distribution.
+The compatibility target remains DuckDB 1.5.6. `render_homebrew.py` renders a base
+formula from accepted SDK checksums; the tap workflow packages, tests and pours
+real Homebrew bottles, then public-download checks verify them. Never substitute
+an SDK tarball for a Homebrew bottle or invent artifact checksums.
 
 ## Build and qualify
 
