@@ -180,3 +180,18 @@ are recorded in `.context/artifacts/vss-fts/fts-conformance-1-identity.json` and
 Fixtures were copied and hash-verified under `reference-corpus` so canonical test
 keys match the baseline and scratch writes remain on this workspace's SSD.
 Subsequent VSS working-tree hooks are not covered by this FTS receipt.
+
+
+## Final extension integration check (2026-11-14)
+
+The final VSS-integrated candidate repeats all ten original FTS files with
+**8 PASS / 2 unchanged directive SKIP**, all **24 bidirectional database checks**,
+and both separately named directive-corrected SQL controls successfully.
+Evidence is under `.context/artifacts/vss-fts/vss-validation-4/` and
+`fts-final-directive-controls/verification.json`. Normal `INSTALL`/`LOAD` and a real
+stem/HNSW query smoke also pass in `extension-install-smoke-1/verification.json`.
+The Snowball source remains unchanged from its full byte-differential gate.
+Full conformance after code commit `07908b18` passes with zero ratchet regressions;
+see [the VSS integration record](vss-extension-spec.md#evidence-and-final-conformance)
+for counts, retained failures, and separate signed-runner identities. This is a
+local source milestone, not a claim about previously published artifacts.

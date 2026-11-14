@@ -6,13 +6,17 @@ The corrected VSS candidate passes 12 unchanged in-scope original files and five
 memory supplements. Five genuine persistence originals retain raw failures under
 the in-memory-only scope. The full recall matrix passes all 405 Rust ef200 cells:
 324,000 adjudicated measurements, zero failures, lowest cell mean 0.9741 against
-the unchanged 0.95 requirement. Core12, storage110, and runtime21 signed tests,
+the unchanged 0.95 requirement. Core (12), storage (110), and runtime (21) signed tests,
 strict lint, workspace checking, normal INSTALL/LOAD, FTS interoperability, and
 opaque C++ HNSW-file checks pass. Exact source/binary identities and prior failed
 runs are retained in [the VSS spec](vss-extension-spec.md). Final full conformance
-after the VSS commit remains pending. Earlier FTS/hook conformance receipts accept
-their own candidates only; the historical release dispositions below do not
-publish or accept these new source additions.
+on code commit `07908b18` passes with 4,801 PASS / 76 SKIP / 20 documented FAIL
+across 4,897 files and zero ratchet regressions. All prior 4,880 file statuses and
+skip reasons are unchanged; the five added failures are the scoped persistence
+cases. The two directive-corrected FTS controls pass on the final runner. The
+existing core ratchet remains unchanged. This completes the declared local source
+milestone; the historical release dispositions below do not publish or qualify
+these additions on other platforms.
 
 Current disposition, November 6, 2026: the owner explicitly approved a physical-device test exception. The goal is complete under that scope: all 22 scoped software collection/review requirements are evidenced; actual iPhone/iPad execution and provisioning remain **unverified, excepted by the owner**. Device builds, signatures and simulator tests retain their verified status. The [delivery index](release-candidate-index-20261106.md) links the new signed disposition, unchanged archive and all known limitations. Older dated statuses below are historical.
 

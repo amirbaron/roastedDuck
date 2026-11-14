@@ -1,10 +1,12 @@
 # VSS compatible implementation specification
 
-Status: internal hooks implemented and scoped-tested; HNSW/SQL integration is
-pending. This defines roastedDuck's compatible implementation
-of the VSS extension for DuckDB **1.5.6**. It does not load official C++ extension
-binaries. HNSW and its engine integration are Rust, with no C/C++ dependencies and
-no USearch dependency. Features are enabled in normal builds.
+Status (2026-11-14): roastedDuck's compatible implementation of VSS is implemented
+and its component gates pass on candidate `vss-validation-4`: 12 unchanged original
+files pass, five persistence obligations remain deferred, and all 405 required
+Rust ef200 recall cells pass. **Final full conformance passes with zero ratchet
+regressions.** HNSW and
+its engine integration are Rust, with no new C/C++ or USearch dependencies and no
+default-off build gate. This does not load official C++ extension binaries.
 
 ## Pinned contract
 
@@ -52,27 +54,53 @@ Preserve oracle handling of NULL arrays/elements, empty indexes, dimensionality,
 non-finite floats, limit/offset, duplicate values, update/delete/rollback, and
 invalid options. These require measured tests rather than inferred semantics.
 
+For SQL predicates on an HNSW scan, roastedDuck deliberately expands the real
+graph candidate budget until LIMIT visible, predicate-eligible rows are available
+or the searchable graph population has been requested. The pinned extension
+filters a fixed k candidate set and can underfill LIMIT depending on graph ties.
+The unchanged `where_clause_segfault.test` expects a full result on duplicate
+vectors, while this project's contract permits a different graph. Predicate-aware
+expansion preserves that SQL behavior without tuning row IDs/tie ordering or
+silently substituting an exact table scan. Runtime metadata reports graph
+traversal and whether predicate expansion occurred; transaction-local/stale-index
+exact fallbacks remain explicitly identified. This is a documented SQL-semantic
+improvement over pinned fixed-k filtering, not a claim of identical graph behavior.
+The signed focused predicate regression and the unchanged upstream filtered-query
+file pass on the validated component candidate; see the milestone below.
+
+A measured NULL-ordering quirk is shared with the pinned oracle: eligible indexed
+`ORDER BY distance ASC NULLS FIRST LIMIT 1` and eligible lateral nearest-neighbor
+joins omit a whole-NULL vector and return the nearest indexed non-NULL vector.
+Disabling extension optimization returns the NULL-vector row first. Both engines'
+plans show the actual HNSW scan/join; this is not a Rust/oracle divergence for the
+probed shape. `vss_join` returns the non-NULL match with optimization on or off
+because its `min_by` ignores NULL distances. Evidence:
+`.context/artifacts/vss-fts/vss-null-order-urzbxllw/verification.json`, with both
+SQL inputs, raw outputs, and plans. This limited probe does not establish every
+NULL-ordering or NULL-element case.
+
 ## Internal engine integration
 
-The current `IndexEntryState` contains concrete `Art` values; `UnboundIndex`
-retains type/name/create-info but its persisted carrier uses `ArtStorageInfo`.
-`PhysicalCreateIndex` rejects every non-ART type. Add internal Rust traits and an
-index-type registry for bound index construction, lifecycle/mutation, scans, and
-type-specific metadata. Preserve ART constraints, concurrency, WAL, and checkpoint
-behavior. This is not a public plugin interface.
+`IndexEntryState` now dispatches between ART and first-party secondary indexes.
+Database-scoped internal Rust index factories cover construction and lifecycle
+operations; ART constraints, retained deletes, and serialized bytes remain
+specialized. Non-ART persisted indexes are guarded before reconstruction and stay
+unbound. Read/mutation/checkpoint binding intents preserve ordinary reads while
+rejecting unsupported writes. These are internal engine hooks, not a public plugin
+interface.
 
-The optimizer currently has the `extension` optimizer name but no registration
-and execution mechanism for extension rules. Add an internal rule registry with
-explicit ordering and enable/disable behavior. The pinned VSS registers expression,
-scan, top-k, and join rules: cosine-distance normalization; distance `ORDER BY`
-plus `LIMIT`; aggregate `min_by` top-k; and eligible lateral/grouped nearest-neighbor
-joins. Preserve projections, residual filters, row IDs, and transactional visibility.
-`EXPLAIN` must expose the operator names asserted by upstream tests. An exact scan
-with an HNSW label is not an implementation.
+The optimizer runs ordered pre/post rule snapshots from the per-database cache,
+including ordinary, prepared-statement, and JSON-plan paths. VSS registers
+expression, scan, top-k, and eligible lateral/grouped join rules. Real HNSW graph
+traversal selects candidates, followed by transaction-visible table fetches.
+Static EXPLAIN metadata identifies the bound table/index; runtime metadata
+identifies graph traversal, predicate expansion, or the explicit exact fallback
+needed for transaction-local changes or a stale index handle. An exact scan is not
+reported as graph traversal.
 
-Implement genuine hierarchical graph construction/search in Rust. Graph layout,
-random choices, and approximate neighbors need not match USearch byte for byte;
-SQL correctness, the pinned tests, and measured recall remain acceptance gates.
+Graph construction/search is Rust, without USearch. Graph layout, random choices,
+and approximate neighbors need not match the C++ graph byte for byte; SQL
+correctness, the pinned tests, and measured recall remain acceptance gates.
 
 ## Persistence boundary and test obligations
 
@@ -90,11 +118,13 @@ C++ DuckDB 1.5.6 and roastedDuck, preserving raw results and failures:
   `hnsw_lateral_join_group`, `hnsw_metrics`, `hnsw_options`, `hnsw_projection`,
   `hnsw_result`, `hnsw_rewrite`, `hnsw_topk`, `where_clause_segfault` (all `.test`),
   and `slow/hnsw_lateral_join_group_large.test_slow`.
-- Persistence-bearing files: `hnsw_basic`, `hnsw_crud`,
-  `hnsw_experimental_persistence`, `hnsw_insert`, `hnsw_insert_wal` (all `.test`),
-  and `slow/hnsw_reclaim_storage.test_slow`.
+- In-scope rejection file: `hnsw_experimental_persistence.test` checks that
+  disk-backed HNSW creation fails when persistence is disabled. It runs unchanged
+  and passes; this does not require or establish HNSW persistence.
+- Five deferred persistence files: `hnsw_basic`, `hnsw_crud`, `hnsw_insert`,
+  `hnsw_insert_wal` (all `.test`), and `slow/hnsw_reclaim_storage.test_slow`.
 
-The latter six remain explicit deferred obligations under the in-memory assumption.
+The latter five remain explicit deferred obligations under the in-memory assumption.
 Do not edit them into in-memory tests or count skips as passes. Therefore full
 upstream-suite parity cannot be claimed in this milestone. Separately verify
 opening/querying a C++ database with a persisted HNSW index left unbound.
@@ -151,9 +181,9 @@ verdicts, and `unbound-hnsw/verification.json`. The controller's initial
 signed test identities. `optimizer-tests-1.json`, `hooks-workspace-check-1.log`,
 and `hooks-clippy-5.log` are in the task artifact directory.
 
-The hooks' required full conformance run also completed with zero ratchet regressions. Standalone HNSW and pinned SQL
-macro source are subsequent, unlinked work; none of these hook receipts accepts
-HNSW behavior, recall, VSS planner rewrites, or the complete extension surface.
+The hooks' required full conformance run also completed with zero ratchet
+regressions. These historical hook receipts do not accept the later HNSW/VSS
+implementation; its separate scoped receipts follow below.
 
 Full conformance for hook commit `73817683` reports **4,789 PASS / 76 SKIP /
 15 documented FAIL**, exactly the same per-file statuses and skip reasons as the
@@ -161,3 +191,146 @@ FTS baseline. `scripts/conformance.sh` exits 0 without changing the passing ratc
 Evidence: `.context/artifacts/vss-fts/hooks-conformance-1-verification.json` and
 `hooks-conformance-1-results.jsonl`; the tested clients are retained under
 `hooks-candidate/`. This gate does not accept later HNSW/VSS working-tree changes.
+
+
+## Component acceptance milestone (2026-11-14)
+
+`vss-validation-4/controller.json` records `candidate_gates_passed`. Its signed
+candidate passes **12 of the 17 unchanged upstream VSS files**: the eleven
+in-memory files, including the large lateral/grouped `.test_slow`, plus the
+persistence-disabled rejection file. The other **five remain raw FAIL results at
+unsupported persistent creation**, explicitly deferred by scope, not skipped or
+accepted persistence tests. The official C++ oracle passes all 17 originals.
+All **five separately named in-memory supplements pass on both engines**; reduced
+contexts do not convert deferred originals into passes. The
+[supplement provenance](../conformance/vss-memory/README.md) retains all six
+originally classified persistence-related source hashes, including the rejection
+file now executed unchanged.
+
+Other component gates:
+
+- **21 signed runtime library tests pass**, including nine VSS-specific tests for
+  macro aliases, graph scan/join execution, real metadata, compaction, min-by top-k,
+  prepared transaction-local changes/rollback, explicit fallbacks, selective
+  duplicate-vector predicates, and measured OFFSET/NULL-element quirks. This is the
+  runtime library harness, not every integration harness in the workspace.
+- **12 signed HNSW core tests pass**, including duplicate routing diversity,
+  admitted-frontier traversal, inner-product link geometry, and nonfinite ordering.
+- **110 signed storage tests pass across nine harnesses**, including the HNSW
+  wrapper, secondary hooks, ART constraints and MVCC. Build-time retirement now
+  recognizes already committed deletions visible to older snapshots, and delete
+  maintenance shares the index-build publication lock. The original signed red
+  failure and corrected old-reader/rollback/rebuild/race cases remain retained.
+- Workspace/all-target checking and strict Clippy pass for the component candidate.
+- With VSS loaded, the **18-execution clean C++ HNSW/ART read/unbound check passes**.
+  Enabling VSS does not deserialize or make the persisted C++ graph writable.
+- FTS is rechecked on this candidate: **eight unchanged originals PASS and two
+  matching original directive-related SKIPs**; the earlier two directive-corrected
+  controls preserve their separate evidence. The **24-execution bidirectional FTS
+  database interoperability** check passes again.
+
+## Full recall result and retained failures
+
+The declared matrix passes in `recall-full-3/verification.json`, with
+`finished=true`, `passed=true`, and `full_acceptance=true` for this finite recall
+contract. It covers 10,000 initial vectors and 200 held-out queries per cell,
+uniform/clustered/duplicate distributions, dimensions 3/32/128, all three metrics,
+k=1/10/100, default and ef200 search, both engines, and baseline/insert/update/
+delete/compact cohorts.
+
+- **324,000 ANN measurements adjudicated**, covering 1,620 engine/profile cells.
+- **405/405 required Rust ef200 cells have mean tie-aware recall >= 0.95**.
+  The lowest mean is **0.9741**, duplicates/128/baseline/IP/k100 (19,482 credited
+  neighbors out of 20,000).
+- **5,400/5,400 exact query-vector guards**, **1,620/1,620 ANN profiles**, and
+  **135/135 exact profiles** verify; no candidate-validation failures.
+- Individual misses remain visible. The lowest-mean cell has an individual
+  minimum of **0.6**; across the full Rust ef200 matrix the individual minimum is
+  **0.0**, with at least one zero-recall query in 70 cells. Acceptance is a
+  per-cell mean threshold, not a guarantee for every query. Default-ef and C++
+  reference results are reported independently, not forced through the Rust gate.
+
+The first corrected full run, `recall-full-2/`, remains complete failed evidence:
+136 of 405 required cells were below threshold, with no scorer-input errors.
+Three core corrections improved the graph without changing M, M0,
+ef_construction, ef_search settings, fixture seeds, query counts or thresholds:
+
+1. Equal vectors no longer consume every routing-diversity slot; remaining
+   capacity can still hold duplicate labels, preserving distinct SQL rows.
+2. Queries finish traversing candidates already admitted to the frontier even
+   after they leave the retained nearest set. Construction's radius stop and the
+   retained `max(ef_search,k)` bound remain unchanged.
+3. Inner-product search keeps raw IP candidate priority, while link diversity
+   compares squared-L2 separation from selected neighbors versus the center.
+
+These changes spend more real graph work. The retained heap bound is not a bound
+on frontier size, visited nodes, latency, or RSS; no speedup or general memory
+acceptance follows from recall passing. Graphs and returned tied IDs need not be
+identical to the oracle. The result establishes this measured finite-input matrix
+on the recorded platform, not every distribution, dimension, nonfinite input,
+query, or persistent-index workload.
+
+`recall-full-1/` remains invalid harness evidence: DECIMAL-looking query literals
+and CSV query operands differed. Its frozen script/interruption record remain
+unchanged. The corrected exponential-literal harness and exact SQL operand guards
+were unchanged between full runs 2 and 3; no tolerance or score normalization was
+introduced. The narrow successful calibration remains diagnostic evidence only.
+
+## Evidence and final conformance
+
+Paths below are relative to `.context/artifacts/vss-fts/`:
+
+- `vss-validation-4/` contains `controller.json`, `source-manifest.json`,
+  runtime/check/lint logs, and `upstream-vss.jsonl`, `memory-vss.jsonl`,
+  `upstream-fts.jsonl`, recording the component candidate and original raw outcomes. Its Rust CLI SHA-256 is
+  `d63ab39062200623d88a960bb56ff452f41c4b20ba0a3a16cc10bb50aacda68f`;
+  SLT SHA-256 is
+  `0defd31985daf06932caf5ea677c593964dba203506c3acbc8f2e48c30b063c1`.
+- `vss-core-recall-fix-validation/verification.json` and
+  `mvcc-build-retirement/green-verification.json` retain signed core/storage
+  identities, source hashes, and their focused regression evidence.
+- `vss-validation-4/unbound-loaded/verification.json` and
+  `vss-validation-4/fts-interop/verification.json` record the current cross-engine checks.
+- `vss-diagnostic-1/upstream-cpp.jsonl`, `vss-slow-diagnostic-1/cpp.jsonl`, and
+  `vss-memory-validation-2/cpp.jsonl` retain unchanged oracle controls. Earlier
+  failed collections remain preserved rather than rewritten as passes.
+- `recall-full-3/verification.json` retains every cell and points to raw SQL,
+  outputs, profiles, candidate scores and per-query details.
+  `recall-full-3-independent-review.json` independently verifies all 1,620 cell
+  keys, 27 job hashes, fixture/candidate/detail hashes, raw measurement/guard
+  counts, actual index/mode profiles, and 200-query detail records in both the
+  lowest-mean cell and a cell containing a zero-recall query. It also confirms
+  unchanged inputs, seed, parameters, threshold and harness versus failed run 2.
+
+Ordinary EXPLAIN names the HNSW scan; EXPLAIN ANALYZE uses its generic `TABLE_SCAN`
+profiler label with the actual `HNSW Index` binding, plus Rust's explicit graph
+execution mode. Profile evidence is one executed query per cell, not per-query
+graph-work instrumentation.
+
+Final `JOBS=1 scripts/conformance.sh` on code commit `07908b18` exits 0:
+**4,897 files: 4,801 PASS / 76 SKIP / 20 documented FAIL**, with **zero ratchet
+regressions**. All 4,880 prior file statuses and skip reasons match the hook
+baseline. The existing ratchet is unchanged. Its 20 newly passing extension files
+are recorded separately because their pinned fixtures are staged outside the
+stock core corpus.
+
+The 20 raw failures are the same eleven private C++ fixture cases and four
+expected-OOM queries that succeed, plus the five explicitly deferred HNSW
+persistence originals. Baseline failure lines/messages also match, allowing only
+worker IDs in temporary paths when comparing the unchanged raw receipts.
+All 144 ART SQL files pass. Evidence is in
+`vss-conformance-final-1/{verification.json,rust-run.jsonl,failure-review.json}`
+and its full log. The original SQL files and failure outputs are retained.
+
+The required script signs the SLT runner again. The final runner's SHA-256 is
+`bddf119d9b7496460bc746a600f0b5affa1389526dc52d60d96531d66be2af84`;
+its signature verifies and every Mach-O section matches the retained Cargo
+compiler artifact (`macho-section-review.json`). Earlier component receipts keep
+their original signed-runner hash. The recall/interoperability CLI remains
+byte-identical, and no Rust/Cargo source changed after `07908b18`.
+The two directive-corrected FTS SQL controls also pass on this final runner;
+see `fts-final-directive-controls/verification.json`. Their originals still count
+as two skips, not passes.
+
+This completes the declared local source milestone with in-memory HNSW. It does
+not accept the five deferred persistence obligations or publish a new release.
