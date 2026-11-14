@@ -33,3 +33,16 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 ## Status
 
 Contract recorded; not a claim that new functionality passes acceptance.
+
+## Backend implementation checkpoint
+
+`crates/aws` now implements a Rust credential-resolution backend with explicit
+pinned provider ordering, role/profile validation, region fallback and redacted
+credential debug output. Twelve isolated Rust provider cases and strict Clippy
+pass; receipts are under `.context/artifacts/popular-extensions/aws-*`.
+The dependency audit adds no new C/C++ crypto or database client library and
+preserves every existing locked package version.
+
+This is not SQL support or completed compatibility acceptance: engine binding,
+legacy table-function behavior, RDS signing, process cancellation, network-provider
+differentials, all 21 originals and platform/package qualification remain open.
