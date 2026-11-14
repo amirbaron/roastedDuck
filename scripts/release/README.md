@@ -1,3 +1,8 @@
+The upcoming candidate is `1.5.6.post3`, adding bundled FTS/VSS and Homebrew
+distribution. Publish only after the existing qualification and artifact gates
+pass. `render_homebrew.py` renders the tap formula from the accepted release's
+SHA256SUMS; it does not publish or invent checksums.
+
 # Release pipeline
 
 The current source candidate is `1.5.6.post2`, a branding and validation-tooling revision

@@ -35,6 +35,22 @@ with tempfile.TemporaryDirectory() as temp:
     with duckdb.connect(database) as con:
         assert con.execute("SELECT * FROM t").fetchall() == [(42, "roastedDuck 🦆")]
         assert con.execute("SELECT * FROM read_parquet(?)", [parquet]).fetchall() == [(42, "roastedDuck 🦆")]
+# Exercise the bundled implementations through the installed Python binding.
+with duckdb.connect(":memory:") as con:
+    con.execute("SET custom_extension_repository='http://127.0.0.1:1'")
+    con.install_extension("fts")
+    con.install_extension("vss")
+    con.load_extension("fts")
+    con.load_extension("vss")
+    assert con.execute("SELECT stem('connections','english')").fetchone() == ("connect",)
+    con.execute("CREATE TABLE docs(id INTEGER, body VARCHAR)")
+    con.execute("INSERT INTO docs VALUES (1,'red fox'),(2,'blue bird')")
+    con.execute("PRAGMA create_fts_index('docs','id','body')")
+    assert con.execute("SELECT id FROM docs WHERE fts_main_docs.match_bm25(id,'fox') IS NOT NULL").fetchall() == [(1,)]
+    con.execute("CREATE TABLE vectors(id INTEGER,v FLOAT[3])")
+    con.execute("INSERT INTO vectors VALUES (1,[1,0,0]),(2,[0,1,0])")
+    con.execute("CREATE INDEX h ON vectors USING HNSW(v)")
+    assert con.execute("SELECT id FROM vectors ORDER BY array_distance(v,[1,0,0]::FLOAT[3]) LIMIT 1").fetchone() == (1,)
 print(json.dumps({"status": "passed", "distribution": "roastedduck", "version": importlib.metadata.version("roastedduck"),
                   "engine_version": duckdb.__duckdb_version__, "extension": duckdb.__file__,
-                  "checks": ["identity", "aggregate", "parameters", "unicode", "rollback", "reopen", "parquet"]}))
+                  "checks": ["identity", "aggregate", "parameters", "unicode", "rollback", "reopen", "parquet", "bundled_fts", "bundled_vss", "offline_install"]}))
