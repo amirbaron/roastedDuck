@@ -236,9 +236,9 @@ fn can_access_bytes(settings: &dyn crate::client::SettingsSource, path: &[u8], d
 }
 
 /// Path prefixes of files other file systems serve (`EXTENSION_FILE_PREFIXES`).
-const REMOTE_PREFIXES: [&str; 12] = [
+const REMOTE_PREFIXES: [&str; 13] = [
     "http://", "https://", "s3://", "s3a://", "s3n://", "gcs://", "gs://", "r2://", "azure://", "az://",
-    "abfss://", "hf://",
+    "abfss://", "abfs://", "hf://",
 ];
 
 /// `FileSystem::IsRemoteFile`.
@@ -409,7 +409,7 @@ fn verify_can_access(path: &[u8], directory: bool) -> roastedduck_common::Result
 
 /// Path prefixes of the file systems extensions register, with the extension
 /// (`EXTENSION_FILE_PREFIXES`).
-const EXTENSION_FILE_PREFIXES: [(&str, &str); 12] = [
+const EXTENSION_FILE_PREFIXES: [(&str, &str); 13] = [
     ("http://", "httpfs"),
     ("https://", "httpfs"),
     ("s3://", "httpfs"),
@@ -421,6 +421,7 @@ const EXTENSION_FILE_PREFIXES: [(&str, &str); 12] = [
     ("azure://", "azure"),
     ("az://", "azure"),
     ("abfss://", "azure"),
+    ("abfs://", "azure"),
     ("hf://", "httpfs"),
 ];
 

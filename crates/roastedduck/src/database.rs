@@ -791,6 +791,8 @@ impl DatabaseInstance {
             if extension == StaticExtension::Azure {
                 roastedduck_function::registered_files::Registry::initialize(&self.object_cache)
                     .register(Arc::new(roastedduck_httpfs::azure::AzureBlobFileSystem))?;
+                roastedduck_function::registered_files::Registry::initialize(&self.object_cache)
+                    .register(Arc::new(roastedduck_httpfs::azure::AzureDfsFileSystem))?;
                 self.secrets.register_azure_type();
                 self.object_cache.put(
                     roastedduck_httpfs::azure::SECRET_RESOLVER_KEY,

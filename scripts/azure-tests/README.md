@@ -31,3 +31,11 @@ raw outcomes and executable hashes. A nonzero exit preserves failures. Azurite
 does not emulate ADLS Gen2 or Azure identity providers; passing these checks does
 not establish those capabilities or live-cloud acceptance. The C++ extension is
 used only by the separate oracle process.
+
+`dfs_control.py` runs 12 paired ADLS SQL controls against `dfs_fixture.py`, a separate
+loopback REST fixture. It verifies SharedKey signatures, hierarchical listings,
+continuation pages, sequential append positions and visibility on flush. Tests
+cover `abfs://` and `abfss://`, reads, the upstream glob restrictions, intermediate
+commits, close=true and partitioned Parquet. It takes `--cli`, `--oracle`,
+`--extension` and `--out`; `--engine cpp` can qualify the fixture independently.
+This is protocol-fixture acceptance, not an Azurite ADLS capability or live Azure.

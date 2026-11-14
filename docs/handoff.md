@@ -1,3 +1,15 @@
+Azure ADLS checkpoint, November 15, 2026: Azure now registers both Blob and
+ADLS (`abfss://` and `abfs://`) Rust filesystems. SharedKey-authenticated protocol
+fixtures pass 12 SQL controls per engine, including directory traversal, paginated
+listing, append/flush, close=true, and partitioned Parquet. The fixture's independent
+C++ qualification also passes. Nine unchanged Blob/VFS originals pass on both
+engines; strict function/HTTPFS/runtime/SLT Clippy passes. Receipts under
+`.context/artifacts/popular-extensions/`: azure-dfs-control-1,
+azure-dfs-oracle-2, azure-dfs-blob-regression-1, azure-dfs-clippy-final.log.
+This adds protocol-fixture acceptance, not live Azure or full extension acceptance.
+Identity providers, remaining originals/options/cancellation, AWS web identity/RDS,
+PostgreSQL, full conformance and publication remain. The all-five goal is active.
+
 Azure Blob checkpoint, November 15, 2026: the all-five goal remains active and
 incomplete. Normal builds now register bundled Azure loading, all secret-provider
 metadata and a Rust Blob filesystem with SharedKey/SAS auth, range reads, listing,

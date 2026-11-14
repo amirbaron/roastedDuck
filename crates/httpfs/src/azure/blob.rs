@@ -43,9 +43,17 @@ impl BlobFile {
         if state.buffer.is_empty() {
             return Ok(());
         }
-        let query = format!("comp=block&blockid={}", encode(&block_id(state.blocks), false));
+        let dfs = self.client.parsed.dfs();
+        let query = if dfs {
+            format!(
+                "action=append&position={}",
+                state.position - state.buffer.len() as u64
+            )
+        } else {
+            format!("comp=block&blockid={}", encode(&block_id(state.blocks), false))
+        };
         let response = self.client.request(
-            "PUT",
+            if dfs { "PATCH" } else { "PUT" },
             Some(&self.client.parsed.path),
             &query,
             Vec::new(),
@@ -59,6 +67,15 @@ impl BlobFile {
 
     fn commit(&self, state: &mut WriteState, force: bool) -> Result<()> {
         if !force && state.committed == state.blocks {
+            return Ok(());
+        }
+        if self.client.parsed.dfs() {
+            let query = format!("action=flush&position={}&close={force}", state.position);
+            let response =
+                self.client
+                    .request("PATCH", Some(&self.client.parsed.path), &query, Vec::new(), &[])?;
+            self.client.check(&response, "FileSync of")?;
+            state.committed = state.blocks;
             return Ok(());
         }
         let mut xml = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?><BlockList>");
@@ -158,7 +175,15 @@ impl FileHandle for BlobFile {
         Ok(())
     }
     fn close(&self) -> Result<()> {
-        self.flush()?;
+        if self.client.parsed.dfs()
+            && let Some(write) = &self.write
+        {
+            let mut state = write.lock().unwrap_or_else(PoisonError::into_inner);
+            self.stage(&mut state)?;
+            self.commit(&mut state, true)?;
+        } else {
+            self.flush()?;
+        }
         if let Some(logger) = &self.logger {
             logger.close();
         }
@@ -185,7 +210,10 @@ impl FileSystem for AzureBlobFileSystem {
         path.starts_with(b"az://") || path.starts_with(b"azure://")
     }
     fn open(&self, path: &[u8], write: bool) -> Result<Arc<dyn FileHandle>> {
-        let client = Client::new(path_text(path)?)?;
+        let mut client = Client::new(path_text(path)?)?;
+        if client.parsed.dfs() && client.parsed.path.len() > 1 && client.parsed.path.ends_with('/') {
+            client.parsed.path.pop();
+        }
         let configured: u64 = setting("azure_write_block_size", "8388608")
             .parse()
             .map_err(io_error)?;
@@ -232,7 +260,18 @@ impl FileSystem for AzureBlobFileSystem {
             logger: FileSystemLogger::open(path),
         };
         if write {
-            file.commit(&mut WriteState::default(), true)?;
+            if file.client.parsed.dfs() {
+                let response = file.client.request(
+                    "PUT",
+                    Some(&file.client.parsed.path),
+                    "resource=file",
+                    Vec::new(),
+                    &[],
+                )?;
+                file.client.check(&response, "Create")?;
+            } else {
+                file.commit(&mut WriteState::default(), true)?;
+            }
         }
         Ok(Arc::new(file))
     }

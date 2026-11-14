@@ -8,10 +8,12 @@ use std::sync::Arc;
 mod blob;
 mod client;
 mod config;
+mod dfs;
 mod url;
 use super::io_error;
 pub use blob::AzureBlobFileSystem;
 pub use config::options;
+pub use dfs::AzureDfsFileSystem;
 
 pub const SECRET_RESOLVER_KEY: &str = "roastedduck.azure_secret_resolver";
 

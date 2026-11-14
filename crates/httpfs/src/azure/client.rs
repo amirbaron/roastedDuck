@@ -45,6 +45,11 @@ impl Client {
             .map(|resolver| resolver.0.resolve(path))
             .transpose()?
             .flatten();
+        if parsed.dfs() && !parsed.qualified() && secret.is_none() {
+            return Err(Error::invalid_input(format!(
+                "Cannot identify the storage account from path '{path}'. To connect anonymously to a storage account easier a fully qualified path has to be provided or secret must be created."
+            )));
+        }
         let text = |key: &str| -> Result<Option<String>> {
             secret
                 .as_ref()
@@ -90,8 +95,10 @@ impl Client {
         let provider = secret.as_ref().map_or("config", |s| s.provider.as_str());
         let mut connection = if secret.is_some() {
             text("connection_string")?
-        } else {
+        } else if !parsed.dfs() {
             Some(setting("azure_storage_connection_string", "")).filter(|s| !s.is_empty())
+        } else {
+            None
         };
         if secret.is_none()
             && let Some(value) = &connection
@@ -157,7 +164,13 @@ impl Client {
             let endpoint = if parsed.qualified() {
                 parsed.endpoint.clone()
             } else if secret.is_some() {
-                text("endpoint")?.unwrap_or_else(|| "blob.core.windows.net".into())
+                text("endpoint")?.unwrap_or_else(|| {
+                    if parsed.dfs() {
+                        "dfs.core.windows.net".into()
+                    } else {
+                        "blob.core.windows.net".into()
+                    }
+                })
             } else {
                 setting("azure_endpoint", "blob.core.windows.net")
             };
@@ -321,9 +334,14 @@ impl Client {
                 self.original
             )));
         }
+        let system = if self.parsed.dfs() {
+            "AzureDfsStorageFileSystem"
+        } else {
+            "AzureBlobStorageFileSystem"
+        };
         Err(io_error(format!(
-            "AzureBlobStorageFileSystem {action} '{}' failed with {code} Reason Phrase: {}",
-            self.original, reason
+            "{system} {action} '{}' failed with {code} Reason Phrase: {reason}",
+            self.original
         )))
     }
 }

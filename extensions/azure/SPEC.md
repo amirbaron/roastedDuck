@@ -80,3 +80,32 @@ baseline selects [azure-identity-cpp 1.13.2](https://raw.githubusercontent.com/m
 and [azure-storage-blobs-cpp 12.15.0](https://raw.githubusercontent.com/microsoft/vcpkg/84bab45d415d22042bd0b9081aea57f362da3f35/ports/azure-storage-blobs-cpp/vcpkg.json).
 Use those source contracts for the remaining providers; do not substitute an
 evolving SDK default chain.
+
+## ADLS protocol checkpoint (November 15)
+
+Normal Azure loading now also registers the Rust ADLS filesystem for `abfss://`
+and `abfs://`, including remote-path access checks and autoload hints. ADLS uses
+directory-aware metadata/listing, recursive traversal with the pinned glob
+restriction, file/directory creation, deletion, append and flush/close operations.
+Blob and ADLS share bounded write buffers but use their distinct commit protocols.
+The no-secret ADLS path rules deliberately differ from Blob's legacy settings,
+matching the pinned implementation.
+
+The independent REST fixture rejects unsigned requests, checks every SharedKey
+signature, and retains append/flush traces. C++ and Rust each pass all 12 SQL
+controls across both schemes, with six close=true flushes each, including
+intermediate commits and partitioned Parquet. The C++ fixture run is separately
+retained. Nine unchanged Blob/VFS originals now pass on both engines, including
+`azure_vfs_ops.test`; the previous eight remain passing. No original was edited.
+
+Receipts: `azure-dfs-control-1/`, `azure-dfs-oracle-2/`,
+`azure-dfs-blob-regression-1/` and `azure-dfs-clippy-final.log` under
+`.context/artifacts/popular-extensions/`. The first fixture attempt lacked two
+required Blob property headers and incorrectly framed HEAD errors; its failed
+oracle receipt remains. Corrections follow the pinned SDK REST response parser.
+Adding serde_json to the transport crate reuses its existing locked version;
+no new package or native dependency is introduced.
+
+This is partial Azure acceptance. Identity token acquisition, remaining cloud
+originals, complete option/cancellation semantics, full conformance and release
+qualification remain required. The profile original's raw failure above remains.
