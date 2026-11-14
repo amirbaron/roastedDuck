@@ -1,14 +1,18 @@
-Current extension work, November 14, 2026: roastedDuck's compatible FTS
-implementation passes the recorded stemming, SQL, and bidirectional storage gates
-in [the FTS spec](fts-extension-spec.md#verified-fts-milestone-2026-11-14).
-The original upstream suite retains two shared directive skips; separately hashed
-supplemental copies execute their unchanged SQL/assertions. Workspace-wide all-target checking and the full conformance ratchet pass. The
-4,880-file run retains 4,789 passes, 76 skips, and 15 documented failures, with zero
-ratchet regressions. VSS hooks pass their scoped storage, optimizer, ART, and opaque-file checks; their
-full conformance run also passes the ratchet with unchanged per-file statuses. Rust HNSW/SQL integration remains in progress;
-[the VSS spec](vss-extension-spec.md) retains the in-memory-only scope and deferred
-persistence obligations. The earlier release dispositions below remain historical
-and do not accept this new extension work.
+Current extension work, November 14, 2026: roastedDuck's compatible FTS and VSS
+implementations are linked in normal builds. FTS's all-stemmer byte differential,
+upstream SQL/directive controls, and bidirectional database checks pass; see
+[the FTS spec](fts-extension-spec.md#verified-fts-milestone-2026-11-14).
+The corrected VSS candidate passes 12 unchanged in-scope original files and five
+memory supplements. Five genuine persistence originals retain raw failures under
+the in-memory-only scope. The full recall matrix passes all 405 Rust ef200 cells:
+324,000 adjudicated measurements, zero failures, lowest cell mean 0.9741 against
+the unchanged 0.95 requirement. Core12, storage110, and runtime21 signed tests,
+strict lint, workspace checking, normal INSTALL/LOAD, FTS interoperability, and
+opaque C++ HNSW-file checks pass. Exact source/binary identities and prior failed
+runs are retained in [the VSS spec](vss-extension-spec.md). Final full conformance
+after the VSS commit remains pending. Earlier FTS/hook conformance receipts accept
+their own candidates only; the historical release dispositions below do not
+publish or accept these new source additions.
 
 Current disposition, November 6, 2026: the owner explicitly approved a physical-device test exception. The goal is complete under that scope: all 22 scoped software collection/review requirements are evidenced; actual iPhone/iPad execution and provisioning remain **unverified, excepted by the owner**. Device builds, signatures and simulator tests retain their verified status. The [delivery index](release-candidate-index-20261106.md) links the new signed disposition, unchanged archive and all known limitations. Older dated statuses below are historical.
 

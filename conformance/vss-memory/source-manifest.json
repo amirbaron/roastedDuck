@@ -1,0 +1,909 @@
+{
+  "upstream_repository": "https://github.com/duckdb/duckdb-vss",
+  "commit": "b833341c8737fd3f3558c7720cc575ae8fc82598",
+  "target_engine": "DuckDB 1.5.6",
+  "status": "SOURCE_PROVENANCE_LEDGER",
+  "originals": [
+    {
+      "path": "test/sql/hnsw/hnsw_basic.test",
+      "sha256": "9584d67787ff3f257cd1fb258b1d9316dd9311d43af31e773f2064e8e4418e4d",
+      "records": 9,
+      "disposition": "deferred persistence original; unchanged",
+      "omitted_obligations": {
+        "records": [
+          1,
+          7,
+          8,
+          9
+        ],
+        "directives": [
+          "file-backed load",
+          "restart"
+        ],
+        "reason": "persistence enablement/checkpoint/restart verification"
+      }
+    },
+    {
+      "path": "test/sql/hnsw/hnsw_crud.test",
+      "sha256": "85e58d9e23112e0cfdff746a7a74accd8cac8a5827bfe59a18f30832cbab9586",
+      "records": 11,
+      "disposition": "deferred persistence original; unchanged",
+      "omitted_obligations": {
+        "records": [
+          1,
+          5
+        ],
+        "directives": [
+          "file-backed load",
+          "restart"
+        ],
+        "recontextualized_records": [
+          9,
+          10,
+          11
+        ],
+        "reason": "checkpoint/restart omitted; later plan/result/compact assert only live-memory state"
+      }
+    },
+    {
+      "path": "test/sql/hnsw/hnsw_experimental_persistence.test",
+      "sha256": "cd460d364e760b9b6e4a5eeebe1733380e8f9bb04cec95a1afe6cf8ba3d1562a",
+      "records": 3,
+      "disposition": "in-scope unchanged rejection original; passed independently on C++ and Rust",
+      "omitted_obligations": {
+        "records": [
+          1,
+          2,
+          3
+        ],
+        "directives": [
+          "all"
+        ],
+        "reason": "not adapted into supplements; unchanged original passes persistence-disabled rejection, not persistent graph execution"
+      }
+    },
+    {
+      "path": "test/sql/hnsw/hnsw_insert.test",
+      "sha256": "0cc786a8203a6e899c8ad39e08efc68b1fd4fc1ad857f819a14f86922eb8ce2d",
+      "records": 12,
+      "disposition": "deferred persistence original; unchanged",
+      "omitted_obligations": {
+        "records": [
+          1,
+          5,
+          9,
+          12
+        ],
+        "directives": [
+          "file-backed load",
+          "restart (three occurrences)"
+        ],
+        "reason": "durability and post-restart survival-only counts"
+      }
+    },
+    {
+      "path": "test/sql/hnsw/hnsw_insert_wal.test",
+      "sha256": "ac6cf8ba98b47f9e93ffdbf03f7aff96aedb0324dccfa6815896780efe1b8c4c",
+      "records": 12,
+      "disposition": "deferred persistence original; unchanged",
+      "omitted_obligations": {
+        "records": [
+          1,
+          5,
+          9,
+          12
+        ],
+        "directives": [
+          "file-backed load",
+          "restart (three occurrences)",
+          "require vector_size 2048"
+        ],
+        "shared_selected_records": [
+          2,
+          3,
+          4,
+          6,
+          7,
+          8,
+          10,
+          11
+        ],
+        "reason": "shared insertion blocks covered once; no WAL/restart claim"
+      }
+    },
+    {
+      "path": "test/sql/slow/hnsw_reclaim_storage.test_slow",
+      "sha256": "38aa6a990b75d0324aa1a18e5b31cd6f8c636eda9276310ad36dbd1a6f6cb64f",
+      "records": 21,
+      "disposition": "deferred persistence original; unchanged",
+      "omitted_obligations": {
+        "records": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21
+        ],
+        "directives": [
+          "all including loop"
+        ],
+        "reason": "entire million-vector checkpoint/block-reclamation contract deferred"
+      }
+    }
+  ],
+  "supplements": [
+    {
+      "path": "basic_before_checkpoint.test",
+      "kind": "selected upstream memory behavior",
+      "sha256": "0c62e65f45eb4fb53af5b5943e2cd1175d05b6ef1831edb0f4c51fb09cd27423",
+      "records": [
+        {
+          "record": 2,
+          "start_line": 12,
+          "end_line": 13,
+          "block_sha256": "da5aed33cf2e9ddd69be728a39eba69c2ab0c977cbaade94e18df62f50cde607",
+          "sql_sha256": "c2d6120fe227af168ae8c2185b271d773cec518777e51c3573bf619a5fe1cf28",
+          "source": "test/sql/hnsw/hnsw_basic.test",
+          "output_start_line": 11
+        },
+        {
+          "record": 3,
+          "start_line": 15,
+          "end_line": 16,
+          "block_sha256": "be27cfd81bec177878b1bf294a71fcaae98986dd4c06fac148ba82b7f569b5f7",
+          "sql_sha256": "feb424d3b9da372491136e77d5a98066db89e4d36ebe18d3b082ab4c1dac461d",
+          "source": "test/sql/hnsw/hnsw_basic.test",
+          "output_start_line": 15
+        },
+        {
+          "record": 4,
+          "start_line": 18,
+          "end_line": 19,
+          "block_sha256": "110b2eacc65e4cdf70d374ac1a337a37da0e9739b31efcb01556ee4159983e77",
+          "sql_sha256": "3d55ec72f8db09d6c67d8d11311bc806b5eada625cf57260810e3680c750710f",
+          "source": "test/sql/hnsw/hnsw_basic.test",
+          "output_start_line": 19
+        },
+        {
+          "record": 5,
+          "start_line": 22,
+          "end_line": 25,
+          "block_sha256": "22572579096977ce0f04d89fa662df48925c4aefacf5d1c74faafd1743aa624b",
+          "sql_sha256": "1ee11ff9899b03af04133d2886d5e31e42039ac4700b308eeeb4fe067be901fe",
+          "source": "test/sql/hnsw/hnsw_basic.test",
+          "output_start_line": 23
+        },
+        {
+          "record": 6,
+          "start_line": 29,
+          "end_line": 34,
+          "block_sha256": "f4e6c9762fcefcc2058727121bc4e9b325d2cef6e977ba690a640b18d6e8f1c2",
+          "sql_sha256": "e67c6d19ee321af81c9362d55af2bc02df60a1ebc44a20095bd97f707d33df62",
+          "source": "test/sql/hnsw/hnsw_basic.test",
+          "output_start_line": 29
+        }
+      ]
+    },
+    {
+      "path": "crud_without_restart.test",
+      "kind": "selected upstream memory behavior",
+      "sha256": "db9738c9d4018ce1960c7dc3f48162f52a5878d3cd6fa3a83c625d1315f146db",
+      "records": [
+        {
+          "record": 2,
+          "start_line": 12,
+          "end_line": 13,
+          "block_sha256": "da5aed33cf2e9ddd69be728a39eba69c2ab0c977cbaade94e18df62f50cde607",
+          "sql_sha256": "c2d6120fe227af168ae8c2185b271d773cec518777e51c3573bf619a5fe1cf28",
+          "source": "test/sql/hnsw/hnsw_crud.test",
+          "output_start_line": 11
+        },
+        {
+          "record": 3,
+          "start_line": 15,
+          "end_line": 16,
+          "block_sha256": "dd07fadae5f551c62a840dffa72971cf97357e1d13f5ec9d8353dcc2b3e2172a",
+          "sql_sha256": "27d59c802c7c843a274fc62089d2c26692bd4ef9e14f0f591eb13d78e85cac31",
+          "source": "test/sql/hnsw/hnsw_crud.test",
+          "output_start_line": 15
+        },
+        {
+          "record": 4,
+          "start_line": 18,
+          "end_line": 19,
+          "block_sha256": "110b2eacc65e4cdf70d374ac1a337a37da0e9739b31efcb01556ee4159983e77",
+          "sql_sha256": "3d55ec72f8db09d6c67d8d11311bc806b5eada625cf57260810e3680c750710f",
+          "source": "test/sql/hnsw/hnsw_crud.test",
+          "output_start_line": 19
+        },
+        {
+          "record": 6,
+          "start_line": 24,
+          "end_line": 25,
+          "block_sha256": "5f2e8faf974cbca2b4eeaa9fb5cc6fa65e82d71d36d2b29164581aa36608a86a",
+          "sql_sha256": "01d73bdb7e2cfe864f3830907567726aa1e70cef2ce253e928454fb26227d2f2",
+          "source": "test/sql/hnsw/hnsw_crud.test",
+          "output_start_line": 23
+        },
+        {
+          "record": 7,
+          "start_line": 27,
+          "end_line": 28,
+          "block_sha256": "602e6355901850ae972bafe374b4c348446bea243cad444b6762e2f76b787947",
+          "sql_sha256": "6e1eaebc472d7db95e990e2fafa132b9894aafef79dcead7e4d70105bc3f3f1c",
+          "source": "test/sql/hnsw/hnsw_crud.test",
+          "output_start_line": 27
+        },
+        {
+          "record": 8,
+          "start_line": 30,
+          "end_line": 33,
+          "block_sha256": "222921d9bf252befade4e4c2a50e1b0360e49f74a5f13b81f45a35898955ce64",
+          "sql_sha256": "f3359d4ac0b1e6e1debfa20dc7bd1548eb97fbca3c8aa2517090f3b5149cd63b",
+          "source": "test/sql/hnsw/hnsw_crud.test",
+          "output_start_line": 31
+        },
+        {
+          "record": 9,
+          "start_line": 39,
+          "end_line": 42,
+          "block_sha256": "22572579096977ce0f04d89fa662df48925c4aefacf5d1c74faafd1743aa624b",
+          "sql_sha256": "1ee11ff9899b03af04133d2886d5e31e42039ac4700b308eeeb4fe067be901fe",
+          "source": "test/sql/hnsw/hnsw_crud.test",
+          "output_start_line": 37
+        },
+        {
+          "record": 10,
+          "start_line": 44,
+          "end_line": 47,
+          "block_sha256": "ea06d7d66ea38f03e39308db7eeebba5e38139492330824c78d79d7d67c27ecd",
+          "sql_sha256": "3ca250786f29dfc3829eac3cdc6f1d9469b63ea5f32c60220965460d60e81126",
+          "source": "test/sql/hnsw/hnsw_crud.test",
+          "output_start_line": 43
+        },
+        {
+          "record": 11,
+          "start_line": 49,
+          "end_line": 50,
+          "block_sha256": "0bdd4ac16e12da864a7332951fc2af2544fb310e51da5264530623d0edfcc34d",
+          "sql_sha256": "300f0a887f3cefb3766b75531221aa0e62351818d7f9bd914f35aae453104ec3",
+          "source": "test/sql/hnsw/hnsw_crud.test",
+          "output_start_line": 49
+        }
+      ]
+    },
+    {
+      "path": "insert_without_restart.test",
+      "kind": "selected upstream memory behavior",
+      "sha256": "2ebfd5a4abca556c6654820731cc9309114c6c180a39a0a62ccbf8f885471882",
+      "records": [
+        {
+          "record": 2,
+          "start_line": 14,
+          "end_line": 15,
+          "block_sha256": "da5aed33cf2e9ddd69be728a39eba69c2ab0c977cbaade94e18df62f50cde607",
+          "sql_sha256": "c2d6120fe227af168ae8c2185b271d773cec518777e51c3573bf619a5fe1cf28",
+          "source": "test/sql/hnsw/hnsw_insert.test",
+          "output_start_line": 11,
+          "also_matches": {
+            "record": 2,
+            "start_line": 26,
+            "end_line": 27,
+            "block_sha256": "da5aed33cf2e9ddd69be728a39eba69c2ab0c977cbaade94e18df62f50cde607",
+            "sql_sha256": "c2d6120fe227af168ae8c2185b271d773cec518777e51c3573bf619a5fe1cf28",
+            "source": "test/sql/hnsw/hnsw_insert_wal.test"
+          }
+        },
+        {
+          "record": 3,
+          "start_line": 18,
+          "end_line": 19,
+          "block_sha256": "110b2eacc65e4cdf70d374ac1a337a37da0e9739b31efcb01556ee4159983e77",
+          "sql_sha256": "3d55ec72f8db09d6c67d8d11311bc806b5eada625cf57260810e3680c750710f",
+          "source": "test/sql/hnsw/hnsw_insert.test",
+          "output_start_line": 15,
+          "also_matches": {
+            "record": 3,
+            "start_line": 30,
+            "end_line": 31,
+            "block_sha256": "110b2eacc65e4cdf70d374ac1a337a37da0e9739b31efcb01556ee4159983e77",
+            "sql_sha256": "3d55ec72f8db09d6c67d8d11311bc806b5eada625cf57260810e3680c750710f",
+            "source": "test/sql/hnsw/hnsw_insert_wal.test"
+          }
+        },
+        {
+          "record": 4,
+          "start_line": 21,
+          "end_line": 24,
+          "block_sha256": "c381438180d8573ca2f50847b88c5a2aba068f4c1e734cf6322cbb69cbeb51a6",
+          "sql_sha256": "a0f30c34597474440c37e1c2e9c7dc4a2a166fce2dd8316ce91ee9ec1c9a3ae9",
+          "source": "test/sql/hnsw/hnsw_insert.test",
+          "output_start_line": 19,
+          "also_matches": {
+            "record": 4,
+            "start_line": 33,
+            "end_line": 36,
+            "block_sha256": "c381438180d8573ca2f50847b88c5a2aba068f4c1e734cf6322cbb69cbeb51a6",
+            "sql_sha256": "a0f30c34597474440c37e1c2e9c7dc4a2a166fce2dd8316ce91ee9ec1c9a3ae9",
+            "source": "test/sql/hnsw/hnsw_insert_wal.test"
+          }
+        },
+        {
+          "record": 6,
+          "start_line": 33,
+          "end_line": 34,
+          "block_sha256": "8805f9718a4e3b6e4e0d4bbe3399a14139addd9c0b2e031d08bafe68a5eecf1f",
+          "sql_sha256": "d71fa84f6e6849d647bc1dc5c60954abba6aa13a56fcb3a76973bcde6c180096",
+          "source": "test/sql/hnsw/hnsw_insert.test",
+          "output_start_line": 25,
+          "also_matches": {
+            "record": 6,
+            "start_line": 45,
+            "end_line": 46,
+            "block_sha256": "8805f9718a4e3b6e4e0d4bbe3399a14139addd9c0b2e031d08bafe68a5eecf1f",
+            "sql_sha256": "d71fa84f6e6849d647bc1dc5c60954abba6aa13a56fcb3a76973bcde6c180096",
+            "source": "test/sql/hnsw/hnsw_insert_wal.test"
+          }
+        },
+        {
+          "record": 7,
+          "start_line": 36,
+          "end_line": 37,
+          "block_sha256": "273e928027dfe6803575042b075ec31fba729b3f29a13fe0af28befba58e4103",
+          "sql_sha256": "028f71afea034a1608c1790b013d866604007dc7f00adc0beae009911538bdb9",
+          "source": "test/sql/hnsw/hnsw_insert.test",
+          "output_start_line": 29,
+          "also_matches": {
+            "record": 7,
+            "start_line": 48,
+            "end_line": 49,
+            "block_sha256": "273e928027dfe6803575042b075ec31fba729b3f29a13fe0af28befba58e4103",
+            "sql_sha256": "028f71afea034a1608c1790b013d866604007dc7f00adc0beae009911538bdb9",
+            "source": "test/sql/hnsw/hnsw_insert_wal.test"
+          }
+        },
+        {
+          "record": 8,
+          "start_line": 39,
+          "end_line": 42,
+          "block_sha256": "b423c2a56e88c485ca981fc3125200104edeba5a466b74ecb01e720ae5016d07",
+          "sql_sha256": "a0f30c34597474440c37e1c2e9c7dc4a2a166fce2dd8316ce91ee9ec1c9a3ae9",
+          "source": "test/sql/hnsw/hnsw_insert.test",
+          "output_start_line": 33,
+          "also_matches": {
+            "record": 8,
+            "start_line": 51,
+            "end_line": 54,
+            "block_sha256": "b423c2a56e88c485ca981fc3125200104edeba5a466b74ecb01e720ae5016d07",
+            "sql_sha256": "a0f30c34597474440c37e1c2e9c7dc4a2a166fce2dd8316ce91ee9ec1c9a3ae9",
+            "source": "test/sql/hnsw/hnsw_insert_wal.test"
+          }
+        },
+        {
+          "record": 10,
+          "start_line": 54,
+          "end_line": 55,
+          "block_sha256": "73d50cb49fb395174c5d15c2c6e5ae1a19a172b13f4cf4bd6248d55c4b08efbc",
+          "sql_sha256": "dda6e5408fd5b2989a1a0fac83a2b31ad4af1f2aaa52bc1ffa18e50b5a233600",
+          "source": "test/sql/hnsw/hnsw_insert.test",
+          "output_start_line": 39,
+          "also_matches": {
+            "record": 10,
+            "start_line": 66,
+            "end_line": 67,
+            "block_sha256": "73d50cb49fb395174c5d15c2c6e5ae1a19a172b13f4cf4bd6248d55c4b08efbc",
+            "sql_sha256": "dda6e5408fd5b2989a1a0fac83a2b31ad4af1f2aaa52bc1ffa18e50b5a233600",
+            "source": "test/sql/hnsw/hnsw_insert_wal.test"
+          }
+        },
+        {
+          "record": 11,
+          "start_line": 58,
+          "end_line": 61,
+          "block_sha256": "ef0c16aeeac5880b25123ae3dbbeb1dfe5afd00b4ad8a8829619bf58b46c5111",
+          "sql_sha256": "a0f30c34597474440c37e1c2e9c7dc4a2a166fce2dd8316ce91ee9ec1c9a3ae9",
+          "source": "test/sql/hnsw/hnsw_insert.test",
+          "output_start_line": 43,
+          "also_matches": {
+            "record": 11,
+            "start_line": 70,
+            "end_line": 73,
+            "block_sha256": "ef0c16aeeac5880b25123ae3dbbeb1dfe5afd00b4ad8a8829619bf58b46c5111",
+            "sql_sha256": "a0f30c34597474440c37e1c2e9c7dc4a2a166fce2dd8316ce91ee9ec1c9a3ae9",
+            "source": "test/sql/hnsw/hnsw_insert_wal.test"
+          }
+        }
+      ]
+    },
+    {
+      "path": "native_transaction_mutations.test",
+      "kind": "new separately authored in-memory supplement",
+      "sha256": "bd0b05236cf8523472ce2ac632c4a84efa5d42d3b28db565cc142a19c1e12d20",
+      "upstream_assertions_reused": false,
+      "records": [
+        {
+          "record": 1,
+          "start_line": 10,
+          "end_line": 11,
+          "block_sha256": "6e0235133742b63b6bca81052aceac4eccb036b27d226170e0b604ccae23c7db",
+          "sql_sha256": "e11a468408cd4669f838bfb5dac917bca61cdddfa7bfd09bd6f9576617cd9084",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 2,
+          "start_line": 13,
+          "end_line": 14,
+          "block_sha256": "f34ee28db0df7d5ae1e0a6676b3ecbd58b5a8f8a94f5f0848520bad472256efd",
+          "sql_sha256": "9025c505f6534675e0967c55a4eabb654e3b2c11ef0e16b41f08f1e400c86c0d",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 3,
+          "start_line": 16,
+          "end_line": 17,
+          "block_sha256": "382b94a304b338d1d00afbd67def65a95814f83d5948a366570d4fb4137b71c6",
+          "sql_sha256": "01fe9975eeff84dfc6f6badc80e0d51cd1083cc0c3180743556a7cf4a9c66db7",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 4,
+          "start_line": 19,
+          "end_line": 22,
+          "block_sha256": "42758b65715f42ceb832b3d58386342d9027dd6bf5b71f39f08916e851dffad2",
+          "sql_sha256": "2b1d06a0743ccb8ca85498dd3321fa12d5482f6018898f6dffda3ef245400322",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 5,
+          "start_line": 24,
+          "end_line": 27,
+          "block_sha256": "203456d8c24bc39be7f422b9853034a3aced24ad13c27d51bb7d7cb8ae1436ab",
+          "sql_sha256": "0a9e4c206c1bd053f5a7da199c47383890ad57467f68ef89cbc8996f9ad98643",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 6,
+          "start_line": 29,
+          "end_line": 30,
+          "block_sha256": "1d350d59baf4cf886d32bbc576f46a1cbd8ae467d2ad50801b6c743bc8772518",
+          "sql_sha256": "b3c34a6baecf4bc98f21f56f9f1fc003051b61aaec14fcd8d7e80b6341f2ecce",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 7,
+          "start_line": 32,
+          "end_line": 33,
+          "block_sha256": "b3ee9d6188226ff806308f6bc130e25b59877a2d03d9efd1aef7f7460b185701",
+          "sql_sha256": "08ce9b86feed4b083846f735eee9e2e7d759f4820839f8d4d6a4f1e88c89ae91",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 8,
+          "start_line": 35,
+          "end_line": 36,
+          "block_sha256": "734ce9ea57c144989fea5d47ff92268bfca8a3177c460147dbb8e8c69e4a9985",
+          "sql_sha256": "aea6dc41195f18dbfa6fb2aca77c6e6c15c3f077ffe03708494739b454b394c5",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 9,
+          "start_line": 38,
+          "end_line": 39,
+          "block_sha256": "ac64b46ddfc0e6cbfec466bb734639a96660890176f435c742b4733d27cd4194",
+          "sql_sha256": "04daa5b166e9ff677f581c165a0355021849b479228b6b8a947b109f5ecb9347",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 10,
+          "start_line": 41,
+          "end_line": 46,
+          "block_sha256": "79feaad5b617cfa0d6b9d19a3c8aef410c3858dba1eddeacbed9c06dc91196c2",
+          "sql_sha256": "b7b9f1c8568a9dfa3d5e3eb8c848521e9b2089b4ed35dcabe9d814fc6160b48f",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 11,
+          "start_line": 48,
+          "end_line": 49,
+          "block_sha256": "64efccdef02a8d8372f93eebb77c353d8619988ca3d12c1af15129bf23a98011",
+          "sql_sha256": "3c41bb5fdf19c0e14c34a58b7dd7ee6c6a1ee9fb70b77b5ce0fe2788a689c8a8",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 12,
+          "start_line": 51,
+          "end_line": 56,
+          "block_sha256": "acc1ca8d1dee4bffd6f02f19f75559016a71473f542c1ff54ef700011a2e979f",
+          "sql_sha256": "b7b9f1c8568a9dfa3d5e3eb8c848521e9b2089b4ed35dcabe9d814fc6160b48f",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 13,
+          "start_line": 58,
+          "end_line": 61,
+          "block_sha256": "203456d8c24bc39be7f422b9853034a3aced24ad13c27d51bb7d7cb8ae1436ab",
+          "sql_sha256": "0a9e4c206c1bd053f5a7da199c47383890ad57467f68ef89cbc8996f9ad98643",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 14,
+          "start_line": 63,
+          "end_line": 64,
+          "block_sha256": "1d350d59baf4cf886d32bbc576f46a1cbd8ae467d2ad50801b6c743bc8772518",
+          "sql_sha256": "b3c34a6baecf4bc98f21f56f9f1fc003051b61aaec14fcd8d7e80b6341f2ecce",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 15,
+          "start_line": 66,
+          "end_line": 67,
+          "block_sha256": "b3ee9d6188226ff806308f6bc130e25b59877a2d03d9efd1aef7f7460b185701",
+          "sql_sha256": "08ce9b86feed4b083846f735eee9e2e7d759f4820839f8d4d6a4f1e88c89ae91",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 16,
+          "start_line": 69,
+          "end_line": 70,
+          "block_sha256": "734ce9ea57c144989fea5d47ff92268bfca8a3177c460147dbb8e8c69e4a9985",
+          "sql_sha256": "aea6dc41195f18dbfa6fb2aca77c6e6c15c3f077ffe03708494739b454b394c5",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 17,
+          "start_line": 72,
+          "end_line": 73,
+          "block_sha256": "ac64b46ddfc0e6cbfec466bb734639a96660890176f435c742b4733d27cd4194",
+          "sql_sha256": "04daa5b166e9ff677f581c165a0355021849b479228b6b8a947b109f5ecb9347",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 18,
+          "start_line": 75,
+          "end_line": 76,
+          "block_sha256": "2f0161bea097897e4fca0313a3f069a159952b7aa04be3670a3972b920b420b9",
+          "sql_sha256": "e83e8c1f4ad612a5bd92067c29bdb9b1597fd541ebed41026079aabd6a4a5bf3",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 19,
+          "start_line": 78,
+          "end_line": 83,
+          "block_sha256": "79feaad5b617cfa0d6b9d19a3c8aef410c3858dba1eddeacbed9c06dc91196c2",
+          "sql_sha256": "b7b9f1c8568a9dfa3d5e3eb8c848521e9b2089b4ed35dcabe9d814fc6160b48f",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 20,
+          "start_line": 85,
+          "end_line": 88,
+          "block_sha256": "bec0553f3794e3badda877331c4f130ca3b1eaa24e1e32f67afc7f4b28a28cbb",
+          "sql_sha256": "1078cfa30c711684a138b1ebe3d0eb5c715e8af6a17bd7d828d038175b81a3d8",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 21,
+          "start_line": 90,
+          "end_line": 93,
+          "block_sha256": "342de4d296bad45b9150a55721dd85391c53f3ee6efcf43fc1d583d82bf59987",
+          "sql_sha256": "0a9e4c206c1bd053f5a7da199c47383890ad57467f68ef89cbc8996f9ad98643",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 22,
+          "start_line": 95,
+          "end_line": 96,
+          "block_sha256": "e5024a383aafe9dc9718697fbd73545dc82cae11191302990498a98bdcf9503e",
+          "sql_sha256": "af20e606e2040ba7190e93c8ed3cf9f4a4927416a274e6a96bb2513eefa6fe33",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 23,
+          "start_line": 98,
+          "end_line": 101,
+          "block_sha256": "e490bfa573eb8cc3791efc3653a4ab3ce2f6a2e4d9e707c4bb8cc4eb9c8f0f8f",
+          "sql_sha256": "a608c3a7123863c7ecbdb099115f3ab1b5e60524e1ebd719615374297e255752",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 24,
+          "start_line": 103,
+          "end_line": 104,
+          "block_sha256": "1d350d59baf4cf886d32bbc576f46a1cbd8ae467d2ad50801b6c743bc8772518",
+          "sql_sha256": "b3c34a6baecf4bc98f21f56f9f1fc003051b61aaec14fcd8d7e80b6341f2ecce",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 25,
+          "start_line": 106,
+          "end_line": 107,
+          "block_sha256": "6296e6504ee7599669121e1d784cc5d449d26ef4a163ae5bb8ec2bc2320c49ba",
+          "sql_sha256": "7dd3b8910547840089fd0ac7a5fcd265bad010b9143b2e74396557c67aff26cf",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 26,
+          "start_line": 109,
+          "end_line": 110,
+          "block_sha256": "64efccdef02a8d8372f93eebb77c353d8619988ca3d12c1af15129bf23a98011",
+          "sql_sha256": "3c41bb5fdf19c0e14c34a58b7dd7ee6c6a1ee9fb70b77b5ce0fe2788a689c8a8",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 27,
+          "start_line": 112,
+          "end_line": 115,
+          "block_sha256": "e7cd0ea9f730e977d10762f07c9ba75407747f4b986c00afa489eb800bfb9e8b",
+          "sql_sha256": "d2f172b97ce2494aa18dbe8559f4e02e390a593af4265dc6cf420bacdec002cf",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 28,
+          "start_line": 117,
+          "end_line": 118,
+          "block_sha256": "50118bbe1bd5f394098804b15218b554127fb949538e1f8ab0a2fe7287f2aa94",
+          "sql_sha256": "c3cc453206e492e66241405436b586f2843058b154f28e7f40067e6ce3762a43",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 29,
+          "start_line": 120,
+          "end_line": 121,
+          "block_sha256": "e5024a383aafe9dc9718697fbd73545dc82cae11191302990498a98bdcf9503e",
+          "sql_sha256": "af20e606e2040ba7190e93c8ed3cf9f4a4927416a274e6a96bb2513eefa6fe33",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 30,
+          "start_line": 123,
+          "end_line": 126,
+          "block_sha256": "816469cebdf59f1d967a29d7b52a54f517abbf27d721187787d79619ab0df6f2",
+          "sql_sha256": "a608c3a7123863c7ecbdb099115f3ab1b5e60524e1ebd719615374297e255752",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 31,
+          "start_line": 128,
+          "end_line": 131,
+          "block_sha256": "c0fe0ad50e7b0dcc7ab2e97b8e742b71d2a74a1decc34a2a9783321d5f1a4ef9",
+          "sql_sha256": "1078cfa30c711684a138b1ebe3d0eb5c715e8af6a17bd7d828d038175b81a3d8",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        }
+      ]
+    },
+    {
+      "path": "native_empty_null_drop_recreate.test",
+      "kind": "new separately authored in-memory supplement",
+      "sha256": "8380e641c29e0c42a1c5c97c63149c869be05bc4455fe3c96bc1c93be5219f96",
+      "upstream_assertions_reused": false,
+      "records": [
+        {
+          "record": 1,
+          "start_line": 10,
+          "end_line": 11,
+          "block_sha256": "e3803783bf28e1ba784ecc4043b8fdf71b86662d9980eb79efe5085afb9d4dde",
+          "sql_sha256": "bc66e6678a6eedc40ceebe2d64c5824a8e582ad4610e7bfffc42e0bf0760ec44",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 2,
+          "start_line": 13,
+          "end_line": 14,
+          "block_sha256": "cfa8f896bf4b1eecc467a5d2e0f89d912698fd5df69c0e8f7365552932acca32",
+          "sql_sha256": "76188171bc8980908874fdec012b8ab1e44ea88a5fcac183d0f20fe970a975b9",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 3,
+          "start_line": 16,
+          "end_line": 19,
+          "block_sha256": "7aebf365224ca132c405fc975f25b31f8e6398c172c43882cd32ce53f5bb1e24",
+          "sql_sha256": "f3f0d2262eb42a58e2f5f999dc847384b6bd86f30223fc00c169fd5fb127ed6f",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 4,
+          "start_line": 21,
+          "end_line": 23,
+          "block_sha256": "4f53f1a2418de2b4fd8a0e0a35c86e35ea29713142444616690471fb68cb949a",
+          "sql_sha256": "6cdb0722ad315457d53c4b4799c309b9741683879682969d38f153e8d74a72aa",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 5,
+          "start_line": 25,
+          "end_line": 26,
+          "block_sha256": "4cc1863bbdb631dee4e8c9622bf2ae9f22447bf79f4d89920aa27e05e72ac5d8",
+          "sql_sha256": "fd38ad2db5553627fe2fb697c3b520a34467b3d6d99c8029db76aa9af87a122f",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 6,
+          "start_line": 28,
+          "end_line": 31,
+          "block_sha256": "41cfa97ce7f9ca2fac84bbc6e372791c0bc6fa7374abfd2a78cc3c2a32aa5859",
+          "sql_sha256": "f3f0d2262eb42a58e2f5f999dc847384b6bd86f30223fc00c169fd5fb127ed6f",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 7,
+          "start_line": 33,
+          "end_line": 36,
+          "block_sha256": "a8f49bf72913ad410d6f6f6986761de0a53b0ca1ca8d59e610cbf94d21d5ec9c",
+          "sql_sha256": "6cdb0722ad315457d53c4b4799c309b9741683879682969d38f153e8d74a72aa",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 8,
+          "start_line": 38,
+          "end_line": 39,
+          "block_sha256": "06b3d5c697201d069d78bdf3ad7ae1b0ba9c1c825dcb4b009c2c3afccd45caf6",
+          "sql_sha256": "a39fac034feba41d8023fe3fb40fa2632b403355535b799e295dc2d385f9b83b",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 9,
+          "start_line": 41,
+          "end_line": 42,
+          "block_sha256": "8164499ec199326b1c2bcfe96d39724c5b0a899d7f85c370d7c8dabe0c93455b",
+          "sql_sha256": "29e325bf64d77186b4282f34f5c811b74d3fce4d5e03f331dff2fc8094639fec",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 10,
+          "start_line": 44,
+          "end_line": 47,
+          "block_sha256": "7aebf365224ca132c405fc975f25b31f8e6398c172c43882cd32ce53f5bb1e24",
+          "sql_sha256": "f3f0d2262eb42a58e2f5f999dc847384b6bd86f30223fc00c169fd5fb127ed6f",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 11,
+          "start_line": 49,
+          "end_line": 52,
+          "block_sha256": "10097e2a4c9310ce868de95870d1738df9762ca7324ec58a155b47d64cfff59b",
+          "sql_sha256": "6008a5b656b1a83b0963adc25478475245ad6d82a7535af37eddef06dd1b4b1e",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 12,
+          "start_line": 54,
+          "end_line": 55,
+          "block_sha256": "a16527c07477f92e28b2f49bfec1d15f68dadc648d3c87f738ce4ac5753d2524",
+          "sql_sha256": "1dee07fccf67ac5211bee1a93d53d9b608227c4a0c97f73a7784dd44951b6e25",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 13,
+          "start_line": 57,
+          "end_line": 58,
+          "block_sha256": "1d350d59baf4cf886d32bbc576f46a1cbd8ae467d2ad50801b6c743bc8772518",
+          "sql_sha256": "b3c34a6baecf4bc98f21f56f9f1fc003051b61aaec14fcd8d7e80b6341f2ecce",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 14,
+          "start_line": 60,
+          "end_line": 61,
+          "block_sha256": "770809abef81fda87159f372feab5decec955287b0de2e5274e1dd20ecb30645",
+          "sql_sha256": "a95e848262804e077b96e72aee8fc5828051b8252f8e22844bc64884882a413b",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 15,
+          "start_line": 63,
+          "end_line": 64,
+          "block_sha256": "64efccdef02a8d8372f93eebb77c353d8619988ca3d12c1af15129bf23a98011",
+          "sql_sha256": "3c41bb5fdf19c0e14c34a58b7dd7ee6c6a1ee9fb70b77b5ce0fe2788a689c8a8",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 16,
+          "start_line": 66,
+          "end_line": 69,
+          "block_sha256": "7eb214782091bf2138ce56614a88e2d2f19ee891014efc285ced67cbe17c2855",
+          "sql_sha256": "d6b74fd2a5ad0d11b323c365d10311352df8f3b65c8dba1b44284e2fcf7232b1",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 17,
+          "start_line": 71,
+          "end_line": 74,
+          "block_sha256": "35dfe18180c27a369ca78721ad15f50edd3f4f2a3e2b37da111e07e1c7f50fe8",
+          "sql_sha256": "e4dd7e22130da6c138de01411b727d62772b4e826d6b738c81fce0ddc19508d2",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 18,
+          "start_line": 76,
+          "end_line": 77,
+          "block_sha256": "770809abef81fda87159f372feab5decec955287b0de2e5274e1dd20ecb30645",
+          "sql_sha256": "a95e848262804e077b96e72aee8fc5828051b8252f8e22844bc64884882a413b",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 19,
+          "start_line": 79,
+          "end_line": 82,
+          "block_sha256": "08a36ec3d201fa97e279538143702f6bd335c2eb5677b66be7ecfb2f795f9c9d",
+          "sql_sha256": "fbc589b3a8c74edffcfce22a7d7aef1b117b9271b0ba49d3c1829111b1688000",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 20,
+          "start_line": 84,
+          "end_line": 85,
+          "block_sha256": "1d350d59baf4cf886d32bbc576f46a1cbd8ae467d2ad50801b6c743bc8772518",
+          "sql_sha256": "b3c34a6baecf4bc98f21f56f9f1fc003051b61aaec14fcd8d7e80b6341f2ecce",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 21,
+          "start_line": 87,
+          "end_line": 88,
+          "block_sha256": "84202a1bbf180e66c6ab3101f5d93a645ed61dd63ef41fa0b88c18b3bc802027",
+          "sql_sha256": "8cf96511f739725b13748267dcbbb2a9e5ed454196de2cbf35d0028c8a89446f",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 22,
+          "start_line": 90,
+          "end_line": 91,
+          "block_sha256": "64efccdef02a8d8372f93eebb77c353d8619988ca3d12c1af15129bf23a98011",
+          "sql_sha256": "3c41bb5fdf19c0e14c34a58b7dd7ee6c6a1ee9fb70b77b5ce0fe2788a689c8a8",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 23,
+          "start_line": 93,
+          "end_line": 96,
+          "block_sha256": "08a36ec3d201fa97e279538143702f6bd335c2eb5677b66be7ecfb2f795f9c9d",
+          "sql_sha256": "fbc589b3a8c74edffcfce22a7d7aef1b117b9271b0ba49d3c1829111b1688000",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 24,
+          "start_line": 98,
+          "end_line": 99,
+          "block_sha256": "cfa8f896bf4b1eecc467a5d2e0f89d912698fd5df69c0e8f7365552932acca32",
+          "sql_sha256": "76188171bc8980908874fdec012b8ab1e44ea88a5fcac183d0f20fe970a975b9",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 25,
+          "start_line": 101,
+          "end_line": 104,
+          "block_sha256": "41cfa97ce7f9ca2fac84bbc6e372791c0bc6fa7374abfd2a78cc3c2a32aa5859",
+          "sql_sha256": "f3f0d2262eb42a58e2f5f999dc847384b6bd86f30223fc00c169fd5fb127ed6f",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        },
+        {
+          "record": 26,
+          "start_line": 106,
+          "end_line": 109,
+          "block_sha256": "35dfe18180c27a369ca78721ad15f50edd3f4f2a3e2b37da111e07e1c7f50fe8",
+          "sql_sha256": "e4dd7e22130da6c138de01411b727d62772b4e826d6b738c81fce0ddc19508d2",
+          "provenance": "newly authored supplement; no upstream assertion substitution"
+        }
+      ]
+    }
+  ],
+  "formatting_repair": "Added mandatory blank record separators between header directives after both engines rejected the initial files before SQL execution; SQL/assertion block hashes unchanged.",
+  "execution_receipts": "See README.md: verified execution and remaining gates"
+}

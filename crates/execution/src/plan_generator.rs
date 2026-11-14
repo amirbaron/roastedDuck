@@ -1272,6 +1272,7 @@ impl PlanGenerator {
                     "CREATE_INDEX",
                     types,
                     Arc::new(CreateIndexAction {
+                        settings: self.context()?.client.function_client.settings(),
                         index_types: self.context()?.client.function_client.object_cache().and_then(
                             |cache| roastedduck_storage::index::IndexTypeRegistry::from_cache(&cache),
                         ),

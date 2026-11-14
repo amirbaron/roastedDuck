@@ -46,7 +46,7 @@ algorithms and aliases must follow its `libstemmer/modules.h`.
 Index creation snapshots the table. Subsequent source-table writes do not maintain
 that snapshot automatically. There is no custom storage index or optimizer hook:
 Rust generates the pinned SQL and uses the existing engine. Bound named PRAGMA
-parameters must reach the query-expansion callback (currently they are discarded).
+parameters are retained by the binder and forwarded to the query-expansion callback.
 
 ## Acceptance
 

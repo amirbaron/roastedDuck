@@ -495,6 +495,8 @@ struct IndexExpressionExecutor {
     /// a pushed-down expression filter; `None` for compound keys or keys over several
     /// columns.
     scan_key: Option<Expression>,
+    /// The original single key, retaining physical column reference numbers.
+    key: Option<Expression>,
 }
 
 impl IndexExpressionExecutor {
@@ -502,6 +504,10 @@ impl IndexExpressionExecutor {
         Self {
             executor: std::sync::Mutex::new(ExpressionExecutor::new(expressions.to_vec())),
             names: expressions.iter().map(Expression::name).collect(),
+            key: match expressions {
+                [expression] => Some(expression.clone()),
+                _ => None,
+            },
             scan_key: match expressions {
                 [expression] => single_column_key(expression),
                 _ => None,
@@ -577,6 +583,12 @@ impl IndexKeyExecutor for IndexExpressionExecutor {
         &self.names
     }
 
+    fn matches_expression(&self, expression: &dyn std::any::Any) -> bool {
+        expression
+            .downcast_ref::<Expression>()
+            .is_some_and(|expression| self.key.as_ref().is_some_and(|key| key.equals(expression)))
+    }
+
     /// `ART::TryInitializeScan` with the filter's `ToExpression`: a comparison of the key
     /// expression with a constant.
     fn scan_predicates(&self, filter: &TableFilter) -> Option<Vec<IndexScanPredicate>> {
@@ -616,6 +628,7 @@ pub struct CreateIndexAction {
     pub catalog: Arc<Catalog>,
     /// Compiled-in secondary factories belonging to this database.
     pub index_types: Option<Arc<roastedduck_storage::index::IndexTypeRegistry>>,
+    pub settings: Option<Arc<dyn roastedduck_function::SettingsSource>>,
     pub info: CreateInfo,
     pub table: Arc<CatalogEntry>,
     /// The key expressions over the table's physical columns.
@@ -786,6 +799,7 @@ impl DdlAction for CreateIndexAction {
                     _ => None,
                 })
                 .collect();
+            let plain_columns = references.is_some();
             let columns = references.map_or_else(
                 || {
                     index
@@ -798,7 +812,7 @@ impl DdlAction for CreateIndexAction {
                 },
                 Ok,
             )?;
-            registry.create(
+            registry.create_with_settings(
                 &index.index_type_name,
                 SecondaryIndexSpec {
                     name: index.name.clone(),
@@ -814,12 +828,15 @@ impl DdlAction for CreateIndexAction {
                         .iter()
                         .map(|expression| expression.return_type.clone())
                         .collect(),
-                    expressions: IndexKeyExpressions::Custom(Arc::new(IndexExpressionExecutor::new(
-                        &self.expressions,
-                    ))),
+                    expressions: if plain_columns {
+                        IndexKeyExpressions::Columns(self.expressions.iter().map(Expression::name).collect())
+                    } else {
+                        IndexKeyExpressions::Custom(Arc::new(IndexExpressionExecutor::new(&self.expressions)))
+                    },
                     options: index.options.clone(),
                     persistent: storage.io().file_block_manager().is_some(),
                 },
+                self.settings.as_deref(),
             )?
         } else {
             index_art(&storage, index, &self.expressions)?.into()

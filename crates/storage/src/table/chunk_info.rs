@@ -251,6 +251,24 @@ impl ChunkVectorInfo {
         max_count - self.sel_vector(options, &mut sel, max_count)
     }
 
+    /// A committed delete, independent of insertion visibility. New secondary
+    /// indexes retain these rows for old snapshots and must classify them for
+    /// the corresponding delayed index cleanup.
+    pub(crate) fn is_committed_deleted(&self, row: usize) -> bool {
+        let deleted = match &self.deleted {
+            DeleteIds::Constant(id) => *id,
+            DeleteIds::Masked { mask, id } => {
+                if mask_bit(mask, row) {
+                    *id
+                } else {
+                    NOT_DELETED_ID
+                }
+            }
+            DeleteIds::PerRow(ids) => ids[row],
+        };
+        deleted < TRANSACTION_ID_START
+    }
+
     /// Whether `row` is visible to the transaction (`Fetch`).
     pub fn fetch(&self, transaction: TransactionData, row: usize) -> bool {
         let insert = match &self.inserted {

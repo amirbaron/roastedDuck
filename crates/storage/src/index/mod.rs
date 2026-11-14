@@ -5,6 +5,7 @@
 pub mod art;
 pub mod conflict_manager;
 pub mod fixed_size_allocator;
+pub mod hnsw;
 pub mod secondary;
 pub mod table_index_list;
 pub mod unbound_index;
@@ -14,6 +15,7 @@ pub use conflict_manager::ConflictManager;
 pub use fixed_size_allocator::{
     BufferLoader, BufferPointer, FixedSizeAllocator, FixedSizeAllocatorInfo, IndexBufferWriter,
 };
+pub use hnsw::{HnswIndex, HnswIndexType};
 pub use secondary::{BoundIndex, IndexType, IndexTypeRegistry, SecondaryIndex, SecondaryIndexSpec};
 pub use table_index_list::{IndexEntry, IndexSlot, TableIndexList};
 pub use unbound_index::{UnboundIndex, UnboundIndexStorage};

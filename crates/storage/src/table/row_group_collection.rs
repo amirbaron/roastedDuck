@@ -588,6 +588,28 @@ impl RowGroupCollection {
         Ok(())
     }
 
+    /// Positions of committed-deleted rows retained by an index-build snapshot.
+    /// The caller holds the table append/publication lock while classifying them.
+    pub(crate) fn committed_deleted_positions(&self, row_ids: &[i64]) -> Result<Vec<u32>> {
+        let row_groups = self.row_groups();
+        let mut deleted = Vec::new();
+        for (position, &row_id) in row_ids.iter().enumerate() {
+            let node = row_groups
+                .tree
+                .index_of(row_id as u64)
+                .and_then(|index| row_groups.tree.get(index))
+                .ok_or_else(|| Error::internal("index build row disappeared during delete classification"))?;
+            if node
+                .node
+                .version_info()
+                .is_some_and(|versions| versions.is_committed_deleted(row_id as u64 - node.row_start))
+            {
+                deleted.push(position as u32);
+            }
+        }
+        Ok(deleted)
+    }
+
     /// Whether row `row_id` is visible to the transaction (`CanFetch`).
     pub fn can_fetch(&self, transaction: TransactionData, row_id: i64) -> Result<bool> {
         let row_groups = self.row_groups();

@@ -37,6 +37,7 @@ mod switch;
 mod system_functions;
 mod temp_catalog;
 mod transaction;
+mod vss;
 mod wal;
 
 pub use config::{AccessMode, Config, ConfigurationSnapshot, config_flags};

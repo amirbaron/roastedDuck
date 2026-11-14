@@ -159,7 +159,13 @@ impl PhysicalOperator for PhysicalTableScan {
     }
     fn params_to_string(&self, estimated_cardinality: u64) -> RenderParams {
         let mut result = RenderParams::new();
-        result.insert("Function".to_owned(), self.function.name.to_ascii_uppercase());
+        if let Some(explain) = &self.function.static_explain {
+            for (key, value) in explain(self.bind_data.as_deref()) {
+                result.insert(key, value);
+            }
+        } else {
+            result.insert("Function".to_owned(), self.function.name.to_ascii_uppercase());
+        }
         if self.function.projection_pushdown {
             // Virtual columns are not listed (`column_id >= names.size()`).
             let name = |index: usize| {

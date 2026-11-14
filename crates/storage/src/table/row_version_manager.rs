@@ -198,6 +198,15 @@ impl RowVersionManager {
         }
     }
 
+    /// Whether this row's deletion has committed, ignoring insertion visibility.
+    pub(crate) fn is_committed_deleted(&self, row: u64) -> bool {
+        self.lock()
+            .vectors
+            .get((row / VECTOR_SIZE) as usize)
+            .and_then(Option::as_ref)
+            .is_some_and(|info| info.is_committed_deleted((row % VECTOR_SIZE) as usize))
+    }
+
     /// Records rows `start..end` as inserted by the transaction (`AppendVersionInfo`).
     pub fn append_version_info(&self, transaction: TransactionData, start: u64, end: u64) {
         let mut state = self.lock_change();

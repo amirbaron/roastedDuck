@@ -269,6 +269,7 @@ pub(crate) fn static_extension_loaded(cache: &roastedduck_function::ObjectCache,
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StaticExtension {
     Fts,
+    Vss,
     Parquet,
     Json,
     Tpch,
@@ -292,6 +293,7 @@ impl StaticExtension {
     fn from_name(name: &str) -> Option<Self> {
         match name {
             "fts" => Some(Self::Fts),
+            crate::vss::EXTENSION_NAME => Some(Self::Vss),
             "parquet" => Some(Self::Parquet),
             "json" => Some(Self::Json),
             roastedduck_tpch::EXTENSION_NAME => Some(Self::Tpch),
@@ -308,6 +310,7 @@ impl StaticExtension {
         use roastedduck_function::{PragmaFunction, PragmaFunctionSet};
         let function = match self {
             Self::Fts => return crate::fts::pragma_functions(),
+            Self::Vss => return vec![crate::vss::compact_pragma()],
             Self::Parquet => PragmaFunction::call(
                 "add_parquet_key",
                 vec![LogicalType::VARCHAR, LogicalType::VARCHAR],
@@ -328,7 +331,7 @@ impl StaticExtension {
         match self {
             Self::Tpch => name.eq_ignore_ascii_case(b"tpch"),
             Self::Tpcds => name.eq_ignore_ascii_case(b"tpcds"),
-            Self::Fts | Self::Parquet | Self::Json | Self::Autocomplete | Self::Icu => false,
+            Self::Fts | Self::Vss | Self::Parquet | Self::Json | Self::Autocomplete | Self::Icu => false,
         }
     }
 
@@ -338,9 +341,9 @@ impl StaticExtension {
         match self {
             Self::Tpch => roastedduck_tpch::pragma_tpch_query(parameters),
             Self::Tpcds => roastedduck_tpcds::pragma_tpcds_query(parameters),
-            Self::Fts | Self::Parquet | Self::Json | Self::Autocomplete | Self::Icu => Err(Error::internal(
-                roastedduck_common::byte_format!("no pragma {name}"),
-            )),
+            Self::Fts | Self::Vss | Self::Parquet | Self::Json | Self::Autocomplete | Self::Icu => Err(
+                Error::internal(roastedduck_common::byte_format!("no pragma {name}")),
+            ),
         }
     }
 
@@ -354,6 +357,7 @@ impl StaticExtension {
             Self::Fts => {
                 system.register_scalar_functions(crate::fts::stem_function())?;
             }
+            Self::Vss => crate::vss::register_catalog(system)?,
             Self::Parquet => {
                 system.register_copy_function(roastedduck_parquet::copy::parquet_copy_function())?;
                 for set in roastedduck_parquet::parquet_table_functions() {
@@ -762,6 +766,16 @@ impl DatabaseInstance {
                     roastedduck_function::file_system::ZSTD_FILE_SYSTEM_KEY.to_owned(),
                     Arc::new(()),
                 );
+            }
+            if extension == StaticExtension::Vss {
+                self.index_types
+                    .register(Arc::new(roastedduck_storage::index::hnsw::HnswIndexType))?;
+                for rule in crate::vss::optimizer_rules() {
+                    self.optimizer_rules.register(rule)?;
+                }
+                for option in crate::vss::options() {
+                    self.add_extension_option(option);
+                }
             }
             loaded.push(extension);
         }
@@ -4946,6 +4960,12 @@ impl Connection {
             }
             LogicalKind::Pragma { name, parameters } => {
                 let lower = name.to_ascii_lowercase();
+                if lower == "hnsw_compact_index" {
+                    let transaction = self.transactions.current();
+                    let client = self.client_context(transaction);
+                    crate::vss::execute_compact(&client, parameters)?;
+                    return Ok(StatementRun::Done(nothing()));
+                }
                 if lower == "add_parquet_key" {
                     // `ParquetCrypto::AddKey` (`PragmaCall` with two VARCHAR arguments).
                     let [key_name, key] = parameters.as_slice() else {

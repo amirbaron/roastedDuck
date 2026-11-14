@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 roastedduck-common.workspace = true
+roastedduck-hnsw = { path = "../hnsw" }
 roastedduck-types.workspace = true
 roastedduck-buffer = { path = "../buffer" }
 roastedduck-crypto = { path = "../crypto" }

@@ -86,7 +86,11 @@ impl PhysicalTableInOutFunction {
 
 impl PhysicalOperator for PhysicalTableInOutFunction {
     fn name(&self) -> &'static str {
-        "INOUT_FUNCTION"
+        if self.function.name.eq_ignore_ascii_case("hnsw_index_join") {
+            "HNSW_INDEX_JOIN"
+        } else {
+            "INOUT_FUNCTION"
+        }
     }
     fn types(&self) -> &[LogicalType] {
         &self.types
@@ -98,7 +102,7 @@ impl PhysicalOperator for PhysicalTableInOutFunction {
         Some(self)
     }
     fn parallel_operator(&self) -> bool {
-        true
+        !self.function.name.eq_ignore_ascii_case("hnsw_index_join")
     }
 }
 
@@ -141,14 +145,18 @@ impl Operator for PhysicalTableInOutFunction {
 
     fn execute(
         &self,
-        _: &ExecutionContext,
+        context: &ExecutionContext,
         input: &DataChunk,
         output: &mut DataChunk,
         (): &(),
         state: &mut InOutState,
     ) -> Result<OperatorResult> {
         if self.projected_input.is_empty() {
-            return self.call(state, input, output).map(operator_result);
+            let result = self.call(state, input, output)?;
+            if let (Some(profiler), Some(explain)) = (&context.profiler, &self.function.in_out_explain) {
+                profiler.record_extra_info(crate::profiler::operator_key(self), explain(&state.scan));
+            }
+            return Ok(operator_result(result));
         }
         // Row by row, with the row's projected columns next to its output.
         if state.new_row {
@@ -176,6 +184,9 @@ impl Operator for PhysicalTableInOutFunction {
         );
         let mut produced = DataChunk::default();
         let result = self.call(state, &row_input, &mut produced)?;
+        if let (Some(profiler), Some(explain)) = (&context.profiler, &self.function.in_out_explain) {
+            profiler.record_extra_info(crate::profiler::operator_key(self), explain(&state.scan));
+        }
         let count = produced.len();
         let mut columns: Vec<Vector> = produced.columns().to_vec();
         for &source in &self.projected_input {

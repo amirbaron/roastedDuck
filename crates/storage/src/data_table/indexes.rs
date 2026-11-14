@@ -414,7 +414,23 @@ impl DataTable {
         let columns = Self::index_columns(index.column_ids());
         let name = index.name().clone();
         self.scan_index_rows(transaction, &name, &columns, reject_nulls, &mut |chunk, rows| {
-            index.append(chunk, rows, &[], IndexAppendMode::Default)
+            index.append(chunk, rows, &[], IndexAppendMode::Default)?;
+            if let Some(secondary) = index.as_secondary_mut() {
+                // These deletes predate this index, so its normal MainIndex
+                // callback never observed them. Retain their old-visible keys,
+                // but register retirement before publishing the new index.
+                let positions = self.row_groups.committed_deleted_positions(rows)?;
+                if !positions.is_empty() {
+                    let retired = positions
+                        .iter()
+                        .map(|&position| rows[position as usize])
+                        .collect::<Vec<_>>();
+                    let selection = roastedduck_types::SelectionVector::new(positions);
+                    let keys = DataChunk::new(Vector::slice_all(chunk.columns(), &selection), retired.len());
+                    secondary.remove(&keys, &retired, IndexRemovalType::MainIndex)?;
+                }
+            }
+            Ok(())
         })?;
         index.vacuum()
     }
@@ -925,13 +941,21 @@ impl DataTable {
     /// Removes deleted rows from the indexes at commit, or re-adds them when the commit
     /// is reverted (`RemoveFromIndexes` with the targets of `GetIndexRemovalTargets`).
     pub(crate) fn remove_from_indexes(&self, row_ids: &[i64], removal: IndexRemovalType) -> Result<()> {
-        if !self.has_indexes() || row_ids.is_empty() {
+        if row_ids.is_empty() {
             return Ok(());
         }
-        // A checkpoint writing the table writes the indexes as of when it started: the
-        // removal waits for it.
+        // Follow append-commit's lock order: table checkpoint lock, then append.
+        // Cleanup takes only append; it can run after a checkpoint, and the
+        // secondary's retirement marker protects against stale relocated IDs.
         let _checkpoint =
             (removal != IndexRemovalType::DeletedRowsInUse).then(|| self.info().checkpoint_lock().shared());
+        let _publication = self.append_lock();
+        // Check after waiting: an index may have been under construction when
+        // this delete committed. It must be published before maintenance scans
+        // the list, even when the list was initially empty.
+        if !self.has_indexes() {
+            return Ok(());
+        }
         let columns = self.indexes().required_columns();
         let fetched = self.fetch_columns(&self.row_groups, &columns, row_ids)?;
         let table_chunk = self.index_table_chunk(&columns, &fetched);

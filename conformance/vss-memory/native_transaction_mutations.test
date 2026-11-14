@@ -1,0 +1,131 @@
+# name: conformance/vss-memory/native_transaction_mutations.test
+# New supplement: transaction mutations and compaction in one memory database.
+# This is not an upstream persistence test or proof of restart/WAL compatibility.
+require vss
+
+require noforcestorage
+
+load :memory:
+
+statement ok
+CREATE TABLE documents (id INTEGER, vec FLOAT[3]);
+
+statement ok
+INSERT INTO documents VALUES (1, [0,0,0]), (2, [10,0,0]), (3, [20,0,0]);
+
+statement ok
+CREATE INDEX document_vectors ON documents USING HNSW (vec);
+
+query II
+EXPLAIN SELECT id FROM documents ORDER BY array_distance(vec, [9,0,0]::FLOAT[3]) LIMIT 1;
+----
+physical_plan	<REGEX>:.*HNSW_INDEX_SCAN.*
+
+query I
+SELECT id FROM documents ORDER BY array_distance(vec, [9,0,0]::FLOAT[3]) LIMIT 1;
+----
+2
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO documents VALUES (4, [8,0,0]);
+
+statement ok
+UPDATE documents SET vec = [9,0,0]::FLOAT[3] WHERE id = 1;
+
+statement ok
+DELETE FROM documents WHERE id = 2;
+
+query IT
+SELECT id, vec FROM documents ORDER BY id;
+----
+1	[9.0, 0.0, 0.0]
+3	[20.0, 0.0, 0.0]
+4	[8.0, 0.0, 0.0]
+
+statement ok
+ROLLBACK;
+
+query IT
+SELECT id, vec FROM documents ORDER BY id;
+----
+1	[0.0, 0.0, 0.0]
+2	[10.0, 0.0, 0.0]
+3	[20.0, 0.0, 0.0]
+
+query I
+SELECT id FROM documents ORDER BY array_distance(vec, [9,0,0]::FLOAT[3]) LIMIT 1;
+----
+2
+
+statement ok
+BEGIN;
+
+statement ok
+INSERT INTO documents VALUES (4, [8,0,0]);
+
+statement ok
+UPDATE documents SET vec = [9,0,0]::FLOAT[3] WHERE id = 1;
+
+statement ok
+DELETE FROM documents WHERE id = 2;
+
+statement ok
+COMMIT;
+
+query IT
+SELECT id, vec FROM documents ORDER BY id;
+----
+1	[9.0, 0.0, 0.0]
+3	[20.0, 0.0, 0.0]
+4	[8.0, 0.0, 0.0]
+
+query I
+SELECT count FROM pragma_hnsw_index_info() WHERE index_name = 'document_vectors';
+----
+3
+
+query I
+SELECT id FROM documents ORDER BY array_distance(vec, [9,0,0]::FLOAT[3]) LIMIT 1;
+----
+1
+
+statement ok
+PRAGMA hnsw_compact_index('document_vectors');
+
+query I
+SELECT id FROM documents ORDER BY array_distance(vec, [8,0,0]::FLOAT[3]) LIMIT 1;
+----
+4
+
+statement ok
+BEGIN;
+
+statement ok
+DELETE FROM documents;
+
+statement ok
+ROLLBACK;
+
+query I
+SELECT count(*) FROM documents;
+----
+3
+
+statement ok
+DELETE FROM documents WHERE id = 4;
+
+statement ok
+PRAGMA hnsw_compact_index('document_vectors');
+
+query I
+SELECT id FROM documents ORDER BY array_distance(vec, [8,0,0]::FLOAT[3]) LIMIT 1;
+----
+1
+
+query I
+SELECT count FROM pragma_hnsw_index_info() WHERE index_name = 'document_vectors';
+----
+2

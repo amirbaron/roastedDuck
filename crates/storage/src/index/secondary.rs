@@ -76,6 +76,13 @@ pub trait SecondaryIndex: Send + Sync + Debug {
 pub trait IndexType: Send + Sync + Debug {
     fn name(&self) -> &str;
     fn create(&self, spec: SecondaryIndexSpec) -> Result<Box<dyn SecondaryIndex>>;
+    /// Provider-specific rejection; this registry does not enable persistence.
+    fn persistence_error(&self, _settings: Option<&dyn roastedduck_function::SettingsSource>) -> Error {
+        Error::not_implemented(byte_format!(
+            "Index type {} does not support persistent storage",
+            self.name()
+        ))
+    }
 }
 
 /// Database-owned secondary type registry. It has no global state and registers
@@ -130,6 +137,16 @@ impl IndexTypeRegistry {
 
     /// Look up a factory without holding the registry lock while invoking it.
     pub fn create(&self, name: impl AsRef<[u8]>, spec: SecondaryIndexSpec) -> Result<BoundIndex> {
+        self.create_with_settings(name, spec, None)
+    }
+
+    /// Create with the statement's settings, allowing an exact provider rejection.
+    pub fn create_with_settings(
+        &self,
+        name: impl AsRef<[u8]>,
+        spec: SecondaryIndexSpec,
+        settings: Option<&dyn roastedduck_function::SettingsSource>,
+    ) -> Result<BoundIndex> {
         let name = name.as_ref();
         let factory = self
             .types
@@ -139,9 +156,7 @@ impl IndexTypeRegistry {
             .cloned()
             .ok_or_else(|| Error::binder(byte_format!("Unknown index type: {name}")))?;
         if spec.persistent {
-            return Err(Error::not_implemented(byte_format!(
-                "Index type {name} does not support persistent storage"
-            )));
+            return Err(factory.persistence_error(settings));
         }
         let index = factory.create(spec)?;
         if index.spec().constraint != IndexConstraintType::None {

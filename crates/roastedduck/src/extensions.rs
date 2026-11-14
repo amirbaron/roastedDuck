@@ -70,9 +70,10 @@ const DEFAULT_EXTENSIONS: [(&str, &str); 30] = [
 ];
 
 /// The extensions the reference build links (loading them is a no-op).
-const LINKED_EXTENSIONS: [&str; 8] = [
+const LINKED_EXTENSIONS: [&str; 9] = [
     "core_functions",
     "fts",
+    "vss",
     "icu",
     "parquet",
     "tpch",
