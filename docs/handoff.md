@@ -8,8 +8,12 @@ non-autoloadable status are documented. The signed runtime cohort passes 22 test
 documentation build passes. Receipts: `.context/artifacts/extension-dx-build-2/`,
 `extension-dx-5/`, and `extension-docs/`. Earlier failed smoke attempts are retained;
 the final smoke follows the documented startup sequence and pinned allowlist.
-Full conformance after the installer change remains pending. No new repositories
-or public release artifacts have been created.
+Full conformance after installer commit `3def127d` passes: 4,801 PASS / 76 SKIP /
+20 documented FAIL, zero regressions, and no status or failure-classification
+changes across 4,897 files. See `.context/artifacts/extension-dx-conformance-1/`.
+The developer smoke is also wired into native candidate qualification CI; that
+hosted run is not claimed by these local receipts. No new repositories or public
+release artifacts have been created.
 
 Current extension work, November 14, 2026: roastedDuck's compatible FTS and VSS
 implementations are linked in normal builds. FTS's all-stemmer byte differential,

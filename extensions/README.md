@@ -57,3 +57,27 @@ repository to detect accidental download dependence. It records binary/input
 hashes, SQL, raw output and expected errors. Package builds inherit these same
 implementations; check actual artifact availability before claiming a public
 release contains them. Do not publish this branch's feature claims as post2 facts.
+
+The existing native candidate qualification workflow also runs this smoke check
+against each built SDK CLI and retains its receipts under
+`native-qualification/search-extensions`. This wiring reuses the normal native
+build; local receipts do not claim a hosted CI run or new platform qualification.
+
+
+## Verified developer-experience checkpoint
+
+Installer commit `3def127d` passes strict runtime Clippy, all 22 signed runtime
+unit tests, and 14 CLI developer journeys. The strict documentation build passes.
+Full `scripts/conformance.sh` after integration passes its unchanged ratchet:
+4,801 PASS / 76 SKIP / 20 documented FAIL across 4,897 files, zero regressions,
+and no changed statuses or failure classifications versus the previous candidate.
+The existing five HNSW persistence deferrals remain; this does not add persistence.
+
+Local receipts under `.context/artifacts/` are `extension-dx-build-2/` (successful
+build/test stages), `extension-dx-5/` (final developer journeys),
+`extension-docs/build-final.log`, and `extension-dx-conformance-1/`. Earlier smoke
+failures are retained: the initial run exposed network-dependent INSTALL; later
+harness corrections use the documented separate LOAD startup statement and the
+pinned VSS autoload exclusion. No search algorithm or recall threshold changed.
+The CI configuration is validated locally; no hosted CI or published-package
+qualification is claimed here.

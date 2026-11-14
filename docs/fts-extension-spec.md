@@ -215,3 +215,10 @@ algorithms and their pinned contracts are unchanged. The reproducible developer
 journey check is `scripts/extension-smoke.py`; it executes the documented examples,
 checks install/load discovery and lifecycle, and retains expected persistence
 errors. It does not replace the full compatibility suites above.
+
+The loading-policy follow-up (`3def127d`) passes 22 signed runtime tests and
+14 developer journeys, including offline installation and explicit startup.
+Its full conformance run retains 4,801 PASS / 76 SKIP / 20 documented FAIL with
+zero regressions and no changed file statuses or failure classifications. See
+[the developer-experience checkpoint](../extensions/README.md#verified-developer-experience-checkpoint).
+The extension algorithms and their earlier qualification scope are unchanged.
