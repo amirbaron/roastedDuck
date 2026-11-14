@@ -70,6 +70,21 @@ const EXTENSION_SECRET_PROVIDERS: [(&str, &str); 17] = [
     ("postgres/config", "postgres_scanner"),
 ];
 
+/// Compiled-in providers needed for the type and the explicitly named provider.
+/// The connection checks the autoload setting before using these hints.
+pub(crate) fn autoload_extensions(input: &CreateSecretInput) -> [Option<&'static str>; 2] {
+    let secret_type = EXTENSION_SECRET_TYPES
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(&input.secret_type))
+        .map(|(_, extension)| *extension);
+    let key = format!("{}/{}", input.secret_type, input.provider);
+    let provider = EXTENSION_SECRET_PROVIDERS
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(&key))
+        .map(|(_, extension)| *extension);
+    [secret_type, provider]
+}
+
 /// The named parameters of the `http` secret functions (`CreateHTTPSecretFunctions`).
 fn http_parameter_type(name: &str) -> Option<LogicalType> {
     Some(match name {
@@ -433,6 +448,57 @@ impl roastedduck_httpfs::s3::ResolveS3Secret for S3SecretLookup {
                     entry.secret.name.as_bytes(), error.raw_message_bytes()
                 ))
             })?;
+            if let Some(logger) = context.function_client.logger()
+                && logger.should_log(
+                    roastedduck_function::logging::LogScope::Connection,
+                    "",
+                    roastedduck_function::logging::LogLevel::Info,
+                )
+                && let Some(new_secret) =
+                    self.0
+                        .secret_in_storage(&entry.secret.name, &entry.storage, &context.transaction)?
+            {
+                let changed = [
+                    "key_id",
+                    "secret",
+                    "session_token",
+                    "region",
+                    "endpoint",
+                    "kms_key_id",
+                    "url_style",
+                    "use_ssl",
+                    "url_compatibility_mode",
+                    "requester_pays",
+                    "bearer_token",
+                    "account_id",
+                ]
+                .into_iter()
+                .any(|key| match (entry.secret.map.get(key), new_secret.map.get(key)) {
+                    (None, None) => false,
+                    (Some(old), Some(new)) => {
+                        old.compare_not_distinct(new) != Some(std::cmp::Ordering::Equal)
+                    }
+                    _ => true,
+                });
+                if changed {
+                    let key = new_secret
+                        .map
+                        .get("key_id")
+                        .cloned()
+                        .unwrap_or_else(|| Value::null(LogicalType::VARCHAR));
+                    let message = byte_format!(
+                        "Successfully refreshed secret: {}, new key_id: {}",
+                        entry.secret.name.as_bytes(),
+                        key.to_varchar_bytes()?
+                    );
+                    logger.write_log_bytes(
+                        roastedduck_function::logging::LogScope::Connection,
+                        "",
+                        roastedduck_function::logging::LogLevel::Info,
+                        message.as_bytes(),
+                    )?;
+                }
+            }
             refreshed = true;
         }
         Ok(refreshed)
@@ -844,6 +910,7 @@ struct ManagerState {
     temporary: Arc<SecretCatalog>,
     local_file: Option<LocalFileStorage>,
     httpfs_registered: bool,
+    aws_registered: bool,
 }
 
 /// The secrets of a database instance (DuckDB's `SecretManager`).
@@ -874,6 +941,7 @@ impl Default for SecretManager {
                 temporary: Arc::default(),
                 local_file: None,
                 httpfs_registered: false,
+                aws_registered: false,
             }),
         }
     }
@@ -966,6 +1034,10 @@ impl SecretManager {
         self.lock().httpfs_registered = true;
     }
 
+    pub fn register_aws_provider(&self) {
+        self.lock().aws_registered = true;
+    }
+
     pub fn secret_types(&self) -> Vec<SecretType> {
         let mut types = SECRET_TYPES.to_vec();
         if self.lock().httpfs_registered {
@@ -980,6 +1052,25 @@ impl SecretManager {
 
     fn lock(&self) -> MutexGuard<'_, ManagerState> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Retrieve the exact replacement, without enumerating unrelated secrets.
+    fn secret_in_storage(
+        &self,
+        name: &[u8],
+        storage: &str,
+        transaction: &Transaction,
+    ) -> Result<Option<KeyValueSecret>> {
+        let mut state = self.lock();
+        let key = ByteString::from(name.to_ascii_lowercase());
+        match storage {
+            TEMPORARY_STORAGE => Ok(state.temporary.get(&key, Some(transaction))),
+            LOCAL_FILE_STORAGE => match state.local_file.as_mut() {
+                Some(local) => local.catalog_get(&key, Some(transaction)),
+                None => Ok(None),
+            },
+            _ => Ok(None),
+        }
     }
 
     /// `SET secret_directory` / `allow_persistent_secrets` / `default_secret_storage`
@@ -1042,6 +1133,19 @@ impl SecretManager {
         // Without a provider the type must exist (its default provider is used);
         // otherwise the type's provider must.
         let was_default = input.provider.is_empty();
+        if state.aws_registered
+            && input.provider == "credential_chain"
+            && matches!(input.secret_type.as_str(), "s3" | "aws" | "r2" | "gcs")
+        {
+            if !state.httpfs_registered {
+                return Err(type_not_found(&input.secret_type));
+            }
+            // Credential providers perform file/process/network I/O. Unrelated
+            // secret readers must not wait on the catalog lock during that I/O.
+            drop(state);
+            let secret = crate::aws::create_secret(input)?;
+            return Self::register(&mut self.lock(), secret, input, transaction);
+        }
         if state.httpfs_registered && input.secret_type == "huggingface" {
             return Self::register(&mut state, create_huggingface_secret(input)?, input, transaction);
         }

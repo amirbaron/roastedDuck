@@ -274,6 +274,7 @@ pub(crate) fn static_extension_loaded(cache: &roastedduck_function::ObjectCache,
 /// An extension linked into the engine whose functions are registered on load.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StaticExtension {
+    Aws,
     Httpfs,
     Fts,
     Vss,
@@ -299,6 +300,7 @@ impl StaticExtension {
 
     fn from_name(name: &str) -> Option<Self> {
         match name {
+            "aws" => Some(Self::Aws),
             "httpfs" => Some(Self::Httpfs),
             "fts" => Some(Self::Fts),
             crate::vss::EXTENSION_NAME => Some(Self::Vss),
@@ -328,7 +330,7 @@ impl StaticExtension {
             }
             Self::Tpch => PragmaFunction::call("tpch", vec![LogicalType::BIGINT]).with_query(),
             Self::Tpcds => PragmaFunction::call("tpcds", vec![LogicalType::BIGINT]).with_query(),
-            Self::Httpfs | Self::Autocomplete | Self::Icu => return Vec::new(),
+            Self::Aws | Self::Httpfs | Self::Autocomplete | Self::Icu => return Vec::new(),
         };
         vec![PragmaFunctionSet::single(function)]
     }
@@ -339,7 +341,8 @@ impl StaticExtension {
         match self {
             Self::Tpch => name.eq_ignore_ascii_case(b"tpch"),
             Self::Tpcds => name.eq_ignore_ascii_case(b"tpcds"),
-            Self::Httpfs
+            Self::Aws
+            | Self::Httpfs
             | Self::Fts
             | Self::Vss
             | Self::Parquet
@@ -355,7 +358,8 @@ impl StaticExtension {
         match self {
             Self::Tpch => roastedduck_tpch::pragma_tpch_query(parameters),
             Self::Tpcds => roastedduck_tpcds::pragma_tpcds_query(parameters),
-            Self::Httpfs
+            Self::Aws
+            | Self::Httpfs
             | Self::Fts
             | Self::Vss
             | Self::Parquet
@@ -374,6 +378,9 @@ impl StaticExtension {
             system.register_pragma_functions(set)?;
         }
         match self {
+            Self::Aws => {
+                system.register_table_functions(crate::aws::legacy_function())?;
+            }
             Self::Httpfs => {}
             Self::Fts => {
                 system.register_scalar_functions(crate::fts::stem_function())?;
@@ -777,6 +784,9 @@ impl DatabaseInstance {
             .unwrap_or_else(PoisonError::into_inner);
         if !loaded.contains(&extension) {
             extension.register(&self.system_catalog, &self.loaded_extensions)?;
+            if extension == StaticExtension::Aws {
+                self.secrets.register_aws_provider();
+            }
             if extension == StaticExtension::Httpfs {
                 self.register_http_file_system()?;
             }
@@ -2470,6 +2480,9 @@ impl Database {
             next_query_id: 0,
             client: Arc::default(),
         };
+        connection
+            .function_client
+            .set_interrupt_flag(connection.client.interrupt_flag());
         connection.sync_global_settings();
         Ok(connection)
     }
@@ -2483,6 +2496,16 @@ impl Database {
         }
         self.instance.add_extension_option(option);
         true
+    }
+
+    pub(crate) fn set_extension_global_value(&self, name: &str, value: &Value) -> Result<()> {
+        let option = self
+            .instance
+            .extension_option(name)
+            .ok_or_else(|| Error::internal(format!("Missing extension option {name}")))?;
+        let value = value.default_cast_as(&option.input_type)?;
+        self.instance.set_extension_global(&option, Some(value));
+        Ok(())
     }
 
     pub(crate) fn httpfs_loaded(&self) -> bool {
@@ -4970,6 +4993,19 @@ impl Connection {
                 return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::CreateSecret(input) => {
+                let autoload = self
+                    .function_client
+                    .settings()
+                    .and_then(|settings| settings.current_setting("autoload_known_extensions").ok())
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+                if autoload {
+                    for extension in crate::secrets::autoload_extensions(input).into_iter().flatten() {
+                        if roastedduck_function::extension_entries::can_autoload_extension(extension) {
+                            self.database.load_extension(extension)?;
+                        }
+                    }
+                }
                 // `PhysicalCreateSecret`: one row with `true`.
                 self.database
                     .instance()

@@ -10,6 +10,7 @@
 //! ```
 
 mod attached;
+mod aws;
 mod checkpoint;
 mod config;
 mod database;

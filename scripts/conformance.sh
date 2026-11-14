@@ -17,9 +17,13 @@ PATHS=("$@")
 cd "$ROOT"
 export PATH="$HOME/.cargo/bin:$PATH"
 cargo build --release -p slt -j "$JOBS" >/dev/null
-"$ROOT/scripts/sign.sh" "$ROOT/target/release/slt"
-SLT="$ROOT/target/release/slt"
-OUT="$ROOT/target/slt"
+CONFORMANCE_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
+if [[ "$CONFORMANCE_TARGET_DIR" != /* ]]; then
+  CONFORMANCE_TARGET_DIR="$ROOT/$CONFORMANCE_TARGET_DIR"
+fi
+"$ROOT/scripts/sign.sh" "$CONFORMANCE_TARGET_DIR/release/slt"
+SLT="$CONFORMANCE_TARGET_DIR/release/slt"
+OUT="$CONFORMANCE_TARGET_DIR/slt"
 mkdir -p "$OUT"
 
 "$SLT" run --engine rust --root "$REF" --jobs "$JOBS" --timeout-secs 300 \

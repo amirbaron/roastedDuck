@@ -2,7 +2,7 @@
 //! `ClientContext` that functions use).
 
 use std::any::Any;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -219,6 +219,7 @@ impl HttpStats {
 /// Per-connection state shared by the functions a connection runs.
 #[derive(Debug)]
 pub struct FunctionClient {
+    interrupt_flag: Mutex<Option<Arc<AtomicBool>>>,
     random: Mutex<RandomEngine>,
     /// The id of the current transaction and its start time in microseconds since the
     /// epoch (DuckDB's `MetaTransaction::start_timestamp`).
@@ -270,6 +271,7 @@ pub trait TempCatalog: Send + Sync + std::fmt::Debug {
 impl Default for FunctionClient {
     fn default() -> Self {
         Self {
+            interrupt_flag: Mutex::default(),
             random: Mutex::default(),
             transaction: Mutex::default(),
             query: Mutex::default(),
@@ -290,6 +292,17 @@ impl Default for FunctionClient {
 }
 
 impl FunctionClient {
+    /// Query cancellation shared with extension I/O.
+    pub fn set_interrupt_flag(&self, flag: Arc<AtomicBool>) {
+        *self.interrupt_flag.lock().unwrap_or_else(PoisonError::into_inner) = Some(flag);
+    }
+
+    pub fn interrupt_flag(&self) -> Option<Arc<AtomicBool>> {
+        self.interrupt_flag
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
     /// The connection's random engine (DuckDB's `RandomEngine::Get(context)` with its
     /// lock held).
     pub fn random_engine(&self) -> MutexGuard<'_, RandomEngine> {

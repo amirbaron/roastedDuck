@@ -36,6 +36,7 @@ fn credential_provider_contract() {
         "process",
         "empty-region-precedence",
         "legacy-profile",
+        "nested-runtime",
         "config-error-before-unknown",
         "unknown-before-config",
     ];
@@ -100,7 +101,7 @@ fn credential_probe() {
             request.profile = Some("fixture".into());
             "profile-key"
         }
-        "default-chain" | "empty-region-precedence" => "environment-key",
+        "default-chain" | "empty-region-precedence" | "nested-runtime" => "environment-key",
         "process" => {
             request.chain = "process".into();
             request.profile = Some("process".into());
@@ -146,7 +147,16 @@ fn credential_probe() {
         }
         _ => panic!("unknown fixture case"),
     };
-    let resolution = resolve(&request).unwrap();
+    let resolution = if case == "nested-runtime" {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async { resolve(&request) })
+            .unwrap()
+    } else {
+        resolve(&request).unwrap()
+    };
     if case == "empty-region-precedence" {
         assert_eq!(resolution.region, "default-region");
     }

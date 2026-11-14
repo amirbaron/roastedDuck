@@ -856,6 +856,29 @@ impl<'a, E: Engine> Runner<'a, E> {
 
     /// `SQLLogicTestRunner::LoadExtension` in the default (non-autoloading) test mode.
     fn load_extension(&mut self, name: &str) -> Result<ExtensionLoad, String> {
+        let loaded = self.load_extension_inner(name)?;
+        if loaded == ExtensionLoad::Loaded
+            && name == "httpfs"
+            && let Ok(client) = std::env::var("SLT_HTTPFS_CLIENT_IMPLEMENTATION")
+        {
+            if !matches!(client.as_str(), "default" | "curl" | "httplib") {
+                return Err("Invalid SLT_HTTPFS_CLIENT_IMPLEMENTATION".to_owned());
+            }
+            // Fixture configuration, applied equally to both engines. The
+            // original SQL remains unchanged and may override it afterward.
+            let connection = self.con.as_mut().ok_or("no open connection")?;
+            let result = self.engine.query(
+                connection,
+                &format!("SET GLOBAL httpfs_client_implementation='{client}'; SET SESSION httpfs_client_implementation='{client}'"),
+            );
+            if let Some(error) = crate::backend::QueryResult::error(&result) {
+                return Err(error.to_owned());
+            }
+        }
+        Ok(loaded)
+    }
+
+    fn load_extension_inner(&mut self, name: &str) -> Result<ExtensionLoad, String> {
         let database = self.db.as_ref().ok_or("no open database")?;
         let loaded = self.engine.load_extension(database, name)?;
         if loaded != ExtensionLoad::NotLoaded {

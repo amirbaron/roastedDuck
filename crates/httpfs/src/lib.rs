@@ -445,6 +445,42 @@ fn request_error(error: &ureq::Error, method: &str, url: &str, httplib: bool) ->
         };
         return io_error(format!("{reason} error for HTTP {method} to '{url}'"));
     }
+    let connection_reason = if httplib {
+        "Could not establish connection"
+    } else {
+        "Could not connect to server"
+    };
+    let uri_reason = if httplib {
+        if url.starts_with("https://") {
+            "SSL connection failed"
+        } else {
+            connection_reason
+        }
+    } else {
+        "URL using bad/illegal format or missing URL"
+    };
+    let reason = match error {
+        ureq::Error::ConnectionFailed => Some(connection_reason),
+        ureq::Error::HostNotFound if httplib => Some(connection_reason),
+        ureq::Error::BadUri(_) => Some(uri_reason),
+        ureq::Error::Io(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::ConnectionRefused
+                    | io::ErrorKind::NotConnected
+                    | io::ErrorKind::AddrNotAvailable
+                    | io::ErrorKind::NetworkUnreachable
+                    | io::ErrorKind::HostUnreachable
+            ) =>
+        {
+            Some(connection_reason)
+        }
+        ureq::Error::Http(error) if error.to_string().contains("uri") => Some(uri_reason),
+        _ => None,
+    };
+    if let Some(reason) = reason {
+        return io_error(format!("{reason} error for HTTP {method} to '{url}'"));
+    }
     io_error(error)
 }
 

@@ -1,3 +1,20 @@
+AWS integration checkpoint, November 15, 2026: the active all-five goal remains
+incomplete. AWS now has normal LOAD/INSTALL, credential_chain secret binding,
+legacy load_aws_credentials, type/provider autoload and query cancellation. Current
+paired controls pass 31/31 against official C++1.5.6. Independent S3 signature and
+credential-rotation controls pass on both engines (17 requests, no invalid signatures).
+The public Rust API interruption probe returns ErrorKind::Interrupt and both CLI/API
+checks stop helper descendants. The RDS backend signer matches a captured C++ token
+byte-for-byte at its recorded timestamp; RDS SQL integration is still pending.
+Eleven unchanged AWS metadata/profile originals pass on both engines with httplib
+explicitly selected; default-client runs retain the original HTTP-message skip.
+No test SQL or expected result was edited. See extensions/aws/SPEC.md and
+`.context/artifacts/popular-extensions/` (aws-sql-current-31, aws-network-control-final,
+aws-interrupt-api-1, aws-interrupt-cli-2, aws-rds-tests-*, and
+aws-upstream-metadata-httplib-3). These are development checks, not release-image
+qualification. Full AWS data-plane/IRSA/RDS/proxy originals, Azure, PostgreSQL,
+full conformance and package/publication gates remain mandatory. No release made.
+
 Local service fixtures, November 14, 2026: the owner authorized emulated AWS/Azure
 and disposable local PostgreSQL integration instead of supplying cloud accounts.
 `scripts/local-services/README.md` documents the repeatable setup and runner.

@@ -46,3 +46,31 @@ preserves every existing locked package version.
 This is not SQL support or completed compatibility acceptance: engine binding,
 legacy table-function behavior, RDS signing, process cancellation, network-provider
 differentials, all 21 originals and platform/package qualification remain open.
+
+## SQL integration checkpoint (November 15)
+
+Normal builds now register AWS SQL entry points and credential_chain providers for
+s3/aws/r2/gcs. The integration supports provider/type autoload when enabled and
+keeps blocking credential I/O outside the secret catalog lock. Legacy calls match
+the pinned named-profile region rules. Refresh-info field order follows the
+platform C++ unordered map. Default redaction follows the pinned implementation,
+including inline configuration values; test credentials are always isolated fakes.
+
+Query interruption propagates to the resolver and terminates owned credential
+process groups. There is no arbitrary process-output cap or fixed total resolver
+deadline; valid large process output is covered. The RDS signing backend is
+implemented and matches an independently verified captured C++ token, but the
+RDS SQL/type/consumer integration is not complete.
+
+Evidence: 31 paired offline SQL controls; profile-based S3 read/write and process
+refresh on both engines with 17 independently verified SigV4 requests; public Rust
+API interruption and CLI process cleanup; 13 isolated provider cases, cancellation,
+large-output and RDS token unit checks. Eleven unchanged metadata/profile files
+pass on both engines with the real httplib setting selected via the runner fixture.
+Default transport runs preserve the upstream error-message skip instead of changing
+its SQL expectation. The fixture disables its identity-denial proxy for the single
+localhost-refusal test, which must actually attempt that local connection.
+
+Remaining: all other original AWS files and advanced network providers, RDS SQL
+and PostgreSQL integration, cross-platform/native package qualification, full
+conformance and publication. This checkpoint is not full AWS acceptance.

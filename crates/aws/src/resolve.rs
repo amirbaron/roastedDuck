@@ -1,5 +1,9 @@
 use std::borrow::Cow;
 use std::fmt::{self, Write as _};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::time::Duration;
 
 use aws_config::provider_config::ProviderConfig;
@@ -25,6 +29,7 @@ pub struct Request {
     pub require_credentials: bool,
     /// The legacy table function uses the SDK lookup without secret validation/fallback.
     pub legacy: bool,
+    pub interrupted: Option<Arc<AtomicBool>>,
 }
 
 impl Default for Request {
@@ -39,6 +44,7 @@ impl Default for Request {
             region: String::new(),
             require_credentials: true,
             legacy: false,
+            interrupted: None,
         }
     }
 }
@@ -55,11 +61,13 @@ pub enum ResolveError {
     InvalidInput(String),
     Configuration(String),
     Runtime(String),
+    Interrupted,
 }
 
 impl fmt::Display for ResolveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Interrupted => f.write_str("Interrupted!"),
             Self::InvalidInput(message) | Self::Configuration(message) | Self::Runtime(message) => {
                 f.write_str(message)
             }
@@ -83,6 +91,12 @@ type Material = Option<aws_credential_types::Credentials>;
 /// Fetch credentials without exposing SDK errors that may contain secret material.
 /// The SQL adapter supplies the pinned extension's validation diagnostic on None.
 pub fn resolve(request: &Request) -> Result<Resolution, ResolveError> {
+    // Synchronous SQL may be called from a Tokio-based application. Drive our
+    // credential futures on a separate thread rather than nesting runtimes.
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return std::thread::scope(|scope| scope.spawn(|| resolve(request)).join())
+            .map_err(|_| ResolveError::Runtime("AWS credential worker panicked".into()))?;
+    }
     if !request.assume_role.is_empty() && request.chain.is_empty() {
         return Err(ResolveError::Configuration(
             "Must pass CHAIN value when passing ASSUME_ROLE_ARN".into(),
@@ -98,9 +112,18 @@ pub fn resolve(request: &Request) -> Result<Resolution, ResolveError> {
         .build()
         .map_err(|_| ResolveError::Runtime("Unable to start AWS credential runtime".into()))?;
     runtime.block_on(async {
-        tokio::time::timeout(Duration::from_secs(60), resolve_async(request, &chain))
-            .await
-            .map_err(|_| ResolveError::Runtime("AWS credential resolution timed out".into()))?
+        if let Some(interrupted) = &request.interrupted {
+            tokio::select! {
+                result = resolve_async(request, &chain) => result,
+                () = async {
+                    while !interrupted.load(Ordering::Acquire) {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                } => Err(ResolveError::Interrupted),
+            }
+        } else {
+            resolve_async(request, &chain).await
+        }
     })
 }
 
@@ -127,27 +150,53 @@ async fn resolve_async(request: &Request, chain: &[&str]) -> Result<Resolution, 
     )
     .await;
     let profile = profiles.selected_profile().to_owned();
-    let mut region = request.region.clone();
-    if region.is_empty() {
-        region = std::env::var("AWS_REGION")
-            .or_else(|_| std::env::var("AWS_DEFAULT_REGION"))
-            .unwrap_or_default();
-    }
-    if region.is_empty() {
-        let name = request
-            .profile
-            .as_deref()
-            .filter(|name| !name.is_empty())
-            .unwrap_or("default");
-        region = config_profiles
-            .get_profile(name)
-            .and_then(|p| p.get("region"))
-            .unwrap_or_default()
-            .into();
-    }
-    if request.legacy && region.is_empty() {
-        region = "us-east-1".into();
-    }
+    let default_profile = std::env::var("AWS_PROFILE")
+        .ok()
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| "default".into());
+    let region = if request.legacy {
+        // ClientConfiguration(profile): SDK environment priority differs from
+        // CREATE SECRET, and a named profile's region overrides that SDK result.
+        let mut region = std::env::var("AWS_DEFAULT_REGION")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .or_else(|| std::env::var("AWS_REGION").ok().filter(|v| !v.is_empty()))
+            .or_else(|| {
+                config_profiles
+                    .get_profile(&default_profile)
+                    .and_then(|p| nonempty(p.get("region")))
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| "us-east-1".into());
+        if let Some(name) = request.profile.as_deref()
+            && let Some(value) = config_profiles
+                .get_profile(name)
+                .and_then(|p| nonempty(p.get("region")))
+        {
+            value.clone_into(&mut region);
+        }
+        region
+    } else {
+        let mut region = request.region.clone();
+        if region.is_empty() {
+            region = std::env::var("AWS_REGION")
+                .or_else(|_| std::env::var("AWS_DEFAULT_REGION"))
+                .unwrap_or_default();
+        }
+        if region.is_empty() {
+            let name = request
+                .profile
+                .as_deref()
+                .filter(|name| !name.is_empty())
+                .unwrap_or("default");
+            region = config_profiles
+                .get_profile(name)
+                .and_then(|p| p.get("region"))
+                .unwrap_or_default()
+                .into();
+        }
+        region
+    };
     let http = aws_smithy_http_client::Builder::new()
         .tls_provider(aws_smithy_http_client::tls::Provider::Rustls(
             aws_smithy_http_client::tls::rustls_provider::CryptoMode::Ring,
@@ -173,10 +222,7 @@ async fn resolve_async(request: &Request, chain: &[&str]) -> Result<Resolution, 
         profiles,
         config_profiles,
         profile,
-        default_profile: std::env::var("AWS_PROFILE")
-            .ok()
-            .filter(|p| !p.is_empty())
-            .unwrap_or_else(|| "default".into()),
+        default_profile,
     };
     // Construct/validate each component in order before fetching credentials.
     // For example, a missing config profile before an unknown provider reports
@@ -272,8 +318,8 @@ impl Context {
                 return result;
             }
         }
-        if std::env::var("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI").is_ok()
-            || std::env::var("AWS_CONTAINER_CREDENTIALS_FULL_URI").is_ok()
+        if std::env::var("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI").is_ok_and(|value| !value.is_empty())
+            || std::env::var("AWS_CONTAINER_CREDENTIALS_FULL_URI").is_ok_and(|value| !value.is_empty())
         {
             aws_config::ecs::EcsCredentialsProvider::builder()
                 .configure(&self.providers)
@@ -301,10 +347,7 @@ impl Context {
             }
             Provider::Process => {
                 let command = nonempty(self.profiles.get_profile(profile)?.get("credential_process"))?;
-                aws_config::credential_process::CredentialProcessProvider::new(command.to_owned())
-                    .provide_credentials()
-                    .await
-                    .ok()
+                crate::process::credentials(command).await
             }
             Provider::Instance => aws_config::imds::credentials::ImdsCredentialsProvider::builder()
                 .configure(&self.providers)
