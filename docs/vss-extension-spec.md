@@ -151,6 +151,13 @@ verdicts, and `unbound-hnsw/verification.json`. The controller's initial
 signed test identities. `optimizer-tests-1.json`, `hooks-workspace-check-1.log`,
 and `hooks-clippy-5.log` are in the task artifact directory.
 
-The hooks' required full conformance run is pending. Standalone HNSW and pinned SQL
+The hooks' required full conformance run also completed with zero ratchet regressions. Standalone HNSW and pinned SQL
 macro source are subsequent, unlinked work; none of these hook receipts accepts
 HNSW behavior, recall, VSS planner rewrites, or the complete extension surface.
+
+Full conformance for hook commit `73817683` reports **4,789 PASS / 76 SKIP /
+15 documented FAIL**, exactly the same per-file statuses and skip reasons as the
+FTS baseline. `scripts/conformance.sh` exits 0 without changing the passing ratchet.
+Evidence: `.context/artifacts/vss-fts/hooks-conformance-1-verification.json` and
+`hooks-conformance-1-results.jsonl`; the tested clients are retained under
+`hooks-candidate/`. This gate does not accept later HNSW/VSS working-tree changes.
