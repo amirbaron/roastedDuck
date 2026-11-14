@@ -9,6 +9,7 @@ use roastedduck_function::registered_files::{FileHandle, FileSystem};
 use roastedduck_types::{LogicalType, Value};
 use ureq::unversioned::transport::{Connector as _, TcpConnector};
 
+pub mod azure;
 mod body;
 pub mod huggingface;
 pub use body::BodyReader;
@@ -331,6 +332,8 @@ struct HttpFile {
     agent: ureq::Agent,
     signing: Option<s3::RequestSigning>,
     logger: Option<logging::HttpLogger>,
+    // Azure's opt-in stats count Content-Length even on HEAD; HTTPFS counts streamed bytes.
+    azure_stats: Option<bool>,
     client: Option<std::sync::Weak<roastedduck_function::FunctionClient>>,
 }
 
@@ -618,8 +621,14 @@ impl HttpFile {
                 let start = std::time::Instant::now();
                 let client = roastedduck_function::file_system::opener()
                     .or_else(|| self.client.as_ref().and_then(std::sync::Weak::upgrade));
-                if let Some(client) = &client {
-                    client.record_http_request(request_method, request_payload.len() as u64);
+                if let Some(client) = &client
+                    && self.azure_stats.unwrap_or(true)
+                {
+                    if self.azure_stats.is_some() {
+                        client.record_azure_http_request(request_method, request_payload.len() as u64);
+                    } else {
+                        client.record_http_request(request_method, request_payload.len() as u64);
+                    }
                 }
                 let result = if request_method == "HEAD" {
                     let mut request = agent.head(url);
@@ -627,11 +636,13 @@ impl HttpFile {
                         request = request.header(name.as_str(), value.as_str());
                     }
                     request.call()
-                } else if request_method == "POST" || request_method == "PUT" {
+                } else if matches!(request_method, "POST" | "PUT" | "PATCH") {
                     let mut request = if request_method == "POST" {
                         agent.post(url)
-                    } else {
+                    } else if request_method == "PUT" {
                         agent.put(url)
+                    } else {
+                        agent.patch(url)
                     };
                     for (name, value) in &headers {
                         request = request.header(name.as_str(), value.as_str());
@@ -671,12 +682,23 @@ impl HttpFile {
                     );
                 }
                 let result = result.map(|response| {
+                    if self.azure_stats == Some(true)
+                        && let Some(client) = &client
+                    {
+                        let length = response
+                            .headers()
+                            .get("content-length")
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(0);
+                        client.record_azure_http_received(length);
+                    }
                     response.map(|body| {
                         body::Body::new(
                             body,
-                            client
-                                .as_ref()
-                                .filter(|_| matches!(request_method, "GET" | "POST")),
+                            client.as_ref().filter(|_| {
+                                self.azure_stats.is_none() && matches!(request_method, "GET" | "POST")
+                            }),
                         )
                     })
                 });
@@ -834,6 +856,7 @@ impl HttpFile {
             agent,
             signing,
             logger: logging::HttpLogger::current(),
+            azure_stats: None,
             client: roastedduck_function::file_system::opener()
                 .as_ref()
                 .map(Arc::downgrade),

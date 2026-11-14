@@ -11,6 +11,7 @@ does not replace those terms or grant rights to third-party trademarks.
 | Snowball stemmers and byte runtime | Pinned Snowball algorithms translated to Rust; [BSD-3-Clause notice](crates/snowball/LICENSE). Provenance and regeneration are recorded in [the crate](crates/snowball/README.md). |
 | DuckDB FTS indexing SQL and stopwords | Pinned `duckdb-fts` source; [retained MIT notice](crates/roastedduck/src/fts/LICENSE). |
 | DuckDB VSS table macros | Pinned `duckdb-vss` SQL; [retained MIT notice](crates/roastedduck/src/vss/LICENSE). The HNSW graph is independently implemented in Rust. |
+| DuckDB Azure URL, option and secret semantics | Pinned `duckdb-azure` source; [retained MIT notice](crates/httpfs/src/azure/LICENSE). Storage requests and signing are implemented in Rust. |
 | ICU data and implementation | [ICU license](crates/icu/LICENSE-ICU) |
 | utf8proc data | [utf8proc license](crates/common/data/utf8proc-LICENSE) |
 | Zstandard | [Retained ZSTD license](crates/zstd/LICENSE-ZSTD) |

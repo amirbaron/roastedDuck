@@ -1,3 +1,21 @@
+Azure Blob checkpoint, November 15, 2026: the all-five goal remains active and
+incomplete. Normal builds now register bundled Azure loading, all secret-provider
+metadata and a Rust Blob filesystem with SharedKey/SAS auth, range reads, listing,
+block uploads, commits and logging/redaction. Eight unchanged Azure originals pass
+on both engines, including the large/concurrent write test. Twelve paired auth/name/
+metadata controls pass. The original azure.test profile expectation fails on both
+engines with different actual request counts; raw results are retained unchanged.
+The signed final development image also passes the existing AWS signed-network/
+process-refresh control (4 cases, 17 requests, 0 invalid signatures). Strict
+all-target function/HTTPFS/runtime/SLT Clippy passes. Receipts live under
+`.context/artifacts/popular-extensions/azure-upstream-blob-3/`,
+`azure-blob-control-2/`, `aws-after-azure-control-1/`, and `azure-clippy-final.log`.
+See extensions/azure/SPEC.md and scripts/azure-tests/README.md for exact scope.
+Azure token acquisition, ADLS, full option/cancellation semantics, remaining Azure
+and AWS originals, PostgreSQL, full conformance and package/publication gates are
+still required. Identity SDK1.13.2 source references are saved with hashes in
+`azure-sdk-reference/`. No new native dependencies, no C++ bridge and no release.
+
 AWS local-original checkpoint, November 15, 2026: 18/21 unchanged originals now
 pass on both engines: eleven metadata/profile, three signed S3, two environment,
 and two proxy files. The independent loopback fixtures validate S3 signatures,

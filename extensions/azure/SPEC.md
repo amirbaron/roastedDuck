@@ -24,9 +24,59 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 
 ## Status
 
-Contract recorded; not a claim that new functionality passes acceptance.
+In progress. Blob storage has a first Rust implementation; full Azure compatibility
+is not yet accepted. See the verification checkpoint below.
 
 The pinned source additionally registers managed-identity client/object/resource IDs
 and service-principal certificate authentication. These are required even though
 the engine's generated provider-name hints omit managed_identity. Source inventory
 takes precedence over that hint table.
+
+## Blob implementation checkpoint (November 15)
+
+Normal builds now provide bundled offline INSTALL/LOAD azure, secret type/provider
+binding and a Blob filesystem. The implementation reuses the existing Rust HTTP
+transport without loading HTTPFS as an extension or adding native dependencies.
+It implements scoped and fully qualified paths, SharedKey/SAS authentication,
+anonymous/access-token request construction, range reads, paginated listing and
+globbing, deletion, bounded block uploads, intermediate commits, and separate Azure
+HTTP statistics. HTTP and filesystem logging include configurable header/query
+redaction. Provider metadata covers all five upstream providers; credential-chain,
+managed-identity and service-principal token acquisition remains unimplemented.
+
+Eight unchanged original files pass on C++1.5.6 and Rust against fresh Azurite
+storage per engine: `azure_secret`, `azure_scope_and_full_path`, `azure_glob`,
+`azure_writes`, `azure_writes_more.test_slow`, `fs_logs`, `http`, and
+`http_log_redaction`. The larger write file exercises 1,000 small objects, concurrent
+writes, large CSV and partitioned Parquet. Original SQL and data are unchanged.
+
+`azure.test` retains a raw failure at line 51 on both engines: its expected profile
+says three HEADs and zero GETs. C++ actually reports three HEADs/two GETs; Rust
+reports two HEADs/one GET. The actual plans and counts are retained; no extra
+requests are fabricated and the original expectation is not changed. Azure stats
+count response Content-Length, including HEAD, separately from HTTPFS's streamed
+byte counters. This common original failure does not imply identical profiles.
+
+Twelve paired controls pass for escaped/Unicode names, SharedKey and SAS reads,
+wrong-key rejection, all provider metadata, invalid parameters and actual SAS-log
+redaction. These metadata controls do not establish identity-provider authentication.
+The existing signed S3/process-refresh differential still passes all four cases,
+with 17 requests and zero invalid signatures after the shared transport changes.
+Strict all-target Clippy passes for function/HTTPFS/runtime/SLT.
+
+Receipts under `.context/artifacts/popular-extensions/`:
+`azure-upstream-blob-3/`, `azure-blob-control-2/`, `aws-after-azure-control-1/`,
+and `azure-clippy-final.log`. These are signed development-image checks, not
+release-image or cross-platform qualification. Reproduction scripts are documented
+in `scripts/azure-tests/README.md`.
+
+Still required: token providers, ADLS and its protocol fixtures, remaining originals,
+complete context-cache/read-transfer semantics, cancellation and failure controls,
+full conformance, and package/release gates. Azurite is not ADLS or live Azure.
+
+Identity reference sources are retained with SHA-256 hashes under
+`.context/artifacts/popular-extensions/azure-sdk-reference/`. The pinned vcpkg
+baseline selects [azure-identity-cpp 1.13.2](https://raw.githubusercontent.com/microsoft/vcpkg/84bab45d415d22042bd0b9081aea57f362da3f35/ports/azure-identity-cpp/vcpkg.json)
+and [azure-storage-blobs-cpp 12.15.0](https://raw.githubusercontent.com/microsoft/vcpkg/84bab45d415d22042bd0b9081aea57f362da3f35/ports/azure-storage-blobs-cpp/vcpkg.json).
+Use those source contracts for the remaining providers; do not substitute an
+evolving SDK default chain.

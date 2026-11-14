@@ -274,6 +274,7 @@ pub(crate) fn static_extension_loaded(cache: &roastedduck_function::ObjectCache,
 /// An extension linked into the engine whose functions are registered on load.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StaticExtension {
+    Azure,
     Aws,
     Httpfs,
     Fts,
@@ -300,6 +301,7 @@ impl StaticExtension {
 
     fn from_name(name: &str) -> Option<Self> {
         match name {
+            "azure" => Some(Self::Azure),
             "aws" => Some(Self::Aws),
             "httpfs" => Some(Self::Httpfs),
             "fts" => Some(Self::Fts),
@@ -330,7 +332,7 @@ impl StaticExtension {
             }
             Self::Tpch => PragmaFunction::call("tpch", vec![LogicalType::BIGINT]).with_query(),
             Self::Tpcds => PragmaFunction::call("tpcds", vec![LogicalType::BIGINT]).with_query(),
-            Self::Aws | Self::Httpfs | Self::Autocomplete | Self::Icu => return Vec::new(),
+            Self::Azure | Self::Aws | Self::Httpfs | Self::Autocomplete | Self::Icu => return Vec::new(),
         };
         vec![PragmaFunctionSet::single(function)]
     }
@@ -341,7 +343,8 @@ impl StaticExtension {
         match self {
             Self::Tpch => name.eq_ignore_ascii_case(b"tpch"),
             Self::Tpcds => name.eq_ignore_ascii_case(b"tpcds"),
-            Self::Aws
+            Self::Azure
+            | Self::Aws
             | Self::Httpfs
             | Self::Fts
             | Self::Vss
@@ -358,7 +361,8 @@ impl StaticExtension {
         match self {
             Self::Tpch => roastedduck_tpch::pragma_tpch_query(parameters),
             Self::Tpcds => roastedduck_tpcds::pragma_tpcds_query(parameters),
-            Self::Aws
+            Self::Azure
+            | Self::Aws
             | Self::Httpfs
             | Self::Fts
             | Self::Vss
@@ -381,7 +385,7 @@ impl StaticExtension {
             Self::Aws => {
                 system.register_table_functions(crate::aws::legacy_function())?;
             }
-            Self::Httpfs => {}
+            Self::Httpfs | Self::Azure => {}
             Self::Fts => {
                 system.register_scalar_functions(crate::fts::stem_function())?;
             }
@@ -784,6 +788,20 @@ impl DatabaseInstance {
             .unwrap_or_else(PoisonError::into_inner);
         if !loaded.contains(&extension) {
             extension.register(&self.system_catalog, &self.loaded_extensions)?;
+            if extension == StaticExtension::Azure {
+                roastedduck_function::registered_files::Registry::initialize(&self.object_cache)
+                    .register(Arc::new(roastedduck_httpfs::azure::AzureBlobFileSystem))?;
+                self.secrets.register_azure_type();
+                self.object_cache.put(
+                    roastedduck_httpfs::azure::SECRET_RESOLVER_KEY,
+                    Arc::new(roastedduck_httpfs::azure::SecretResolver(Arc::new(
+                        crate::secrets::AzureSecretLookup(self.secrets.clone()),
+                    ))),
+                );
+                for option in roastedduck_httpfs::azure::options() {
+                    self.add_extension_option(option);
+                }
+            }
             if extension == StaticExtension::Aws {
                 self.secrets.register_aws_provider();
             }

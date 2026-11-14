@@ -20,7 +20,9 @@ use roastedduck_serde::binary::{BinaryDeserializer, BinarySerializer};
 use roastedduck_serde::{DeserializeObject, Deserializer, SerializationOptions, SerializeObject, Serializer};
 use roastedduck_types::{LogicalType, Value};
 
+mod azure;
 mod catalog;
+pub(crate) use azure::AzureSecretLookup;
 use catalog::SecretCatalog;
 use roastedduck_storage::transaction::Transaction;
 
@@ -904,6 +906,10 @@ struct SecretConfig {
 }
 
 #[derive(Debug)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independently loaded extension providers and catalog initialization"
+)]
 struct ManagerState {
     config: SecretConfig,
     initialized: bool,
@@ -911,6 +917,7 @@ struct ManagerState {
     local_file: Option<LocalFileStorage>,
     httpfs_registered: bool,
     aws_registered: bool,
+    azure_registered: bool,
 }
 
 /// The secrets of a database instance (DuckDB's `SecretManager`).
@@ -942,6 +949,7 @@ impl Default for SecretManager {
                 local_file: None,
                 httpfs_registered: false,
                 aws_registered: false,
+                azure_registered: false,
             }),
         }
     }
@@ -1038,8 +1046,19 @@ impl SecretManager {
         self.lock().aws_registered = true;
     }
 
+    pub fn register_azure_type(&self) {
+        self.lock().azure_registered = true;
+    }
+
     pub fn secret_types(&self) -> Vec<SecretType> {
         let mut types = SECRET_TYPES.to_vec();
+        if self.lock().azure_registered {
+            types.push(SecretType {
+                name: "azure",
+                default_provider: "config",
+                extension: "azure",
+            });
+        }
         if self.lock().httpfs_registered {
             types.extend(["s3", "aws", "r2", "gcs", "huggingface"].map(|name| SecretType {
                 name,
@@ -1145,6 +1164,9 @@ impl SecretManager {
             drop(state);
             let secret = crate::aws::create_secret(input)?;
             return Self::register(&mut self.lock(), secret, input, transaction);
+        }
+        if state.azure_registered && input.secret_type == "azure" {
+            return Self::register(&mut state, azure::create(input)?, input, transaction);
         }
         if state.httpfs_registered && input.secret_type == "huggingface" {
             return Self::register(&mut state, create_huggingface_secret(input)?, input, transaction);

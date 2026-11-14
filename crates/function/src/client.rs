@@ -170,6 +170,17 @@ pub struct HttpStats {
     pub put: u64,
     pub post: u64,
     pub delete: u64,
+    pub azure: Option<AzureHttpStats>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AzureHttpStats {
+    pub received: u64,
+    pub sent: u64,
+    pub head: u64,
+    pub get: u64,
+    pub put: u64,
+    pub post: u64,
 }
 
 impl HttpStats {
@@ -181,17 +192,43 @@ impl HttpStats {
             && self.put == 0
             && self.post == 0
             && self.delete == 0
+            && self.azure.is_none_or(|stats| {
+                stats.received == 0
+                    && stats.sent == 0
+                    && stats.head == 0
+                    && stats.get == 0
+                    && stats.put == 0
+                    && stats.post == 0
+            })
     }
 
     /// `HTTPState::WriteProfilingInformation`, shared by EXPLAIN and query profiles.
     pub fn render(self) -> roastedduck_common::ByteString {
+        let mut out = self.render_named("HTTPFS HTTP Stats", true);
+        if let Some(azure) = self.azure {
+            let stats = Self {
+                active: true,
+                received: azure.received,
+                sent: azure.sent,
+                head: azure.head,
+                get: azure.get,
+                put: azure.put,
+                post: azure.post,
+                ..Self::default()
+            };
+            out.push_bytes(stats.render_named("Azure HTTP Stats", false));
+        }
+        out
+    }
+
+    fn render_named(self, title: &str, include_delete: bool) -> roastedduck_common::ByteString {
         let mut out = roastedduck_common::ByteString::new();
         if !self.active {
             return out;
         }
         out.push_bytes("┌─────────────────────────────────────┐\n│┌───────────────────────────────────┐│\n");
-        for line in [
-            "HTTPFS HTTP Stats".to_owned(),
+        let mut lines = vec![
+            title.to_owned(),
             String::new(),
             format!("in: {}", roastedduck_buffer::format_bytes(self.received)),
             format!("out: {}", roastedduck_buffer::format_bytes(self.sent)),
@@ -199,8 +236,11 @@ impl HttpStats {
             format!("#GET: {}", self.get),
             format!("#PUT: {}", self.put),
             format!("#POST: {}", self.post),
-            format!("#DELETE: {}", self.delete),
-        ] {
+        ];
+        if include_delete {
+            lines.push(format!("#DELETE: {}", self.delete));
+        }
+        for line in lines {
             let padding = 35_usize.saturating_sub(line.chars().count());
             let left = padding / 2 + padding % 2;
             let _ = roastedduck_common::byte_write!(
@@ -335,6 +375,7 @@ impl FunctionClient {
             self.query_id.fetch_add(1, Ordering::Relaxed);
             *stats = HttpStats {
                 active: stats.active,
+                azure: stats.azure.map(|_| AzureHttpStats::default()),
                 ..HttpStats::default()
             };
         }
@@ -370,6 +411,24 @@ impl FunctionClient {
 
     pub fn http_stats(&self) -> HttpStats {
         *self.http_stats.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn record_azure_http_request(&self, method: &str, body_length: u64) {
+        let mut stats = self.http_stats.lock().unwrap_or_else(PoisonError::into_inner);
+        let stats = stats.azure.get_or_insert_default();
+        stats.sent += body_length;
+        match method {
+            "HEAD" => stats.head += 1,
+            "GET" => stats.get += 1,
+            "PUT" => stats.put += 1,
+            "POST" => stats.post += 1,
+            _ => {}
+        }
+    }
+
+    pub fn record_azure_http_received(&self, bytes: u64) {
+        let mut stats = self.http_stats.lock().unwrap_or_else(PoisonError::into_inner);
+        stats.azure.get_or_insert_default().received += bytes;
     }
 
     pub fn record_http_received(&self, query_id: u64, bytes: u64) {

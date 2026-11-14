@@ -6,11 +6,60 @@ use roastedduck_function::logging::{ClientLogger, LogLevel, LogScope};
 use roastedduck_types::{LogicalType, Timestamp, Value};
 
 #[derive(Clone, Debug)]
-pub(super) struct HttpLogger(Arc<dyn ClientLogger>);
+pub(super) struct HttpLogger {
+    client: Arc<dyn ClientLogger>,
+    azure_redaction: Option<(Vec<String>, Vec<String>)>,
+}
 
 impl HttpLogger {
     pub(super) fn current() -> Option<Self> {
-        Some(Self(roastedduck_function::file_system::opener()?.logger()?))
+        Some(Self {
+            client: roastedduck_function::file_system::opener()?.logger()?,
+            azure_redaction: None,
+        })
+    }
+
+    pub(super) fn azure(query_params: Vec<String>, headers: Vec<String>) -> Option<Self> {
+        let mut logger = Self::current()?;
+        logger.azure_redaction = Some((query_params, headers));
+        Some(logger)
+    }
+
+    fn header(&self, name: &str, value: &str) -> (Value, Value) {
+        if let Some((_, redact)) = &self.azure_redaction {
+            let name = name.to_ascii_lowercase();
+            let value = if redact.contains(&name) { "REDACTED" } else { value };
+            (Value::varchar(name), Value::varchar(value))
+        } else {
+            (Value::varchar(name), Value::varchar(value))
+        }
+    }
+
+    fn url(&self, url: &str) -> String {
+        let Some((redact, _)) = &self.azure_redaction else {
+            return url.into();
+        };
+        if redact.is_empty() {
+            return url.into();
+        }
+        let Some((base, query)) = url.split_once('?') else {
+            return url.into();
+        };
+        let query = query
+            .split('&')
+            .filter(|s| !s.is_empty())
+            .map(|field| {
+                if let Some((name, _)) = field.split_once('=')
+                    && redact.iter().any(|s| s == name)
+                {
+                    format!("{name}=REDACTED")
+                } else {
+                    field.into()
+                }
+            })
+            .collect::<Vec<String>>()
+            .join("&");
+        format!("{base}?{query}")
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -24,14 +73,17 @@ impl HttpLogger {
         elapsed: Instant,
         response: &std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error>,
     ) {
-        if !self.0.should_log(LogScope::Connection, "HTTP", LogLevel::Debug) {
+        if !self
+            .client
+            .should_log(LogScope::Connection, "HTTP", LogLevel::Debug)
+        {
             return;
         }
         let map =
             |entries: Vec<(Value, Value)>| Value::map(LogicalType::VARCHAR, LogicalType::VARCHAR, entries);
-        let request = Value::struct_value(vec![
+        let mut request_fields = vec![
             ("type".into(), Value::varchar(method)),
-            ("url".into(), Value::varchar(url)),
+            ("url".into(), Value::varchar(self.url(url))),
             (
                 "start_time".into(),
                 Value::timestamp_tz(Timestamp(
@@ -58,10 +110,14 @@ impl HttpLogger {
                 "headers".into(),
                 map(headers
                     .iter()
-                    .map(|(name, value)| (Value::varchar(name), Value::varchar(value)))
+                    .map(|(name, value)| self.header(name, value))
                     .collect()),
             ),
-        ]);
+        ];
+        if self.azure_redaction.is_some() {
+            request_fields.retain(|(key, _)| key != "request_body_length");
+        }
+        let request = Value::struct_value(request_fields);
         let (status, reason, headers) = match response {
             Ok(response) => (
                 status_name(response.status()),
@@ -74,26 +130,27 @@ impl HttpLogger {
                     .headers()
                     .iter()
                     .map(|(name, value)| {
-                        (
-                            Value::varchar(name.as_str()),
-                            Value::varchar(String::from_utf8_lossy(value.as_bytes())),
-                        )
+                        self.header(name.as_str(), &String::from_utf8_lossy(value.as_bytes()))
                     })
                     .collect(),
             ),
             Err(error) => ("INVALID".to_owned(), error.to_string(), Vec::new()),
         };
-        let response = Value::struct_value(vec![
-            ("status".into(), Value::varchar(status)),
-            ("reason".into(), Value::varchar(reason)),
-            ("headers".into(), map(headers)),
-        ]);
+        let response = if response.is_err() && self.azure_redaction.is_some() {
+            Value::null(LogicalType::SQLNULL)
+        } else {
+            Value::struct_value(vec![
+                ("status".into(), Value::varchar(status)),
+                ("reason".into(), Value::varchar(reason)),
+                ("headers".into(), map(headers)),
+            ])
+        };
         if let Ok(message) =
             Value::struct_value(vec![("request".into(), request), ("response".into(), response)])
                 .to_varchar_bytes()
         {
             let _ = self
-                .0
+                .client
                 .write_log_bytes(LogScope::Connection, "HTTP", LogLevel::Debug, &message);
         }
     }
