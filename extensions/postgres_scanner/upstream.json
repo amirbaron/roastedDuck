@@ -248,5 +248,11 @@
     "src/storage/postgres_type_entry.cpp": "de9a2b189c809aa0d314da6b32932c1aed0dd4c5d52769019992cf48e7dc608f",
     "src/storage/postgres_type_set.cpp": "521e680c66a8b859e263ca92f6b2302cfcf45382fa79f3a7159392d93f45b051",
     "src/storage/postgres_update.cpp": "6ef53047a1629263b6aefa575da50d690f264ebfecc5dacf2d0543fa817d5238"
+  },
+  "submodules": {
+    "database-connector": {
+      "repository": "https://github.com/duckdb/database-connector",
+      "commit": "0a8505f775dae7bb30edd37f848d5975bf72884e"
+    }
   }
 }

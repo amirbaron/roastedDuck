@@ -1,3 +1,29 @@
+Active five-extension work, November 14, 2026: the user authorized HTTPFS, AWS,
+Azure, ICU and PostgreSQL compatible implementations against DuckDB 1.5.6. This
+work is **incomplete**. Docs-first commit `6793bbd8` pins the source contracts;
+`extensions/*/upstream.json` inventories 395 original SQL files across the five.
+HTTPFS now has bundled offline INSTALL/LOAD, aliases and an internal filesystem
+autoload bridge that preserves explicit settings and access restrictions. The
+signed final CLI passes 10 transport/developer cases (8 Rust, 2 C++ controls).
+Strict all-target Clippy passes for function/runtime/capi. A canonical 67-file
+ICU/extension run via scripts/conformance.sh passes its unchanged ratchet:
+Rust 65 PASS / 2 prerequisite SKIP; C++ 63 PASS / 4 prerequisite SKIP. Both skip
+two LOCAL_EXTENSION_REPO cases; the C++ shim additionally lacks TPCH for two
+mixed-feature tests. This is a targeted run, not a new full-corpus qualification.
+The first runtime-unit checkpoint passed 23 tests before the autoload bridge;
+the bridge is covered by the final transport/cohort tests. Receipts are under
+`.context/artifacts/popular-extensions/`, especially `bundled-final/`,
+`conformance-final/`, and `httpfs-clippy.log`. Earlier failing smoke/path-layout
+runs are retained. No baseline or original tests were weakened.
+AWS, Azure and PostgreSQL remain **unimplemented**; do not count inventories as
+support or end the requested work at HTTPFS. PostgreSQL's disposable local-server
+oracle control passes five checks against C++1.5.6/PG17.11 and stops its server;
+Rust was not tested. AWS SDK ordering and Azure's additional managed_identity/
+abfs surfaces are recorded in the specs. Next: implement credential providers,
+Azure filesystem and PostgreSQL remote catalog/transaction integration, then run
+all pinned suites and actual service/package acceptance. No new public release
+was made. The published post3 below predates these HTTPFS loading changes.
+
 Current publication, November 14, 2026: roastedDuck `1.5.6.post3` is public on
 GitHub and PyPI, with a Homebrew tap and verified native bottles. The release tag
 points to `afe4e2bb2baf79addf027b35b1ede98c2e05ad4f`; main contains the merged source,

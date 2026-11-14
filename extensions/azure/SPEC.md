@@ -10,7 +10,7 @@ source hashes. Sources/archives are retained under `.context/artifacts/popular-e
 
 ## Surface
 
-Blob and ADLS filesystems for az://, azure:// and abfss://; read/range/list/glob and COPY/write/commit; config, credential_chain, service_principal and access_token secret providers; all azure_* options registered in src/azure_extension.cpp. Match scope/authentication, retry/error and bounded-memory semantics.
+Blob and ADLS filesystems for az://, azure://, abfss:// and abfs://; read/range/list/glob and COPY/write/commit; config, credential_chain, managed_identity, service_principal and access_token secret providers; all azure_* options registered in src/azure_extension.cpp. Match scope/authentication, retry/error and bounded-memory semantics.
 
 ## Acceptance
 
@@ -24,3 +24,8 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 ## Status
 
 Contract recorded; not a claim that new functionality passes acceptance.
+
+The pinned source additionally registers managed-identity client/object/resource IDs
+and service-principal certificate authentication. These are required even though
+the engine's generated provider-name hints omit managed_identity. Source inventory
+takes precedence over that hint table.

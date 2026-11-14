@@ -14,6 +14,14 @@ Credential-chain providers for s3, aws, r2, gcs and rds; explicit chain/profile,
 
 ## Acceptance
 
+The pinned vcpkg baseline resolves aws-sdk-cpp 1.11.702. The default constructor's
+provider order is environment, profile, process, web identity, SSO, then container
+credentials or instance metadata. Its configured constructor also includes login
+credentials; the extension's default call does not use that constructor. Preserve
+this distinction instead of adopting a newer Rust SDK's default chain unchanged.
+The reference provider source is retained as `aws-provider-chain.cpp` in the
+external artifact directory; it is not shipped or compiled into roastedDuck.
+
 Run unchanged upstream SQL against C++ DuckDB 1.5.6 and Rust. Keep missing-service
 prerequisites explicit; skips do not qualify a feature. Add differential controls
 for auth, scope, cancellation, transactions and errors where applicable. Use real

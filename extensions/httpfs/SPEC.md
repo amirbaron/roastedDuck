@@ -24,3 +24,19 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 ## Status
 
 Contract recorded; not a claim that new functionality passes acceptance.
+
+## Bundled-loading source milestone
+
+The normal build now links HTTPFS and acknowledges bare INSTALL/FORCE INSTALL
+offline. LOAD aliases share one initialization; explicit package loading still
+validates the pinned legacy package and activates Rust code. A filesystem
+autoload callback respects the existing autoload setting (default false) and
+rechecks permissions. Explicit repository/version replacement is rejected for
+this bundled implementation, as for FTS/VSS.
+
+Final CLI developer/transport checks: 10 PASS (8 Rust, 2 C++ controls), including
+CSV, Parquet, aliases, no-reset reloads and zero-request denied-access cases.
+Strict all-target Clippy passes; targeted conformance has zero regressions.
+Receipts: `.context/artifacts/popular-extensions/bundled-final/` and
+`conformance-final/`. This does not qualify all 132 upstream HTTPFS files or
+real-cloud interoperability, and is not yet included in a public package.

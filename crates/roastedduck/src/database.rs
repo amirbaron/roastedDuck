@@ -160,6 +160,12 @@ impl roastedduck_planner::DatabaseState for InstanceState {
     }
 }
 
+impl roastedduck_function::file_system::FileSystemExtensionLoader for InstanceState {
+    fn load(&self, extension: &str) -> Result<bool> {
+        <Self as roastedduck_planner::DatabaseState>::autoload_extension(self, extension)
+    }
+}
+
 /// The instance state of the database a call is bound in.
 pub(crate) fn instance_state(context: &ClientContext) -> Result<&InstanceState> {
     context
@@ -268,6 +274,7 @@ pub(crate) fn static_extension_loaded(cache: &roastedduck_function::ObjectCache,
 /// An extension linked into the engine whose functions are registered on load.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StaticExtension {
+    Httpfs,
     Fts,
     Vss,
     Parquet,
@@ -292,6 +299,7 @@ impl StaticExtension {
 
     fn from_name(name: &str) -> Option<Self> {
         match name {
+            "httpfs" => Some(Self::Httpfs),
             "fts" => Some(Self::Fts),
             crate::vss::EXTENSION_NAME => Some(Self::Vss),
             "parquet" => Some(Self::Parquet),
@@ -320,7 +328,7 @@ impl StaticExtension {
             }
             Self::Tpch => PragmaFunction::call("tpch", vec![LogicalType::BIGINT]).with_query(),
             Self::Tpcds => PragmaFunction::call("tpcds", vec![LogicalType::BIGINT]).with_query(),
-            Self::Autocomplete | Self::Icu => return Vec::new(),
+            Self::Httpfs | Self::Autocomplete | Self::Icu => return Vec::new(),
         };
         vec![PragmaFunctionSet::single(function)]
     }
@@ -331,7 +339,13 @@ impl StaticExtension {
         match self {
             Self::Tpch => name.eq_ignore_ascii_case(b"tpch"),
             Self::Tpcds => name.eq_ignore_ascii_case(b"tpcds"),
-            Self::Fts | Self::Vss | Self::Parquet | Self::Json | Self::Autocomplete | Self::Icu => false,
+            Self::Httpfs
+            | Self::Fts
+            | Self::Vss
+            | Self::Parquet
+            | Self::Json
+            | Self::Autocomplete
+            | Self::Icu => false,
         }
     }
 
@@ -341,9 +355,15 @@ impl StaticExtension {
         match self {
             Self::Tpch => roastedduck_tpch::pragma_tpch_query(parameters),
             Self::Tpcds => roastedduck_tpcds::pragma_tpcds_query(parameters),
-            Self::Fts | Self::Vss | Self::Parquet | Self::Json | Self::Autocomplete | Self::Icu => Err(
-                Error::internal(roastedduck_common::byte_format!("no pragma {name}")),
-            ),
+            Self::Httpfs
+            | Self::Fts
+            | Self::Vss
+            | Self::Parquet
+            | Self::Json
+            | Self::Autocomplete
+            | Self::Icu => Err(Error::internal(roastedduck_common::byte_format!(
+                "no pragma {name}"
+            ))),
         }
     }
 
@@ -354,6 +374,7 @@ impl StaticExtension {
             system.register_pragma_functions(set)?;
         }
         match self {
+            Self::Httpfs => {}
             Self::Fts => {
                 system.register_scalar_functions(crate::fts::stem_function())?;
             }
@@ -756,6 +777,9 @@ impl DatabaseInstance {
             .unwrap_or_else(PoisonError::into_inner);
         if !loaded.contains(&extension) {
             extension.register(&self.system_catalog, &self.loaded_extensions)?;
+            if extension == StaticExtension::Httpfs {
+                self.register_http_file_system()?;
+            }
             if extension == StaticExtension::Icu {
                 self.load_icu_config();
             }
@@ -778,6 +802,66 @@ impl DatabaseInstance {
                 }
             }
             loaded.push(extension);
+        }
+        Ok(())
+    }
+
+    fn register_http_file_system(&self) -> Result<()> {
+        roastedduck_function::registered_files::Registry::initialize(&self.object_cache)
+            .register(Arc::new(roastedduck_httpfs::HttpFileSystem))?;
+        roastedduck_function::registered_files::Registry::initialize(&self.object_cache)
+            .register(Arc::new(roastedduck_httpfs::huggingface::HuggingFaceFileSystem))?;
+        roastedduck_function::registered_files::Registry::initialize(&self.object_cache).register(
+            Arc::new(roastedduck_httpfs::s3::S3FileSystem::new(
+                self.env.buffer_manager.clone(),
+            )),
+        )?;
+        self.secrets.register_s3_types();
+        self.object_cache.put(
+            roastedduck_httpfs::HTTP_SECRET_RESOLVER_KEY,
+            Arc::new(roastedduck_httpfs::HttpSecretResolver(Arc::new(
+                crate::secrets::HttpSecretLookup(Arc::clone(&self.secrets)),
+            ))),
+        );
+        self.object_cache.put(
+            roastedduck_httpfs::s3::SECRET_RESOLVER_KEY,
+            Arc::new(roastedduck_httpfs::s3::SecretResolver(Arc::new(
+                crate::secrets::S3SecretLookup(Arc::clone(&self.secrets)),
+            ))),
+        );
+        self.object_cache.put(
+            roastedduck_httpfs::huggingface::SECRET_RESOLVER_KEY,
+            Arc::new(roastedduck_httpfs::huggingface::SecretResolver(Arc::new(
+                crate::secrets::HuggingFaceSecretLookup(Arc::clone(&self.secrets)),
+            ))),
+        );
+        for option in roastedduck_httpfs::options()
+            .into_iter()
+            .chain(roastedduck_httpfs::s3::options())
+        {
+            if self.extension_option(&option.name).is_none() {
+                self.add_extension_option(option);
+            }
+        }
+        // The pinned extension snapshots these environment settings at LOAD.
+        // These are global values; keep the reported option defaults intact.
+        for (name, variable) in [
+            ("s3_region", "AWS_DEFAULT_REGION"),
+            ("s3_region", "AWS_REGION"),
+            ("s3_access_key_id", "AWS_ACCESS_KEY_ID"),
+            ("s3_secret_access_key", "AWS_SECRET_ACCESS_KEY"),
+            ("s3_session_token", "AWS_SESSION_TOKEN"),
+            ("s3_endpoint", "DUCKDB_S3_ENDPOINT"),
+            ("s3_use_ssl", "DUCKDB_S3_USE_SSL"),
+            ("s3_kms_key_id", "DUCKDB_S3_KMS_KEY_ID"),
+            ("s3_requester_pays", "DUCKDB_S3_REQUESTER_PAYS"),
+        ] {
+            if let Ok(text) = std::env::var(variable)
+                && let Some(option) = self.extension_option(name)
+            {
+                let value = Value::varchar(text).default_cast_as(&option.input_type)?;
+                self.set_extension_global(&option, Some(value));
+            }
         }
         Ok(())
     }
@@ -1904,6 +1988,15 @@ impl Database {
         let database = Self {
             instance: Arc::new(instance),
         };
+        database.instance.object_cache.put(
+            roastedduck_function::file_system::EXTENSION_LOADER_KEY,
+            Arc::new(roastedduck_function::file_system::ExtensionLoader(Arc::new(
+                InstanceState {
+                    secrets: Arc::clone(&database.instance.secrets),
+                    instance: Arc::downgrade(&database.instance),
+                },
+            ))),
+        );
         database
             .instance
             .optimizer_rules
@@ -2392,64 +2485,14 @@ impl Database {
         true
     }
 
-    /// Register native HTTP(S) and S3 transports. Full HTTPFS support, including
-    /// credential refresh and `HuggingFace`, remains separate work.
+    pub(crate) fn httpfs_loaded(&self) -> bool {
+        static_extension_loaded(&self.instance.object_cache, "httpfs")
+            || self.external_extensions().contains(b"httpfs")
+    }
+
+    /// Register roastedDuck's compatible HTTPFS transports and secret providers.
     pub fn register_http_file_system(&self) -> Result<()> {
-        roastedduck_function::registered_files::Registry::initialize(&self.instance.object_cache)
-            .register(Arc::new(roastedduck_httpfs::HttpFileSystem))?;
-        roastedduck_function::registered_files::Registry::initialize(&self.instance.object_cache)
-            .register(Arc::new(roastedduck_httpfs::huggingface::HuggingFaceFileSystem))?;
-        roastedduck_function::registered_files::Registry::initialize(&self.instance.object_cache).register(
-            Arc::new(roastedduck_httpfs::s3::S3FileSystem::new(
-                self.instance.env.buffer_manager.clone(),
-            )),
-        )?;
-        self.instance.secrets.register_s3_types();
-        self.instance.object_cache.put(
-            roastedduck_httpfs::HTTP_SECRET_RESOLVER_KEY,
-            Arc::new(roastedduck_httpfs::HttpSecretResolver(Arc::new(
-                crate::secrets::HttpSecretLookup(Arc::clone(&self.instance.secrets)),
-            ))),
-        );
-        self.instance.object_cache.put(
-            roastedduck_httpfs::s3::SECRET_RESOLVER_KEY,
-            Arc::new(roastedduck_httpfs::s3::SecretResolver(Arc::new(
-                crate::secrets::S3SecretLookup(Arc::clone(&self.instance.secrets)),
-            ))),
-        );
-        self.instance.object_cache.put(
-            roastedduck_httpfs::huggingface::SECRET_RESOLVER_KEY,
-            Arc::new(roastedduck_httpfs::huggingface::SecretResolver(Arc::new(
-                crate::secrets::HuggingFaceSecretLookup(Arc::clone(&self.instance.secrets)),
-            ))),
-        );
-        for option in roastedduck_httpfs::options()
-            .into_iter()
-            .chain(roastedduck_httpfs::s3::options())
-        {
-            self.add_extension_option(option);
-        }
-        // The pinned extension snapshots these environment settings at LOAD.
-        // These are global values; keep the reported option defaults intact.
-        for (name, variable) in [
-            ("s3_region", "AWS_DEFAULT_REGION"),
-            ("s3_region", "AWS_REGION"),
-            ("s3_access_key_id", "AWS_ACCESS_KEY_ID"),
-            ("s3_secret_access_key", "AWS_SECRET_ACCESS_KEY"),
-            ("s3_session_token", "AWS_SESSION_TOKEN"),
-            ("s3_endpoint", "DUCKDB_S3_ENDPOINT"),
-            ("s3_use_ssl", "DUCKDB_S3_USE_SSL"),
-            ("s3_kms_key_id", "DUCKDB_S3_KMS_KEY_ID"),
-            ("s3_requester_pays", "DUCKDB_S3_REQUESTER_PAYS"),
-        ] {
-            if let Ok(text) = std::env::var(variable)
-                && let Some(option) = self.instance.extension_option(name)
-            {
-                let value = Value::varchar(text).default_cast_as(&option.input_type)?;
-                self.instance.set_extension_global(&option, Some(value));
-            }
-        }
-        Ok(())
+        self.instance.register_http_file_system()
     }
 
     /// Runs queued tasks of the database's queries on the calling thread (DuckDB's

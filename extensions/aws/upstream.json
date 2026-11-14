@@ -32,5 +32,12 @@
     "src/aws_secret.cpp": "0ea127ee415958a8d6fbade19f7ad9dae4accec8c068126ccaa61abfead102f9",
     "src/include/aws_extension.hpp": "c1d941e09d3376092951f98c93aef0b14f0fdd81c1caa681b3e84a0aeb81ca89",
     "src/include/aws_secret.hpp": "13b14f6a546e8a5d213984394e1613fa0b0f95119dee5e426ff332faa511ac7d"
+  },
+  "reference_dependencies": {
+    "aws-sdk-cpp": {
+      "version": "1.11.702",
+      "vcpkg_commit": "84bab45d415d22042bd0b9081aea57f362da3f35",
+      "purpose": "Oracle behavior reference only; not a product dependency"
+    }
   }
 }

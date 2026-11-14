@@ -24,3 +24,12 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 ## Status
 
 Contract recorded; not a claim that new functionality passes acceptance.
+
+The pinned `database-connector` submodule is
+`0a8505f775dae7bb30edd37f848d5975bf72884e`. A basic reference fixture is executable
+with `scripts/postgres-tests/oracle_control.py`. It creates a fresh, loopback-only
+PostgreSQL cluster under the supplied artifact directory, verifies remote reads,
+writes, rollback, query pushdown and a local/remote join, then stops the server.
+The first run passes on C++ 1.5.6 and PostgreSQL 17.11; Rust was not tested because
+the connector is not implemented. This does not replace the 152 original SQL
+files or pool/TLS/authentication/concurrency acceptance.
