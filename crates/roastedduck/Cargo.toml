@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 flate2 = "1"
+roastedduck-snowball = { path = "../snowball" }
 roastedduck-common.workspace = true
 roastedduck-types.workspace = true
 roastedduck-ast.workspace = true

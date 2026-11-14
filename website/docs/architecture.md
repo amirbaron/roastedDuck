@@ -40,3 +40,9 @@ compatibility version.
 
 Read the [detailed engineering conventions](https://github.com/amirbaron/roastedDuck/blob/main/docs/architecture.md)
 before changing operator, memory-accounting, or persistence behavior.
+
+
+FTS and VSS are bundled implementations maintained in this repository. Their
+algorithm crates (`crates/snowball` and `crates/hnsw`) are separate from their SQL
+and storage integration. Internal Rust hooks evolve atomically with the engine;
+there is no independently versioned Rust plugin ABI. See the [extension guide](extensions.md).

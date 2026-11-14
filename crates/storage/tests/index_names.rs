@@ -71,3 +71,52 @@ fn raw_names_survive_unbound_binding_delta_lookup_and_removal() -> Result<()> {
     assert!(list.is_empty());
     Ok(())
 }
+
+#[test]
+fn selective_binding_leaves_unsupported_formats_opaque() -> Result<()> {
+    let manager = BufferManager::new(BufferManagerConfig::default())?;
+    let list = TableIndexList::default();
+    for (name, kind) in [("first", "HNSW"), ("middle", "ART"), ("last", "HNSW")] {
+        list.add_unbound(UnboundIndex::new(
+            name,
+            kind,
+            IndexConstraintType::None,
+            vec![0],
+            Arc::new(()),
+            UnboundIndexStorage::Deprecated,
+        ));
+    }
+    let mut calls = 0;
+    for _ in 0..2 {
+        list.bind_matching(
+            &|index| index.index_type().eq_ignore_ascii_case("ART"),
+            &mut |index| {
+                calls += 1;
+                assert!(index.index_type().eq_ignore_ascii_case("ART"));
+                Art::new(
+                    index.name(),
+                    IndexConstraintType::None,
+                    vec![0],
+                    vec![LogicalType::INTEGER],
+                    IndexKeyExpressions::Columns(vec!["key".into()]),
+                    manager.clone(),
+                    262_136,
+                )
+            },
+        )?;
+    }
+    assert_eq!(calls, 1);
+    assert_eq!(list.len(), 3);
+    assert_eq!(list.entries().len(), 1);
+    assert!(list.has_unbound());
+    assert!(list.find("middle").is_some());
+    assert!(list.find("first").is_none());
+    assert!(list.contains("first") && list.contains("last"));
+    // Mandatory binding still rejects the unsupported index before publishing it.
+    assert!(
+        list.bind(&mut |_| Err(roastedduck_common::Error::not_implemented("opaque index")))
+            .is_err()
+    );
+    assert_eq!(list.len(), 3);
+    Ok(())
+}

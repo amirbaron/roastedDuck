@@ -260,6 +260,22 @@ pub type TableInOutFunction = Arc<
         + Sync,
 >;
 
+/// Execution details reported by a first-party streaming table function.
+pub type TableInOutExplain = Arc<
+    dyn Fn(&TableScanState) -> Vec<(roastedduck_common::ByteString, roastedduck_common::ByteString)>
+        + Send
+        + Sync,
+>;
+
+/// Static plan attributes supplied by a compiled-in table function's real bind
+/// data (DuckDB's `table_function_to_string_t`). Runtime modes stay in the scan's
+/// dynamic explain callbacks.
+pub type TableFunctionStaticExplain = Arc<
+    dyn Fn(Option<&dyn FunctionData>) -> Vec<(roastedduck_common::ByteString, roastedduck_common::ByteString)>
+        + Send
+        + Sync,
+>;
+
 /// Per-scan state of a [`TableFunctionScan`] (cursor position and similar).
 #[derive(Debug, Default)]
 pub struct TableScanState {
@@ -324,6 +340,12 @@ pub struct TableFunction {
     /// subquery whose rows are the function's input, and `bind` sees their types in
     /// `input_table_types` instead of `inputs`.
     pub in_out_function: Option<TableInOutFunction>,
+    /// Runtime execution details for first-party table-in/table-out operators.
+    #[doc(hidden)]
+    pub in_out_explain: Option<TableInOutExplain>,
+    /// Static plan attributes from actual bound table/index metadata.
+    #[doc(hidden)]
+    pub static_explain: Option<TableFunctionStaticExplain>,
     /// The estimated row count of a call (`cardinality`).
     pub cardinality: Option<TableFunctionCardinality>,
     /// Whether the function has DuckDB's empty virtual column (`COLUMN_IDENTIFIER_EMPTY`,
@@ -380,6 +402,8 @@ impl TableFunction {
             in_out: false,
             type_pushdown: None,
             in_out_function: None,
+            in_out_explain: None,
+            static_explain: None,
             cardinality: None,
             empty_column: false,
             pushdown_filters: None,

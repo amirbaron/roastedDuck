@@ -55,7 +55,8 @@ pub use cross_product::{CrossProductExecutor, CrossProductGlobal, PhysicalCrossP
 pub use cte::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte, RecursiveCteState};
 pub use ddl::{
     CatalogTableCreator, CreateEntryAction, CreateIndexAction, CreateSchemaAction, CreateSequenceAction,
-    CreateViewAction, DdlAction, DropAction, PhysicalDdl, bind_table_indexes,
+    CreateViewAction, DdlAction, DropAction, IndexBindIntent, PhysicalDdl, bind_table_indexes,
+    bind_table_indexes_with_intent,
 };
 pub use delete::PhysicalDelete;
 pub use delim::{DelimData, DelimGlobal, DelimShared, PhysicalDelimJoin, PhysicalDelimScan};

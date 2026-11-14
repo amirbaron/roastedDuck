@@ -307,6 +307,8 @@ jobs:
           test "$result" = 45
           cc scripts/release/smoke_c.c -I"$PWD/native/sdk/include" -L"$PWD/native/sdk/lib" -Wl,-rpath,"$PWD/native/sdk/lib" -lduckdb -o smoke-c
           ./smoke-c
+      - name: Verify bundled FTS and VSS developer journeys
+        run: python3.12 scripts/extension-smoke.py --cli native/sdk/bin/roastedDuck --out native-qualification/search-extensions
       - name: Fetch immutable upstream test inputs
         run: python scripts/release/fetch_validation_source.py --out upstream
       - name: Exercise public ADBC on the feature-free SDK

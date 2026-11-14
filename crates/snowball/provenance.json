@@ -1,0 +1,561 @@
+{
+  "upstream": "https://github.com/snowballstem/snowball",
+  "commit": "896281c2d89c9347f83426d37ad9b36fc4742d5b",
+  "duckdb": "1.5.6",
+  "modules_sha256": "e2ac8ee9bde31a79193eb431d9621edd05d2d2c47783f8e85b7cd7f2b2d92902",
+  "compiler_sources": {
+    "compiler/analyser.c": "a468be587522ba54b4a3fdfcfa90e0b35a5ff9907a15c1294114701f9858dd67",
+    "compiler/driver.c": "27a9b24e858dcb7214d1d2ad878cb13ee23e9d0e1aadfb0303c91832ad09efad",
+    "compiler/generator.c": "bdca862f6df0928b422d46119bb8e58fb52ad7fabbdb42815f13474c0d6e11f3",
+    "compiler/generator_ada.c": "d6735cc50bc162a0f85aee296f87d579263bc3fd75c7b6b542031fc64613debf",
+    "compiler/generator_csharp.c": "53cfde28613cf351e16df71cba803fde819991d5dff941e04f62cd148e2b395a",
+    "compiler/generator_go.c": "f3225b789bedb1474dd0d6ea0617ab9b06ca70ccc17657a1816e5105099c4736",
+    "compiler/generator_java.c": "8269019f2fc5a9e91c918c6451a1c315f0eb72ae77c5691ef37c7f526e2336c0",
+    "compiler/generator_js.c": "f95d87558f59477dedbfcfafdc525e29923b901a5722cf79cf4058c1467dfc0e",
+    "compiler/generator_pascal.c": "226436ab5537c57a7fe412e531fffaadf193868771267784aa4367ddc2a1af55",
+    "compiler/generator_python.c": "caf9e0ddc076b64207cee3d8b5707f094fd3bb3cb985c4a338d25626ea841e4c",
+    "compiler/generator_rust.c": "56d4ea1c1c7388dbd5361759d87809684f39404881228e42fc9012ac6aba495d",
+    "compiler/header.h": "0dafff2521e6e578ad7b10747a300fe25071081b1418a6703e78a53c3c127042",
+    "compiler/space.c": "a28de9c3bd16ec14a51fa70375c1c8c01c56b25a00cc872e5d9a6d2af1b2ad55",
+    "compiler/syswords.h": "6a1852e5b94a70ce3eaf1450f343ab99aa3ac01ecc1e5b1fdd590c4f2354045d",
+    "compiler/syswords2.h": "8a1cf8487ae8a6bcd9e1b043b138eff7aebbd882f86bc223ee3e967885e60dc7",
+    "compiler/tokeniser.c": "41b47ec93fd44533a013506dac448a57a662b64fe3a96744b9f06999cd305d81"
+  },
+  "algorithms": [
+    {
+      "name": "arabic",
+      "definition_sha256": "a35de153c23da0f9376805093251e79f8550a02bcf3f969f616ed2f29fd00f11",
+      "duckdb_c_sha256": "858ea87670599553bfaf0adf4f759856a2ea43fc5a1d8a9f60b59993537857b7",
+      "generated_c_matches": true,
+      "rust_sha256": "a778f3358e2658b5cfad501932f685925c7a475142a0d1a773dda05464f29935"
+    },
+    {
+      "name": "basque",
+      "definition_sha256": "ed3f8dcbd348ddc5ff524165cb75646409522124e6c2cb55b2eb56184e9170d2",
+      "duckdb_c_sha256": "e2e36da3c92f610193fc2728fa4b8cd81910b061027e6c2b26f81518c3c5654a",
+      "generated_c_matches": true,
+      "rust_sha256": "9528ebb3dbb3891eb6a48df4a164cee13ad94357f95cd3e3fffe87f18e08d429"
+    },
+    {
+      "name": "catalan",
+      "definition_sha256": "e8fb73948aed7bb6a742681e2f807a082d3bd9f566e2c2303ed50962502925d3",
+      "duckdb_c_sha256": "daa45d2570e98d669b356b63dd8e755beabea0816af1e8192ebea2cca5511ef0",
+      "generated_c_matches": true,
+      "rust_sha256": "6884dcd9057b521f2d9d992c99b4215149284ed31518ffcef5c1d5ddfb29e114"
+    },
+    {
+      "name": "danish",
+      "definition_sha256": "03e163d32c78f976afc6455f287083cc78b339afa271d73b575e711c04cacc19",
+      "duckdb_c_sha256": "0957f6b508401a04c3ca940bf5dd579d44321bed8a6883b26619d7ef16ce2992",
+      "generated_c_matches": true,
+      "rust_sha256": "c8bd5d1be01a4d4a89d53ab705e55d2714e4a1fbb7c14ae0c3589bdb9e1c2109"
+    },
+    {
+      "name": "dutch",
+      "definition_sha256": "2552f3db19f94bb352df84f31be5db25103bdb5d6577932be6ea4220ca7910ee",
+      "duckdb_c_sha256": "6edd7448a60dd5732d50ee36e6dbeb062bbda3f889f60cf3a8176eb0699cc3a7",
+      "generated_c_matches": true,
+      "rust_sha256": "07098551cd4bce58c9e02ae9bb2792b673a0f8b65144f3044e350dd503d065b9"
+    },
+    {
+      "name": "english",
+      "definition_sha256": "10493352edae52d38759a442168e929635d9e731e444b1bdc79eb30e2da60cb1",
+      "duckdb_c_sha256": "5ad4f80f1753f8b29972bfc144edf9be3c62a9a647b4444d2ad8ccac3708f064",
+      "generated_c_matches": true,
+      "rust_sha256": "027f675c3487ae4aac26708e4c82b53b65e1ce626844cd9cbf633c840b8abd24"
+    },
+    {
+      "name": "finnish",
+      "definition_sha256": "917156c9da56a18b1e81b8d8051bcf2d1ea58f5dc09b35a38dbff8d74ae7920b",
+      "duckdb_c_sha256": "acc6c22795feb1a5685fb7ec2fbbad21c7c23c8d8d194351f3e8bddf2e3403ee",
+      "generated_c_matches": true,
+      "rust_sha256": "b71194583ad86351538a0ce8e4c50eba967888f932ea1e47dad319e7d2560c57"
+    },
+    {
+      "name": "french",
+      "definition_sha256": "119074de7759bbbb3e1472382dac93b6017426732034bd85962635cc5a707e5b",
+      "duckdb_c_sha256": "a3293549ac7f79ff5f339aa80db8389c33a1cdd0c317334e2a2689470511a16a",
+      "generated_c_matches": true,
+      "rust_sha256": "4876753ab1f3c96f4d1a9096907713b3377c65e54ccfbfbb30967450e313b310"
+    },
+    {
+      "name": "german",
+      "definition_sha256": "da77e92ed1b84507204e307ccfc4df1e163108994e987a82aa9e63e8cbc89d78",
+      "duckdb_c_sha256": "be07378bd3716d3e7dee088cf604341f33ab7b49d62c4c25fc88903c007f077c",
+      "generated_c_matches": true,
+      "rust_sha256": "13cde0422f5bfb8c805955b4a11e91d7893d6ad6e7ecda8e960691a4b63d7e9d"
+    },
+    {
+      "name": "greek",
+      "definition_sha256": "a7c9d65644e5a0ea6c1f7d8abc669bc3069a618174ba88a6909a7959a99189cb",
+      "duckdb_c_sha256": "836c6f8b49d61192dd8e1139e674e96fb219b7df0231a7afd361f3fd025b2c08",
+      "generated_c_matches": true,
+      "rust_sha256": "881001877ffdb99df36f9d6dc6a5834b40a8ca32e7458dcaea38f60417a8c583"
+    },
+    {
+      "name": "hindi",
+      "definition_sha256": "02f7d9915c0e167bea2560dd75db44dbd9034c607eea2b79b5baf6968c14dfab",
+      "duckdb_c_sha256": "bb66e20f8a08b518602740492b24a8c813819f88c215a8984bcf6c116bd475ce",
+      "generated_c_matches": true,
+      "rust_sha256": "75800da596a71957776334685783b2407a5719e08740d8687d91bf256b1935b2"
+    },
+    {
+      "name": "hungarian",
+      "definition_sha256": "b3a1a2c5121b6522054f1191c1627e34afd73baa7ec448af2095ea6e14fe1df3",
+      "duckdb_c_sha256": "d4e43dfb3fb643566bd47a031a65c9c6fea0fbd5f848095fbae06a4dc21ec44d",
+      "generated_c_matches": true,
+      "rust_sha256": "74d3185a4898d618f9171f1e906a96b9aec66e6ba113f309029382c97803c54b"
+    },
+    {
+      "name": "indonesian",
+      "definition_sha256": "9cc3325f3f440628a8fcb886c4d4f06dbb8679f40b20666a8e027132c6504ac4",
+      "duckdb_c_sha256": "9c003298c0be78926f1f220e7d3a41b5798cc9c84c602553d96941370724d973",
+      "generated_c_matches": true,
+      "rust_sha256": "cb8f762f33a01d86dfa9062200d3202a88fc5b79e71a51ea13d41a5277a89715"
+    },
+    {
+      "name": "irish",
+      "definition_sha256": "524820ff444a21c590e04f89909b683139f2bd5faac2336529067577900dff87",
+      "duckdb_c_sha256": "a60da9ff44eda1338bcf1dab892ef1b94006a4a4e8880397666717964e76c3ae",
+      "generated_c_matches": true,
+      "rust_sha256": "c8d43172e7096d4aaa56d705862ba3475b40da5c2b300d220753b4ee92b5367e"
+    },
+    {
+      "name": "italian",
+      "definition_sha256": "5046fbe37e26938a32d7782266479358e3e61cd24831afb0eb0c2573421381c6",
+      "duckdb_c_sha256": "52e8b60000a93184690e8c6ecc9abbe8b02a24d452c76e822e2d36c0dbd1b3ff",
+      "generated_c_matches": true,
+      "rust_sha256": "ec400e0088535daf97778c7150175475c5e7686d714d1621ecfa13fe010f3b10"
+    },
+    {
+      "name": "lithuanian",
+      "definition_sha256": "a03da5b6336c7373eb330ff9014536c4f733512d7830512c7c4d9236fefe23ea",
+      "duckdb_c_sha256": "9d3cde7d3efebe2a969dfcc3c409b9b9d1c709d0f50a0de163b07f862ec8dedc",
+      "generated_c_matches": true,
+      "rust_sha256": "30a89a38a296ca762cff727d91f253ddf8d8308e0e339f8deede17074b518ce1"
+    },
+    {
+      "name": "nepali",
+      "definition_sha256": "319c2df01434172cae97f1f140920e25a57921f0ca8b765e9dea6e8f4deecc40",
+      "duckdb_c_sha256": "c9603c693b34ce465cb6ad037f2f6c8e8afdb98366538b2c7b24e6aa9480c410",
+      "generated_c_matches": true,
+      "rust_sha256": "fdc359a766407f1f331a7461c4c6ea66a2b8e4f2732195d87c7a2dfc772bd4e2"
+    },
+    {
+      "name": "norwegian",
+      "definition_sha256": "7cfa1644a3fce7b14e027a790281bcf2ac84d198845b7ef06ad8a3236c23e69f",
+      "duckdb_c_sha256": "7eb235865aa2af20854f896e8e39c9e51a597768e65a2233830edd46f9d8fc7c",
+      "generated_c_matches": true,
+      "rust_sha256": "a973a275aba5d41036219af4c7ada7c7a1ce2030b053b72b855ce12a5031eeb7"
+    },
+    {
+      "name": "porter",
+      "definition_sha256": "ba1dacc8105ff952e3b1034a1b38de1ebeb8f55ebb637bda7abbdefe5cdb1183",
+      "duckdb_c_sha256": "75297cfc344a37a2b3d4b6558453119248dc58a2afe7eef9963517dd64fc5967",
+      "generated_c_matches": true,
+      "rust_sha256": "18ca153914f7db70ea6ca9b9a0bcf00bdbdb5d2f03be5415a1e7da5541d018e1"
+    },
+    {
+      "name": "portuguese",
+      "definition_sha256": "5709ba2a1ca960ffd2a53185ed53bef03cd42de74d869ed94493917fe1eb8135",
+      "duckdb_c_sha256": "f89c41b4226e6acf09f73ce8ff0b49175c6a87bc8994114604878234db0a2e75",
+      "generated_c_matches": true,
+      "rust_sha256": "f8d9578420e1358116fea17a9549eeb3110fcd991cd6a8bf38ddf906a56a2039"
+    },
+    {
+      "name": "romanian",
+      "definition_sha256": "2bcdf2d072d0a718652c22f9c1e4e5636e37c534467bfd6f31ecbdcd72f58ca0",
+      "duckdb_c_sha256": "794a83a60d5ef71072bb7ff3e6dd7a47cd16c0637a4bd5690942acaccff547e9",
+      "generated_c_matches": true,
+      "rust_sha256": "4df3e2f615b35bb4913da421721d1b157df3d7bac40bcaf90b1efe8fb822b082"
+    },
+    {
+      "name": "russian",
+      "definition_sha256": "f1b54ea9315b434c4595529e95dd6ad024490785aa56d5013de988a0d3d27fc9",
+      "duckdb_c_sha256": "8dcd4d220d246cf27c6415cb5a243d9f5aca89354e1c3fb89d9c03753d797506",
+      "generated_c_matches": true,
+      "rust_sha256": "5f6ae64766893c50935cb1c6feb601bae7952729de187b8ca61084a66b7724d5"
+    },
+    {
+      "name": "serbian",
+      "definition_sha256": "08d8bc64c088ba8fbfe25be2c931150d5883aee38de39019b4229cab95489223",
+      "duckdb_c_sha256": "9e6d934ec4f90af178b11ca3a10be6056e7cb7edcb1910b4ed2bc6bdc51f8687",
+      "generated_c_matches": true,
+      "rust_sha256": "684dd52316a712a9d9f270a0622697f2fae28b7f640fa817dd1d9dc639d772ee"
+    },
+    {
+      "name": "spanish",
+      "definition_sha256": "f75c503f8c669da762b1e7692ff18e31c3858b20e77a8937546b3870b0585cfe",
+      "duckdb_c_sha256": "af9030125b9583a4820e526d9501de414aa3e93c7f8494c8cf07a738426ffb1c",
+      "generated_c_matches": true,
+      "rust_sha256": "adc8bd562d7f4790b6cc10a5073293f6fcb8a35f4f228eb593380b6f051b9171"
+    },
+    {
+      "name": "swedish",
+      "definition_sha256": "cf877514abf1f67f1f91ac2c50d3b0f06bdb7006a514e4976c96c5fc8f5622be",
+      "duckdb_c_sha256": "bcfa300d2d508ed74850f565664c91ed352529dce3777213b230124ea2f9ca4b",
+      "generated_c_matches": true,
+      "rust_sha256": "f4ba661330ddb37940ebb09d95ae212fa2104facff18ce13851b4571a57a3714"
+    },
+    {
+      "name": "tamil",
+      "definition_sha256": "1668bbc10932aa76ed663718528452a4ce26e85536dfe66745c5044e766a5b41",
+      "duckdb_c_sha256": "d1cc4342090ebd9098193f1a4884bbfb96b872793f0afe617e551e93df53eead",
+      "generated_c_matches": true,
+      "rust_sha256": "7fd6719d958257c20f4b2b6c7e4427a55c82b4d827e9388b8602480400505b77"
+    },
+    {
+      "name": "turkish",
+      "definition_sha256": "62b0aaceb1cdcbf28032c467b37ca6d9c5c206097da802dd7fe3a4cdd38bacdd",
+      "duckdb_c_sha256": "2467f87909d059911a411e4cce490dac42d4b8698a2d26b3f87766f8ae71be75",
+      "generated_c_matches": true,
+      "rust_sha256": "6c619910ec60cd9166c6265ac413c8d1c9fcfe5149b4ad9accdfaea49ed94eea"
+    }
+  ],
+  "aliases": [
+    [
+      "ar",
+      "arabic"
+    ],
+    [
+      "ara",
+      "arabic"
+    ],
+    [
+      "arabic",
+      "arabic"
+    ],
+    [
+      "baq",
+      "basque"
+    ],
+    [
+      "basque",
+      "basque"
+    ],
+    [
+      "ca",
+      "catalan"
+    ],
+    [
+      "cat",
+      "catalan"
+    ],
+    [
+      "catalan",
+      "catalan"
+    ],
+    [
+      "da",
+      "danish"
+    ],
+    [
+      "dan",
+      "danish"
+    ],
+    [
+      "danish",
+      "danish"
+    ],
+    [
+      "de",
+      "german"
+    ],
+    [
+      "deu",
+      "german"
+    ],
+    [
+      "dut",
+      "dutch"
+    ],
+    [
+      "dutch",
+      "dutch"
+    ],
+    [
+      "el",
+      "greek"
+    ],
+    [
+      "ell",
+      "greek"
+    ],
+    [
+      "en",
+      "english"
+    ],
+    [
+      "eng",
+      "english"
+    ],
+    [
+      "english",
+      "english"
+    ],
+    [
+      "es",
+      "spanish"
+    ],
+    [
+      "esl",
+      "spanish"
+    ],
+    [
+      "eu",
+      "basque"
+    ],
+    [
+      "eus",
+      "basque"
+    ],
+    [
+      "fi",
+      "finnish"
+    ],
+    [
+      "fin",
+      "finnish"
+    ],
+    [
+      "finnish",
+      "finnish"
+    ],
+    [
+      "fr",
+      "french"
+    ],
+    [
+      "fra",
+      "french"
+    ],
+    [
+      "fre",
+      "french"
+    ],
+    [
+      "french",
+      "french"
+    ],
+    [
+      "ga",
+      "irish"
+    ],
+    [
+      "ger",
+      "german"
+    ],
+    [
+      "german",
+      "german"
+    ],
+    [
+      "gle",
+      "irish"
+    ],
+    [
+      "gre",
+      "greek"
+    ],
+    [
+      "greek",
+      "greek"
+    ],
+    [
+      "hi",
+      "hindi"
+    ],
+    [
+      "hin",
+      "hindi"
+    ],
+    [
+      "hindi",
+      "hindi"
+    ],
+    [
+      "hu",
+      "hungarian"
+    ],
+    [
+      "hun",
+      "hungarian"
+    ],
+    [
+      "hungarian",
+      "hungarian"
+    ],
+    [
+      "id",
+      "indonesian"
+    ],
+    [
+      "ind",
+      "indonesian"
+    ],
+    [
+      "indonesian",
+      "indonesian"
+    ],
+    [
+      "irish",
+      "irish"
+    ],
+    [
+      "it",
+      "italian"
+    ],
+    [
+      "ita",
+      "italian"
+    ],
+    [
+      "italian",
+      "italian"
+    ],
+    [
+      "lit",
+      "lithuanian"
+    ],
+    [
+      "lithuanian",
+      "lithuanian"
+    ],
+    [
+      "lt",
+      "lithuanian"
+    ],
+    [
+      "ne",
+      "nepali"
+    ],
+    [
+      "nep",
+      "nepali"
+    ],
+    [
+      "nepali",
+      "nepali"
+    ],
+    [
+      "nl",
+      "dutch"
+    ],
+    [
+      "nld",
+      "dutch"
+    ],
+    [
+      "no",
+      "norwegian"
+    ],
+    [
+      "nor",
+      "norwegian"
+    ],
+    [
+      "norwegian",
+      "norwegian"
+    ],
+    [
+      "por",
+      "portuguese"
+    ],
+    [
+      "porter",
+      "porter"
+    ],
+    [
+      "portuguese",
+      "portuguese"
+    ],
+    [
+      "pt",
+      "portuguese"
+    ],
+    [
+      "ro",
+      "romanian"
+    ],
+    [
+      "romanian",
+      "romanian"
+    ],
+    [
+      "ron",
+      "romanian"
+    ],
+    [
+      "ru",
+      "russian"
+    ],
+    [
+      "rum",
+      "romanian"
+    ],
+    [
+      "rus",
+      "russian"
+    ],
+    [
+      "russian",
+      "russian"
+    ],
+    [
+      "serbian",
+      "serbian"
+    ],
+    [
+      "spa",
+      "spanish"
+    ],
+    [
+      "spanish",
+      "spanish"
+    ],
+    [
+      "sr",
+      "serbian"
+    ],
+    [
+      "srp",
+      "serbian"
+    ],
+    [
+      "sv",
+      "swedish"
+    ],
+    [
+      "swe",
+      "swedish"
+    ],
+    [
+      "swedish",
+      "swedish"
+    ],
+    [
+      "ta",
+      "tamil"
+    ],
+    [
+      "tam",
+      "tamil"
+    ],
+    [
+      "tamil",
+      "tamil"
+    ],
+    [
+      "tr",
+      "turkish"
+    ],
+    [
+      "tur",
+      "turkish"
+    ],
+    [
+      "turkish",
+      "turkish"
+    ]
+  ]
+}

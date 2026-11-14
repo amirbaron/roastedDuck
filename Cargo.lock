@@ -1097,6 +1097,7 @@ dependencies = [
  "roastedduck-planner",
  "roastedduck-row",
  "roastedduck-serde",
+ "roastedduck-snowball",
  "roastedduck-storage",
  "roastedduck-tpcds",
  "roastedduck-tpch",
@@ -1311,6 +1312,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "roastedduck-hnsw"
+version = "1.5.6"
+dependencies = [
+ "roastedduck-common",
+]
+
+[[package]]
 name = "roastedduck-httpfs"
 version = "1.5.6"
 dependencies = [
@@ -1470,6 +1478,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "roastedduck-snowball"
+version = "1.5.6"
+dependencies = [
+ "roastedduck-common",
+]
+
+[[package]]
 name = "roastedduck-storage"
 version = "1.5.6"
 dependencies = [
@@ -1478,6 +1493,7 @@ dependencies = [
  "roastedduck-common",
  "roastedduck-crypto",
  "roastedduck-function",
+ "roastedduck-hnsw",
  "roastedduck-row",
  "roastedduck-serde",
  "roastedduck-types",

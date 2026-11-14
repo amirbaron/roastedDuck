@@ -1,0 +1,109 @@
+# name: conformance/vss-memory/native_empty_null_drop_recreate.test
+# New supplement: empty/NULL arrays and transactional index catalog lifecycle.
+# Small memory coverage; does not stand in for disk-block reclamation assertions.
+require vss
+
+require noforcestorage
+
+load :memory:
+
+statement ok
+CREATE TABLE vectors (id INTEGER, vec FLOAT[3]);
+
+statement ok
+CREATE INDEX idx ON vectors USING HNSW (vec);
+
+query I
+SELECT count FROM pragma_hnsw_index_info() WHERE index_name = 'idx';
+----
+0
+
+query I
+SELECT id FROM vectors ORDER BY array_distance(vec, [1,2,3]::FLOAT[3]) LIMIT 1;
+----
+
+statement ok
+INSERT INTO vectors VALUES (1, NULL), (2, [1,2,3]);
+
+query I
+SELECT count FROM pragma_hnsw_index_info() WHERE index_name = 'idx';
+----
+1
+
+query I
+SELECT id FROM vectors ORDER BY array_distance(vec, [1,2,3]::FLOAT[3]) LIMIT 1;
+----
+2
+
+statement ok
+DELETE FROM vectors WHERE id = 2;
+
+statement ok
+PRAGMA hnsw_compact_index('idx');
+
+query I
+SELECT count FROM pragma_hnsw_index_info() WHERE index_name = 'idx';
+----
+0
+
+query I
+SELECT count(*) FROM vectors;
+----
+1
+
+statement ok
+INSERT INTO vectors VALUES (3, [3,2,1]);
+
+statement ok
+BEGIN;
+
+statement ok
+DROP INDEX idx;
+
+statement ok
+ROLLBACK;
+
+query II
+EXPLAIN SELECT id FROM vectors ORDER BY array_distance(vec, [3,2,1]::FLOAT[3]) LIMIT 1;
+----
+physical_plan	<REGEX>:.*HNSW_INDEX_SCAN.*
+
+query I
+SELECT id FROM vectors ORDER BY array_distance(vec, [3,2,1]::FLOAT[3]) LIMIT 1;
+----
+3
+
+statement ok
+DROP INDEX idx;
+
+query I
+SELECT count(*) FROM pragma_hnsw_index_info();
+----
+0
+
+statement ok
+BEGIN;
+
+statement ok
+CREATE INDEX rolled_back ON vectors USING HNSW (vec);
+
+statement ok
+ROLLBACK;
+
+query I
+SELECT count(*) FROM pragma_hnsw_index_info();
+----
+0
+
+statement ok
+CREATE INDEX idx ON vectors USING HNSW (vec);
+
+query I
+SELECT count FROM pragma_hnsw_index_info() WHERE index_name = 'idx';
+----
+1
+
+query I
+SELECT id FROM vectors ORDER BY array_distance(vec, [3,2,1]::FLOAT[3]) LIMIT 1;
+----
+3

@@ -495,6 +495,8 @@ struct IndexExpressionExecutor {
     /// a pushed-down expression filter; `None` for compound keys or keys over several
     /// columns.
     scan_key: Option<Expression>,
+    /// The original single key, retaining physical column reference numbers.
+    key: Option<Expression>,
 }
 
 impl IndexExpressionExecutor {
@@ -502,6 +504,10 @@ impl IndexExpressionExecutor {
         Self {
             executor: std::sync::Mutex::new(ExpressionExecutor::new(expressions.to_vec())),
             names: expressions.iter().map(Expression::name).collect(),
+            key: match expressions {
+                [expression] => Some(expression.clone()),
+                _ => None,
+            },
             scan_key: match expressions {
                 [expression] => single_column_key(expression),
                 _ => None,
@@ -577,6 +583,12 @@ impl IndexKeyExecutor for IndexExpressionExecutor {
         &self.names
     }
 
+    fn matches_expression(&self, expression: &dyn std::any::Any) -> bool {
+        expression
+            .downcast_ref::<Expression>()
+            .is_some_and(|expression| self.key.as_ref().is_some_and(|key| key.equals(expression)))
+    }
+
     /// `ART::TryInitializeScan` with the filter's `ToExpression`: a comparison of the key
     /// expression with a constant.
     fn scan_predicates(&self, filter: &TableFilter) -> Option<Vec<IndexScanPredicate>> {
@@ -614,6 +626,9 @@ impl IndexKeyExecutor for IndexExpressionExecutor {
 #[derive(Debug)]
 pub struct CreateIndexAction {
     pub catalog: Arc<Catalog>,
+    /// Compiled-in secondary factories belonging to this database.
+    pub index_types: Option<Arc<roastedduck_storage::index::IndexTypeRegistry>>,
+    pub settings: Option<Arc<dyn roastedduck_function::SettingsSource>>,
     pub info: CreateInfo,
     pub table: Arc<CatalogEntry>,
     /// The key expressions over the table's physical columns.
@@ -659,6 +674,23 @@ fn index_art(storage: &DataTable, index: &CreateIndexInfo, expressions: &[Expres
 /// building each from the table's rows (DuckDB's `DataTableInfo::BindIndexes` with
 /// `IndexBinder::BindIndex`). Called before a statement changes the table.
 pub fn bind_table_indexes(client: &Arc<ClientContext>, entry: &Arc<CatalogEntry>) -> Result<()> {
+    bind_table_indexes_with_intent(client, entry, IndexBindIntent::Mutation)
+}
+
+/// Internal binding policy: reading rows does not require decoding every index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IndexBindIntent {
+    Read,
+    Mutation,
+    Checkpoint,
+}
+
+/// Bind supported persisted indexes, rejecting unsupported write/checkpoint paths.
+pub fn bind_table_indexes_with_intent(
+    client: &Arc<ClientContext>,
+    entry: &Arc<CatalogEntry>,
+    intent: IndexBindIntent,
+) -> Result<()> {
     let EntryKind::Table(table) = &entry.kind else {
         return Ok(());
     };
@@ -668,7 +700,9 @@ pub fn bind_table_indexes(client: &Arc<ClientContext>, entry: &Arc<CatalogEntry>
     if !storage.indexes().has_unbound() {
         return Ok(());
     }
-    storage.bind_indexes(&mut |unbound| {
+    storage.indexes().bind_matching(
+        &|unbound| intent != IndexBindIntent::Read || unbound.index_type().eq_ignore_ascii_case("ART"),
+        &mut |unbound| {
         let Some(info) = unbound.create_info().downcast_ref::<CreateInfo>() else {
             return Err(Error::internal("unbound index without a CreateInfo"));
         };
@@ -676,6 +710,12 @@ pub fn bind_table_indexes(client: &Arc<ClientContext>, entry: &Arc<CatalogEntry>
             return Err(Error::internal("unbound index without a CreateIndexInfo"));
         };
         if !unbound.index_type().eq_ignore_ascii_case("ART") {
+            if intent == IndexBindIntent::Checkpoint || unbound.index_type().eq_ignore_ascii_case("HNSW") {
+                return Err(Error::not_implemented(roastedduck_common::byte_format!(
+                    "Cannot bind persisted index '{}' of type '{}'; the index remains unbound.",
+                    unbound.name(), unbound.index_type()
+                )));
+            }
             return Err(Error::new_bytes(
                 roastedduck_common::ErrorKind::MissingExtension,
                 roastedduck_common::byte_format!(
@@ -725,7 +765,14 @@ impl DdlAction for CreateIndexAction {
                 "Index keys cannot contain expressions with side effects.",
             ));
         }
-        if !index.index_type_name.is_empty() && !index.index_type_name.eq_ignore_ascii_case("ART") {
+        let secondary =
+            !index.index_type_name.is_empty() && !index.index_type_name.eq_ignore_ascii_case("ART");
+        if secondary
+            && !self
+                .index_types
+                .as_ref()
+                .is_some_and(|types| types.contains(&index.index_type_name))
+        {
             return Err(Error::binder(roastedduck_common::byte_format!(
                 "Unknown index type: {}",
                 index.index_type_name
@@ -738,10 +785,65 @@ impl DdlAction for CreateIndexAction {
             .storage
             .clone()
             .ok_or_else(|| Error::binder("Indexes can only be created on DuckDB tables."))?;
-        let art = index_art(&storage, index, &self.expressions)?;
+        let bound = if secondary {
+            use roastedduck_storage::index::SecondaryIndexSpec;
+            let registry = self
+                .index_types
+                .as_ref()
+                .ok_or_else(|| Error::internal("missing index type registry"))?;
+            let references: Option<Vec<usize>> = self
+                .expressions
+                .iter()
+                .map(|expression| match &expression.kind {
+                    ExpressionKind::Reference(reference) => usize::try_from(reference.index).ok(),
+                    _ => None,
+                })
+                .collect();
+            let plain_columns = references.is_some();
+            let columns = references.map_or_else(
+                || {
+                    index
+                        .column_ids
+                        .iter()
+                        .map(|&column| {
+                            usize::try_from(column).map_err(|_| Error::binder("invalid index column"))
+                        })
+                        .collect::<Result<Vec<_>>>()
+                },
+                Ok,
+            )?;
+            registry.create_with_settings(
+                &index.index_type_name,
+                SecondaryIndexSpec {
+                    name: index.name.clone(),
+                    constraint: match index.constraint_type {
+                        AstIndexConstraintType::None => IndexConstraintType::None,
+                        AstIndexConstraintType::Unique => IndexConstraintType::Unique,
+                        AstIndexConstraintType::Primary => IndexConstraintType::Primary,
+                        AstIndexConstraintType::Foreign => IndexConstraintType::Foreign,
+                    },
+                    column_ids: columns,
+                    key_types: self
+                        .expressions
+                        .iter()
+                        .map(|expression| expression.return_type.clone())
+                        .collect(),
+                    expressions: if plain_columns {
+                        IndexKeyExpressions::Columns(self.expressions.iter().map(Expression::name).collect())
+                    } else {
+                        IndexKeyExpressions::Custom(Arc::new(IndexExpressionExecutor::new(&self.expressions)))
+                    },
+                    options: index.options.clone(),
+                    persistent: storage.io().file_block_manager().is_some(),
+                },
+                self.settings.as_deref(),
+            )?
+        } else {
+            index_art(&storage, index, &self.expressions)?.into()
+        };
         storage.create_index(
             transaction,
-            art,
+            bound,
             self.info.on_conflict != OnCreateConflict::IgnoreOnConflict,
         )?;
         let mut entry = self.catalog.new_entry(

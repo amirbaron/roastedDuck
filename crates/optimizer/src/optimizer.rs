@@ -15,6 +15,7 @@ use roastedduck_planner::{ClientContext, Expression, LogicalKind, LogicalOperato
 use crate::build_probe_side::optimize_build_probe_side;
 use crate::column_lifetime_analyzer::analyze_column_lifetime;
 use crate::expression_rewriter::ExpressionRewriter;
+use crate::extension::{OptimizerRuleRegistry, OptimizerRules};
 use crate::filter_pullup::FilterPullup;
 use crate::filter_pushdown::FilterPushdown;
 use crate::join_order::JoinOrderOptimizer;
@@ -190,6 +191,8 @@ pub struct Optimizer {
     /// The time each pass took, in the order they ran (the optimizer phases DuckDB's
     /// `RunOptimizer` reports to the query profiler).
     timings: Vec<(OptimizerType, Duration)>,
+    /// Compiled-in callbacks captured for this optimizer, in registration order.
+    rules: OptimizerRules,
 }
 
 /// Fixes the columns of every scan: the binder shares them with its table bindings
@@ -233,12 +236,23 @@ fn max_table_index(op: &LogicalOperator) -> u64 {
 impl Optimizer {
     /// An optimizer for plans bound in `context`.
     pub fn new(context: Arc<ClientContext>, config: OptimizerConfig) -> Self {
+        let rules = OptimizerRuleRegistry::for_context(&context);
         Self {
             context,
             config,
             next_table_index: Cell::new(0),
             timings: Vec::new(),
+            rules,
         }
+    }
+
+    /// Uses the embedding database's snapshot of compiled-in optimizer rules.
+    /// This is an internal integration hook, not a public plugin interface.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_rules(mut self, rules: OptimizerRules) -> Self {
+        self.rules = rules;
+        self
     }
 
     /// The time each pass took, in the order they ran.
@@ -280,7 +294,26 @@ impl Optimizer {
         self.next_table_index.set(next);
         let mut plan = plan;
         finalize_column_ids(&mut plan);
-        self.run_built_in_optimizers(plan)
+        let plan = self.run_extension_rules(plan, true)?;
+        let plan = self.run_built_in_optimizers(plan)?;
+        self.run_extension_rules(plan, false)
+    }
+
+    /// DuckDB runs all pre callbacks, all built-ins, then all post callbacks.
+    fn run_extension_rules(&mut self, mut plan: LogicalOperator, before: bool) -> Result<LogicalOperator> {
+        // Clone only the snapshot handle. No registry lock is held while a rule
+        // runs, including a rule that causes another extension to be loaded.
+        let rules = Arc::clone(&self.rules);
+        for rule in rules.iter() {
+            plan = self.run(OptimizerType::Extension, plan, |optimizer, plan| {
+                if before {
+                    rule.pre_optimize(optimizer, plan)
+                } else {
+                    rule.post_optimize(optimizer, plan)
+                }
+            })?;
+        }
+        Ok(plan)
     }
 
     /// Runs `pass` on the plan unless it is disabled (DuckDB's `RunOptimizer`).

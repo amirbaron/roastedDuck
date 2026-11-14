@@ -161,6 +161,30 @@ The current full Rust run reaches these explicit unsupported-load failures. Its
 remaining results are still being collected; no new failure is accepted by name
 similarity or by the extension suffix. Final review must inspect each raw failure.
 
+## VSS persistence boundary
+
+roastedDuck's compatible VSS implementation uses in-memory Rust HNSW indexes.
+Cross-engine HNSW persistence is deferred under the current scope. Setting
+`hnsw_enable_experimental_persistence=true` does not enable an unimplemented
+persistent format. A database containing a C++ HNSW index can be opened and read
+with that index left unbound; unsupported mutation/checkpoint binding is rejected.
+
+Five unchanged pinned VSS files require persistent HNSW creation and retain raw
+failures at that boundary:
+
+- `test/sql/hnsw/hnsw_basic.test`
+- `test/sql/hnsw/hnsw_crud.test`
+- `test/sql/hnsw/hnsw_insert.test`
+- `test/sql/hnsw/hnsw_insert_wal.test`
+- `test/sql/slow/hnsw_reclaim_storage.test_slow`
+
+The original `hnsw_experimental_persistence.test` only checks disabled-persistence
+rejection and passes unchanged. The eleven other in-memory originals also pass.
+Separately named memory supplements preserve selected SQL assertions from the
+persistence files without converting their original raw failures into passes.
+See [the VSS spec](../docs/vss-extension-spec.md) for source pins, all test verdicts,
+recall results, predicate-expansion behavior, and measured shared SQL quirks.
+
 ## Uninitialized reference VARIANT padding
 
 C++ 1.5.6 can include uninitialized bytes in a VARIANT BLOB when a NULL
@@ -275,3 +299,15 @@ corpus observations, not whole-release or performance acceptance.
 Evidence is on the external SSD under
 `.context/artifacts/platform-matrix-20261029/`: `macos-full-corpus-1967/`,
 `cpp-concurrent-drop-diagnosis-2007/`, and `current-macos-full-corpus-review-2022/`.
+
+
+## Bundled FTS/VSS installation
+
+roastedDuck's compatible implementations of FTS and VSS ship in the engine.
+Bare `INSTALL` and `FORCE INSTALL` acknowledge those bundled names without cache
+writes or downloads; they do not load them. `LOAD` performs registration. `FROM`
+and `VERSION` overrides for the bundled names produce an actionable error;
+upgrading the engine updates their implementations. This differs intentionally
+from installing independently distributed DuckDB extension binaries. Other names
+and explicit file paths retain their existing behavior. See the
+[developer workflow](../extensions/README.md) and [loading guide](../website/docs/extensions.md).

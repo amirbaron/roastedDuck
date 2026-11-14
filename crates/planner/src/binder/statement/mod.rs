@@ -394,6 +394,8 @@ fn bind_deallocate(scope: &BindScope<'_>, drop: &DropInfo) -> BoundStatement {
 /// A pragma bound to its overload (DuckDB's `BoundPragmaInfo`).
 #[derive(Debug)]
 pub struct BoundPragmaInfo {
+    /// Named arguments, evaluated and cast to the registered signature.
+    pub named_parameters: Vec<(roastedduck_common::ByteString, Value)>,
     pub function: roastedduck_function::PragmaFunction,
     pub parameters: Vec<Value>,
 }
@@ -488,6 +490,7 @@ pub fn bind_pragma_info(scope: &mut BindScope<'_>, pragma: &mut PragmaInfo) -> R
         &function.name,
     )?;
     Ok(BoundPragmaInfo {
+        named_parameters,
         function: function.clone(),
         parameters,
     })

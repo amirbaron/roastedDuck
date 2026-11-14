@@ -420,7 +420,11 @@ impl PlanGenerator {
         if (filters.is_some() || get.dynamic_filters.is_some())
             && let Some(table_entry) = &get.table
         {
-            bind_table_indexes(&context.client, table_entry)?;
+            crate::operators::bind_table_indexes_with_intent(
+                &context.client,
+                table_entry,
+                crate::operators::IndexBindIntent::Read,
+            )?;
         }
         let explain = ScanExplainInfo {
             table: get
@@ -1268,6 +1272,10 @@ impl PlanGenerator {
                     "CREATE_INDEX",
                     types,
                     Arc::new(CreateIndexAction {
+                        settings: self.context()?.client.function_client.settings(),
+                        index_types: self.context()?.client.function_client.object_cache().and_then(
+                            |cache| roastedduck_storage::index::IndexTypeRegistry::from_cache(&cache),
+                        ),
                         catalog,
                         info: create.info,
                         table: create.table,

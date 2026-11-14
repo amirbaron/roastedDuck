@@ -1,3 +1,40 @@
+Extension developer experience, November 14, 2026: FTS/VSS stay in the monorepo,
+with inventory manifests, runnable SQL examples, and a [loading guide](../website/docs/extensions.md).
+Bare INSTALL/FORCE INSTALL now acknowledge the bundled implementations offline;
+repository/version overrides produce engine-upgrade guidance. LOAD is the normal
+startup path. Explicit FTS startup before pragma batches and VSS's pinned
+non-autoloadable status are documented. The signed runtime cohort passes 22 tests,
+14 developer journeys pass without downloaded extension binaries, and the strict
+documentation build passes. Receipts: `.context/artifacts/extension-dx-build-2/`,
+`extension-dx-5/`, and `extension-docs/`. Earlier failed smoke attempts are retained;
+the final smoke follows the documented startup sequence and pinned allowlist.
+Full conformance after installer commit `3def127d` passes: 4,801 PASS / 76 SKIP /
+20 documented FAIL, zero regressions, and no status or failure-classification
+changes across 4,897 files. See `.context/artifacts/extension-dx-conformance-1/`.
+The developer smoke is also wired into native candidate qualification CI; that
+hosted run is not claimed by these local receipts. No new repositories or public
+release artifacts have been created.
+
+Current extension work, November 14, 2026: roastedDuck's compatible FTS and VSS
+implementations are linked in normal builds. FTS's all-stemmer byte differential,
+upstream SQL/directive controls, and bidirectional database checks pass; see
+[the FTS spec](fts-extension-spec.md#verified-fts-milestone-2026-11-14).
+The corrected VSS candidate passes 12 unchanged in-scope original files and five
+memory supplements. Five genuine persistence originals retain raw failures under
+the in-memory-only scope. The full recall matrix passes all 405 Rust ef200 cells:
+324,000 adjudicated measurements, zero failures, lowest cell mean 0.9741 against
+the unchanged 0.95 requirement. Core (12), storage (110), and runtime (21) signed tests,
+strict lint, workspace checking, normal INSTALL/LOAD, FTS interoperability, and
+opaque C++ HNSW-file checks pass. Exact source/binary identities and prior failed
+runs are retained in [the VSS spec](vss-extension-spec.md). Final full conformance
+on code commit `07908b18` passes with 4,801 PASS / 76 SKIP / 20 documented FAIL
+across 4,897 files and zero ratchet regressions. All prior 4,880 file statuses and
+skip reasons are unchanged; the five added failures are the scoped persistence
+cases. The two directive-corrected FTS controls pass on the final runner. The
+existing core ratchet remains unchanged. This completes the declared local source
+milestone; the historical release dispositions below do not publish or qualify
+these additions on other platforms.
+
 Current disposition, November 6, 2026: the owner explicitly approved a physical-device test exception. The goal is complete under that scope: all 22 scoped software collection/review requirements are evidenced; actual iPhone/iPad execution and provisioning remain **unverified, excepted by the owner**. Device builds, signatures and simulator tests retain their verified status. The [delivery index](release-candidate-index-20261106.md) links the new signed disposition, unchanged archive and all known limitations. Older dated statuses below are historical.
 
 The exact Mac2556 and Linux2663 engine images have completed the recorded SQL, shell, C API/ADBC, Python, Go, Swift, storage and codec checks. All 15 normal Python wheels are qualified. Final relocation/runtime audit2921 passed, and the signed candidate archive2924 extracted with all 300 payload files and symlink targets unchanged. Known SQL failures, matching skips, reference crashes and shell differences remain explicit; this is scoped verification, not a universal no-exception claim.

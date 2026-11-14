@@ -54,7 +54,7 @@ with duckdb.connect("example.duckdb") as connection:
 ## Versions and platforms
 
 The compatibility target is **DuckDB 1.5.6**. The distribution version
-`1.5.6.post2` identifies a roastedDuck packaging/security revision of that
+`1.5.6.post3` identifies a roastedDuck extension and packaging revision of that
 target. `duckdb.__version__` and `duckdb.__duckdb_version__` retain the compatibility
 version; `importlib.metadata.version("roastedduck")` identifies the installed
 distribution, and `duckdb.version()` reports both.
@@ -90,3 +90,20 @@ cryptography dependencies may contain non-Rust code.
 
 DuckDB is a trademark of the DuckDB Foundation. roastedDuck is not affiliated
 with or endorsed by the Foundation.
+
+
+## Bundled full-text and vector search
+
+The post3 build includes roastedDuck's compatible FTS and VSS implementations.
+No separate extension packages are required:
+
+```python
+con = duckdb.connect(":memory:")
+con.load_extension("fts")
+con.load_extension("vss")
+```
+
+Load implementations before executing batches containing their pragmas. FTS uses
+ordinary persisted tables and BM25 macros; rebuild its snapshot after document
+changes. VSS provides in-memory Rust HNSW indexes. HNSW persistence remains out of
+scope. See the [extension guide](https://amirbaron.github.io/roastedDuck/extensions/).

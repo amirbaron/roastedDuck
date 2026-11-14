@@ -19,6 +19,7 @@ mod default_views;
 mod extension_http;
 mod extensions;
 pub mod external_extensions;
+mod fts;
 mod function_lists;
 mod function_registration;
 mod log_functions;
@@ -36,6 +37,7 @@ mod switch;
 mod system_functions;
 mod temp_catalog;
 mod transaction;
+mod vss;
 mod wal;
 
 pub use config::{AccessMode, Config, ConfigurationSnapshot, config_flags};

@@ -53,6 +53,12 @@ pub trait IndexKeyExecutor: Send + Sync + fmt::Debug {
     /// The display names of the key expressions (`Expression::GetName`).
     fn names(&self) -> &[roastedduck_common::ByteString];
 
+    /// Internal planner expression matching, with references normalized to physical
+    /// table columns. Storage does not depend on planner expression types.
+    fn matches_expression(&self, _expression: &dyn std::any::Any) -> bool {
+        false
+    }
+
     /// The predicates an index scan answers for the pushed-down `filter` on the one column
     /// the key expression reads, if it compares the key expression with a constant
     /// (`ART::TryInitializeScan` on the filter's `ToExpression`).

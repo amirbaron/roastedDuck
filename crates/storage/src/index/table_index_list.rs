@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 use roastedduck_common::{ByteString, Result};
 use roastedduck_types::DataChunk;
 
-use super::Art;
 use super::unbound_index::{BufferedIndexReplay, UnboundIndex};
+use super::{Art, BoundIndex};
 
 /// Which side of a foreign key an index lookup is for (`ForeignKeyType`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,7 +22,7 @@ pub enum ForeignKeyType {
 #[derive(Debug)]
 pub struct IndexEntryState {
     /// The index.
-    pub index: Art,
+    pub index: BoundIndex,
     /// Rows deleted by committed transactions that older transactions may still see
     /// (`deleted_rows_in_use`).
     pub deleted_rows_in_use: Option<Art>,
@@ -40,7 +40,8 @@ pub struct IndexEntry {
 }
 
 impl IndexEntry {
-    fn new(index: Art) -> Self {
+    fn new(index: impl Into<BoundIndex>) -> Self {
+        let index = index.into();
         Self {
             name: index.name().to_owned(),
             column_ids: index.column_ids().to_vec(),
@@ -101,7 +102,7 @@ pub enum IndexSlot {
 
 impl IndexSlot {
     /// A bound index staged outside the active list during WAL replay.
-    pub fn from_bound(index: Art) -> Self {
+    pub fn from_bound(index: impl Into<BoundIndex>) -> Self {
         Self::Bound(Arc::new(IndexEntry::new(index)))
     }
 
@@ -160,7 +161,7 @@ impl TableIndexList {
     }
 
     /// Adds an index (`AddIndex`).
-    pub fn add(&self, index: Art) -> Arc<IndexEntry> {
+    pub fn add(&self, index: impl Into<BoundIndex>) -> Arc<IndexEntry> {
         let entry = Arc::new(IndexEntry::new(index));
         self.write().push(IndexSlot::Bound(Arc::clone(&entry)));
         entry
@@ -312,10 +313,13 @@ impl TableIndexList {
         let list = Self::default();
         for entry in self.entries() {
             let state = entry.lock();
-            if state.index.constraint_type() == super::IndexConstraintType::None {
+            let Some(art) = state.index.as_art() else {
+                continue;
+            };
+            if art.constraint_type() == super::IndexConstraintType::None {
                 continue;
             }
-            list.add(state.index.delta(false)?);
+            list.add(art.delta(false)?);
         }
         Ok(list)
     }
@@ -340,14 +344,24 @@ impl TableIndexList {
     /// (`TableIndexList::Bind`). One caller binds at a time; the others wait and find the
     /// indexes bound.
     pub fn bind(&self, bind: &mut dyn FnMut(&UnboundIndex) -> Result<Art>) -> Result<()> {
+        self.bind_matching(&|_| true, bind)
+    }
+
+    /// Bind only supported entries during a read. Unsupported formats stay opaque;
+    /// selecting the next matching entry avoids retrying a skipped slot forever.
+    pub fn bind_matching(
+        &self,
+        supported: &dyn Fn(&UnboundIndex) -> bool,
+        bind: &mut dyn FnMut(&UnboundIndex) -> Result<Art>,
+    ) -> Result<()> {
         if !self.has_unbound() {
             return Ok(());
         }
         let _binding = self.bind_lock.lock().unwrap_or_else(PoisonError::into_inner);
         loop {
             let next = self.read().iter().find_map(|slot| match slot {
-                IndexSlot::Unbound(index) => Some(Arc::clone(index)),
-                IndexSlot::Bound(_) => None,
+                IndexSlot::Unbound(index) if supported(index) => Some(Arc::clone(index)),
+                IndexSlot::Unbound(_) | IndexSlot::Bound(_) => None,
             });
             let Some(unbound) = next else {
                 return Ok(());

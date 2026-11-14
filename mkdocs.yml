@@ -56,6 +56,7 @@ nav:
   - Get started:
       - Installation: install.md
       - SQL quickstart: quickstart.md
+      - FTS and VSS: extensions.md
       - Python: python.md
       - Go: go.md
       - Swift: swift.md

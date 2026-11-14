@@ -1012,7 +1012,7 @@ pub struct TableDataPointer {
     pub vacuumed: Option<VacuumedLayout>,
     /// The table's indexes built over the vacuumed row groups, in the order of its index
     /// list, when the vacuum moved row ids (`vacuum_rebuild_indexes`).
-    pub rebuilt_indexes: Option<Vec<crate::index::Art>>,
+    pub rebuilt_indexes: Option<Vec<crate::index::BoundIndex>>,
     /// The row groups of the table the checkpoint covered; those after them were
     /// appended while it ran.
     pub row_group_count: usize,
@@ -1941,7 +1941,7 @@ fn initialize_vacuum_state(
 }
 
 /// `CanRebuildExistingIndexesAfterVacuum`: `vacuum_rebuild_indexes` is set and the table
-/// has at most that many rows and only bound (ART) indexes.
+/// has at most that many rows and only bound, rebuildable indexes.
 fn can_rebuild_indexes_after_vacuum(table: &DataTable) -> bool {
     let indexes = table.info().indexes();
     if indexes.is_empty() || indexes.has_unbound() {

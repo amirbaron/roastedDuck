@@ -414,6 +414,8 @@ fn create_index_keeps_concurrent_append_visible_in_index() {
             .unwrap()
             .lock()
             .index
+            .as_art()
+            .unwrap()
             .search_equal(&key, usize::MAX, &mut indexed)
             .unwrap()
     );

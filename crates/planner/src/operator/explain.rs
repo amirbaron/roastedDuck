@@ -173,6 +173,11 @@ impl LogicalOperator {
                 result.insert("Table Index".to_owned(), table_index.to_string());
             }
             LogicalKind::Get(get) => {
+                if let Some(explain) = &get.function.static_explain {
+                    for (key, value) in explain(get.bind_data.as_deref()) {
+                        result.insert(key, value);
+                    }
+                }
                 let filters: Vec<ByteString> = get
                     .table_filters
                     .filters

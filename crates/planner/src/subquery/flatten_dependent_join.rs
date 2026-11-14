@@ -325,7 +325,14 @@ impl<'a> FlattenDependentJoins<'a> {
                 plan,
                 LogicalOperator::new(LogicalKind::DummyScan { table_index: 0 }),
             );
-            cte.children[1] = self.decorrelate(dependent, parent_propagate_null_values, lateral_depth)?;
+            // DuckDB keeps the CTE definitions in binder.recursive_ctes while it
+            // decorrelates below the lifted definition. Our registry was moved
+            // into `flatten`, so lend it back for this recursive call: otherwise
+            // later CTEs reading the lifted definition appear unknown/correlated.
+            self.ctes = std::mem::take(&mut flatten.ctes);
+            let result = self.decorrelate(dependent, parent_propagate_null_values, lateral_depth);
+            flatten.ctes = std::mem::take(&mut self.ctes);
+            cte.children[1] = result?;
             return Ok(cte);
         }
         let right = take_child(plan, 1)?;

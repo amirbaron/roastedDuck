@@ -8,6 +8,9 @@ does not replace those terms or grant rights to third-party trademarks.
 | --- | --- |
 | DuckDB algorithms, interfaces, fixtures, Python/Swift helpers | Copyright 2018–2026 Stichting DuckDB Foundation; MIT. [Retained upstream text](python/LICENSE-UPSTREAM). Compatibility target: 1.5.6. |
 | DuckDB Go client | Pinned in `go/upstream.json`; its MIT license is retained in each distributed source copy. |
+| Snowball stemmers and byte runtime | Pinned Snowball algorithms translated to Rust; [BSD-3-Clause notice](crates/snowball/LICENSE). Provenance and regeneration are recorded in [the crate](crates/snowball/README.md). |
+| DuckDB FTS indexing SQL and stopwords | Pinned `duckdb-fts` source; [retained MIT notice](crates/roastedduck/src/fts/LICENSE). |
+| DuckDB VSS table macros | Pinned `duckdb-vss` SQL; [retained MIT notice](crates/roastedduck/src/vss/LICENSE). The HNSW graph is independently implemented in Rust. |
 | ICU data and implementation | [ICU license](crates/icu/LICENSE-ICU) |
 | utf8proc data | [utf8proc license](crates/common/data/utf8proc-LICENSE) |
 | Zstandard | [Retained ZSTD license](crates/zstd/LICENSE-ZSTD) |
