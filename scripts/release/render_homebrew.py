@@ -41,7 +41,7 @@ def render(version, sums):
 
   def install
     bin.install "bin/roastedDuck" => "roastedduck"
-    bin.install_symlink "roastedduck" => "roastedDuck"
+    bin.install_symlink "roastedduck" => "roastedDuck" unless (bin/"roastedDuck").exist?
     pkgshare.install "notices", "LICENSE", "THIRD_PARTY_NOTICES.md"
   end
 
