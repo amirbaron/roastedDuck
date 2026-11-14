@@ -1,3 +1,16 @@
+Local service fixtures, November 14, 2026: the owner authorized emulated AWS/Azure
+and disposable local PostgreSQL integration instead of supplying cloud accounts.
+`scripts/local-services/README.md` documents the repeatable setup and runner.
+Moto 5.2.5, Azurite 3.37.0 and PostgreSQL 17.11 pass eight grouped checks, including
+Rust HTTPFS S3 read/COPY and C++1.5.6 S3/Blob/PostgreSQL controls. All services were
+stopped after verification. Tools, data and receipts are on the external SSD at
+`.context/artifacts/local-services/`; final evidence is `check-final/verification.json`.
+AWS credential-chain, Azure and PostgreSQL Rust implementations remain pending.
+Azurite does not emulate ADLS Gen2: add separate ADLS protocol fixtures. IAM/Entra,
+real cloud policies and cloud-only behavior remain unverified, not blockers for
+independent implementation/local integration. Do not ask again for cloud accounts
+as a prerequisite to this work. These test tools are not engine dependencies.
+
 Active five-extension work, November 14, 2026: the user authorized HTTPFS, AWS,
 Azure, ICU and PostgreSQL compatible implementations against DuckDB 1.5.6. This
 work is **incomplete**. Docs-first commit `6793bbd8` pins the source contracts;

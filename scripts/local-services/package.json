@@ -1,0 +1,9 @@
+{
+  "name": "roastedduck-local-service-fixtures",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Development-only Azure Blob emulator",
+  "dependencies": {
+    "azurite": "3.37.0"
+  }
+}

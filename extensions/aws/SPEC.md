@@ -24,8 +24,9 @@ external artifact directory; it is not shipped or compiled into roastedDuck.
 
 Run unchanged upstream SQL against C++ DuckDB 1.5.6 and Rust. Keep missing-service
 prerequisites explicit; skips do not qualify a feature. Add differential controls
-for auth, scope, cancellation, transactions and errors where applicable. Use real
-service integration in addition to protocol fixtures. Run scripts/conformance.sh
+for auth, scope, cancellation, transactions and errors where applicable. Use local emulator/disposable-service
+integration in addition to protocol fixtures, as authorized by the owner on
+November 14. Record live-cloud behavior separately as unverified until exercised. Run scripts/conformance.sh
 after integration merges, then verify normal Python and Homebrew packages.
 No new C/C++ dependencies, binary adapters, default-off gates or public plugin ABI.
 
