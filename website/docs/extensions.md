@@ -1,9 +1,9 @@
 # FTS and VSS
 
-!!! note "Current source builds"
-    This page describes roastedDuck's compatible implementations in current source.
-    It does not claim the previously published `1.5.6.post2` packages include them.
-    Build the engine from this source branch to use these additions.
+!!! note "Available in 1.5.6.post3"
+    roastedDuck's compatible FTS/VSS implementations are bundled in the post3
+    Homebrew and PyPI distributions. Earlier post2 packages do not include them.
+    See [installation](install.md) for the package commands.
 
 ## Load the bundled implementations
 
@@ -111,7 +111,7 @@ mutation/checkpoint binding is rejected.
 
 ## Python application startup
 
-For a Python package built from this source:
+For `roastedduck` 1.5.6.post3 or later:
 
 ```python
 import duckdb

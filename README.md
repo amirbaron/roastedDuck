@@ -20,6 +20,14 @@ This project is independently maintained and is not an official DuckDB release.
 
 ## Try it
 
+Install the CLI through the [Homebrew tap](https://github.com/amirbaron/homebrew-roastedduck):
+
+```sh
+brew install amirbaron/roastedduck/roastedduck
+roastedduck
+```
+
+
 Download the native archive for your platform from
 [Releases](https://github.com/amirbaron/roastedDuck/releases), verify its SHA-256
 against `SHA256SUMS`, extract it, and run:
@@ -46,6 +54,12 @@ are available through GitHub Releases and [PyPI](https://pypi.org/project/roaste
 No crates.io publication is claimed.
 
 ## What is verified
+
+Release 1.5.6.post3 passes fresh source/package qualification, all 15 ordinary PyPI
+install cells, and public Homebrew bottle tests on three native platforms.
+[Release and provider evidence](https://amirbaron.github.io/roastedDuck/releases/)
+keeps software checks and platform exceptions explicit.
+
 
 The 1.5.6.post2 release has fresh native client, security, encryption, and
 15-cell Python qualification. Its source archive is rebuilt outside the checkout,
@@ -93,9 +107,9 @@ Public release versions follow the targeted DuckDB version. Preview status
 is recorded separately from version compatibility. See [CONTRIBUTING.md](CONTRIBUTING.md)
 for prerequisites, tests, and the existing branch workflow.
 
-## Compatible FTS and VSS in source builds
+## Compatible FTS and VSS
 
-Current source builds include roastedDuck's compatible implementations of DuckDB
+Release 1.5.6.post3 includes roastedDuck's compatible implementations of DuckDB
 1.5.6's FTS and VSS SQL surfaces, enabled in normal builds:
 
 ```sql
@@ -113,9 +127,8 @@ See the [loading and application guide](website/docs/extensions.md),
 [runnable examples](examples/extensions), and
 [extension contributor workflow](extensions/README.md).
 
-These source additions have separate [FTS](docs/fts-extension-spec.md) and
-[VSS](docs/vss-extension-spec.md) verification records; they are not included in
-claims about previously published release artifacts.
+See the [FTS](docs/fts-extension-spec.md) and [VSS](docs/vss-extension-spec.md)
+verification records. Earlier releases remain unchanged.
 
 ## License and acknowledgements
 

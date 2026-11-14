@@ -1,3 +1,13 @@
+Current publication, November 14, 2026: roastedDuck `1.5.6.post3` is public on
+GitHub and PyPI, with a Homebrew tap and verified native bottles. The release tag
+points to `afe4e2bb2baf79addf027b35b1ede98c2e05ad4f`; main contains the merged source,
+and `v1.5-variegata` was advanced without rewriting history. All 15 ordinary PyPI
+index installs pass, and public Homebrew bottle installs/tests pass on macOS ARM64
+and Linux x86_64/ARM64. See [the release record](release-post3-20261114.md) for exact
+runs, source/artifact scope, and retained exceptions. FTS/VSS are bundled; HNSW
+remains in-memory only. No physical-device or notarization acceptance is implied.
+Earlier checkpoints below retain their historical scope.
+
 Extension developer experience, November 14, 2026: FTS/VSS stay in the monorepo,
 with inventory manifests, runnable SQL examples, and a [loading guide](../website/docs/extensions.md).
 Bare INSTALL/FORCE INSTALL now acknowledge the bundled implementations offline;

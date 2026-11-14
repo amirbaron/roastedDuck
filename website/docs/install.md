@@ -1,26 +1,42 @@
 # Installation
 
 Download from [GitHub Releases](https://github.com/amirbaron/roastedDuck/releases).
-The current preview is `v1.5.6.post2`, targeting DuckDB 1.5.6. Each release has a `SHA256SUMS` manifest,
+The current preview is `v1.5.6.post3`, targeting DuckDB 1.5.6. Each release has a `SHA256SUMS` manifest,
 native SDKs, Python wheels, Swift packages, and a provenance report.
+
+## Homebrew CLI
+
+On Apple Silicon macOS or Linux x86_64/ARM64:
+
+```sh
+brew install amirbaron/roastedduck/roastedduck
+roastedduck
+```
+
+The [project tap](https://github.com/amirbaron/homebrew-roastedduck) provides tested
+binary bottles. It installs the CLI without replacing upstream `duckdb`.
+FTS and VSS are bundled; start with `LOAD fts;` or `LOAD vss;`.
+HNSW currently requires an in-memory database. See the [extension guide](extensions.md).
+The full C/ADBC/Go SDK remains available in the native archives below; Homebrew
+installs the CLI and notices. Use pip separately for the Python package.
 
 ## Native shell and SDK
 
 | Machine | Archive |
 | --- | --- |
-| Apple Silicon Mac | `roastedduck-1.5.6.post2-macos-arm64.tar.gz` |
-| Linux ARM64 | `roastedduck-1.5.6.post2-linux-arm64.tar.gz` |
-| Linux x86_64 | `roastedduck-1.5.6.post2-linux-amd64.tar.gz` |
+| Apple Silicon Mac | `roastedduck-1.5.6.post3-macos-arm64.tar.gz` |
+| Linux ARM64 | `roastedduck-1.5.6.post3-linux-arm64.tar.gz` |
+| Linux x86_64 | `roastedduck-1.5.6.post3-linux-amd64.tar.gz` |
 
 Download the appropriate archive and `SHA256SUMS` into the same directory.
 Check the archive's digest against its line in the manifest:
 
 ```sh
 # macOS; replace the filename on Linux and use sha256sum instead.
-shasum -a 256 roastedduck-1.5.6.post2-macos-arm64.tar.gz
-grep 'roastedduck-1.5.6.post2-macos-arm64.tar.gz' SHA256SUMS
+shasum -a 256 roastedduck-1.5.6.post3-macos-arm64.tar.gz
+grep 'roastedduck-1.5.6.post3-macos-arm64.tar.gz' SHA256SUMS
 mkdir roastedduck
-tar -xzf roastedduck-1.5.6.post2-macos-arm64.tar.gz -C roastedduck
+tar -xzf roastedduck-1.5.6.post3-macos-arm64.tar.gz -C roastedduck
 cd roastedduck
 ./bin/roastedDuck -c 'SELECT 42 AS answer;'
 ```
@@ -54,7 +70,7 @@ and Intel Mac wheels are outside this preview.
 
 The distribution name is `roastedduck`; the import name is `duckdb`. Install
 in a fresh virtual environment and do not co-install the official `duckdb`
-package. To pin this release, use `python -m pip install roastedduck==1.5.6.post2`.
+package. To pin this release, use `python -m pip install roastedduck==1.5.6.post3`.
 The same wheels and the tested source archive are also available in GitHub Releases.
 
 ## Build from source

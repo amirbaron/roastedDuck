@@ -15,7 +15,9 @@ def render(version, sums):
             raise ValueError('Invalid SHA-256: ' + name)
         return f'https://github.com/amirbaron/roastedDuck/releases/download/v{version}/{name}', digest
     mac, arm, intel = (archive(p) for p in ('macos-arm64', 'linux-arm64', 'linux-amd64'))
-    return f'''class Roastedduck < Formula
+    return f'''require "shellwords"
+
+class Roastedduck < Formula
   desc "Analytical SQL engine in Rust with bundled compatible FTS and VSS"
   homepage "https://amirbaron.github.io/roastedDuck/"
   version "{version}"
@@ -71,7 +73,7 @@ def render(version, sums):
       SELECT CASE WHEN id=1 THEN 'vss-ok' ELSE error('VSS failure') END FROM (SELECT id FROM vectors ORDER BY array_distance(v,[1,0,0]::FLOAT[3]) LIMIT 1);
       EXPLAIN SELECT id FROM vectors ORDER BY array_distance(v,[1,0,0]::FLOAT[3]) LIMIT 1;
     SQL
-    output = pipe_output("#{{bin}}/roastedduck -batch -bail -init /dev/null :memory:", sql, 0)
+    output = pipe_output("#{{bin}}/roastedduck".shellescape + " -batch -bail -init /dev/null :memory:", sql, 0)
     assert_match "fts-ok", output
     assert_match "vss-ok", output
     assert_match "HNSW_INDEX_SCAN", output

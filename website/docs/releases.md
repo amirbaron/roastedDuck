@@ -4,6 +4,28 @@ Install Python from [PyPI](https://pypi.org/project/roastedduck/) with
 `python -m pip install roastedduck`. Native SDKs, Swift packages, exact Python
 files and verification receipts are on [GitHub Releases](https://github.com/amirbaron/roastedDuck/releases).
 
+## 1.5.6.post3
+
+This release adds roastedDuck's compatible FTS and VSS implementations, offline
+installation of the bundled names, and the [Homebrew tap](https://github.com/amirbaron/homebrew-roastedduck).
+HNSW remains in-memory only. No C++ extension binary compatibility layer is introduced.
+
+- [Fresh source and distribution qualification](https://github.com/amirbaron/roastedDuck/actions/runs/43584310679).
+- [Trusted PyPI publication and all 15 ordinary index installs](https://github.com/amirbaron/roastedDuck/actions/runs/43604870953).
+- [Homebrew package/bottle tests](https://github.com/amirbaron/homebrew-roastedduck/actions/runs/43604947328) and [public bottle installs](https://github.com/amirbaron/homebrew-roastedduck/actions/runs/43606039657) on macOS ARM64 and Linux x86_64/ARM64.
+- [Exact release files and SHA256SUMS](https://github.com/amirbaron/roastedDuck/releases/tag/v1.5.6.post3).
+
+The workflow's security job initially reported inconsistent terminal metadata.
+Its check and aggregate acceptance were rerun successfully without changing the
+built native images or Python distributions. Both attempts remain in the workflow history.
+
+All 405 required finite VSS recall cells pass their 0.95 mean threshold; individual
+query misses remain explicit. Full local SQL conformance retains 4,801 passes,
+76 skips and 20 documented failures with zero ratchet regressions. The five HNSW
+persistence files remain deferred. Apple simulator checks and device builds pass;
+physical-device execution and notarization remain unverified. Earlier benchmark
+results retain their original candidate/date scope.
+
 ## 1.5.6.post2
 
 This branding and validation-tooling revision targets DuckDB 1.5.6. Rust crates

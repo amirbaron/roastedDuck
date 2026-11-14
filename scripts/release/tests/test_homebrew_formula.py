@@ -31,5 +31,6 @@ class HomebrewFormulaTests(unittest.TestCase):
         self.assertEqual(formula.count('sha256 "' + 'a' * 64 + '"'), 3)
         self.assertIn('unless (bin/"roastedDuck").exist?', formula)
         self.assertIn('assert_match "HNSW_INDEX_SCAN"', formula)
+        self.assertIn('.shellescape + " -batch', formula)
         self.assertIn('INSTALL fts;', formula)
         self.assertNotIn('"duckdb" =>', formula)
