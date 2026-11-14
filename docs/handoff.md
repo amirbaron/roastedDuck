@@ -1,3 +1,16 @@
+Extension developer experience, November 14, 2026: FTS/VSS stay in the monorepo,
+with inventory manifests, runnable SQL examples, and a [loading guide](../website/docs/extensions.md).
+Bare INSTALL/FORCE INSTALL now acknowledge the bundled implementations offline;
+repository/version overrides produce engine-upgrade guidance. LOAD is the normal
+startup path. Explicit FTS startup before pragma batches and VSS's pinned
+non-autoloadable status are documented. The signed runtime cohort passes 22 tests,
+14 developer journeys pass without downloaded extension binaries, and the strict
+documentation build passes. Receipts: `.context/artifacts/extension-dx-build-2/`,
+`extension-dx-5/`, and `extension-docs/`. Earlier failed smoke attempts are retained;
+the final smoke follows the documented startup sequence and pinned allowlist.
+Full conformance after the installer change remains pending. No new repositories
+or public release artifacts have been created.
+
 Current extension work, November 14, 2026: roastedDuck's compatible FTS and VSS
 implementations are linked in normal builds. FTS's all-stemmer byte differential,
 upstream SQL/directive controls, and bidirectional database checks pass; see

@@ -305,6 +305,19 @@ fn install_extension_options(
     database: &crate::Database,
     use_etags: bool,
 ) -> Result<()> {
+    // These first-party implementations ship in the engine. Installing by name
+    // must not download an unrelated C++ binary or require a writable cache.
+    if !is_full_path(&info.filename) {
+        let name = apply_extension_alias(&info.filename);
+        if matches!(name.as_bytes(), b"fts" | b"vss") {
+            if !info.repository.is_empty() || !info.version.is_empty() {
+                return Err(Error::invalid_input(byte_format!(
+                    "Extension '{name}' is bundled with roastedDuck and cannot be installed from another repository or version. Use LOAD {name}; upgrade roastedDuck to update its compatible implementation."
+                )));
+            }
+            return Ok(());
+        }
+    }
     let force = info.load_type == LoadType::ForceInstall;
     let mut repository = if info.repository.is_empty() {
         None
@@ -1154,6 +1167,36 @@ pub(crate) fn extension_rows(
 #[cfg(test)]
 mod install_tests {
     use super::*;
+    use crate::Value;
+    #[test]
+    fn bundled_search_install_is_offline_and_does_not_load() -> Result<()> {
+        let db = crate::Database::open_in_memory()?;
+        let mut connection = db.connect()?;
+        // /dev/null cannot contain a cache directory. This fails if INSTALL
+        // reaches the filesystem, independently of network availability.
+        connection.query("SET extension_directory='/dev/null/search-extensions'")?;
+        connection.query("SET custom_extension_repository='http://127.0.0.1:1'")?;
+        for name in ["fts", "vss", "FTS", "VSS"] {
+            connection.query(format!("INSTALL {name}"))?;
+            connection.query(format!("FORCE INSTALL {name}"))?;
+            let error = connection.query(format!("INSTALL {name} FROM core")).unwrap_err();
+            assert!(error.to_string().contains("is bundled with roastedDuck"));
+            assert!(
+                connection
+                    .query(format!("INSTALL {name} VERSION 'other'"))
+                    .is_err()
+            );
+        }
+        let state = connection.query("SELECT bool_and(installed AND NOT loaded) FROM duckdb_extensions() WHERE extension_name IN ('fts','vss')")?;
+        assert_eq!(state.value(0, 0), Value::boolean(true));
+        connection.query("LOAD fts; LOAD vss; LOAD fts; LOAD vss")?;
+        let state = connection.query(
+            "SELECT bool_and(loaded) FROM duckdb_extensions() WHERE extension_name IN ('fts','vss')",
+        )?;
+        assert_eq!(state.value(0, 0), Value::boolean(true));
+        Ok(())
+    }
+
     #[test]
     fn install_info_mode_is_required_like_cpp() -> Result<()> {
         let error = roastedduck_serde::binary::BinaryDeserializer::deserialize::<InstallInfo>(

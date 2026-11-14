@@ -99,9 +99,7 @@ Current source builds include roastedDuck's compatible implementations of DuckDB
 1.5.6's FTS and VSS SQL surfaces, enabled in normal builds:
 
 ```sql
-INSTALL fts;
 LOAD fts;
-INSTALL vss;
 LOAD vss;
 ```
 
@@ -109,6 +107,11 @@ FTS provides Snowball stemming, index creation/drop pragmas, and BM25 ranking ov
 ordinary persisted tables. VSS provides Rust HNSW indexes, vector-search rewrites,
 join/match macros, settings, and index maintenance. HNSW is **in-memory only**;
 persisted C++ HNSW indexes remain opaque when their databases are opened.
+
+They are bundled: no separate repository, package, or binary download is needed.
+See the [loading and application guide](website/docs/extensions.md),
+[runnable examples](examples/extensions), and
+[extension contributor workflow](extensions/README.md).
 
 These source additions have separate [FTS](docs/fts-extension-spec.md) and
 [VSS](docs/vss-extension-spec.md) verification records; they are not included in

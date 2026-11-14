@@ -195,3 +195,23 @@ Full conformance after code commit `07908b18` passes with zero ratchet regressio
 see [the VSS integration record](vss-extension-spec.md#evidence-and-final-conformance)
 for counts, retained failures, and separate signed-runner identities. This is a
 local source milestone, not a claim about previously published artifacts.
+
+
+## Bundled installation and developer workflow
+
+The first-party implementation remains in the roastedDuck monorepo and ships in
+normal engine builds. See the [extension inventory](../extensions/README.md) and
+[user loading guide](../website/docs/extensions.md). `LOAD` by its bundled name
+requires neither an install step nor an external binary. Bare `INSTALL` and
+`FORCE INSTALL` are idempotent acknowledgements and do not load the implementation,
+create a cache, or contact a repository. Explicit `FROM`/`VERSION` overrides for
+these bundled names are rejected with engine-upgrade guidance. Explicit file paths
+and other extension names retain their existing loader behavior.
+
+This distribution policy is intentional: independently updating a binary cannot
+replace Rust engine integration. It corrects the previous installer path that
+could download an unused C++ artifact despite built-in loading. SQL/search
+algorithms and their pinned contracts are unchanged. The reproducible developer
+journey check is `scripts/extension-smoke.py`; it executes the documented examples,
+checks install/load discovery and lifecycle, and retains expected persistence
+errors. It does not replace the full compatibility suites above.
