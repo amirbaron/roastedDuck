@@ -52,3 +52,15 @@ Other cohorts are `sql_control.py` (offline SQL), `network_control.py` (signed S
 requests and changing process credentials), and `upstream_{metadata,data,proxy,
 environment}.py`. The original unchanged-credential refresh test has a retained
 shared C++/Rust failure; do not suppress it or count it as passing acceptance.
+
+`sso_session_control.py --slt ... --shim ... --extensions ... --transport ...
+--out ...` compares session-based SSO cache use, refresh and writeback. Its
+transport adapter also allowlists the owned OIDC service hostnames. The runner
+uses SLT for both engines because macOS hardening on the official CLI prevents
+loading the test adapter; the official binary is not re-signed or modified.
+
+The controls cover the ten-minute refresh boundary, expired registration metadata,
+failed/empty refresh responses, expired returned tokens, read-only cache files,
+refresh-token rotation/reuse, session/legacy fallback, explicit profile selection
+and AWS_DEFAULT_PROFILE precedence. They inspect actual requests and cache files;
+no live SSO login or account is used. Select a subset with repeated `--case`.

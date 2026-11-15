@@ -1,3 +1,40 @@
+AWS session SSO checkpoint, November 15, 2026:
+Session SSO now follows the pinned SDK1.11.702 cache and refresh behavior in Rust.
+It reads SHA1(session-name) under the configured credentials directory, refreshes
+within600 seconds of token expiry, uses the cached OIDC region, and sends the
+source's request fields. Registration expiry is retained but does not gate refresh,
+as upstream. Failed/empty refreshes can keep a still-valid token and still rewrite
+known cache fields. New tokens become active only after successful writeback;
+read-only files keep the previous in-memory token. Unknown cache fields are dropped
+on rewrite, dates use the pinned second-resolution representation, and rotated
+refresh tokens are persisted/reused. Legacy caches remain non-refreshing.
+
+Explicit CHAIN 'sso' without PROFILE no longer selects the default profile; the
+default chain still does. AWS_DEFAULT_PROFILE takes precedence over AWS_PROFILE
+in the owned profile lookup. Equal inline/session fields are accepted; conflicting
+or missing session links retain the pinned legacy fallback behavior.
+
+All25 paired scenarios (50 records) pass on final signed images. They include
+refresh-window boundaries, expired tokens/registrations, rejected/empty refresh,
+expired responses, write failure with valid/expired previous tokens, cache reuse,
+profile precedence and legacy fallback. The original web-identity/RDS files pass
+unchanged on both engines. Offline SQL31, network4 with17 independently verified
+SigV4 requests, 5 native tests/2 signed targets (13 isolated provider cases), and
+strict Clippy2 pass. Receipt: .context/artifacts/popular-extensions/aws-sso-session-verification.json.
+No locked package/version or C/C++ product dependency was added.
+
+All services/jobs stopped. The first experimental CLI fixture was rejected by
+macOS hardening; the final fixture uses the established signed SLT oracle harness,
+with the official binary unchanged. Failed exploratory receipts remain. This
+is owned-service qualification, not live SSO acceptance. The retained AWS original
+inventory stays20 passes plus the shared unchanged-credential refresh failure;
+a final frozen full inventory is still required.
+
+Next: ECS/container and IMDS controls, then assume-role/provider failures and the
+remaining PG transport/prerequisite, core, platform/package, PyPI/Homebrew/Core
+acceptance gates. Source pointers: .context/aws-next-control.md. Goal remains
+active; no new public release.
+
 AWS identity checkpoint, November 15, 2026:
 Both previously unqualified AWS originals (web identity and RDS) now pass unchanged
 on C++ DuckDB1.5.6 and Rust. Original hashes are checked. Owned STS/SSO services

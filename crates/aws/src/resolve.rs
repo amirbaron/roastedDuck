@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::fmt::{self, Write as _};
+use std::fmt;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use aws_config::provider_config::ProviderConfig;
 use aws_credential_types::provider::{ProvideCredentials, SharedCredentialsProvider};
-use aws_runtime::env_config::file::{EnvConfigFileKind, EnvConfigFiles};
-use aws_runtime::env_config::section::{EnvConfigSections, Profile};
+use aws_runtime::env_config::file::EnvConfigFiles;
+use aws_runtime::env_config::section::EnvConfigSections;
 use aws_types::os_shim_internal::{Env, Fs};
 use aws_types::region::Region;
 
@@ -153,19 +153,24 @@ async fn resolve_async(
     chain: &[&str],
     fetch_credentials: bool,
 ) -> Result<Resolution, ResolveError> {
-    let profiles = read_profiles(&EnvConfigFiles::default(), request.profile.as_deref()).await;
+    let default_profile = ["AWS_DEFAULT_PROFILE", "AWS_PROFILE"]
+        .into_iter()
+        .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
+        .unwrap_or_else(|| "default".into());
+    let selected_profile = request
+        .profile
+        .as_deref()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(&default_profile);
+    let profiles = read_profiles(&EnvConfigFiles::default(), Some(selected_profile)).await;
     let config_profiles = read_profiles(
         &EnvConfigFiles::builder()
             .include_default_config_file(true)
             .build(),
-        request.profile.as_deref(),
+        Some(selected_profile),
     )
     .await;
     let profile = profiles.selected_profile().to_owned();
-    let default_profile = std::env::var("AWS_PROFILE")
-        .ok()
-        .filter(|p| !p.is_empty())
-        .unwrap_or_else(|| "default".into());
     let region = if request.legacy {
         // ClientConfiguration(profile): SDK environment priority differs from
         // CREATE SECRET, and a named profile's region overrides that SDK result.
@@ -283,6 +288,7 @@ async fn resolve_async(
         for provider in &providers {
             result = match provider {
                 Provider::Config => context.config(request).await?,
+                Provider::Sso => context.sso(request.profile.as_deref().unwrap_or_default()).await,
                 Provider::Sts => {
                     context
                         .assume_role(&request.assume_role, &request.external_id)
@@ -480,64 +486,24 @@ impl Context {
 
     async fn sso(&self, profile: &str) -> Material {
         let profile = self.profiles.get_profile(profile)?;
-        // Feed only SSO fields to the SDK. A static key or role in this profile
-        // must not replace the explicitly selected SSO provider.
-        if profile.get("sso_session").is_none() && profile.get("sso_start_url").is_none() {
-            return None;
-        }
-        if profile.get("sso_session").is_none() {
-            return crate::sso::legacy(profile, &self.sdk).await;
-        }
-        let mut contents = "[profile roastedduck-internal-sso]\n".to_owned();
-        append_profile_fields(
-            &mut contents,
-            profile,
-            &[
-                "sso_account_id",
-                "sso_role_name",
-                "sso_region",
-                "sso_start_url",
-                "sso_session",
-            ],
-        )?;
-        if let Some(name) = profile.get("sso_session") {
-            if name.contains(['\r', '\n', '[', ']']) {
-                return None;
-            }
-            let session = self.profiles.sso_session(name)?;
-            let _ = writeln!(contents, "\n[sso-session {name}]");
-            for key in ["sso_region", "sso_start_url", "sso_registration_scopes"] {
-                if let Some(value) = session.get(key) {
-                    if value.contains(['\r', '\n']) {
-                        return None;
-                    }
-                    let _ = writeln!(contents, "{key}={value}");
-                }
+        if let Some(name) = profile.get("sso_session").filter(|s| !s.is_empty())
+            && let Some(session) = self.profiles.sso_session(name)
+        {
+            let conflict = ["sso_region", "sso_start_url"].iter().any(|key| {
+                let a = profile.get(key).unwrap_or_default();
+                let b = session.get(key).unwrap_or_default();
+                !a.is_empty() && !b.is_empty() && a != b
+            });
+            if !conflict {
+                return crate::sso::session(
+                    profile,
+                    name,
+                    session.get("sso_region").unwrap_or_default(),
+                    &self.sdk,
+                )
+                .await;
             }
         }
-        let files = EnvConfigFiles::builder()
-            .with_contents(EnvConfigFileKind::Config, contents)
-            .build();
-        aws_config::profile::ProfileFileCredentialsProvider::builder()
-            .configure(&self.providers)
-            .profile_name("roastedduck-internal-sso")
-            .profile_files(files)
-            .build()
-            .provide_credentials()
-            .await
-            .ok()
+        crate::sso::legacy(profile, &self.sdk).await
     }
-}
-
-fn append_profile_fields(output: &mut String, profile: &Profile, keys: &[&str]) -> Option<()> {
-    use std::fmt::Write as _;
-    for key in keys {
-        if let Some(value) = profile.get(key) {
-            if value.contains(['\r', '\n']) {
-                return None;
-            }
-            let _ = writeln!(output, "{key}={value}");
-        }
-    }
-    Some(())
 }

@@ -12,11 +12,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <stdarg.h>
 
 static int allowed(const char *host) {
     return host && (!strcmp(host,"sts.eu-west-1.amazonaws.com") ||
       !strcmp(host,"sts.us-east-1.amazonaws.com") || !strcmp(host,"sts.amazonaws.com") ||
-      !strcmp(host,"portal.sso.eu-west-1.amazonaws.com"));
+      !strcmp(host,"portal.sso.eu-west-1.amazonaws.com") ||
+      !strcmp(host,"oidc.eu-west-1.amazonaws.com") || !strcmp(host,"oidc.us-east-2.amazonaws.com"));
 }
 static nw_endpoint_t fixture_endpoint(const char *host,const char *port) {
     if(allowed(host)) {
@@ -27,6 +30,7 @@ static nw_endpoint_t fixture_endpoint(const char *host,const char *port) {
     fprintf(stderr,"fixture denied endpoint: %s\n",host);return nw_endpoint_create_host("127.0.0.1","1");
 }
 static FILE *fixture_fopen(const char *path,const char *mode) {
+    if(strstr(path,"/sso/cache/"))fprintf(stderr,"fixture cache fopen: %s\n",path);
     if(!strcmp(path,"/etc/ssl/cert.pem")) {
         const char *ca=getenv("ROASTEDDUCK_FIXTURE_CA_PEM");if(ca)return fopen(ca,mode);
     }
@@ -104,3 +108,10 @@ INTERPOSE(fixture_endpoint,nw_endpoint_create_host)
 INTERPOSE(fixture_fopen,fopen)
 
 INTERPOSE(fixture_connectx,connectx)
+
+static int fixture_open(const char *path,int flags,...) {
+    mode_t mode=0;if(flags&O_CREAT){va_list args;va_start(args,flags);mode=va_arg(args,int);va_end(args);}
+    if(strstr(path,"/sso/cache/"))fprintf(stderr,"fixture cache open: %s\n",path);
+    return open(path,flags,mode);
+}
+INTERPOSE(fixture_open,open)

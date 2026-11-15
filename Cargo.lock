@@ -2119,6 +2119,7 @@ dependencies = [
  "aws-credential-types",
  "aws-runtime",
  "aws-sdk-sso",
+ "aws-sdk-ssooidc",
  "aws-sigv4",
  "aws-smithy-http-client",
  "aws-smithy-types",
