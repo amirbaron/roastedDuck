@@ -7,7 +7,7 @@ use crate::{Column, Error, Portal, Row, Statement};
 use bytes::{Bytes, BytesMut};
 use fallible_iterator::FallibleIterator;
 use futures_util::Stream;
-use log::{Level, debug, log_enabled};
+use log::{debug, log_enabled, Level};
 use pin_project_lite::pin_project;
 use postgres_protocol::message::backend::{CommandCompleteBody, Message};
 use postgres_protocol::message::frontend;
@@ -15,7 +15,7 @@ use postgres_types::Type;
 use std::fmt;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll, ready};
+use std::task::{ready, Context, Poll};
 
 struct BorrowToSqlParamsDebug<'a, T>(&'a [T]);
 
@@ -30,16 +30,13 @@ where
     }
 }
 
-pub async fn query<P, I>(
-    client: &InnerClient,
-    statement: Statement,
-    params: I,
-) -> Result<RowStream, Error>
+pub async fn query<P, I>(client: &InnerClient, statement: Statement, params: I) -> Result<RowStream, Error>
 where
     P: BorrowToSql,
     I: IntoIterator<Item = P>,
     I::IntoIter: ExactSizeIterator,
 {
+    statement.observe(client);
     let buf = if log_enabled!(Level::Debug) {
         let params = params.into_iter().collect::<Vec<_>>();
         debug!(
@@ -59,37 +56,48 @@ where
     })
 }
 
-
 // roastedDuck: raw text result format with the ordinary per-parameter encodings.
-pub async fn query_text<P, I>(client: &InnerClient, statement: Statement, params: I) -> Result<RowStream, Error>
+pub async fn query_text<P, I>(
+    client: &InnerClient,
+    statement: Statement,
+    params: I,
+) -> Result<RowStream, Error>
 where
     P: BorrowToSql,
     I: IntoIterator<Item = P>,
     I::IntoIter: ExactSizeIterator,
 {
+    statement.observe(client);
     let params = params.into_iter();
     if params.len() != statement.params().len() {
         return Err(Error::parameters(params.len(), statement.params().len()));
     }
     let buf = client.with_buf(|buf| {
-        encode_bind_raw(statement.name(), params.zip(statement.params().iter().cloned()), "", 0, buf)?;
+        encode_bind_raw(
+            statement.name(),
+            params.zip(statement.params().iter().cloned()),
+            "",
+            0,
+            buf,
+        )?;
         frontend::execute("", 0, buf).map_err(Error::encode)?;
         frontend::sync(buf);
         Ok(buf.split().freeze())
     })?;
     let responses = start(client, buf).await?;
-    Ok(RowStream { statement, responses, rows_affected: None })
+    Ok(RowStream {
+        statement,
+        responses,
+        rows_affected: None,
+    })
 }
 
-pub async fn query_typed<P, I>(
-    client: &Arc<InnerClient>,
-    query: &str,
-    params: I,
-) -> Result<RowStream, Error>
+pub async fn query_typed<P, I>(client: &Arc<InnerClient>, query: &str, params: I) -> Result<RowStream, Error>
 where
     P: BorrowToSql,
     I: IntoIterator<Item = (P, Type)>,
 {
+    client.observe_query(query);
     let buf = {
         let params = params.into_iter().collect::<Vec<_>>();
         let param_oids = params.iter().map(|(_, t)| t.oid()).collect::<Vec<_>>();
@@ -142,15 +150,12 @@ where
     }
 }
 
-pub async fn execute_typed<P, I>(
-    client: &Arc<InnerClient>,
-    query: &str,
-    params: I,
-) -> Result<u64, Error>
+pub async fn execute_typed<P, I>(client: &Arc<InnerClient>, query: &str, params: I) -> Result<u64, Error>
 where
     P: BorrowToSql,
     I: IntoIterator<Item = (P, Type)>,
 {
+    client.observe_query(query);
     let buf = {
         let params = params.into_iter().collect::<Vec<_>>();
         let param_oids = params.iter().map(|(_, t)| t.oid()).collect::<Vec<_>>();
@@ -194,11 +199,7 @@ where
     }
 }
 
-pub async fn query_portal(
-    client: &InnerClient,
-    portal: &Portal,
-    max_rows: i32,
-) -> Result<RowStream, Error> {
+pub async fn query_portal(client: &InnerClient, portal: &Portal, max_rows: i32) -> Result<RowStream, Error> {
     let buf = client.with_buf(|buf| {
         frontend::execute(portal.name(), max_rows, buf).map_err(Error::encode)?;
         frontend::sync(buf);
@@ -227,16 +228,13 @@ pub fn extract_row_affected(body: &CommandCompleteBody) -> Result<u64, Error> {
     Ok(rows)
 }
 
-pub async fn execute<P, I>(
-    client: &InnerClient,
-    statement: Statement,
-    params: I,
-) -> Result<u64, Error>
+pub async fn execute<P, I>(client: &InnerClient, statement: Statement, params: I) -> Result<u64, Error>
 where
     P: BorrowToSql,
     I: IntoIterator<Item = P>,
     I::IntoIter: ExactSizeIterator,
 {
+    statement.observe(client);
     let buf = if log_enabled!(Level::Debug) {
         let params = params.into_iter().collect::<Vec<_>>();
         debug!(

@@ -1,10 +1,10 @@
-use crate::Statement;
 use crate::to_statement::private::{Sealed, ToStatementType};
+use crate::Statement;
 
 mod private {
     use std::sync::Arc;
 
-    use crate::{Error, Statement, client::InnerClient, prepare};
+    use crate::{client::InnerClient, prepare, Error, Statement};
 
     pub trait Sealed {}
 
@@ -16,8 +16,14 @@ mod private {
     impl ToStatementType<'_> {
         pub async fn into_statement(self, client: &Arc<InnerClient>) -> Result<Statement, Error> {
             match self {
-                ToStatementType::Statement(s) => Ok(s.clone()),
-                ToStatementType::Query(s) => prepare::prepare(client, s, &[]).await,
+                ToStatementType::Statement(s) => {
+                    client.observe_query(s.query_text());
+                    Ok(s.clone().observed())
+                }
+                ToStatementType::Query(s) => {
+                    client.observe_query(s);
+                    prepare::prepare(client, s, &[]).await.map(Statement::observed)
+                }
             }
         }
     }

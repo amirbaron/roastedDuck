@@ -32,13 +32,13 @@ The initial four-file oracle cohort passes against PostgreSQL17.11. This qualifi
 the fixture, not Rust SQL support. `wire_control.py` separately exercises the signed
 Rust backend probe against an owned CA/server certificate chain and non-superuser
 role. It checks the reference TLS connection, backend protocol controls and server
-cleanup. Runtime scan/legacy-attach registration is now present; SQL ATTACH's
-catalog/transaction/mutation integration remains pending.
+cleanup. ATTACH catalog/transaction/mutation behavior and the shared attached/
+standalone scan executor are covered by the additional controls below.
 
 `codec_control.py --probe ... --cli ... --oracle ... --extension ... --out ...`
-compares 39 value and logical-type cases. Thirteen use the Rust SQL runtime; 26
-use the codec driver for table/query mappings whose runtime integration is still
-pending. The probe also round-trips seven parameter types through PostgreSQL.
+compares 39 value and logical-type cases. Use `--runtime-all` to execute every
+mapping through the SQL runtime; the default retains the earlier mixed runtime/
+backend-probe cohort. The probe also round-trips seven parameter types through PostgreSQL.
 `scan_control.py --cli ... --oracle ... --extension ... --out ...` checks 25 paired
 SQL cases; `--interrupt-probe .../postgres_interrupt_probe` adds an API cancellation
 check that observes the server's `PgSleep` state before and after interruption.
@@ -77,3 +77,18 @@ running SQL. It never stops or connects those tests to an existing local server.
 The CHECKPOINT original grants only the `pg_checkpoint` role inside the owned
 cluster; the application role remains non-superuser. Both originals pass the C++
 fixture qualification in `postgres-full-fixture-oracle-1`.
+
+`oauth_control.py --cli ... --oracle ... --extension ... --out ...` runs an
+owned loopback OAUTHBEARER server with disposable fixture tokens. It tests session
+and environment precedence, token clearing/reacquisition, discovery reconnect,
+issuer validation, malformed challenges, rejection, require_auth policies and
+channel-binding refusal. Add `--slt ... --shim ... --source ...` to run the
+unchanged original attach_oauth_token.test on both engines; its manifest hash is
+checked. It never contacts an OAuth issuer or requests real credentials. Optional
+libpq OAuth plugins/device flows are outside this supplied-token control.
+
+`debug_control.py --cli ... --oracle ... --extension ... --slt ... --shim ...
+--out ...` verifies stderr formatting, COPY and type-lookup queries, RESET and
+process-global behavior across two SQL connections. `rds_control.py` checks SigV4
+passwords and token reuse on an owned protocol endpoint. These fixtures establish
+local protocol compatibility, not live OAuth or AWS acceptance.

@@ -270,12 +270,19 @@ fn initialize_local(global: &Global) -> Result<Local> {
         (global.main.clone(), false)
     } else {
         let pool = global.data.source.pool();
-        let lease = if first {
-            Some(pool.force_acquire(global.data.client.interrupt_flag().as_deref())?)
-        } else if pool.snapshot().0.max_connections == 0 {
-            Some(pool.acquire(global.data.client.interrupt_flag().as_deref())?)
+        let acquire = || {
+            Ok(if first {
+                Some(pool.force_acquire(global.data.client.interrupt_flag().as_deref())?)
+            } else if pool.snapshot().0.max_connections == 0 {
+                Some(pool.acquire(global.data.client.interrupt_flag().as_deref())?)
+            } else {
+                pool.try_acquire()?
+            })
+        };
+        let lease = if global.data.source.catalog().is_some() {
+            crate::postgres::auth::with_oauth(&global.data.client, acquire)?
         } else {
-            pool.try_acquire()?
+            acquire()?
         };
         let Some(lease) = lease else {
             return Ok(Local {

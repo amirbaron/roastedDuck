@@ -1,5 +1,3 @@
-#[cfg(feature = "runtime")]
-use crate::Socket;
 use crate::codec::{BackendMessages, FrontendMessage};
 use crate::config::{SslMode, SslNegotiation};
 use crate::connection::{Request, RequestMessages};
@@ -12,9 +10,11 @@ use crate::simple_query::SimpleQueryStream;
 use crate::tls::MakeTlsConnect;
 use crate::tls::TlsConnect;
 use crate::types::{Oid, ToSql, Type};
+#[cfg(feature = "runtime")]
+use crate::Socket;
 use crate::{
-    CancelToken, CopyInSink, Error, Row, SimpleQueryMessage, Statement, ToStatement, Transaction,
-    TransactionBuilder, copy_in, copy_out, prepare, query, simple_query, slice_iter,
+    copy_in, copy_out, prepare, query, simple_query, slice_iter, CancelToken, CopyInSink, Error, Row,
+    SimpleQueryMessage, Statement, ToStatement, Transaction, TransactionBuilder,
 };
 use bytes::{Buf, BytesMut};
 use fallible_iterator::FallibleIterator;
@@ -32,9 +32,9 @@ use std::net::IpAddr;
 #[cfg(feature = "runtime")]
 use std::path::PathBuf;
 use std::pin::pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::task::{Context, Poll, ready};
+use std::sync::Arc;
+use std::task::{ready, Context, Poll};
 #[cfg(feature = "runtime")]
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -95,19 +95,24 @@ pub struct InnerClient {
     sender: mpsc::UnboundedSender<Request>,
     cached_typeinfo: Mutex<CachedTypeInfo>,
     transaction_status: Arc<AtomicU8>,
+    query_observer: Mutex<Option<fn(&str)>>,
 
     /// A buffer to use when writing out postgres commands.
     buffer: Mutex<BytesMut>,
 }
 
 impl InnerClient {
+    pub(crate) fn observe_query(&self, sql: &str) {
+        let observer = *self.query_observer.lock();
+        if let Some(observer) = observer {
+            observer(sql);
+        }
+    }
     pub fn send(&self, messages: RequestMessages) -> Result<Responses, Error> {
         let (sender, receiver) = mpsc::channel(1);
         let request = Request { messages, sender };
         self.transaction_status.store(b'A', Ordering::Release);
-        self.sender
-            .unbounded_send(request)
-            .map_err(|_| Error::closed())?;
+        self.sender.unbounded_send(request).map_err(|_| Error::closed())?;
 
         Ok(Responses {
             receiver,
@@ -215,6 +220,7 @@ impl Client {
                 sender,
                 cached_typeinfo: Default::default(),
                 transaction_status: Arc::new(AtomicU8::new(b'I')),
+                query_observer: Mutex::new(None),
                 buffer: Default::default(),
             }),
             #[cfg(feature = "runtime")]
@@ -247,11 +253,7 @@ impl Client {
     ///
     /// The list of types may be smaller than the number of parameters - the types of the remaining parameters will be
     /// inferred. For example, `client.prepare_typed(query, &[])` is equivalent to `client.prepare(query)`.
-    pub async fn prepare_typed(
-        &self,
-        query: &str,
-        parameter_types: &[Type],
-    ) -> Result<Statement, Error> {
+    pub async fn prepare_typed(&self, query: &str, parameter_types: &[Type]) -> Result<Statement, Error> {
         prepare::prepare(&self.inner, query, parameter_types).await
     }
 
@@ -263,11 +265,7 @@ impl Client {
     /// The `statement` argument can either be a `Statement`, or a raw query string. If the same statement will be
     /// repeatedly executed (perhaps with different query parameters), consider preparing the statement up front
     /// with the `prepare` method.
-    pub async fn query<T>(
-        &self,
-        statement: &T,
-        params: &[&(dyn ToSql + Sync)],
-    ) -> Result<Vec<Row>, Error>
+    pub async fn query<T>(&self, statement: &T, params: &[&(dyn ToSql + Sync)]) -> Result<Vec<Row>, Error>
     where
         T: ?Sized + ToStatement,
     {
@@ -311,11 +309,7 @@ impl Client {
     /// The `statement` argument can either be a `Statement`, or a raw query string. If the same statement will be
     /// repeatedly executed (perhaps with different query parameters), consider preparing the statement up front
     /// with the `prepare` method.
-    pub async fn query_one<T>(
-        &self,
-        statement: &T,
-        params: &[&(dyn ToSql + Sync)],
-    ) -> Result<Row, Error>
+    pub async fn query_one<T>(&self, statement: &T, params: &[&(dyn ToSql + Sync)]) -> Result<Row, Error>
     where
         T: ?Sized + ToStatement,
     {
@@ -598,11 +592,7 @@ impl Client {
     /// with the `prepare` method.
     ///
     /// If the statement does not modify any rows (e.g. `SELECT`), 0 is returned.
-    pub async fn execute<T>(
-        &self,
-        statement: &T,
-        params: &[&(dyn ToSql + Sync)],
-    ) -> Result<u64, Error>
+    pub async fn execute<T>(&self, statement: &T, params: &[&(dyn ToSql + Sync)]) -> Result<u64, Error>
     where
         T: ?Sized + ToStatement,
     {
@@ -783,6 +773,12 @@ impl Client {
         T: TlsConnect<S>,
     {
         self.cancel_token().cancel_query_raw(stream, tls).await
+    }
+
+    /// Internal execution observer; bind values and authentication payloads are excluded.
+    #[doc(hidden)]
+    pub fn set_query_observer(&self, observer: Option<fn(&str)>) -> Option<fn(&str)> {
+        std::mem::replace(&mut *self.inner.query_observer.lock(), observer)
     }
 
     /// Resolves a catalog type OID without preparing a query over a user relation.

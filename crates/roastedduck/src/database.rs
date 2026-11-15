@@ -4891,9 +4891,14 @@ impl Connection {
                             )));
                         }
                         config.secret_entry = secret.map(|s| s.secret);
-                        let attached = instance
-                            .databases
-                            .attach_postgres(info, path, &options, config, instance)?;
+                        let attached = instance.databases.attach_postgres(
+                            info,
+                            path,
+                            &options,
+                            config,
+                            instance,
+                            &self.function_client,
+                        )?;
                         if let Some(attached) = attached
                             && !self.transactions.is_auto_commit()
                         {

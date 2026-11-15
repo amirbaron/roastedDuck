@@ -1,3 +1,37 @@
+PostgreSQL OAuth/debug checkpoint, November 15, 2026:
+All 26 pinned extension settings now have runtime registrations, including
+pg_oauth_token and pg_debug_show_queries. This does not claim complete libpq-option
+or provider compatibility. OAuth uses the source's session-token/PGOAUTHTOKEN
+precedence and acquisition-scoped clearing. The Rust transport implements supplied-
+token OAUTHBEARER, validated issuer discovery, same-endpoint reconnect, rejection,
+require_auth policy and channel-binding refusal. It does not load libpq OAuth
+plugins or implement their interactive device flows. Token handlers are redacted;
+the captured token uses zeroizing storage.
+
+Query debugging writes the source's double-newline records to stderr (despite the
+upstream setting description saying stdout). It is process-global even for a
+session SET. Simple/extended queries, COPY and internal type lookups are observed;
+pool maintenance is suppressed. The per-client observer is inactive for unrelated
+driver clients, and retained statement SQL is omitted from Debug.
+
+The unchanged attach_oauth_token.test passes on C++ and Rust against the owned
+loopback OAuth fixture; all 23 paired supplemental scenarios pass, including no
+credential transmission on policy/issuer failures. Debug (8 records), RDS (11), pool (16), secret (30)
+and unified-scan (21) controls pass. The complete original PostgreSQL
+inventory remains 145 PASS / 7 SKIP / 0 FAIL (postgres-upstream-auth-all-1); the
+separate OAuth original supplies one of those prerequisites without rewriting SQL.
+The other six original skips remain explicit. This is local protocol/disposable-
+server evidence, not live OAuth/AWS acceptance.
+
+Receipt: .context/artifacts/popular-extensions/postgres-auth-verification.json.
+All 279 native tests across 45 signed targets pass with TZ=UTC; strict
+Clippy2 passes. All owned fixtures stopped. The driver audit checks the registry archive hash, ten changed files, one added
+Rust OAuth module and unchanged MIT/Apache licenses. Earlier failed exploratory
+receipts remain. Final-source full core, vendor/version/snapshot behavior,
+remaining authentication/provider/platform/package checks and PyPI/Homebrew
+publication remain open. Next source notes: .context/postgres-auth-settings-next.md.
+The all-five goal remains active; no new public release.
+
 PostgreSQL unified-scan checkpoint, November 15, 2026:
 Standalone postgres_scan/postgres_scan_pushdown and postgres_query now use the same
 scan data and executor as attached tables. Standalone binding reads catalog type

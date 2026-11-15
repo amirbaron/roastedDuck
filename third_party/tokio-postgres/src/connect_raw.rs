@@ -17,7 +17,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::pin::Pin;
-use std::task::{Context, Poll, ready};
+use std::task::{ready, Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::Framed;
 
@@ -58,10 +58,7 @@ where
 {
     type Item = io::Result<Message>;
 
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<io::Result<Message>>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<io::Result<Message>>> {
         loop {
             match self.buf.next() {
                 Ok(Some(message)) => return Poll::Ready(Some(Ok(message))),
@@ -89,14 +86,7 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
     T: TlsConnect<S>,
 {
-    let stream = connect_tls(
-        stream,
-        config.ssl_mode,
-        config.ssl_negotiation,
-        tls,
-        has_hostname,
-    )
-    .await?;
+    let stream = connect_tls(stream, config.ssl_mode, config.ssl_negotiation, tls, has_hostname).await?;
 
     let mut stream = StartupStream {
         inner: Framed::new(stream, PostgresCodec),
@@ -126,11 +116,7 @@ where
     Ok((client, connection))
 }
 
-async fn startup<S, T>(
-    stream: &mut StartupStream<S, T>,
-    config: &Config,
-    user: &str,
-) -> Result<(), Error>
+async fn startup<S, T>(stream: &mut StartupStream<S, T>, config: &Config, user: &str) -> Result<(), Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
     T: AsyncRead + AsyncWrite + Unpin,
@@ -167,10 +153,12 @@ where
 {
     match stream.try_next().await.map_err(Error::io)? {
         Some(Message::AuthenticationOk) => {
+            config.check_auth("none", "server did not complete authentication")?;
             can_skip_channel_binding(config)?;
             return Ok(());
         }
         Some(Message::AuthenticationCleartextPassword) => {
+            config.check_auth("password", "server requested a cleartext password")?;
             can_skip_channel_binding(config)?;
 
             let pass = config
@@ -181,6 +169,7 @@ where
             authenticate_password(stream, pass).await?;
         }
         Some(Message::AuthenticationMd5Password(body)) => {
+            config.check_auth("md5", "server requested a hashed password")?;
             can_skip_channel_binding(config)?;
 
             let pass = config
@@ -192,15 +181,15 @@ where
             authenticate_password(stream, output.as_bytes()).await?;
         }
         Some(Message::AuthenticationSasl(body)) => {
-            authenticate_sasl(stream, body, config).await?;
+            if authenticate_sasl(stream, body, config).await? {
+                return Ok(());
+            }
         }
         Some(Message::AuthenticationKerberosV5)
         | Some(Message::AuthenticationScmCredential)
         | Some(Message::AuthenticationGss)
         | Some(Message::AuthenticationSspi) => {
-            return Err(Error::authentication(
-                "unsupported authentication method".into(),
-            ));
+            return Err(Error::authentication("unsupported authentication method".into()));
         }
         Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
         Some(_) => return Err(Error::unexpected_message()),
@@ -218,16 +207,13 @@ where
 fn can_skip_channel_binding(config: &Config) -> Result<(), Error> {
     match config.channel_binding {
         config::ChannelBinding::Disable | config::ChannelBinding::Prefer => Ok(()),
-        config::ChannelBinding::Require => Err(Error::authentication(
-            "server did not use channel binding".into(),
-        )),
+        config::ChannelBinding::Require => {
+            Err(Error::authentication("server did not use channel binding".into()))
+        }
     }
 }
 
-async fn authenticate_password<S, T>(
-    stream: &mut StartupStream<S, T>,
-    password: &[u8],
-) -> Result<(), Error>
+async fn authenticate_password<S, T>(stream: &mut StartupStream<S, T>, password: &[u8]) -> Result<(), Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
     T: AsyncRead + AsyncWrite + Unpin,
@@ -245,27 +231,70 @@ async fn authenticate_sasl<S, T>(
     stream: &mut StartupStream<S, T>,
     body: AuthenticationSaslBody,
     config: &Config,
-) -> Result<(), Error>
+) -> Result<bool, Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
     T: TlsStream + Unpin,
 {
-    let password = config
-        .password
-        .as_ref()
-        .ok_or_else(|| Error::config("password missing".into()))?;
-
+    if !config.auth_allowed("oauth") && !config.auth_allowed("scram-sha-256") {
+        config.check_auth("oauth", "server requested SASL authentication")?;
+    }
+    if config.channel_binding == config::ChannelBinding::Require
+        && matches!(stream.inner.get_ref(), MaybeTlsStream::Raw(_))
+    {
+        return Err(Error::authentication(
+            "channel binding required, but SSL not in use".into(),
+        ));
+    }
     let mut has_scram = false;
     let mut has_scram_plus = false;
+    let mut first_mechanism = None;
     let mut mechanisms = body.mechanisms();
     while let Some(mechanism) = mechanisms.next().map_err(Error::parse)? {
         match mechanism {
-            sasl::SCRAM_SHA_256 => has_scram = true,
+            sasl::SCRAM_SHA_256 => {
+                has_scram = true;
+                first_mechanism.get_or_insert("scram");
+            }
             sasl::SCRAM_SHA_256_PLUS => has_scram_plus = true,
+            "OAUTHBEARER" if config.oauth.is_some() => {
+                first_mechanism.get_or_insert("oauth");
+            }
             _ => {}
         }
     }
 
+    if has_scram_plus
+        && stream
+            .inner
+            .get_ref()
+            .channel_binding()
+            .tls_server_end_point
+            .is_none()
+    {
+        return Err(Error::authentication(
+            "server offered SCRAM-SHA-256-PLUS authentication over a non-SSL connection".into(),
+        ));
+    }
+    if first_mechanism == Some("oauth")
+        && (!has_scram_plus || config.channel_binding == config::ChannelBinding::Disable)
+    {
+        config.check_auth("oauth", "server requested OAUTHBEARER authentication")?;
+        if config.channel_binding == config::ChannelBinding::Require {
+            return Err(Error::authentication("channel binding is required, but server did not offer an authentication method that supports channel binding".into()));
+        }
+        return authenticate_oauth(stream, config).await;
+    }
+    if !has_scram && !has_scram_plus {
+        return Err(Error::authentication(
+            "none of the server's SASL authentication mechanisms are supported".into(),
+        ));
+    }
+    config.check_auth("scram-sha-256", "server requested SCRAM-SHA-256 authentication")?;
+    let password = config
+        .password
+        .as_ref()
+        .ok_or_else(|| Error::config("password missing".into()))?;
     let channel_binding = stream
         .inner
         .get_ref()
@@ -330,7 +359,57 @@ where
         .finish(body.data())
         .map_err(|e| Error::authentication(e.into()))?;
 
-    Ok(())
+    Ok(false)
+}
+
+async fn authenticate_oauth<S, T>(stream: &mut StartupStream<S, T>, config: &Config) -> Result<bool, Error>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+    T: TlsStream + Unpin,
+{
+    let handler = &config
+        .oauth
+        .as_ref()
+        .ok_or_else(|| Error::authentication("missing OAuth handler".into()))?
+        .0;
+    let response = handler.initial_response().map_err(Error::authentication)?;
+    let mut buf = BytesMut::new();
+    frontend::sasl_initial_response("OAUTHBEARER", &response, &mut buf).map_err(Error::encode)?;
+    stream
+        .send(FrontendMessage::Raw(buf.freeze()))
+        .await
+        .map_err(Error::io)?;
+    match stream.try_next().await.map_err(Error::io)? {
+        Some(Message::AuthenticationOk) => {
+            if !handler.authenticated() {
+                config.check_auth("none", "server did not complete authentication")?;
+            }
+            Ok(true)
+        }
+        Some(Message::AuthenticationSaslContinue(body)) => {
+            let mut buf = BytesMut::new();
+            frontend::sasl_response(b"\x01", &mut buf).map_err(Error::encode)?;
+            stream
+                .send(FrontendMessage::Raw(buf.freeze()))
+                .await
+                .map_err(Error::io)?;
+            if handler.challenge(body.data()).map_err(Error::authentication)? {
+                return Err(Error::authentication(Box::new(crate::oauth::Reconnect)));
+            }
+            match stream.try_next().await.map_err(Error::io)? {
+                Some(Message::ErrorResponse(body)) => Err(Error::db(body)),
+                _ => Err(Error::authentication(
+                    "server sent additional OAuth data after error".into(),
+                )),
+            }
+        }
+        Some(Message::AuthenticationSaslFinal(_)) => Err(Error::authentication(
+            "server sent unexpected additional OAuth data".into(),
+        )),
+        Some(Message::ErrorResponse(body)) => Err(Error::db(body)),
+        Some(_) => Err(Error::unexpected_message()),
+        None => Err(Error::closed()),
+    }
 }
 
 async fn read_info<S, T>(
@@ -356,9 +435,7 @@ where
                     body.value().map_err(Error::parse)?.to_string(),
                 );
             }
-            Some(msg @ Message::NoticeResponse(_)) => {
-                stream.delayed.push_back(BackendMessage::Async(msg))
-            }
+            Some(msg @ Message::NoticeResponse(_)) => stream.delayed.push_back(BackendMessage::Async(msg)),
             Some(Message::ReadyForQuery(_)) => return Ok((process_id, secret_key, parameters)),
             Some(Message::ErrorResponse(body)) => return Err(Error::db(body)),
             Some(_) => return Err(Error::unexpected_message()),

@@ -4,6 +4,8 @@ pub mod codec;
 pub mod config;
 pub mod copy;
 pub mod copy_rows;
+pub mod debug;
+pub mod oauth;
 pub mod parameters;
 pub mod pool;
 mod tls;
@@ -128,7 +130,8 @@ impl Driver {
         }
     }
     pub fn connect(&self, parameters: &config::Parameters) -> Result<Session> {
-        let config = parameters.wire_config()?;
+        let mut config = parameters.wire_config()?;
+        config.oauth_handler(oauth::handler(parameters));
         let mode = parameters.get("sslmode").unwrap_or("prefer");
         let (client, task) = self.wait(async {
             if mode == "disable" || mode == "allow" {
@@ -149,6 +152,7 @@ impl Driver {
                 .map(|(client, c)| (client, tokio::spawn(c)))
                 .map_err(pg_error)
         })??;
+        client.set_query_observer(Some(debug::query));
         Ok(Session {
             driver: self.clone(),
             client,
@@ -325,6 +329,7 @@ impl Session {
     }
     /// A pool health check succeeds only for a tuple-producing final command.
     pub fn ping(&self, sql: &str) -> Result<bool> {
+        let _quiet = debug::quiet(&self.client);
         if self.is_closed() {
             return Ok(false);
         }
@@ -351,6 +356,7 @@ impl Session {
     }
 
     pub fn reset_for_pool(&mut self, health_check: &str) -> Result<()> {
+        let quiet = debug::quiet(&self.client);
         if !matches!(self.client.transaction_status(), b'I' | b'T' | b'E') {
             self.driver
                 .wait(self.client.check_connection())?
@@ -367,6 +373,7 @@ impl Session {
         if reset.and_then(|()| self.batch("DISCARD ALL")).is_ok() {
             return Ok(());
         }
+        drop(quiet);
         let session = self.driver.connect(&self.parameters)?;
         *self = session;
         if self.ping(health_check)? {

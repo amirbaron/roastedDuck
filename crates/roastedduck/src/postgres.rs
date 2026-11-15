@@ -201,6 +201,18 @@ pub(crate) fn options() -> Vec<ExtensionOption> {
         default_value: Value::boolean(default), set_function: None, global_by_default: false,
     }).collect();
     options.push(ExtensionOption {
+        name: "pg_debug_show_queries".into(),
+        description: "DEBUG SETTING: print all queries sent to Postgres to stdout".into(),
+        input_type: LogicalType::BOOLEAN,
+        default_value: Value::boolean(false),
+        set_function: Some(Arc::new(|value| {
+            roastedduck_postgres::debug::set_enabled(value.as_bool().unwrap_or(false));
+            Ok(())
+        })),
+        global_by_default: false,
+    });
+    options.push(ExtensionOption {name:"pg_oauth_token".into(),description:"OAuth bearer token for PostgreSQL OAUTHBEARER authentication. Takes priority over the PGOAUTHTOKEN environment variable".into(),input_type:LogicalType::VARCHAR,default_value:Value::null(LogicalType::SQLNULL),set_function:None,global_by_default:false});
+    options.push(ExtensionOption {
         name: "pg_null_byte_replacement".into(),
         description: "When writing NULL bytes to Postgres, replace them with the given character".into(),
         input_type: LogicalType::VARCHAR,

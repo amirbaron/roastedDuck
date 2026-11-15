@@ -79,6 +79,10 @@ class Endpoint:
                 data=struct.pack('!i',int(value)) if binary and oid==23 else struct.pack('!q',int(value)) if binary and oid==20 else value.encode()
                 body+=I(len(data))+data
         message(conn,b'D',body)
+    def authenticate(self,conn,startup):
+        message(conn,b'R',I(3));kind,password=packet(conn);assert kind==b'p'
+        self.tokens.append(validate(password.rstrip(b'\0').decode(),self.port));message(conn,b'R',I(0));return True
+    def copy_query(self,conn,sql):return False
     def client(self,conn):
         statements={};portals={};state=b'I'
         try:
@@ -86,15 +90,17 @@ class Endpoint:
             if struct.unpack('!I',startup[:4])[0] in (80877103,80877104):
                 conn.sendall(b'N');startup=recv(conn,struct.unpack('!I',recv(conn,4))[0]-4)
             assert struct.unpack('!I',startup[:4])[0]==196608
-            message(conn,b'R',I(3));kind,password=packet(conn);assert kind==b'p';token=password.rstrip(b'\0').decode();self.tokens.append(validate(token,self.port))
-            message(conn,b'R',I(0));message(conn,b'S',b'server_version\x0017.11\0');message(conn,b'S',b'client_encoding\x00UTF8\0');message(conn,b'K',I(1234)+I(5678));message(conn,b'Z',state)
+            if not self.authenticate(conn,startup):return
+            message(conn,b'S',b'server_version\x0017.11\0');message(conn,b'S',b'client_encoding\x00UTF8\0');message(conn,b'K',I(1234)+I(5678));message(conn,b'Z',state)
             while True:
                 kind,body=packet(conn)
                 if kind==b'X':break
                 if kind==b'Q':
                     for sql in body.rstrip(b'\0').decode().split(';'):
                         if not sql.strip():continue
-                        self.queries.append(sql.strip());columns,values,tag=self.shape(sql)
+                        self.queries.append(sql.strip())
+                        if self.copy_query(conn,sql):continue
+                        columns,values,tag=self.shape(sql)
                         if tag=='BEGIN':state=b'T'
                         if tag in ('COMMIT','ROLLBACK'):state=b'I'
                         if sql.strip().upper()=='SELECT 1' and state==b'T':time.sleep(1.1)
@@ -115,7 +121,9 @@ class Endpoint:
                     result_count=struct.unpack('!H',rest[offset:offset+2])[0];binary=result_count>0 and struct.unpack('!H',rest[offset+2:offset+4])[0]==1
                     portals[portal]=(statements[name],binary);message(conn,b'2')
                 elif kind==b'E':
-                    name=body.split(b'\0',1)[0];sql,binary=portals[name];self.queries.append(sql);columns,values,tag=self.shape(sql);self.rows(conn,columns,values,binary);message(conn,b'C',tag.encode()+b'\0')
+                    name=body.split(b'\0',1)[0];sql,binary=portals[name];self.queries.append(sql)
+                    if self.copy_query(conn,sql):continue
+                    columns,values,tag=self.shape(sql);self.rows(conn,columns,values,binary);message(conn,b'C',tag.encode()+b'\0')
                 elif kind==b'S':message(conn,b'Z',state)
                 elif kind==b'C':message(conn,b'3')
                 elif kind==b'H':pass

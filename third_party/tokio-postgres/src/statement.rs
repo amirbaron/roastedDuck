@@ -8,6 +8,7 @@ use std::sync::{Arc, Weak};
 struct StatementInner {
     client: Weak<InnerClient>,
     name: String,
+    sql: String,
     params: Vec<Type>,
     columns: Vec<Column>,
 }
@@ -33,30 +34,52 @@ impl Drop for StatementInner {
 ///
 /// Prepared statements can only be used with the connection that created them.
 #[derive(Clone)]
-pub struct Statement(Arc<StatementInner>);
+pub struct Statement(Arc<StatementInner>, bool);
 
 impl Statement {
     pub(crate) fn new(
         inner: &Arc<InnerClient>,
         name: String,
+        sql: String,
         params: Vec<Type>,
         columns: Vec<Column>,
     ) -> Statement {
-        Statement(Arc::new(StatementInner {
-            client: Arc::downgrade(inner),
-            name,
-            params,
-            columns,
-        }))
+        Statement(
+            Arc::new(StatementInner {
+                client: Arc::downgrade(inner),
+                name,
+                sql,
+                params,
+                columns,
+            }),
+            false,
+        )
     }
 
     pub(crate) fn unnamed(params: Vec<Type>, columns: Vec<Column>) -> Statement {
-        Statement(Arc::new(StatementInner {
-            client: Weak::new(),
-            name: String::new(),
-            params,
-            columns,
-        }))
+        Statement(
+            Arc::new(StatementInner {
+                client: Weak::new(),
+                name: String::new(),
+                sql: String::new(),
+                params,
+                columns,
+            }),
+            false,
+        )
+    }
+
+    pub(crate) fn query_text(&self) -> &str {
+        &self.0.sql
+    }
+    pub(crate) fn observed(mut self) -> Self {
+        self.1 = true;
+        self
+    }
+    pub(crate) fn observe(&self, client: &InnerClient) {
+        if !self.1 {
+            client.observe_query(&self.0.sql);
+        }
     }
 
     pub(crate) fn name(&self) -> &str {

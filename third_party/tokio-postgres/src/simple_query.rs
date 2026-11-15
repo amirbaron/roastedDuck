@@ -12,7 +12,7 @@ use postgres_protocol::message::backend::Message;
 use postgres_protocol::message::frontend;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll, ready};
+use std::task::{ready, Context, Poll};
 
 /// Information about a column of a single query row.
 #[derive(Debug)]
@@ -32,6 +32,7 @@ impl SimpleColumn {
 }
 
 pub async fn simple_query(client: &InnerClient, query: &str) -> Result<SimpleQueryStream, Error> {
+    client.observe_query(query);
     debug!("executing simple query: {query}");
 
     let buf = encode(client, query)?;
@@ -44,6 +45,7 @@ pub async fn simple_query(client: &InnerClient, query: &str) -> Result<SimpleQue
 }
 
 pub async fn batch_execute(client: &InnerClient, query: &str) -> Result<(), Error> {
+    client.observe_query(query);
     debug!("executing statement batch: {query}");
 
     let buf = encode(client, query)?;
@@ -87,9 +89,7 @@ impl Stream for SimpleQueryStream {
                 let rows = extract_row_affected(&body)?;
                 Poll::Ready(Some(Ok(SimpleQueryMessage::CommandComplete(rows))))
             }
-            Message::EmptyQueryResponse => {
-                Poll::Ready(Some(Ok(SimpleQueryMessage::CommandComplete(0))))
-            }
+            Message::EmptyQueryResponse => Poll::Ready(Some(Ok(SimpleQueryMessage::CommandComplete(0)))),
             Message::RowDescription(body) => {
                 let columns: Arc<[SimpleColumn]> = body
                     .fields()

@@ -778,6 +778,7 @@ impl DatabaseManager {
         options: &AttachOptions,
         config: crate::postgres::AttachConfig,
         instance: &Arc<crate::database::DatabaseInstance>,
+        client: &Arc<roastedduck_function::FunctionClient>,
     ) -> Result<Option<Arc<AttachedDatabase>>> {
         let buffer_manager = &instance.env.buffer_manager;
         let instance_validity = &instance.validity;
@@ -817,20 +818,22 @@ impl DatabaseManager {
         let catalog = Arc::new(Catalog::unregistered_remote(&name, self.oid_allocator.clone())?);
         let dsn = std::str::from_utf8(path)
             .map_err(|_| Error::invalid_input("Invalid Postgres connection string"))?;
-        let postgres = crate::postgres::catalog::PgCatalog::new(
-            &catalog,
-            crate::postgres::auth::factory(
-                Arc::downgrade(instance),
-                &String::from_utf8_lossy(name.as_bytes()),
-                dsn,
-                config.secret_entry.as_ref(),
-            )?,
-            buffer_manager.clone(),
-            options.read_only(),
-            config.isolation,
-            config.schemas,
-            config.pool,
-        )?;
+        let postgres = crate::postgres::auth::with_oauth(client, || {
+            crate::postgres::catalog::PgCatalog::new(
+                &catalog,
+                crate::postgres::auth::factory(
+                    Arc::downgrade(instance),
+                    &String::from_utf8_lossy(name.as_bytes()),
+                    dsn,
+                    config.secret_entry.as_ref(),
+                )?,
+                buffer_manager.clone(),
+                options.read_only(),
+                config.isolation,
+                config.schemas,
+                config.pool,
+            )
+        })?;
         let register_storage = crate::postgres::secret_storage::initialize(
             &postgres,
             &config.secret_table,

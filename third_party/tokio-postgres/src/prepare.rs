@@ -106,7 +106,7 @@ pub async fn prepare(
         }
     }
 
-    Ok(Statement::new(client, name, parameters, columns))
+    Ok(Statement::new(client, name, query.to_owned(), parameters, columns))
 }
 
 fn prepare_rec<'a>(

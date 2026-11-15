@@ -172,3 +172,16 @@ pub(crate) fn factory(
         driver.connect(&Parameters::parse(&dsn)?)
     }))
 }
+
+pub(crate) fn with_oauth<T>(
+    client: &roastedduck_function::FunctionClient,
+    call: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    let token = client
+        .settings()
+        .and_then(|s| s.current_setting("pg_oauth_token").ok())
+        .filter(|v| !v.is_null())
+        .map(|v| v.to_varchar())
+        .transpose()?;
+    roastedduck_postgres::oauth::with_token(token.as_deref(), call)
+}

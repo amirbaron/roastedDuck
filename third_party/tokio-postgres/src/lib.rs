@@ -161,6 +161,8 @@ mod codec;
 pub mod config;
 #[cfg(feature = "runtime")]
 mod connect;
+#[doc(hidden)]
+pub mod oauth;
 mod connect_raw;
 #[cfg(feature = "runtime")]
 mod connect_socket;

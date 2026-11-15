@@ -3,8 +3,6 @@
 #![allow(clippy::doc_overindented_list_items)]
 
 #[cfg(feature = "runtime")]
-use crate::Socket;
-#[cfg(feature = "runtime")]
 use crate::connect::connect;
 use crate::connect_raw::connect_raw;
 #[cfg(not(target_arch = "wasm32"))]
@@ -12,6 +10,8 @@ use crate::keepalive::KeepaliveConfig;
 #[cfg(feature = "runtime")]
 use crate::tls::MakeTlsConnect;
 use crate::tls::TlsConnect;
+#[cfg(feature = "runtime")]
+use crate::Socket;
 use crate::{Client, Connection, Error};
 use std::borrow::Cow;
 #[cfg(unix)]
@@ -219,6 +219,8 @@ pub enum Host {
 pub struct Config {
     pub(crate) user: Option<String>,
     pub(crate) password: Option<Vec<u8>>,
+    pub(crate) oauth: Option<crate::oauth::Handler>,
+    pub(crate) require_auth: Option<String>,
     pub(crate) dbname: Option<String>,
     pub(crate) options: Option<String>,
     pub(crate) application_name: Option<String>,
@@ -249,6 +251,8 @@ impl Config {
         Config {
             user: None,
             password: None,
+            oauth: None,
+            require_auth: None,
             dbname: None,
             options: None,
             application_name: None,
@@ -284,6 +288,41 @@ impl Config {
     /// the `user` method.
     pub fn get_user(&self) -> Option<&str> {
         self.user.as_deref()
+    }
+
+    #[doc(hidden)]
+    pub fn authentication_policy(&mut self, policy: String) -> &mut Self {
+        self.require_auth = Some(policy);
+        self
+    }
+    pub(crate) fn auth_allowed(&self, method: &str) -> bool {
+        let Some(policy) = &self.require_auth else {
+            return true;
+        };
+        if policy.starts_with('!') {
+            !policy.split(',').any(|s| s.strip_prefix('!') == Some(method))
+        } else {
+            policy.split(',').any(|s| s == method)
+        }
+    }
+    pub(crate) fn check_auth(&self, method: &str, reason: &str) -> Result<(), Error> {
+        if self.auth_allowed(method) {
+            Ok(())
+        } else {
+            Err(Error::authentication(
+                format!(
+                    "authentication method requirement \"{}\" failed: {reason}",
+                    self.require_auth.as_deref().unwrap_or_default()
+                )
+                .into(),
+            ))
+        }
+    }
+    /// Installs the internal supplied-token OAuth exchange handler.
+    #[doc(hidden)]
+    pub fn oauth_handler(&mut self, handler: std::sync::Arc<dyn crate::oauth::OAuthHandler>) -> &mut Self {
+        self.oauth = Some(crate::oauth::Handler(handler));
+        self
     }
 
     /// Sets the password to authenticate with.
@@ -525,10 +564,7 @@ impl Config {
     ///
     /// This can be used to connect to the primary server in a clustered database rather than one of the read-only
     /// secondary servers. Defaults to `Any`.
-    pub fn target_session_attrs(
-        &mut self,
-        target_session_attrs: TargetSessionAttrs,
-    ) -> &mut Config {
+    pub fn target_session_attrs(&mut self, target_session_attrs: TargetSessionAttrs) -> &mut Config {
         self.target_session_attrs = target_session_attrs;
         self
     }
@@ -595,9 +631,7 @@ impl Config {
                     "postgres" => SslNegotiation::Postgres,
                     "direct" => SslNegotiation::Direct,
                     _ => {
-                        return Err(Error::config_parse(Box::new(InvalidValue(
-                            "sslnegotiation",
-                        ))));
+                        return Err(Error::config_parse(Box::new(InvalidValue("sslnegotiation"))));
                     }
                 };
                 self.ssl_negotiation(mode);
@@ -660,18 +694,18 @@ impl Config {
             }
             #[cfg(not(target_arch = "wasm32"))]
             "keepalives_interval" => {
-                let keepalives_interval = value.parse::<i64>().map_err(|_| {
-                    Error::config_parse(Box::new(InvalidValue("keepalives_interval")))
-                })?;
+                let keepalives_interval = value
+                    .parse::<i64>()
+                    .map_err(|_| Error::config_parse(Box::new(InvalidValue("keepalives_interval"))))?;
                 if keepalives_interval > 0 {
                     self.keepalives_interval(Duration::from_secs(keepalives_interval as u64));
                 }
             }
             #[cfg(not(target_arch = "wasm32"))]
             "keepalives_retries" => {
-                let keepalives_retries = value.parse::<u32>().map_err(|_| {
-                    Error::config_parse(Box::new(InvalidValue("keepalives_retries")))
-                })?;
+                let keepalives_retries = value
+                    .parse::<u32>()
+                    .map_err(|_| Error::config_parse(Box::new(InvalidValue("keepalives_retries"))))?;
                 self.keepalives_retries(keepalives_retries);
             }
             "target_session_attrs" => {
@@ -693,9 +727,7 @@ impl Config {
                     "prefer" => ChannelBinding::Prefer,
                     "require" => ChannelBinding::Require,
                     _ => {
-                        return Err(Error::config_parse(Box::new(InvalidValue(
-                            "channel_binding",
-                        ))));
+                        return Err(Error::config_parse(Box::new(InvalidValue("channel_binding"))));
                     }
                 };
                 self.channel_binding(channel_binding);
@@ -705,17 +737,13 @@ impl Config {
                     "disable" => LoadBalanceHosts::Disable,
                     "random" => LoadBalanceHosts::Random,
                     _ => {
-                        return Err(Error::config_parse(Box::new(InvalidValue(
-                            "load_balance_hosts",
-                        ))));
+                        return Err(Error::config_parse(Box::new(InvalidValue("load_balance_hosts"))));
                     }
                 };
                 self.load_balance_hosts(load_balance_hosts);
             }
             key => {
-                return Err(Error::config_parse(Box::new(UnknownOption(
-                    key.to_string(),
-                ))));
+                return Err(Error::config_parse(Box::new(UnknownOption(key.to_string()))));
             }
         }
 
@@ -774,6 +802,7 @@ impl fmt::Debug for Config {
         config_dbg = config_dbg
             .field("user", &self.user)
             .field("password", &self.password.as_ref().map(|_| Redaction {}))
+            .field("oauth", &self.oauth.as_ref().map(|_| Redaction {}))
             .field("dbname", &self.dbname)
             .field("options", &self.options)
             .field("application_name", &self.application_name)
@@ -872,8 +901,7 @@ impl<'a> Parser<'a> {
         match self.it.next() {
             Some((_, c)) if c == target => Ok(()),
             Some((i, c)) => {
-                let m =
-                    format!("unexpected character at byte {i}: expected `{target}` but got `{c}`");
+                let m = format!("unexpected character at byte {i}: expected `{target}` but got `{c}`");
                 Err(Error::config_parse(m.into()))
             }
             None => Err(Error::config_parse("unexpected EOF".into())),
@@ -897,7 +925,11 @@ impl<'a> Parser<'a> {
             _ => true,
         });
 
-        if s.is_empty() { None } else { Some(s) }
+        if s.is_empty() {
+            None
+        } else {
+            Some(s)
+        }
     }
 
     fn value(&mut self) -> Result<String, Error> {
@@ -1170,7 +1202,7 @@ impl<'a> UrlParser<'a> {
 mod tests {
     use std::net::IpAddr;
 
-    use crate::{Config, config::Host};
+    use crate::{config::Host, Config};
 
     #[test]
     fn test_simple_parsing() {
@@ -1179,10 +1211,7 @@ mod tests {
         assert_eq!(Some("pass_user"), config.get_user());
         assert_eq!(Some("postgres"), config.get_dbname());
         assert_eq!(
-            [
-                Host::Tcp("host1".to_string()),
-                Host::Tcp("host2".to_string())
-            ],
+            [Host::Tcp("host1".to_string()), Host::Tcp("host2".to_string())],
             config.get_hosts(),
         );
 

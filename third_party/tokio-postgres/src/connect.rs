@@ -12,10 +12,7 @@ use std::task::Poll;
 use std::{cmp, io};
 use tokio::net;
 
-pub async fn connect<T>(
-    mut tls: T,
-    config: &Config,
-) -> Result<(Client, Connection<Socket, T::Stream>), Error>
+pub async fn connect<T>(mut tls: T, config: &Config) -> Result<(Client, Connection<Socket, T::Stream>), Error>
 where
     T: MakeTlsConnect<Socket>,
 {
@@ -23,10 +20,7 @@ where
         return Err(Error::config("both host and hostaddr are missing".into()));
     }
 
-    if !config.host.is_empty()
-        && !config.hostaddr.is_empty()
-        && config.host.len() != config.hostaddr.len()
-    {
+    if !config.host.is_empty() && !config.hostaddr.is_empty() && config.host.len() != config.hostaddr.len() {
         let msg = format!(
             "number of hosts ({}) is different from number of hostaddrs ({})",
             config.host.len(),
@@ -108,9 +102,7 @@ where
 
             let mut last_err = None;
             for addr in addrs {
-                match connect_once(Addr::Tcp(addr.ip()), hostname.as_deref(), port, tls, config)
-                    .await
-                {
+                match connect_once(Addr::Tcp(addr.ip()), hostname.as_deref(), port, tls, config).await {
                     Ok(stream) => return Ok(stream),
                     Err(e) => {
                         last_err = Some(e);
@@ -127,9 +119,7 @@ where
             }))
         }
         #[cfg(unix)]
-        Host::Unix(path) => {
-            connect_once(Addr::Unix(path), hostname.as_deref(), port, tls, config).await
-        }
+        Host::Unix(path) => connect_once(Addr::Unix(path), hostname.as_deref(), port, tls, config).await,
     }
 }
 
@@ -143,24 +133,35 @@ async fn connect_once<T>(
 where
     T: MakeTlsConnect<Socket>,
 {
-    let socket = connect_socket(
-        &addr,
-        port,
-        config.connect_timeout,
-        config.tcp_user_timeout,
-        if config.keepalives {
-            Some(&config.keepalive_config)
-        } else {
-            None
-        },
-    )
-    .await?;
-
-    let tls = tls
-        .make_tls_connect(hostname.unwrap_or(""))
-        .map_err(|e| Error::tls(e.into()))?;
-    let has_hostname = hostname.is_some();
-    let (mut client, mut connection) = connect_raw(socket, tls, has_hostname, config).await?;
+    let mut retry = false;
+    let (mut client, mut connection) = loop {
+        let socket = connect_socket(
+            &addr,
+            port,
+            config.connect_timeout,
+            config.tcp_user_timeout,
+            if config.keepalives {
+                Some(&config.keepalive_config)
+            } else {
+                None
+            },
+        )
+        .await?;
+        let connector = tls
+            .make_tls_connect(hostname.unwrap_or(""))
+            .map_err(|e| Error::tls(e.into()))?;
+        match connect_raw(socket, connector, hostname.is_some(), config).await {
+            Ok(result) => break result,
+            Err(error) => {
+                use std::error::Error as _;
+                if !retry && error.source().is_some_and(|e| e.is::<crate::oauth::Reconnect>()) {
+                    retry = true;
+                    continue;
+                }
+                return Err(error);
+            }
+        }
+    };
 
     if config.target_session_attrs != TargetSessionAttrs::Any {
         let mut rows = pin!(client.simple_query_raw("SHOW transaction_read_only"));

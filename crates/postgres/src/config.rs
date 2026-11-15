@@ -36,6 +36,7 @@ const ENVIRONMENT: &[(&str, &str)] = &[
     ("sslcrl", "PGSSLCRL"),
     ("sslnegotiation", "PGSSLNEGOTIATION"),
     ("channel_binding", "PGCHANNELBINDING"),
+    ("require_auth", "PGREQUIREAUTH"),
     ("target_session_attrs", "PGTARGETSESSIONATTRS"),
     ("service", "PGSERVICE"),
 ];
@@ -191,6 +192,11 @@ impl Parameters {
                     | "passfile"
                     | "service"
                     | "oauth_token"
+                    | "oauth_issuer"
+                    | "oauth_client_id"
+                    | "oauth_client_secret"
+                    | "oauth_scope"
+                    | "require_auth"
             ) {
                 continue;
             }
@@ -206,8 +212,35 @@ impl Parameters {
             text.push_str(&value.replace('\\', "\\\\").replace('\'', "\\'"));
             text.push_str("' ");
         }
-        text.parse()
-            .map_err(|e: tokio_postgres::Error| invalid(e.to_string()))
+        let mut config: tokio_postgres::Config = text
+            .parse()
+            .map_err(|e: tokio_postgres::Error| invalid(e.to_string()))?;
+        if let Some(policy) = self.get("require_auth").filter(|s| !s.is_empty()) {
+            let negated = policy.starts_with('!');
+            let mut seen = std::collections::BTreeSet::new();
+            for part in policy.split(',') {
+                if part.starts_with('!') != negated {
+                    return Err(invalid(if negated {
+                        format!("require_auth method \"{part}\" cannot be mixed with negative methods")
+                    } else {
+                        format!(
+                            "negative require_auth method \"{part}\" cannot be mixed with non-negative methods"
+                        )
+                    }));
+                }
+                let method = part.strip_prefix('!').unwrap_or(part);
+                if !["password", "md5", "gss", "sspi", "scram-sha-256", "oauth", "none"].contains(&method) {
+                    return Err(invalid(format!("invalid require_auth value: \"{method}\"")));
+                }
+                if !seen.insert(method) {
+                    return Err(invalid(format!(
+                        "require_auth method \"{part}\" is specified more than once"
+                    )));
+                }
+            }
+            config.authentication_policy(policy.to_owned());
+        }
+        Ok(config)
     }
 }
 

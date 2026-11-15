@@ -2436,10 +2436,13 @@ dependencies = [
  "roastedduck-common",
  "roastedduck-types",
  "rustls",
+ "serde",
+ "serde_json",
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
  "whoami",
+ "zeroize",
 ]
 
 [[package]]

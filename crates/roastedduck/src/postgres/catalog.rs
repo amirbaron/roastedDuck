@@ -101,7 +101,8 @@ impl PgCatalog {
     ) -> Result<Arc<PgTransaction>> {
         let catalog = self.native()?;
         let participant = transaction.participant(&catalog.name(), || {
-            let session = self.pool.acquire(client.interrupt_flag().as_deref())?;
+            let session =
+                super::auth::with_oauth(client, || self.pool.acquire(client.interrupt_flag().as_deref()))?;
             Ok(Arc::new(Participant(PgTransaction::new(
                 session,
                 client.clone(),
