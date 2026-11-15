@@ -291,7 +291,9 @@ impl<'a, E: Engine> Runner<'a, E> {
         if self.original_sqlite_test {
             self.engine.query(&mut connection, "SET integer_division=true");
         }
-        let secret_directory = self.environment.test_path("test_secret_dir");
+        let secret_directory = std::env::var("SLT_SECRET_DIRECTORY")
+            .unwrap_or_else(|_| self.environment.test_path("test_secret_dir"))
+            .replace('\'', "''");
         self.engine.query(
             &mut connection,
             &format!("SET secret_directory='{secret_directory}'"),
@@ -858,6 +860,20 @@ impl<'a, E: Engine> Runner<'a, E> {
     fn load_extension(&mut self, name: &str) -> Result<ExtensionLoad, String> {
         let loaded = self.load_extension_inner(name)?;
         if loaded == ExtensionLoad::Loaded
+            && name == "azure"
+            && let Ok(transport) = std::env::var("SLT_AZURE_TRANSPORT")
+        {
+            if !matches!(transport.as_str(), "default" | "curl") {
+                return Err("Invalid SLT_AZURE_TRANSPORT".into());
+            }
+            let connection = self.con.as_mut().ok_or("no open connection")?;
+            let result = self.engine.query(connection,
+                &format!("SET GLOBAL azure_transport_option_type='{transport}'; SET SESSION azure_transport_option_type='{transport}'"));
+            if let Some(error) = crate::backend::QueryResult::error(&result) {
+                return Err(error.to_owned());
+            }
+        }
+        if loaded == ExtensionLoad::Loaded
             && name == "httpfs"
             && let Ok(client) = std::env::var("SLT_HTTPFS_CLIENT_IMPLEMENTATION")
         {
@@ -897,10 +913,9 @@ impl<'a, E: Engine> Runner<'a, E> {
         {
             let proxy = proxy.replace('\'', "''");
             let connection = self.con.as_mut().ok_or("no open connection")?;
-            let result = self.engine.query(
-                connection,
-                &format!("SET GLOBAL http_proxy='{proxy}'"),
-            );
+            let result = self
+                .engine
+                .query(connection, &format!("SET GLOBAL http_proxy='{proxy}'"));
             if let Some(error) = crate::backend::QueryResult::error(&result) {
                 return Err(error.to_owned());
             }

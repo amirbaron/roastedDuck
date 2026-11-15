@@ -130,6 +130,9 @@ impl FileSystem for AzureDfsFileSystem {
     fn open(&self, path: &[u8], write: bool) -> Result<Arc<dyn FileHandle>> {
         AzureBlobFileSystem.open(path, write)
     }
+    fn open_read_direct(&self, path: &[u8]) -> Result<Arc<dyn FileHandle>> {
+        AzureBlobFileSystem.open_read_direct(path)
+    }
     fn glob(&self, path: &[u8]) -> Result<Vec<ByteString>> {
         let client = client(path)?;
         let Some(wildcard) = client.parsed.path.find(['*', '[', '\\']) else {

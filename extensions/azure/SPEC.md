@@ -24,8 +24,9 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 
 ## Status
 
-In progress. Blob, ADLS and identity-provider implementations are present in normal
-builds; full Azure compatibility is not yet accepted. See the checkpoints below.
+All 27 unchanged original SQL files pass locally on both engines. Blob, ADLS and
+identity-provider implementations are present in normal builds. Broader core,
+platform and release qualification remains pending; see the checkpoints below.
 
 The pinned source additionally registers managed-identity client/object/resource IDs
 and service-principal certificate authentication. These are required even though
@@ -151,3 +152,48 @@ remaining option/refresh/challenge/error and network-cancellation controls,
 Linux/Windows Arc acceptance where applicable, full conformance, cross-platform
 package qualification and publication. These checks do not establish live Entra,
 Azure policy or production-cloud acceptance.
+
+## Complete original SQL cohort (November 15)
+
+`azure-upstream-all-2/` records **27 PASS, zero FAIL/SKIP** on both C++1.5.6 and
+Rust, with zero fixture errors and zero invalid authorizations. This includes
+all identity, proxy, anonymous-read, hierarchy, integrity and large/concurrent-write
+originals. SQL and data were copied without edits and checked against their pins.
+The full cloud fixture routes only owned account hostnames through a loopback
+CONNECT proxy, with CA trust scoped to the child processes. Persistent secrets
+are real files in an owned directory, not substituted SQL results.
+
+The initial full run exposed a Rust Parquet integration gap: nonlocal row groups
+were not using the normal prefetch/external-cache path, and scans reused the bind
+handle. Remote scans now revalidate through a separate handle and bypass provider
+read-ahead when the engine cache owns the requested range, matching InitializeScan.
+Local-file defaults and the external-cache budget are unchanged. Azure's engine
+cache validation uses Last-Modified, as upstream does; ETags protect chunks within
+each download, rather than changing the engine's cache-validation contract.
+This resolves the profiling original without fabricating request counts.
+
+The earlier fresh-Azurite profiling failures above are retained but do not describe
+the final cohort. The pinned engine deliberately invalidates timestamp-only cached
+data less than ten seconds old. The final fixture starts with the original data's
+timestamps and updates metadata on writes. The fixture also implements the C++
+transport's 100-continue upload handshake and performs concurrent TLS handshakes in
+workers. Its normal listing size follows the [Azure REST contract](https://learn.microsoft.com/rest/api/storageservices/datalakestoragegen2/path/list).
+Dedicated small-page controls still verify continuation handling.
+
+Fourteen transfer controls per engine pass on the same source in
+`azure-transfer-control-final/`: exact bytes, configured chunk limits, bounded
+parallelism, zero/negative concurrency and ETag overwrite races. The configured
+read buffer is now used, with bypass for larger/direct reads; SDK-style chunks
+reuse the first response's ETag and stop scheduling after a failure. The failed
+buffer is discarded. ADLS metadata/downloads use the Blob endpoint while path
+mutation and listing use DFS, following the pinned SDK.
+
+This closes the original-SQL milestone, not the full five-extension goal or release
+qualification. Core regression/conformance, remaining provider/error/network
+controls, applicable platform checks and package/publication gates remain required.
+
+Core component follow-up: signed function (37) and Parquet (31) unit tests pass;
+two existing Snappy comparison/benchmark tools remain ignored. Strict all-target
+Clippy passes for function, HTTPFS, Parquet, runtime and SLT. Receipts:
+`azure-core-tests-final/` and `azure-core-clippy-final.log`. Full core conformance
+and release-image qualification are not implied by these component results.

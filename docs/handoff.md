@@ -1,3 +1,27 @@
+Azure original-SQL milestone, November 15, 2026: all27 unchanged original files
+now PASS on both C++1.5.6 and Rust, with zero skips, fixture errors or invalid
+authorizations. Receipts: `.context/artifacts/popular-extensions/azure-upstream-all-2/`.
+This includes identity, both large/concurrent-write suites, all4 proxy tests and real
+persistent-secret data integrity. Fourteen transfer controls per engine also pass
+on the final development image (azure-transfer-control-final). Signed core unit
+checks pass37 function and31 Parquet tests, with2 existing ignored Snappy tools;
+strict function/HTTPFS/Parquet/runtime/SLT Clippy passes (azure-core-tests-final,
+azure-core-clippy-final.log).
+
+Core corrections enable nonlocal Parquet prefetch and separately validate scan
+handles, with an internal direct-read hook to avoid duplicate provider read-ahead.
+Azure follows upstream's Last-Modified cache validation; ETags guard download chunks.
+Configured read buffers/chunks/concurrency and ADLS Blob-vs-DFS routing are honored.
+No cache budget or local-file default changed. The earlier profiling failure was
+resolved, not accepted as a divergence; fresh Azurite objects fall within the pinned
+ten-second timestamp cache guard, while the final fixture uses source-file times.
+The fixture implements100-continue and concurrent TLS handshakes, validates auth,
+and keeps test SQL/data unchanged. See extensions/azure/SPEC.md for exact history.
+
+The all-five goal is still incomplete. Full core conformance/release qualification
+is the next gate, followed by remaining AWS web identity/RDS, PostgreSQL, other
+extension/provider/platform gates and publication. No new public release made.
+
 Azure identity checkpoint, November 15, 2026: Rust now acquires environment,
 workload, CLI, managed-identity and service-principal/certificate tokens. Twenty-five
 paired identity controls pass on the final signed development image, with matching

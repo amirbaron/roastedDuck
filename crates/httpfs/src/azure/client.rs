@@ -217,7 +217,24 @@ impl Client {
         payload: &[u8],
     ) -> Result<ureq::http::Response<body::Body>> {
         check_interrupt()?;
-        let mut url = format!("{}/{}", self.base, encode(&self.parsed.container, false));
+        // DataLakePathClient delegates properties and downloads to BlobClient;
+        // append/flush and directory listings remain on the DFS endpoint.
+        let base = if self.parsed.dfs() && object.is_some() && matches!(method, "HEAD" | "GET") {
+            let (scheme, rest) = self
+                .base
+                .split_once("://")
+                .ok_or_else(|| io_error("Invalid Azure endpoint"))?;
+            let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+            format!(
+                "{scheme}://{}{}{}",
+                authority.replace(".dfs.", ".blob."),
+                if path.is_empty() { "" } else { "/" },
+                path
+            )
+        } else {
+            self.base.clone()
+        };
+        let mut url = format!("{base}/{}", encode(&self.parsed.container, false));
         if let Some(object) = object {
             url.push('/');
             url.push_str(&encode(object, true));

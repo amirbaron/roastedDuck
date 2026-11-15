@@ -58,3 +58,23 @@ that the custom CA does not silently become trusted by that provider.
 the real SQL lookup, including helper descendants. Pass `--api-probe` pointing at
 the signed `aws_interrupt_probe` example to verify the actual Rust ErrorKind as
 well as the native CLI behavior.
+
+`upstream_cloud.py --all` runs all 27 original Azure files, including the four
+fixed-port proxy tests, both large/concurrent write suites and data integrity.
+It uses owned TLS/token/storage services and a CONNECT proxy restricted to the
+fixture hostnames. Ports 3128 and 3129 must be free; the script never stops another
+service to obtain them. Original SQL and data remain unchanged and are hashed.
+The integrity case uses real persistent secret files in an owned directory and
+sets both of its upstream prerequisite environment variables.
+
+The test runner's `SLT_AZURE_TRANSPORT=curl` selects the ordinary transport option
+on both engines so the fixture CA is trusted through `CURL_CA_INFO`. The optional
+`SLT_SECRET_DIRECTORY` selects an owned persistent-secret directory. Neither changes
+the engine's product defaults. Initial object timestamps come from the original
+data files; successful writes update timestamps and version tags. Cloud listings
+use the service's normal page size; the smaller pagination fixture remains separate.
+
+`transfer_control.py` compares both URL schemes for read-buffer bypass, chunk sizes,
+concurrency (including the pinned zero/negative behavior), exact bytes and a file
+overwritten between chunks. It checks the `If-Match` guards and requires failure
+on a changed ETag. All fixture exceptions are bounded and included in receipts.

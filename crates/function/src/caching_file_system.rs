@@ -67,10 +67,14 @@ enum ReadFile {
 
 impl OpenFile {
     /// `LocalFileSystem::OpenFile` for reading, with its errors.
-    fn open(path: &[u8]) -> Result<Self> {
+    fn open(path: &[u8], direct_io: bool) -> Result<Self> {
         crate::file_system::verify_can_access_file(path)?;
         if let Some(fs) = crate::registered_files::lookup(path) {
-            let handle = fs.open(path, false)?;
+            let handle = if direct_io {
+                fs.open_read_direct(path)?
+            } else {
+                fs.open(path, false)?
+            };
             let size = handle.size()?;
             let last_modified = handle.modified()?;
             let version_tag = handle.version_tag()?;
@@ -239,6 +243,7 @@ impl CachedRead {
 /// method takes `&self`: threads share a handle and read positionally.
 #[derive(Debug)]
 pub struct CachingFileHandle {
+    direct_io: bool,
     /// The database's cache; `None` outside a database, where reads go to the file.
     cache: Option<Arc<ExternalFileCache>>,
     path: roastedduck_common::ByteString,
@@ -275,9 +280,26 @@ impl CachingFileHandle {
         path: impl AsRef<[u8]>,
         validation: CacheValidationMode,
     ) -> Result<Self> {
-        let path = path.as_ref();
+        Self::open_with_mode(cache, path.as_ref(), validation, false)
+    }
+
+    pub fn open_direct(
+        cache: Option<Arc<ExternalFileCache>>,
+        path: &[u8],
+        validation: CacheValidationMode,
+    ) -> Result<Self> {
+        Self::open_with_mode(cache, path, validation, true)
+    }
+
+    fn open_with_mode(
+        cache: Option<Arc<ExternalFileCache>>,
+        path: &[u8],
+        validation: CacheValidationMode,
+        direct_io: bool,
+    ) -> Result<Self> {
         let cached_file = cache.as_ref().map(|cache| cache.get_or_create_cached_file(path));
         let handle = Self {
+            direct_io,
             validate: validation.should_validate(path),
             path: path.into(),
             cached_file: Mutex::new(cached_file.clone()),
@@ -316,7 +338,7 @@ impl CachingFileHandle {
         if let Some(open) = &*file {
             return Ok(Arc::clone(open));
         }
-        let open = Arc::new(OpenFile::open(&self.path)?);
+        let open = Arc::new(OpenFile::open(&self.path, self.direct_io)?);
         if let Some(cached_file) = cached_file {
             let mut state = cached_file.write();
             if !CachedFile::is_valid(&state, self.validate, &open.version_tag, open.last_modified) {
@@ -369,6 +391,17 @@ impl CachingFileHandle {
     /// `GetFileSize`.
     pub fn file_size(&self) -> Result<u64> {
         self.property(|state| state.file_size, |file| file.size)
+    }
+
+    pub fn on_disk_file(&self) -> Result<bool> {
+        self.property(
+            |state| state.on_disk_file,
+            |file| matches!(file.file, ReadFile::Local(_)),
+        )
+    }
+
+    pub fn can_seek(&self) -> Result<bool> {
+        self.property(|state| state.can_seek, |_| true)
     }
 
     /// `GetLastModifiedTime`, in microseconds since the epoch.
