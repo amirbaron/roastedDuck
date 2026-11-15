@@ -296,7 +296,7 @@ impl CreateInfo {
         result.push_bytes(write_optionally_quoted(&index.name));
         result.push_bytes(" ON ");
         result.push_bytes(self.qualified(&index.table));
-        if !index.index_type_name.is_empty() && index.index_type_name != "ART" {
+        if index.index_type_name != "ART" {
             result.push_bytes(" USING ");
             result.push_bytes(write_optionally_quoted(&index.index_type_name));
             result.push(b' ');

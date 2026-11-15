@@ -61,7 +61,8 @@ def main():
                 cluster.reset()
                 cluster.sql("CREATE TABLE source(id INTEGER PRIMARY KEY,s TEXT,matrix INTEGER[]); INSERT INTO source SELECT i,'row-'||i,ARRAY[i,NULL] FROM generate_series(1,20) i; CREATE SCHEMA extra; CREATE TABLE extra.extra_table(i INTEGER); INSERT INTO extra.extra_table VALUES(7);", database=DATABASE)
                 load = f'LOAD {literal(str(args.extension.resolve()))};' if engine == 'cpp' else 'LOAD postgres;'
-                full_sql = load + " ATTACH 'dbname=postgresscanner' AS p(TYPE postgres); " + sql + ';'
+                case_sql = sql(engine, out) if callable(sql) else sql
+                full_sql = load + " ATTACH 'dbname=postgresscanner' AS p(TYPE postgres); " + case_sql + ';'
                 (out/(name+'.'+engine+'.sql')).write_text(full_sql)
                 binary = args.oracle if engine == 'cpp' else args.cli
                 run = subprocess.run([str(binary.resolve()), '-batch', '-bail', '-csv', '-noheader', '-nullvalue', '__NULL__', '-init', '/dev/null', ':memory:'],

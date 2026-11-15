@@ -1,3 +1,46 @@
+PostgreSQL DDL/export/hstore checkpoint, November 15, 2026:
+The working implementation now creates and lists server-owned indexes, handles
+CREATE INDEX IF NOT EXISTS, creates/replaces/drops views, and sends CHECKPOINT on
+the active PG transaction connection. Remote DDL quotes identifiers as the pinned
+source does. Catalog lookup distinguishes exact-case objects; CREATE/DROP preserve
+unrelated cached definitions. Schema table/type/index name sets are captured
+together. Created tables retain aliases/defaults without changing decoder layouts,
+including JSON and arrays while pg_array_as_varchar=true. Full staleness handling
+and pooling remain pending.
+
+COPY FROM DATABASE and EXPORT enumerate providers, propagate I/O errors and clean
+up temporary metadata transactions on failure. COPY keeps resolved type infos
+instead of converting them to self-referencing SQL aliases. EXPORT preserves the
+pinned existing-composite-type import limitation; a schema-filtered round trip of
+newly created tables/views passes. Mixed-case index-expression failure is also
+preserved from C++. Hstore get/to_json use the pinned byte parser, NULL and duplicate
+key behavior, JSON escaping and error positions. No new dependencies or gates.
+
+Final evidence in .context/artifacts/popular-extensions/postgres-ddl-verification.json:
+16 paired DDL/export controls (postgres-ddl-control-8); hstore 200 inputs x17 keys
+plus NULL/control bytes and9 malformed-input cases (postgres-hstore-control-3);
+9 unchanged originals pass both (postgres-upstream-ddl-3); all earlier27 attachment,
+22 mutation,7 metadata and39 codec SQL controls pass (postgres-ddl-*-regression-2).
+All40 targeted native copy/export/index/catalog files pass (postgres-ddl-core-targeted-2).
+All216 native tests across39 signed targets pass with TZ=UTC (postgres-ddl-unit-results-2.json),
+and strict all-target Clippy6 passes. All owned servers stopped. CLI SHA starts
+3cd99b40f72c; SLT starts b31ade7ecd6b. Failed discovery/control receipts remain.
+No active jobs remain at this checkpoint. Staged source copies in postgres-ddl-stage
+are obsolete; do not reapply them.
+
+The full core run at frozen83d8da21 completed with 4,844 PASS /33 SKIP /same20 FAIL,
+zero status changes/regressions and unchanged passing baseline. Its verification
+is postgres-metadata-conformance-verification.json; release SLT SHA starts9d162655.
+That full run predates this DDL milestone; final current-source conformance and
+platform/package gates still remain. No release was made.
+
+Next PG work: binary file COPY/read functions, connection pooling/session reuse,
+remaining settings/filter/limit/parallel scans, staleness/rebinding, secrets/RDS,
+logging/authentication and remaining originals. The full152 discovery is recorded
+in postgres-upstream-all-1; do not turn passing subsets or skipped prerequisites
+into full acceptance. Finish remaining AWS/HTTPFS/ICU/provider/platform gates,
+then PyPI/Homebrew delivery. The all-five goal remains active and incomplete.
+
 PostgreSQL full-inventory discovery and metadata checkpoint, November 15, 2026:
 The frozen first all-152 run completed: C++ 144 PASS / 7 SKIP / 1 FAIL;
 Rust 95 PASS / 7 SKIP / 48 FAIL / 2 CRASH. The C++ failure is the original binary

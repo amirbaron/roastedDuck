@@ -17,6 +17,8 @@ use roastedduck_types::{LogicalType, Value};
 use crate::expression::Expression;
 use crate::prepared::PreparedStatementData;
 
+type QualifiedEntryName = (ByteString, ByteString, ByteString);
+
 /// Evaluates foldable expressions at bind time (DuckDB's `ExpressionExecutor::EvaluateScalar`,
 /// which lives in the execution layer above the planner).
 pub trait ExpressionEvaluator: Send + Sync + fmt::Debug {
@@ -670,7 +672,7 @@ impl ClientContext {
                 )));
             }
         }
-        Err(self.missing_entry_error(&path, ty, name))
+        Err(self.missing_entry_error(&path, ty, name)?)
     }
 
     fn autoload_catalog_entry(&self, ty: CatalogType, name: &[u8]) -> Result<bool> {
@@ -721,7 +723,7 @@ impl ClientContext {
         schemas: &[(ByteString, ByteString)],
         ty: CatalogType,
         name: impl AsRef<[u8]>,
-    ) -> (f64, Vec<(ByteString, ByteString, ByteString)>) {
+    ) -> Result<(f64, Vec<QualifiedEntryName>)> {
         let name = name.as_ref();
         let mut best = 0.0;
         let mut results: Vec<(ByteString, ByteString, ByteString)> = Vec::new();
@@ -729,24 +731,39 @@ impl ClientContext {
             let Some(catalog) = self.catalog(catalog_name) else {
                 continue;
             };
-            let Some(schema) = catalog.schema(&self.transaction, schema_name) else {
-                continue;
+            let (mut entry_score, mut entry_name) = if catalog.backend().is_some() {
+                let mut score = 0.0;
+                let mut found = ByteString::new();
+                for entry in
+                    catalog.scan_entries(&self.function_client, &self.transaction, ty, schema_name)?
+                {
+                    let candidate_score = similarity_rating(entry.name(), name);
+                    if candidate_score > score {
+                        score = candidate_score;
+                        entry.name().clone_into(&mut found);
+                    }
+                }
+                (score, found)
+            } else {
+                let Some(schema) = catalog.schema(&self.transaction, schema_name) else {
+                    continue;
+                };
+                let Some(schema) = schema.as_schema() else {
+                    continue;
+                };
+                let set = match ty {
+                    CatalogType::Table | CatalogType::View => &schema.tables,
+                    CatalogType::TableFunction | CatalogType::TableMacro => &schema.table_functions,
+                    CatalogType::Sequence => &schema.sequences,
+                    CatalogType::Index => &schema.indexes,
+                    CatalogType::Type => &schema.types,
+                    CatalogType::Collation => &schema.collations,
+                    CatalogType::PragmaFunction => &schema.pragma_functions,
+                    CatalogType::CopyFunction => &schema.copy_functions,
+                    _ => &schema.functions,
+                };
+                set.similar_entry(name)
             };
-            let Some(schema) = schema.as_schema() else {
-                continue;
-            };
-            let set = match ty {
-                CatalogType::Table | CatalogType::View => &schema.tables,
-                CatalogType::TableFunction | CatalogType::TableMacro => &schema.table_functions,
-                CatalogType::Sequence => &schema.sequences,
-                CatalogType::Index => &schema.indexes,
-                CatalogType::Type => &schema.types,
-                CatalogType::Collation => &schema.collations,
-                CatalogType::PragmaFunction => &schema.pragma_functions,
-                CatalogType::CopyFunction => &schema.copy_functions,
-                _ => &schema.functions,
-            };
-            let (mut entry_score, mut entry_name) = set.similar_entry(name);
             let mut consider = |candidate: &str| {
                 let score = similarity_rating(candidate, name);
                 if score > entry_score {
@@ -774,7 +791,7 @@ impl ClientContext {
                 ));
             }
         }
-        (best, results)
+        Ok((best, results))
     }
 
     /// `name` in `catalog.schema`, qualified only as far as the search path requires
@@ -906,13 +923,15 @@ impl ClientContext {
         searched: &[(ByteString, ByteString)],
         ty: CatalogType,
         name: impl AsRef<[u8]>,
-    ) -> Error {
+    ) -> Result<Error> {
         const UNSEEN_PENALTY: f64 = 0.2;
         let name = name.as_ref();
-        let (seen_score, seen) = self.similar_entries(searched, ty, name);
+        let (seen_score, seen) = self.similar_entries(searched, ty, name)?;
         let mut unseen_schemas = Vec::new();
         for catalog in &self.catalogs {
-            for schema in catalog.schemas().scan(&self.transaction) {
+            for schema in
+                catalog.scan_entries(&self.function_client, &self.transaction, CatalogType::Schema, b"")?
+            {
                 let key = (
                     ByteString::from(catalog.name().as_ref()),
                     schema.name().to_owned(),
@@ -927,9 +946,9 @@ impl ClientContext {
             .filter(|key| !searched.contains(key))
             .collect();
         if let Some(error) = self.extension_entry_error(ty, name) {
-            return error;
+            return Ok(error);
         }
-        let (unseen_score, unseen) = self.similar_entries(&unseen_schemas, ty, name);
+        let (unseen_score, unseen) = self.similar_entries(&unseen_schemas, ty, name)?;
         let mut suggestions = BTreeSet::new();
         if !unseen.is_empty() && (unseen_score >= 1.0 || unseen_score - UNSEEN_PENALTY > seen_score) {
             // Entries outside the search path need (minimal) qualification.
@@ -966,7 +985,7 @@ impl ClientContext {
         } else {
             error.with_extra_info("candidates", did_you_mean)
         };
-        error.with_extra_info_round_trip()
+        Ok(error.with_extra_info_round_trip())
     }
 }
 

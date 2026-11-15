@@ -389,6 +389,9 @@ impl StaticExtension {
         }
         match self {
             Self::Postgres => {
+                for set in crate::postgres::hstore::functions() {
+                    system.register_scalar_functions(set)?;
+                }
                 system.register_table_functions(crate::postgres::attach_function())?;
                 for set in crate::postgres::query_functions() {
                     system.register_table_functions(set)?;
@@ -3466,6 +3469,11 @@ impl Connection {
                 .iter()
                 .any(|database| Arc::ptr_eq(database, &attached));
         let transaction = self.transactions.current();
+        if let crate::attached::DatabaseStorage::Postgres(catalog) = &attached.storage {
+            return catalog
+                .transaction(&self.function_client, &transaction)?
+                .execute("CHECKPOINT", true);
+        }
         // Explicit checkpoints bind the indexes first, so the written indexes hold
         // the changes replayed from the WAL (`SingleFileCheckpointWriter::WriteTable`
         // with a bind connection).
@@ -3902,63 +3910,80 @@ impl Connection {
         // The statements to run; `queries` are SQL texts to run before `statements[i]`.
         let mut statements: Vec<SqlStatement> = Vec::new();
         let mut queries: Vec<(usize, roastedduck_common::ByteString)> = Vec::new();
-        if stmt.copy_type == roastedduck_ast::CopyDatabaseType::CopySchema {
-            for mut info in roastedduck_catalog::checkpoint::export_create_infos(&source.catalog, &snapshot) {
-                info.catalog.clone_from(&target_name);
-                info.on_conflict = if matches!(info.kind, roastedduck_ast::CreateInfoKind::Schema) {
-                    roastedduck_ast::OnCreateConflict::IgnoreOnConflict
-                } else {
-                    roastedduck_ast::OnCreateConflict::ErrorOnConflict
-                };
-                // Schemas and sequences are created from their infos: their SQL names no
-                // catalog, and a sequence's SQL loses its usage.
-                if matches!(
-                    info.kind,
-                    roastedduck_ast::CreateInfoKind::Schema | roastedduck_ast::CreateInfoKind::Sequence(_)
-                ) {
-                    statements.push(SqlStatement::new(roastedduck_ast::SqlStatementKind::Create(
-                        Box::new(info),
-                    )));
-                } else if let Some(sql) = info.to_sql() {
-                    queries.push((statements.len(), sql));
-                }
-            }
-        } else {
-            let mut tables = Vec::new();
-            for schema in source.catalog.schemas().scan(&snapshot) {
-                let Some(contents) = schema.as_schema() else {
-                    continue;
-                };
-                for entry in contents.tables.scan(&snapshot) {
-                    if matches!(entry.kind, roastedduck_catalog::EntryKind::Table(_)) && !entry.internal {
-                        tables.push((schema.name().to_owned(), entry));
+        let prepared = (|| -> Result<()> {
+            if stmt.copy_type == roastedduck_ast::CopyDatabaseType::CopySchema {
+                for mut info in roastedduck_catalog::checkpoint::export_create_infos(
+                    &source.catalog,
+                    &snapshot,
+                    &self.function_client,
+                )? {
+                    info.catalog.clone_from(&target_name);
+                    info.on_conflict = if matches!(info.kind, roastedduck_ast::CreateInfoKind::Schema) {
+                        roastedduck_ast::OnCreateConflict::IgnoreOnConflict
+                    } else {
+                        roastedduck_ast::OnCreateConflict::ErrorOnConflict
+                    };
+                    // Keep schemas, sequence usage and fully resolved type definitions
+                    // in their infos instead of round-tripping them through SQL.
+                    if matches!(
+                        info.kind,
+                        roastedduck_ast::CreateInfoKind::Schema
+                            | roastedduck_ast::CreateInfoKind::Sequence(_)
+                            | roastedduck_ast::CreateInfoKind::Type(_)
+                    ) {
+                        statements.push(SqlStatement::new(roastedduck_ast::SqlStatementKind::Create(
+                            Box::new(info),
+                        )));
+                    } else if let Some(sql) = info.to_sql() {
+                        queries.push((statements.len(), sql));
                     }
                 }
+            } else {
+                let mut tables = Vec::new();
+                for schema in source.catalog.scan_entries(
+                    &self.function_client,
+                    &snapshot,
+                    roastedduck_catalog::CatalogType::Schema,
+                    b"",
+                )? {
+                    for entry in source.catalog.scan_entries(
+                        &self.function_client,
+                        &snapshot,
+                        roastedduck_catalog::CatalogType::Table,
+                        schema.name(),
+                    )? {
+                        if matches!(entry.kind, roastedduck_catalog::EntryKind::Table(_)) && !entry.internal {
+                            tables.push((schema.name().to_owned(), entry));
+                        }
+                    }
+                }
+                for (schema, entry) in roastedduck_catalog::checkpoint::reorder_table_entries(tables) {
+                    let roastedduck_catalog::EntryKind::Table(table) = &entry.kind else {
+                        continue;
+                    };
+                    let columns: Vec<roastedduck_common::ByteString> = table
+                        .physical_columns()
+                        .map(|(_, _, column)| {
+                            roastedduck_ast::keyword::write_optionally_quoted_bytes(&column.name)
+                        })
+                        .collect();
+                    let columns = roastedduck_common::ByteString::join(&columns, b", ");
+                    queries.push((
+                        statements.len(),
+                        roastedduck_common::byte_format!(
+                            "INSERT INTO {} ({columns}) SELECT {columns} FROM {}",
+                            roastedduck_ast::qualifier_to_string(&target_name, &schema, entry.name()),
+                            roastedduck_ast::qualifier_to_string(source.name(), &schema, entry.name()),
+                        ),
+                    ));
+                }
             }
-            for (schema, entry) in roastedduck_catalog::checkpoint::reorder_table_entries(tables) {
-                let roastedduck_catalog::EntryKind::Table(table) = &entry.kind else {
-                    continue;
-                };
-                let columns: Vec<roastedduck_common::ByteString> = table
-                    .physical_columns()
-                    .map(|(_, _, column)| {
-                        roastedduck_ast::keyword::write_optionally_quoted_bytes(&column.name)
-                    })
-                    .collect();
-                let columns = roastedduck_common::ByteString::join(&columns, b", ");
-                queries.push((
-                    statements.len(),
-                    roastedduck_common::byte_format!(
-                        "INSERT INTO {} ({columns}) SELECT {columns} FROM {}",
-                        roastedduck_ast::qualifier_to_string(&target_name, &schema, entry.name()),
-                        roastedduck_ast::qualifier_to_string(source.name(), &schema, entry.name()),
-                    ),
-                ));
-            }
-        }
+            Ok(())
+        })();
         if temporary {
             instance.transactions.rollback(&snapshot);
         }
+        prepared?;
         let mut queries = queries.into_iter().peekable();
         for (index, statement) in statements
             .into_iter()

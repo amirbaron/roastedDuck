@@ -388,7 +388,11 @@ pub fn reorder_table_entries<T>(tables: Vec<(T, Arc<CatalogEntry>)>) -> Vec<(T, 
 /// writes them (DuckDB's `PhysicalExport::GetNaiveExportOrder`): schemas, sequences,
 /// types, tables (referenced tables first), macros (by creation), views, indexes. The
 /// catalog name is left out.
-pub fn export_create_infos(catalog: &Catalog, transaction: &Transaction) -> Vec<CreateInfo> {
+pub fn export_create_infos(
+    catalog: &Catalog,
+    transaction: &Transaction,
+    client: &Arc<roastedduck_function::FunctionClient>,
+) -> Result<Vec<CreateInfo>> {
     let mut schemas = Vec::new();
     let mut sequences = Vec::new();
     let mut types = Vec::new();
@@ -396,15 +400,12 @@ pub fn export_create_infos(catalog: &Catalog, transaction: &Transaction) -> Vec<
     let mut macros = Vec::new();
     let mut views = Vec::new();
     let mut indexes = Vec::new();
-    for schema in catalog.schemas().scan(transaction) {
-        let Some(schema_entry) = schema.as_schema() else {
-            continue;
-        };
+    for schema in catalog.scan_entries(client, transaction, crate::CatalogType::Schema, b"")? {
         let schema_name = schema.name().to_owned();
         if !schema.internal {
             schemas.push(schema_create_info("", &schema_name));
         }
-        for entry in schema_entry.tables.scan(transaction) {
+        for entry in catalog.scan_entries(client, transaction, crate::CatalogType::Table, &schema_name)? {
             if entry.internal {
                 continue;
             }
@@ -414,17 +415,17 @@ pub fn export_create_infos(catalog: &Catalog, transaction: &Transaction) -> Vec<
                 _ => {}
             }
         }
-        for entry in schema_entry.sequences.scan(transaction) {
+        for entry in catalog.scan_entries(client, transaction, crate::CatalogType::Sequence, &schema_name)? {
             if let (false, EntryKind::Sequence(sequence)) = (entry.internal, &entry.kind) {
                 sequences.push(sequence_create_info("", &schema_name, &entry, sequence));
             }
         }
-        for entry in schema_entry.types.scan(transaction) {
+        for entry in catalog.scan_entries(client, transaction, crate::CatalogType::Type, &schema_name)? {
             if let (false, EntryKind::Type(ty)) = (entry.internal, &entry.kind) {
                 types.push(type_create_info("", &schema_name, &entry, ty));
             }
         }
-        for entry in schema_entry.indexes.scan(transaction) {
+        for entry in catalog.scan_entries(client, transaction, crate::CatalogType::Index, &schema_name)? {
             if let (false, EntryKind::Index(index)) = (entry.internal, &entry.kind) {
                 indexes.push(entry_info(
                     "",
@@ -435,11 +436,10 @@ pub fn export_create_infos(catalog: &Catalog, transaction: &Transaction) -> Vec<
                 ));
             }
         }
-        for entry in schema_entry
-            .functions
-            .scan(transaction)
+        for entry in catalog
+            .scan_entries(client, transaction, crate::CatalogType::Macro, &schema_name)?
             .into_iter()
-            .chain(schema_entry.table_functions.scan(transaction))
+            .chain(catalog.scan_entries(client, transaction, crate::CatalogType::TableMacro, &schema_name)?)
         {
             if !entry.internal && matches!(entry.kind, EntryKind::Macro(_) | EntryKind::TableMacro(_)) {
                 macros.push((entry.oid, schema_name.clone(), entry));
@@ -463,7 +463,7 @@ pub fn export_create_infos(catalog: &Catalog, transaction: &Transaction) -> Vec<
     result.extend(macros);
     result.extend(views);
     result.extend(indexes);
-    reorder_by_dependencies(result)
+    Ok(reorder_by_dependencies(result))
 }
 
 /// The name of the entry `info` creates.

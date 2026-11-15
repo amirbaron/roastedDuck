@@ -1407,12 +1407,15 @@ impl PlanGenerator {
                 let context = self.context()?;
                 let catalog = context.catalog(&export.catalog)?;
                 let child = next_child("export").ok();
-                Arc::new(crate::operators::PhysicalExport::new(
-                    child,
-                    *export,
-                    catalog,
-                    Arc::clone(&context.transaction),
-                ))
+                Arc::new(
+                    crate::operators::PhysicalExport::new(
+                        child,
+                        *export,
+                        catalog,
+                        Arc::clone(&context.transaction),
+                    )
+                    .with_client(context.client.function_client.clone()),
+                )
             }
             LogicalKind::CreateTable(info) => {
                 let context = self.context()?;
@@ -1518,6 +1521,20 @@ impl PlanGenerator {
                     )?,
                     other => return Err(not_implemented(other)),
                 }
+            }
+            LogicalKind::CreateIndex(create)
+                if self.context()?.catalog(&create.info.catalog)?.backend().is_some() =>
+            {
+                let context = self.context()?;
+                self.ddl(
+                    "CREATE_INDEX",
+                    types,
+                    Arc::new(crate::operators::BackendCreateAction {
+                        catalog: context.catalog(&create.info.catalog)?,
+                        client: context.client.function_client.clone(),
+                        info: create.info,
+                    }),
+                )?
             }
             LogicalKind::CreateIndex(create) => {
                 let create = *create;

@@ -10,6 +10,7 @@ use std::sync::Arc;
 struct Metadata {
     schema: Arc<CatalogEntry>,
     table: Arc<CatalogEntry>,
+    fail_listing: Arc<std::sync::atomic::AtomicBool>,
 }
 impl CatalogBackend for Metadata {
     fn catalog_type(&self) -> &'static str {
@@ -28,7 +29,9 @@ impl CatalogBackend for Metadata {
         Ok(match kind {
             CatalogType::Schema => vec![self.schema.clone()],
             CatalogType::Table if schema == b"public" => vec![self.table.clone()],
-            CatalogType::Sequence => return Err(Error::new(ErrorKind::Io, "provider enumeration failed")),
+            CatalogType::Sequence if self.fail_listing.load(std::sync::atomic::Ordering::Relaxed) => {
+                return Err(Error::new(ErrorKind::Io, "provider enumeration failed"));
+            }
             _ => vec![],
         })
     }
@@ -108,9 +111,11 @@ fn remote_table_keeps_identity_without_native_storage_or_capabilities() -> Resul
     table.storage = None;
     table.backend = Some(Arc::new(Rows));
     let entry = Arc::new(catalog.new_entry("items", EntryKind::Table(table)));
+    let fail_listing = Arc::new(std::sync::atomic::AtomicBool::new(false));
     catalog.set_backend(Arc::new(Metadata {
         schema: catalog.schema(&Transaction::system(), "public").unwrap(),
         table: entry.clone(),
+        fail_listing: fail_listing.clone(),
     }))?;
     assert_eq!(catalog.catalog_type(), "test_remote");
     assert_eq!(
@@ -131,9 +136,21 @@ fn remote_table_keeps_identity_without_native_storage_or_capabilities() -> Resul
             .value(0, 0),
         Value::integer(20)
     );
+    fail_listing.store(true, std::sync::atomic::Ordering::Relaxed);
     let error = connection.query("SELECT * FROM duckdb_sequences()").unwrap_err();
     assert_eq!(error.kind(), ErrorKind::Io);
     assert!(error.to_string().contains("provider enumeration failed"));
+    let active = database.instance().transactions.active_count();
+    assert!(connection.query("COPY FROM DATABASE remote TO memory").is_err());
+    assert_eq!(database.instance().transactions.active_count(), active);
+    fail_listing.store(false, std::sync::atomic::Ordering::Relaxed);
+    connection.query("COPY FROM DATABASE remote TO memory")?;
+    assert_eq!(
+        connection
+            .query("SELECT sum(details.score) FROM memory.public.items")?
+            .value(0, 0),
+        Value::hugeint(30)
+    );
     assert!(Arc::ptr_eq(
         &entry,
         &catalog

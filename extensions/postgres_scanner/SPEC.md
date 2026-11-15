@@ -10,7 +10,7 @@ source hashes. Sources/archives are retained under `.context/artifacts/popular-e
 
 ## Surface
 
-ATTACH with postgres/postgres_scanner, remote catalogs/transactions, scans/filter pushdown, writes/DDL; postgres_scan, postgres_scan_pushdown, postgres_attach, pg_clear_cache, postgres_query, postgres_execute, postgres_binary_copy, read_postgres, postgres_configure_pool, hstore functions; postgres and rds secret types, config provider and all pg_* settings. Inventory source names below is authoritative over this prose. No libpq dependency; implement protocol and catalog integration in Rust.
+ATTACH with postgres/postgres_scanner, remote catalogs/transactions, scans/filter pushdown, writes/DDL; postgres_scan, postgres_scan_pushdown, postgres_attach, pg_clear_cache, postgres_query, postgres_execute, COPY (FORMAT postgres_binary), read_postgres_binary, postgres_configure_pool, hstore functions; postgres and rds secret types, config provider and all pg_* settings. Inventory source names below is authoritative over this prose. No libpq dependency; implement protocol and catalog integration in Rust.
 
 ## Acceptance
 
@@ -25,6 +25,45 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 ## Status
 
 Contract recorded; not a claim that new functionality passes acceptance.
+
+## DDL, export and hstore checkpoint (November 15)
+
+roastedDuck's compatible implementation now supports server-owned index creation,
+IF NOT EXISTS and index listings; CREATE/REPLACE/DROP VIEW; and server CHECKPOINT
+through the active transaction. The binder retains resolved remote schemas and
+uses provider DDL instead of native ART storage. Quoted identifiers retain their
+PostgreSQL spelling, including distinct objects differing only by case.
+
+CREATE/DROP update the affected cache entries and retain unrelated definitions.
+Schema table/type/index name sets are captured together. Newly created table
+entries keep defaults and logical aliases such as JSON without changing decoder
+layouts. The pg_array_as_varchar setting does not rewrite a freshly created array
+column's declared type; explicit cache clearing restores the normal reload mapping.
+Full staleness/identity-swap/rebinding behavior remains pending.
+
+Database copy and export use provider enumeration. Copy preserves resolved type
+infos; temporary metadata transactions are rolled back even after errors. A filtered
+schema export/import round trip of newly created tables and views passes. Pinned
+quirks remain: an export containing existing composite types can write aliases that
+fail on import, and mixed-case index column expressions can fail after PostgreSQL
+folding. These are verified oracle outcomes, not claims of broader export acceptance.
+
+The hstore functions preserve byte parsing, duplicate-key lookup, JSON order and
+escaping, NULL values and exact tested syntax-error positions. The differential
+matrix covers 200 inputs across17 keys, NULL/control-byte cases and9 malformed inputs.
+
+Final receipts under `.context/artifacts/popular-extensions/`:
+`postgres-ddl-verification.json`, `postgres-ddl-control-8`,
+`postgres-hstore-control-3`, `postgres-upstream-ddl-3`, and the four
+`postgres-ddl-*-regression-2` cohorts. All16 DDL/export comparisons, nine unchanged
+originals on both engines,27 attachment/22 mutation/7 metadata/39 codec SQL controls,
+40 targeted native SQL files and216 tests across39 signed targets pass. Strict
+all-target Clippy6 passes. Owned servers stopped. No new dependency or default-off gate.
+
+The preceding frozen83d8da21 full core run has zero regressions/status changes:
+4,844 PASS /33 SKIP /same20 documented FAIL. It predates this milestone. Remaining
+PG functionality, complete extension inventories, final core/platform/package
+qualification and PyPI/Homebrew publication stay open.
 
 ## Metadata and full-inventory discovery (November 15)
 
