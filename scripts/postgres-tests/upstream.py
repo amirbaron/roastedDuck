@@ -8,7 +8,7 @@ from pathlib import Path
 import subprocess
 import tarfile
 
-from cluster import Cluster, DATABASE, TEMPLATE
+from cluster import Cluster, DATABASE, TEMPLATE, PASSWORD
 
 ROOT=Path(__file__).resolve().parents[2]
 
@@ -92,7 +92,10 @@ def main():
     for name in ['tpch','tpcds']:
         (extensions/(name+'.duckdb_extension')).symlink_to((args.dataset_extensions/(name+'.duckdb_extension')).resolve())
     report={}
-    with Cluster(out/'cluster') as cluster:
+    explicit_uri_fixture='test/sql/storage/attach_secret.test' in files
+    with Cluster(out/'cluster',fixed_port=5432 if explicit_uri_fixture else None,
+                 password='postgres' if explicit_uri_fixture else PASSWORD,
+                 checkpoint_role='test/sql/storage/attach_checkpoint.test' in files) as cluster:
         seed(cluster,args.source,args.oracle,out,args.dataset_extensions)
         env=dict(cluster.environment,POSTGRES_TEST_DATABASE_AVAILABLE='1',
                  SLT_ORACLE_EXTENSION_DIRECTORY=str(extensions),TMPDIR=str(cluster.tmp))

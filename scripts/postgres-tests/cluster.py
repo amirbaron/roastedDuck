@@ -20,11 +20,14 @@ def quote_identifier(value):
 
 
 class Cluster:
-    def __init__(self, out):
+    def __init__(self, out, fixed_port=None, password=PASSWORD, checkpoint_role=False):
         self.out = Path(out).resolve()
         self.started = False
         self.commands = []
         self.tools = {}
+        self.fixed_port = fixed_port
+        self.password = password
+        self.checkpoint_role = checkpoint_role
         for name in ['initdb', 'pg_ctl', 'psql']:
             path = shutil.which(name)
             if path is None:
@@ -32,6 +35,12 @@ class Cluster:
             self.tools[name] = path
 
     def __enter__(self):
+        if self.fixed_port is not None:
+            # Some unchanged originals explicitly use localhost:5432. Never
+            # connect them to an existing local service or stop that service.
+            for family,address in [(socket.AF_INET,'127.0.0.1'),(socket.AF_INET6,'::1')]:
+                with socket.socket(family) as probe:
+                    probe.bind((address,self.fixed_port))
         self.out.mkdir(parents=True, exist_ok=False)
         self.data = self.out / 'data'
         self.tmp = self.out / 'tmp'
@@ -43,9 +52,9 @@ class Cluster:
             path.write_text('')
             path.chmod(0o600)
         env.update(TMPDIR=str(self.tmp), PGPASSFILE=str(self.out/'pgpass'),
-                   PGSERVICEFILE=str(self.out/'pg_service.conf'), PGPASSWORD=PASSWORD)
+                   PGSERVICEFILE=str(self.out/'pg_service.conf'), PGPASSWORD=self.password)
         password = self.out/'init-password'
-        password.write_text(PASSWORD+'\n')
+        password.write_text(self.password+'\n')
         password.chmod(0o600)
         with (self.out/'initdb.log').open('w') as log:
             subprocess.run([self.tools['initdb'], '-D', str(self.data), '-U', ADMIN,
@@ -56,9 +65,10 @@ class Cluster:
         self._certificate()
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
-            self.port = sock.getsockname()[1]
+            self.port = self.fixed_port or sock.getsockname()[1]
+        addresses='127.0.0.1,::1' if self.fixed_port is not None else '127.0.0.1'
         with (self.data/'postgresql.conf').open('a') as config:
-            config.write(f"\nlisten_addresses='127.0.0.1'\nport={self.port}\nunix_socket_directories=''\n"
+            config.write(f"\nlisten_addresses='{addresses}'\nport={self.port}\nunix_socket_directories=''\n"
                          "max_connections=160\nshared_buffers='16MB'\nssl=on\n"
                          "ssl_cert_file='server.crt'\nssl_key_file='server.key'\n"
                          "log_min_messages=warning\nlog_error_verbosity=terse\n")
@@ -69,9 +79,17 @@ class Cluster:
             subprocess.run([self.tools['pg_ctl'], '-D', str(self.data), '-l', str(self.out/'postgres.log'),
                             '-w', 'start'], env=env, check=True, capture_output=True, text=True, timeout=60)
             self.started = True
+            if self.fixed_port is not None:
+                pid=(self.data/'postmaster.pid').read_text().splitlines()[0]
+                owned=subprocess.check_output(['lsof','-nP','-a','-p',pid,'-iTCP:'+str(self.port),'-sTCP:LISTEN','-Fn'],text=True)
+                if f'n127.0.0.1:{self.port}' not in owned or f'n[::1]:{self.port}' not in owned:
+                    raise RuntimeError('Owned fixture must hold both localhost listeners before explicit-URI tests run')
             # Administrative privileges are used only for fixture provisioning.
             # Tests run as a database owner without superuser or role-management rights.
-            self.sql(f"CREATE ROLE {quote_identifier(USER)} LOGIN PASSWORD '{PASSWORD}' NOSUPERUSER NOCREATEDB NOCREATEROLE;", admin=True)
+            quoted_password=self.password.replace("'","''")
+            self.sql(f"CREATE ROLE {quote_identifier(USER)} LOGIN PASSWORD '{quoted_password}' NOSUPERUSER NOCREATEDB NOCREATEROLE;", admin=True)
+            if self.checkpoint_role:
+                self.sql(f'GRANT pg_checkpoint TO {quote_identifier(USER)};',admin=True)
             self.sql(f"ALTER DATABASE postgres OWNER TO {quote_identifier(USER)};", admin=True)
             self.sql(f"CREATE DATABASE {TEMPLATE} OWNER {quote_identifier(USER)};", admin=True)
             return self

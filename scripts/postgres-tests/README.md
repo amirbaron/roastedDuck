@@ -69,3 +69,11 @@ sleep and checks that mutation cancellation preserves stored data.
 When selecting TPCH/TPCDS originals (including --all), supply --duckdb-source
 pointing at the pinned DuckDB1.5.6 source. The harness links its unchanged expected
 answer files into the reference layout and records their hashes.
+
+The unchanged secret/URI original uses `localhost:5432` and the standard fixture
+password. When selected, the harness first requires both IPv4/IPv6 loopback ports
+to be free, starts its own server on both, and verifies listener ownership before
+running SQL. It never stops or connects those tests to an existing local server.
+The CHECKPOINT original grants only the `pg_checkpoint` role inside the owned
+cluster; the application role remains non-superuser. Both originals pass the C++
+fixture qualification in `postgres-full-fixture-oracle-1`.
