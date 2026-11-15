@@ -149,7 +149,7 @@ impl RowIdColumn {
 /// The columns identifying the rows of `get`, if it supports late materialization: a
 /// table's row id, or a table function's `get_row_id_columns`.
 fn row_id_columns(get: &LogicalGet) -> Result<Option<Vec<RowIdColumn>>> {
-    if get.table.is_some() {
+    if get.is_native_table() {
         return Ok(Some(vec![RowIdColumn::table_row_id()]));
     }
     let Some(get_row_id_columns) = &get.function.get_row_id_columns else {

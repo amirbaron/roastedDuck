@@ -14,7 +14,7 @@ use crate::filter_combiner::{FilterPushdownResult, FilterResult, try_pushdown_ge
 /// Whether a scan applies table filters itself (DuckDB's `TableFunction::filter_pushdown`):
 /// base table scans and table functions that take filters do.
 pub fn supports_filter_pushdown(get: &LogicalGet) -> bool {
-    get.table.is_some() || (get.function.filter_pushdown && get.function.pushdown_filters.is_some())
+    get.is_native_table() || (get.function.filter_pushdown && get.function.pushdown_filters.is_some())
 }
 
 /// Renames column references to scanned columns back to the scan's column names

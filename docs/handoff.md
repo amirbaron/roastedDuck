@@ -1,3 +1,25 @@
+Remote-catalog engine hooks checkpoint, November 15, 2026:
+internal Rust CatalogBackend/TableBackend traits now provide fallible metadata
+lookup, catalog-specific default schemas and provider scans on real table entries.
+The optimizer and executor distinguish native storage capabilities from table
+identity. USE/search-path lookup honors the backend default while preserving native
+main-schema fallback. Transaction-owned participants are reused per catalog,
+finished outside the native manager lock, and cleaned up on failure or drop.
+
+All 26 signed runtime unit tests and strict storage/catalog/planner/optimizer/
+execution/runtime Clippy pass. This includes synthetic provider scans through the
+real binder/optimizer/executor, provider-error propagation, native search-path
+fallback, participant reuse/order and failed-commit/drop cleanup. Receipts:
+postgres-catalog-hooks-tests-2.{log,json} and postgres-catalog-hooks-clippy-6.log
+under `.context/artifacts/popular-extensions/`. The first hook test caught USE still
+selecting main and is retained in postgres-catalog-hooks-tests-1.log; corrected
+source passes. Full scripts/conformance.sh qualification is the next gate.
+
+These are engine hooks, not completed PostgreSQL ATTACH support. The actual remote
+catalog/storage owner, PG session leases, DDL/DML sinks, query/execute, pooling,
+remaining settings/authentication and full original suite remain required. The
+all-five goal and publication gates remain active and incomplete.
+
 PostgreSQL codec and legacy SQL checkpoint, November 15, 2026:
 normal builds now register bundled LOAD postgres, postgres_scan,
 postgres_scan_pushdown and postgres_attach. The legacy attach creates views,

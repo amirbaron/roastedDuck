@@ -303,6 +303,13 @@ impl ClientContext {
             .map_or(DEFAULT_SCHEMA.as_bytes(), |(_, schema)| schema.as_bytes())
     }
 
+    fn implicit_schema_for(&self, catalog: impl AsRef<[u8]>) -> ByteString {
+        self.catalog(catalog).map_or_else(
+            || ByteString::from(DEFAULT_SCHEMA),
+            |c| ByteString::from(c.default_schema()),
+        )
+    }
+
     /// The default schema of `catalog` (`CatalogSearchPath::GetDefaultSchema`): that of
     /// the first search path entry in it, else `main`.
     pub fn default_schema_for(&self, catalog: impl AsRef<[u8]>) -> ByteString {
@@ -310,7 +317,15 @@ impl ClientContext {
         self.search_path
             .iter()
             .find(|(path_catalog, _)| path_catalog.eq_ignore_ascii_case(catalog))
-            .map_or_else(|| ByteString::from(DEFAULT_SCHEMA), |(_, schema)| schema.clone())
+            .map_or_else(
+                || {
+                    self.catalog(catalog).map_or_else(
+                        || ByteString::from(DEFAULT_SCHEMA),
+                        |c| ByteString::from(c.default_schema()),
+                    )
+                },
+                |(_, schema)| schema.clone(),
+            )
     }
 
     /// The catalog an entry of `schema` goes to by default
@@ -336,7 +351,10 @@ impl ClientContext {
             paths.push((ByteString::from(TEMP_CATALOG), ByteString::from(DEFAULT_SCHEMA)));
         }
         paths.extend(self.search_path.iter().cloned());
-        paths.push((self.default_catalog(), ByteString::from(DEFAULT_SCHEMA)));
+        paths.push((
+            self.default_catalog(),
+            self.implicit_schema_for(self.default_catalog()),
+        ));
         paths.push((ByteString::from("system"), ByteString::from(DEFAULT_SCHEMA)));
         paths.push((ByteString::from("system"), ByteString::from("pg_catalog")));
         let mut unique: Vec<(ByteString, ByteString)> = Vec::with_capacity(paths.len());
@@ -408,7 +426,10 @@ impl ClientContext {
         }
         paths.extend(self.view_search_path.iter().cloned());
         paths.extend(self.search_path.iter().cloned());
-        paths.push((self.default_catalog(), ByteString::from(DEFAULT_SCHEMA)));
+        paths.push((
+            self.default_catalog(),
+            self.implicit_schema_for(self.default_catalog()),
+        ));
         paths.push((ByteString::from("system"), ByteString::from(DEFAULT_SCHEMA)));
         paths.push((ByteString::from("system"), ByteString::from("pg_catalog")));
         let mut unique: Vec<(ByteString, ByteString)> = Vec::with_capacity(paths.len());
@@ -498,7 +519,7 @@ impl ClientContext {
                     .map(|(_, path_schema)| (ByteString::from(catalog), path_schema))
                     .collect();
                 if entries.is_empty() {
-                    entries.push((ByteString::from(catalog), ByteString::from(DEFAULT_SCHEMA)));
+                    entries.push((ByteString::from(catalog), self.default_schema_for(catalog)));
                 }
                 unique(entries)
             }
@@ -521,16 +542,29 @@ impl ClientContext {
     }
 
     /// The default table of the attached database called `name` (`TryLookupDefaultTable`).
-    fn default_table_lookup(&self, name: impl AsRef<[u8]>) -> Option<EntryLookup> {
+    fn default_table_lookup(&self, name: impl AsRef<[u8]>) -> Result<Option<EntryLookup>> {
         let name = name.as_ref();
-        let catalog = self.catalog(name)?;
-        let (schema, table) = catalog.default_table()?;
-        let entry = catalog.get_entry(&self.transaction, CatalogType::Table, &schema, &table)?;
-        Some(EntryLookup {
+        let Some(catalog) = self.catalog(name) else {
+            return Ok(None);
+        };
+        let Some((schema, table)) = catalog.default_table() else {
+            return Ok(None);
+        };
+        let Some(entry) = catalog.lookup_entry(
+            &self.function_client,
+            &self.transaction,
+            CatalogType::Table,
+            &schema,
+            &table,
+        )?
+        else {
+            return Ok(None);
+        };
+        Ok(Some(EntryLookup {
             catalog: ByteString::from(catalog.name().as_ref()),
             schema,
             entry,
-        })
+        }))
     }
 
     fn lookup_in(
@@ -539,12 +573,14 @@ impl ClientContext {
         schema: impl AsRef<[u8]>,
         ty: CatalogType,
         name: impl AsRef<[u8]>,
-    ) -> Option<Arc<CatalogEntry>> {
+    ) -> Result<Option<Arc<CatalogEntry>>> {
         let catalog = catalog.as_ref();
         let schema = schema.as_ref();
         let name = name.as_ref();
-        self.catalog(catalog)?
-            .get_entry(&self.transaction, ty, schema, name)
+        let Some(catalog) = self.catalog(catalog) else {
+            return Ok(None);
+        };
+        catalog.lookup_entry(&self.function_client, &self.transaction, ty, schema, name)
     }
 
     /// Looks up an entry like DuckDB's `CatalogEntryRetriever::GetEntry`: through the search
@@ -576,19 +612,19 @@ impl ClientContext {
                     "Catalog \"{catalog_name}\" does not exist!"
                 )));
             }
-            if let Some(entry) = self.lookup_in(catalog_name, schema_name, ty, name) {
+            if let Some(entry) = self.lookup_in(catalog_name, schema_name, ty, name)? {
                 let lookup = EntryLookup {
                     catalog: catalog_name.clone(),
                     schema: schema_name.clone(),
                     entry,
                 };
-                if default_lookup && let Some(default_table) = self.default_table_lookup(name) {
+                if default_lookup && let Some(default_table) = self.default_table_lookup(name)? {
                     return Err(default_table_ambiguity(&lookup, &default_table, name));
                 }
                 return Ok(Some(self.record_lookup(lookup)));
             }
         }
-        if default_lookup && let Some(default_table) = self.default_table_lookup(name) {
+        if default_lookup && let Some(default_table) = self.default_table_lookup(name)? {
             return Ok(Some(self.record_lookup(default_table)));
         }
         // `Catalog::AutoLoadExtensionByCatalogEntry`: retry the same search path
@@ -597,7 +633,7 @@ impl ClientContext {
         // does not actually register this name/type.
         if self.autoload_catalog_entry(ty, name)? {
             for (catalog_name, schema_name) in &path {
-                if let Some(entry) = self.lookup_in(catalog_name, schema_name, ty, name) {
+                if let Some(entry) = self.lookup_in(catalog_name, schema_name, ty, name)? {
                     return Ok(Some(self.record_lookup(EntryLookup {
                         catalog: catalog_name.clone(),
                         schema: schema_name.clone(),
@@ -614,17 +650,25 @@ impl ClientContext {
                 "Catalog \"{catalog}\" does not exist!"
             )));
         }
-        // A table in a named schema that exists nowhere: the error is about the schema.
-        if ty == CatalogType::Table
-            && !schema.is_empty()
-            && !path.iter().any(|(catalog_name, schema_name)| {
-                self.catalog(catalog_name)
-                    .is_some_and(|catalog| catalog.schema(&self.transaction, schema_name).is_some())
-            })
-        {
-            return Err(Error::catalog(roastedduck_common::byte_format!(
-                "Table with name \"{schema}.{name}\" does not exist because schema \"{schema}\" does not exist."
-            )));
+        // Metadata providers may need I/O to distinguish a missing schema from
+        // a missing table. Preserve errors from that lookup as well.
+        if ty == CatalogType::Table && !schema.is_empty() {
+            let mut schema_exists = false;
+            for (catalog_name, schema_name) in &path {
+                if let Some(catalog) = self.catalog(catalog_name)
+                    && catalog
+                        .lookup_schema(&self.function_client, &self.transaction, schema_name)?
+                        .is_some()
+                {
+                    schema_exists = true;
+                    break;
+                }
+            }
+            if !schema_exists {
+                return Err(Error::catalog(roastedduck_common::byte_format!(
+                    "Table with name \"{schema}.{name}\" does not exist because schema \"{schema}\" does not exist."
+                )));
+            }
         }
         Err(self.missing_entry_error(&path, ty, name))
     }

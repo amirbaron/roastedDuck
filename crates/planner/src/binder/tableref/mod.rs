@@ -650,17 +650,31 @@ fn bind_base_table(
             } else {
                 BindingAlias::new(alias)
             };
+            let mut backend_scan = table
+                .backend
+                .as_ref()
+                .map(|backend| backend.scan(&scope.context.function_client, &scope.context.transaction))
+                .transpose()?;
+            if let Some(scan) = &mut backend_scan {
+                let virtual_columns = scan.virtual_columns.clone();
+                scan.function.get_virtual_columns = Some(Arc::new(move |_| virtual_columns.clone()));
+            }
             let shared_column_ids = crate::operator::SharedColumnIds::default();
             scope.bind_context.add_binding(
                 Binding::new(
                     BindingKind::Table {
                         bound_column_ids: Arc::clone(&shared_column_ids),
                         entry: Some(Arc::clone(&found.entry)),
-                        virtual_columns: vec![(
-                            crate::operator::COLUMN_IDENTIFIER_ROW_ID,
-                            "rowid".into(),
-                            LogicalType::BIGINT,
-                        )],
+                        virtual_columns: backend_scan.as_ref().map_or_else(
+                            || {
+                                vec![(
+                                    crate::operator::COLUMN_IDENTIFIER_ROW_ID,
+                                    "rowid".into(),
+                                    LogicalType::BIGINT,
+                                )]
+                            },
+                            |scan| scan.virtual_columns.clone(),
+                        ),
                     },
                     binding_alias,
                     types.clone(),
@@ -671,8 +685,11 @@ fn bind_base_table(
             );
             let get = LogicalGet {
                 table_index,
-                function: TableFunction::new("seq_scan", Vec::new()),
-                bind_data: None,
+                function: backend_scan.as_ref().map_or_else(
+                    || TableFunction::new("seq_scan", Vec::new()),
+                    |scan| scan.function.clone(),
+                ),
+                bind_data: backend_scan.and_then(|scan| scan.bind_data),
                 returned_types: types.clone(),
                 names: column_names,
                 column_ids: Vec::<ColumnIndex>::new(),

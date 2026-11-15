@@ -145,6 +145,7 @@ fn definition(columns: Vec<TableColumn>, constraints: Vec<Constraint>) -> TableE
         not_null_columns,
         constraints,
         storage: None,
+        backend: None,
     }
 }
 

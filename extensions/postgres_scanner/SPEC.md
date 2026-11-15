@@ -26,6 +26,24 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 
 Contract recorded; not a claim that new functionality passes acceptance.
 
+## Internal engine hooks checkpoint (November 15)
+
+The catalog now accepts engine-owned Rust metadata and table backends. Fallible
+lookups preserve provider errors; table entries bind provider scans without native
+DataTable storage. Catalog-specific default schemas flow through USE/search paths.
+Native-only optimizations are gated by native storage rather than table identity,
+so remote providers retain predicates, sampling and projections they do not accept.
+Transaction participants are owned per catalog, reused within a transaction and
+committed/rolled back outside the native manager lock. Read-only participants finish
+before the database allowed to write; this is not distributed two-phase commit.
+
+The 26 signed runtime tests include synthetic-provider end-to-end scan/lookup
+checks and participant lifecycle failures. Strict core/runtime Clippy passes.
+Receipts: postgres-catalog-hooks-tests-2.{log,json} and
+postgres-catalog-hooks-clippy-6.log. These tests qualify internal hooks only; they
+are not PostgreSQL service acceptance. The actual PG catalog and DDL/DML integration
+remain to be implemented, and fresh full core conformance is pending.
+
 ## Codec and legacy scanner checkpoint (November 15)
 
 Normal builds now register bundled `LOAD postgres` / `postgres_scanner`,

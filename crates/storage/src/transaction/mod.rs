@@ -11,9 +11,11 @@
 //! need the versions they replaced, and are then cleaned up.
 
 mod local_storage;
+mod participant;
 mod undo;
 
 pub use local_storage::{LocalStorage, LocalTableStorage};
+pub use participant::TransactionParticipant;
 pub use undo::{CatalogUndo, UndoProperties};
 pub(crate) use undo::{SequenceValue, UndoBuffer, UndoEntry};
 
@@ -71,6 +73,7 @@ impl TransactionData {
 /// A running transaction: its identity, undo log and transaction-local storage.
 #[derive(Debug)]
 pub struct Transaction {
+    participants: participant::Participants,
     /// Commit timestamps below this are visible.
     pub start_time: u64,
     /// Versions written by this transaction carry this id until commit.
@@ -97,6 +100,7 @@ pub struct Transaction {
 impl Transaction {
     fn new(start_time: u64, transaction_id: u64) -> Self {
         Self {
+            participants: participant::Participants::default(),
             start_time,
             transaction_id,
             commit_id: AtomicU64::new(0),
@@ -263,6 +267,21 @@ impl Transaction {
     /// The transaction's identity for version checks.
     pub fn data(&self) -> TransactionData {
         TransactionData::new(self.transaction_id, self.start_time)
+    }
+
+    /// One engine-owned remote transaction per attached catalog. The factory runs
+    /// only once; failed acquisition does not install an unusable participant.
+    pub fn participant(
+        &self,
+        name: &[u8],
+        create: impl FnOnce() -> Result<Arc<dyn TransactionParticipant>>,
+    ) -> Result<Arc<dyn TransactionParticipant>> {
+        self.access_database(name);
+        self.participants.get_or_create(name, create)
+    }
+
+    pub fn rollback_participants(&self) -> Result<()> {
+        self.participants.rollback()
     }
 
     /// The commit id once committed, 0 before.
@@ -600,6 +619,11 @@ impl TransactionManager {
         transaction: &Transaction,
         checkpoint: Option<CommitCheckpoint<'_>>,
     ) -> Result<()> {
+        // Remote I/O must not hold the native manager's global commit mutex.
+        if let Err(error) = Self::participant_commit(transaction) {
+            self.rollback(transaction);
+            return Err(error);
+        }
         let wal = transaction.wal();
         let mut state = self.lock();
         let commit_id = state.current_start_timestamp;
@@ -671,6 +695,7 @@ impl TransactionManager {
 
     /// Discards everything `transaction` did (`RollbackTransaction`).
     pub fn rollback(&self, transaction: &Transaction) {
+        let _ = transaction.rollback_participants();
         let mut state = self.lock();
         let undo = std::mem::take(&mut *transaction.undo());
         // Rolling back only fails on internal errors; the versions are then left as they
@@ -682,6 +707,13 @@ impl TransactionManager {
         drop(state);
         transaction.release_checkpoint_lock();
         self.run_cleanup(cleanup);
+    }
+
+    fn participant_commit(transaction: &Transaction) -> Result<()> {
+        let writer = transaction.modified_database();
+        transaction
+            .participants
+            .commit(writer.as_ref().map(roastedduck_common::ByteString::as_bytes))
     }
 
     /// Removes a finished transaction from the active list and collects the committed

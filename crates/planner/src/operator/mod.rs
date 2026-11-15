@@ -223,6 +223,10 @@ pub fn sync_column_ids(op: &mut LogicalOperator) {
 }
 
 impl LogicalGet {
+    /// Native storage capabilities must not be inferred merely from table identity.
+    pub fn is_native_table(&self) -> bool {
+        self.table.as_ref().is_some_and(|entry| matches!(&entry.kind, roastedduck_catalog::EntryKind::Table(table) if table.backend.is_none()))
+    }
     /// Takes over the columns bound through the table binding so far.
     pub fn sync_column_ids(&mut self) {
         if let Some(shared) = &self.shared_column_ids {

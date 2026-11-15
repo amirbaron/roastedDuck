@@ -224,7 +224,7 @@ impl CommonSubplanFinder {
             let column_ids = std::mem::take(&mut get.column_ids);
             let projection_ids = std::mem::take(&mut get.projection_ids);
             get.column_ids = (0..get.names.len() as u64).map(ColumnIndex::new).collect();
-            if get.table.is_some() {
+            if get.is_native_table() {
                 get.column_ids.push(ColumnIndex::new(COLUMN_IDENTIFIER_ROW_ID));
             }
             if column_ids
@@ -736,7 +736,7 @@ fn operator_text(op: &LogicalOperator) -> String {
             get.ordinality_index,
             get.table_filters,
         );
-        if get.table.is_none() {
+        if !get.is_native_table() {
             let _ = write!(text, " {:?}", get.bind_data);
         }
         let _ = write!(text, " {:?}", get.sample_options);

@@ -11,6 +11,8 @@
 
 mod attached;
 mod aws;
+#[cfg(test)]
+mod catalog_backend_tests;
 mod checkpoint;
 mod config;
 mod database;

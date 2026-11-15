@@ -328,7 +328,7 @@ impl StatisticsPropagator<'_> {
         if let Some(rows) = get.table_cardinality() {
             self.node_stats = Some(NodeStatistics::new(rows, rows));
         }
-        if get.table.is_none() && get.function.statistics.is_none() {
+        if !get.is_native_table() && get.function.statistics.is_none() {
             // Only base table scans and functions with statistics have column statistics.
             return Ok(self.node_stats.take());
         }

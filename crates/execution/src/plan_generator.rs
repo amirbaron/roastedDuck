@@ -1171,7 +1171,7 @@ impl PlanGenerator {
             LogicalKind::ChunkGet { collection, .. } => {
                 Arc::new(PhysicalColumnDataScan::new(types, collection))
             }
-            LogicalKind::Get(get) if get.table.is_some() => {
+            LogicalKind::Get(get) if get.is_native_table() => {
                 let entry = get
                     .table
                     .clone()

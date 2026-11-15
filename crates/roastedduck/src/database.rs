@@ -4302,9 +4302,11 @@ impl Connection {
                 }
                 // A database name alone means its default schema.
                 if let Some(database) = instance.databases.get(&schema)
-                    && let Some(main) = database
-                        .catalog
-                        .schema(&transaction, roastedduck_catalog::DEFAULT_SCHEMA)
+                    && let Some(main) = database.catalog.lookup_schema(
+                        &self.function_client,
+                        &transaction,
+                        database.catalog.default_schema(),
+                    )?
                 {
                     resolved.push(((&*database.name()).into(), main.name().to_owned()));
                     set_paths.push((schema.clone(), main.name().to_owned()));
@@ -4312,7 +4314,11 @@ impl Connection {
                 }
                 let default = self.default_catalog();
                 let database = instance.databases.get(&default).ok_or_else(not_found)?;
-                if let Some(found) = database.catalog.schema(&transaction, &schema) {
+                if let Some(found) =
+                    database
+                        .catalog
+                        .lookup_schema(&self.function_client, &transaction, &schema)?
+                {
                     resolved.push(((&*database.name()).into(), found.name().to_owned()));
                 } else {
                     // `Catalog::GetSchema` without a catalog also finds the system schemas.
@@ -4328,7 +4334,7 @@ impl Connection {
             let database = instance.databases.get(&catalog).ok_or_else(not_found)?;
             let found = database
                 .catalog
-                .schema(&transaction, &schema)
+                .lookup_schema(&self.function_client, &transaction, &schema)?
                 .ok_or_else(not_found)?;
             resolved.push(((&*database.name()).into(), found.name().to_owned()));
             set_paths.push((catalog, schema));

@@ -59,7 +59,7 @@ pub fn table_column_statistics(
     if column == COLUMN_IDENTIFIER_ROW_ID {
         return None;
     }
-    if get.table.is_none() {
+    if !get.is_native_table() {
         // A table function's own statistics (`get.function.statistics`).
         let statistics = get.function.statistics.as_ref()?;
         return statistics(get.bind_data.as_deref(), column)
@@ -126,7 +126,7 @@ pub fn extract_get_stats(op: &mut LogicalOperator, context: &ClientContext) -> R
         || roastedduck_common::ByteString::from("some table"),
         |table| table.name().to_owned(),
     );
-    if get.table.is_some() {
+    if get.is_native_table() {
         stats.table_name.clone_from(&name);
     }
     for column in &get.column_ids {

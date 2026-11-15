@@ -17,6 +17,7 @@ pub const TEMP_CATALOG: &str = "temp";
 /// One attached database's catalog (DuckDB's `DuckCatalog`).
 #[derive(Debug)]
 pub struct Catalog {
+    backend: OnceLock<Arc<dyn crate::backend::CatalogBackend>>,
     name: CatalogName,
     schemas: Arc<CatalogSet>,
     /// Where the database's tables keep their data.
@@ -100,6 +101,7 @@ impl Catalog {
         let name = CatalogName::with_oid_allocator(name.into(), allocator);
         let provisional_oid = if registered { 0 } else { name.next_oid() };
         let catalog = Self {
+            backend: OnceLock::new(),
             schemas: Arc::new(CatalogSet::new(&name, "")),
             name,
             io: OnceLock::new(),
@@ -131,6 +133,56 @@ impl Catalog {
 
     pub fn oid_allocator(&self) -> Arc<crate::OidAllocator> {
         self.name.oid_allocator()
+    }
+
+    /// Install an engine-owned backend once, before publishing the attachment.
+    pub fn set_backend(&self, backend: Arc<dyn crate::backend::CatalogBackend>) -> Result<()> {
+        self.backend
+            .set(backend)
+            .map_err(|_| Error::internal("Catalog backend already initialized"))
+    }
+
+    pub fn backend(&self) -> Option<&Arc<dyn crate::backend::CatalogBackend>> {
+        self.backend.get()
+    }
+
+    pub fn catalog_type(&self) -> &str {
+        self.backend.get().map_or("duckdb", |b| b.catalog_type())
+    }
+
+    pub fn default_schema(&self) -> &[u8] {
+        self.backend
+            .get()
+            .map_or(DEFAULT_SCHEMA.as_bytes(), |b| b.default_schema())
+    }
+
+    /// Fallible lookup used by the binder; native catalog lookup remains in-memory.
+    pub fn lookup_entry(
+        &self,
+        client: &Arc<roastedduck_function::FunctionClient>,
+        transaction: &Transaction,
+        kind: CatalogType,
+        schema: &[u8],
+        name: &[u8],
+    ) -> Result<Option<Arc<CatalogEntry>>> {
+        if let Some(backend) = self.backend.get() {
+            backend.lookup(client, transaction, kind, schema, name)
+        } else {
+            Ok(self.get_entry(transaction, kind, schema, name))
+        }
+    }
+
+    pub fn lookup_schema(
+        &self,
+        client: &Arc<roastedduck_function::FunctionClient>,
+        transaction: &Transaction,
+        name: &[u8],
+    ) -> Result<Option<Arc<CatalogEntry>>> {
+        if let Some(backend) = self.backend.get() {
+            backend.lookup(client, transaction, CatalogType::Schema, b"", name)
+        } else {
+            Ok(self.schema(transaction, name))
+        }
     }
 
     /// Defers default entry allocation while keeping definition validation at startup.
