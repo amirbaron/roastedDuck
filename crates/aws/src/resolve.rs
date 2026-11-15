@@ -219,11 +219,20 @@ async fn resolve_async(
             aws_smithy_http_client::tls::rustls_provider::CryptoMode::Ring,
         ))
         .build_https();
-    let sdk_region = Region::new(if region.is_empty() {
-        "us-east-1".to_owned()
-    } else {
-        region.clone()
-    });
+    // Service clients use ClientConfiguration's default region, independently
+    // of the region stored in the generated S3 secret.
+    let client_region = std::env::var("AWS_DEFAULT_REGION")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(|| std::env::var("AWS_REGION").ok().filter(|v| !v.is_empty()))
+        .or_else(|| {
+            config_profiles
+                .get_profile(&default_profile)
+                .and_then(|p| nonempty(p.get("region")))
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "us-east-1".into());
+    let sdk_region = Region::new(client_region);
     let providers = ProviderConfig::without_region()
         .with_http_client(http.clone())
         .with_region(Some(sdk_region.clone()));
@@ -370,40 +379,72 @@ impl Context {
                 crate::process::credentials(command).await
             }
             Provider::Instance => crate::metadata::instance().await,
-            Provider::WebIdentity => {
-                let mut builder =
-                    aws_config::web_identity_token::WebIdentityTokenCredentialsProvider::builder()
-                        .configure(&self.providers);
-                if !request.assume_role.is_empty()
-                    || !request.web_identity_token_file.is_empty()
-                    || !request.session_name.is_empty()
-                {
-                    builder =
-                        builder.static_configuration(aws_config::web_identity_token::StaticConfiguration {
-                            role_arn: if request.assume_role.is_empty() {
-                                std::env::var("AWS_ROLE_ARN").ok()?
-                            } else {
-                                request.assume_role.clone()
-                            },
-                            web_identity_token_file: if request.web_identity_token_file.is_empty() {
-                                std::env::var("AWS_WEB_IDENTITY_TOKEN_FILE").ok()?.into()
-                            } else {
-                                request.web_identity_token_file.clone().into()
-                            },
-                            session_name: if request.session_name.is_empty() {
-                                std::env::var("AWS_ROLE_SESSION_NAME")
-                                    .unwrap_or_else(|_| "roastedduck-web-identity".into())
-                            } else {
-                                request.session_name.clone()
-                            },
-                        });
-                }
-                builder.build().provide_credentials().await.ok()
-            }
+            Provider::WebIdentity => self.web_identity(request).await,
             Provider::Sso => self.sso(profile).await,
             // Role-aware config and STS are handled by the outer dispatcher.
             Provider::Config | Provider::Sts => None,
         }
+    }
+
+    async fn web_identity(&self, request: &Request) -> Material {
+        let explicit = !request.chain.is_empty();
+        // The C++ default constructor supplies values from its selected profile;
+        // the explicit provider leaves resolution to CRT, which uses AWS_PROFILE.
+        // SQL PROFILE is not passed to this provider by the pinned extension.
+        let crt_name = std::env::var("AWS_PROFILE")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "default".into());
+        let crt = self.config_profiles.get_profile(&crt_name);
+        let primary = if explicit {
+            crt
+        } else {
+            self.config_profiles.get_profile(&self.default_profile)
+        };
+        let field = |profile: Option<&aws_runtime::env_config::section::Profile>, key| {
+            profile.and_then(|p| nonempty(p.get(key))).map(str::to_owned)
+        };
+        let env = |key| std::env::var(key).ok().filter(|s| !s.is_empty());
+        let role = nonempty(Some(&request.assume_role))
+            .map(str::to_owned)
+            .or_else(|| env("AWS_ROLE_ARN"))
+            .or_else(|| field(primary, "role_arn"))
+            .or_else(|| field(crt, "role_arn"))?;
+        let token = nonempty(Some(&request.web_identity_token_file))
+            .map(str::to_owned)
+            .or_else(|| env("AWS_WEB_IDENTITY_TOKEN_FILE"))
+            .or_else(|| field(primary, "web_identity_token_file"))
+            .or_else(|| field(crt, "web_identity_token_file"))?;
+        let name = nonempty(Some(&request.session_name))
+            .map(str::to_owned)
+            .or_else(|| {
+                if explicit {
+                    None
+                } else {
+                    env("AWS_ROLE_SESSION_NAME").or_else(|| field(primary, "role_session_name"))
+                }
+            })
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string().to_ascii_uppercase());
+        let region = if explicit {
+            None
+        } else {
+            env("AWS_DEFAULT_REGION").or_else(|| field(primary, "region"))
+        }
+        .or_else(|| env("AWS_REGION"))
+        .or_else(|| env("AWS_DEFAULT_REGION"))
+        .or_else(|| field(crt, "region"))?;
+        let providers = self.providers.clone().with_region(Some(Region::new(region)));
+        aws_config::web_identity_token::WebIdentityTokenCredentialsProvider::builder()
+            .configure(&providers)
+            .static_configuration(aws_config::web_identity_token::StaticConfiguration {
+                role_arn: role,
+                web_identity_token_file: token.into(),
+                session_name: name,
+            })
+            .build()
+            .provide_credentials()
+            .await
+            .ok()
     }
 
     fn config_role(&self, request: &Request) -> Result<Option<(String, String)>, ResolveError> {
@@ -467,11 +508,29 @@ impl Context {
             .into_builder()
             .credentials_provider(SharedCredentialsProvider::new(credentials))
             .build();
-        let mut builder = aws_config::sts::AssumeRoleProvider::builder(role).configure(&sdk);
+        let millis = aws_smithy_types::DateTime::from(std::time::SystemTime::now())
+            .to_millis()
+            .ok()?;
+        let mut builder = aws_config::sts::AssumeRoleProvider::builder(role)
+            .configure(&sdk)
+            .session_length(Duration::from_mins(15))
+            .session_name(format!("aws-sdk-cpp-{millis}"));
         if !external.is_empty() {
             builder = builder.external_id(external);
         }
-        builder.build().await.provide_credentials().await.ok()
+        let credentials = builder.build().await.provide_credentials().await.ok()?;
+        if credentials.access_key_id().is_empty() || credentials.secret_access_key().is_empty() {
+            return None;
+        }
+        // The pinned provider keeps expiry for its own refresh bookkeeping but
+        // constructs returned AWSCredentials without an expiry field.
+        Some(aws_credential_types::Credentials::new(
+            credentials.access_key_id(),
+            credentials.secret_access_key(),
+            credentials.session_token().map(str::to_owned),
+            None,
+            "roastedDuck-sts",
+        ))
     }
 
     async fn sso(&self, profile: &str) -> Material {

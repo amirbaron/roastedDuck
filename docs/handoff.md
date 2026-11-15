@@ -1,3 +1,37 @@
+AWS assume-role/web-identity checkpoint, November 15, 2026:
+STS client region is now separate from the generated secret's region. The client
+uses the pinned SDK default-region precedence and default base credentials;
+profile/config roles and external IDs follow the extension's selection. AssumeRole
+requests use900-second sessions and the pinned generated session-name shape.
+Returned credentials omit expiry like the C++ provider; empty keys are rejected.
+
+Web identity resolves each role/token override through the source's environment
+and profile rules. Explicit providers use CRT's AWS_PROFILE selection and generated
+uppercase UUID session names unless SQL supplies one; SQL PROFILE is not forwarded.
+The default chain uses the C++ constructor's AWS_DEFAULT_PROFILE precedence and
+can use environment/profile session names. Its region precedence is distinct from
+the explicit provider. Missing region does not become valid merely because the
+secret specifies REGION. No process environment is mutated to implement this.
+
+All15 paired signed-STS scenarios (30 records),21 paired web-identity scenarios
+(42 records) and8 bad-CA/wrong-host rejection records pass. Both engines use real
+TLS to owned endpoints; every STS signature is independently checked. The original
+identity files still pass unchanged on both engines. SQL31, network4/17 SigV4
+requests, 5 native checks/2 signed targets (13 isolated provider cases) and
+Clippy2 pass. Receipt: .context/artifacts/popular-extensions/aws-role-verification.json.
+The final code cleanup only replaces the equivalent duration expression; a final
+signed control verifies900 seconds. Individual receipts retain image hashes.
+No locked package/version or C/C++ product dependency was added. All owned jobs/
+services stopped. Failed exploratory receipts remain; no live IAM claim is made.
+
+The original AWS count remains20/21 across retained runs, including one shared
+refresh failure. Next consolidate acceptance across all five extensions: ICU's
+63-file fresh inventory and HTTPFS's132 originals have not been closed by the
+recent provider work. Azure27 and PostgreSQL145/7 retain their stated scopes.
+Then finish remaining prerequisite/transport gaps, frozen core, platform/package
+checks and PyPI/Homebrew/Core delivery. Goal remains active; no new publication.
+See .context/popular-final-acceptance-next.md and .context/aws-next-control.md.
+
 AWS metadata-provider checkpoint, November 15, 2026:
 ECS/container credentials now match optional session-token and invalid/missing
 expiry behavior. Expired ECS credentials can create a secret but do not expose

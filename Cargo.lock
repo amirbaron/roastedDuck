@@ -2130,6 +2130,7 @@ dependencies = [
  "sha1",
  "tokio",
  "url",
+ "uuid",
 ]
 
 [[package]]

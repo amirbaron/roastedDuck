@@ -78,3 +78,14 @@ URI controls apply this adapter to both engines. Other controls use explicit
 loopback endpoints. No system routes, DNS or proxy configuration is changed.
 Controls set a region explicitly; legacy automatic region discovery and broader
 IPv6/profile-flag variations need separate qualification.
+
+`sts_control.py` accepts `--slt`, `--shim`, `--extensions`, `--transport` and
+`--out`. It independently validates the complete SigV4 signature on each owned
+AssumeRole request and checks region, base credentials, duration, external ID,
+session naming and response handling. `web_identity_control.py` accepts the same
+inputs and compares environment/profile/SQL override precedence, region and
+session-name selection. Both now exercise TLS for both engines using an owned CA
+through the child's normal SSL_CERT_FILE path and the test-only transport adapter.
+Use `--case basic` (STS) or `--case profile-only` (web identity) with `--bad-ca` or
+`--bad-host` to verify rejection before any credential request reaches the service.
+The tests do not change machine trust settings or establish live IAM acceptance.
