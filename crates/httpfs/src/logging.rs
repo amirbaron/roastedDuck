@@ -79,8 +79,16 @@ impl HttpLogger {
         {
             return;
         }
-        let map =
-            |entries: Vec<(Value, Value)>| Value::map(LogicalType::VARCHAR, LogicalType::VARCHAR, entries);
+        let map = |entries: Vec<(Value, Value)>| {
+            // HTTPHeaders::Insert uses a case-insensitive map and keeps the
+            // first value. HTTP responses may repeat a header (e.g. Vary).
+            let mut names = std::collections::HashSet::new();
+            let entries = entries
+                .into_iter()
+                .filter(|(name, _)| names.insert(name.to_varchar().unwrap_or_default().to_ascii_lowercase()))
+                .collect();
+            Value::map(LogicalType::VARCHAR, LogicalType::VARCHAR, entries)
+        };
         let mut request_fields = vec![
             ("type".into(), Value::varchar(method)),
             ("url".into(), Value::varchar(self.url(url))),

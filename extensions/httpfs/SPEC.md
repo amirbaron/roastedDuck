@@ -56,3 +56,26 @@ native HTTPFS tests pass; strict Clippy4 passes. Receipts are in
 The other108 originals still require service fixtures; this is not full HTTPFS
 or package/release acceptance. Pinned MinIO/mc source preparation is recorded in
 `.context/artifacts/popular-extensions/httpfs-services/source-pins.json`.
+
+## Owned S3 originals checkpoint (November 15)
+
+All 26 selected S3 originals now pass unchanged on both engines against the
+pinned, source-built MinIO service. The fixture checks real signatures, versions,
+listing, reads, writes and deletes. It preserves virtual-host/path behavior and
+maps the original hostnames only inside the test child; no system DNS changes.
+
+HTTP metadata is statement-local by default and database-local when enabled.
+Cached versions/regions survive scope changes as upstream; writes invalidate the
+selected cache, ETag mismatches permit a fresh retry, and listing metadata avoids
+redundant HEAD requests. HTTP logs retain unique case-insensitive headers and the
+engine user agent. Literal URL spaces are encoded without changing existing escapes.
+
+The two-connection cache control matches all 23 records on both engines. The prior
+24 metadata/secret originals pass again on Rust. Receipts:
+`.context/artifacts/popular-extensions/httpfs-s3-verification.json` and
+`scripts/httpfs-tests/README.md` (runner instructions).
+
+This brings the retained HTTPFS original inventory to 50/132. The remaining 82
+include large datasets, attachments/presigned URLs, HTTP servers, proxies and
+public/HuggingFace fixtures. This is owned-service qualification, not live AWS or
+final core/platform/package acceptance. No new publication is claimed.

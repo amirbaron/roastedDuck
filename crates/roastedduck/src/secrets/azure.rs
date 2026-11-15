@@ -84,26 +84,7 @@ impl std::fmt::Debug for AzureSecretLookup {
 }
 impl roastedduck_httpfs::azure::ResolveAzureSecret for AzureSecretLookup {
     fn user_agent(&self) -> String {
-        let mut value = format!(
-            "duckdb/{}({})",
-            crate::Database::library_version(),
-            crate::extensions::platform()
-        );
-        for name in ["duckdb_api", "custom_user_agent"] {
-            if let Some(setting) = roastedduck_function::file_system::opener()
-                .and_then(|c| c.settings())
-                .and_then(|s| s.current_setting(name).ok())
-                .filter(|v| !v.is_null())
-                .and_then(|v| v.to_varchar().ok())
-                && !setting.is_empty()
-            {
-                value.push(' ');
-                value.push_str(&setting);
-            }
-        }
-        value.push(' ');
-        value.push_str(crate::Database::source_id());
-        value
+        super::http_user_agent()
     }
     fn resolve(&self, path: &str) -> Result<Option<roastedduck_httpfs::azure::AzureSecret>> {
         self.0

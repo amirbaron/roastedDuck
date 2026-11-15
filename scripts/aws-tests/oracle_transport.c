@@ -21,6 +21,12 @@ static int allowed(const char *host) {
       !strcmp(host,"portal.sso.eu-west-1.amazonaws.com") ||
       !strcmp(host,"oidc.eu-west-1.amazonaws.com") || !strcmp(host,"oidc.us-east-2.amazonaws.com"));
 }
+static const char *s3_port(const char *host) {
+    const char *port=getenv("ROASTEDDUCK_FIXTURE_S3_PORT");
+    if(!port || atoi(port)<=0 || atoi(port)>65535 || !host)return NULL;
+    const char *suffix=".duckdb-minio.com";size_t n=strlen(host),m=strlen(suffix);
+    return !strcmp(host,"duckdb-minio.com") || (n>m && !strcmp(host+n-m,suffix)) ? port : NULL;
+}
 static const char *metadata_port(const char *host) {
     const char *port=getenv("ROASTEDDUCK_FIXTURE_HTTP_PORT");
     if(!port || atoi(port)<=0 || atoi(port)>65535)return NULL;
@@ -31,6 +37,7 @@ static void route_metadata(struct sockaddr_in *address) {
     if(port && ntohs(address->sin_port)==80){address->sin_addr.s_addr=htonl(INADDR_LOOPBACK);address->sin_port=htons((unsigned short)atoi(port));}
 }
 static nw_endpoint_t fixture_endpoint(const char *host,const char *port) {
+    if(s3_port(host) && !strcmp(port,"9000"))return nw_endpoint_create_host("127.0.0.1",s3_port(host));
     if(metadata_port(host) && !strcmp(port,"80"))return nw_endpoint_create_host("127.0.0.1",metadata_port(host));
     if(allowed(host)) {
         fprintf(stderr,"fixture endpoint: %s:%s\n",host,port);
@@ -47,6 +54,7 @@ static FILE *fixture_fopen(const char *path,const char *mode) {
     return fopen(path,mode);
 }
 static int fixture_getaddrinfo(const char *node,const char *service,const struct addrinfo *hints,struct addrinfo **out) {
+    if (s3_port(node)) return getaddrinfo("127.0.0.1",service,hints,out);
     if (allowed(node)) {fprintf(stderr,"fixture DNS: %s\n",node);return getaddrinfo("127.0.0.1",service,hints,out);}
     if(node && metadata_port(node))return getaddrinfo(node,service,hints,out);
     if (!node || !strcmp(node,"localhost") || !strcmp(node,"127.0.0.1") || !strcmp(node,"::1"))
@@ -61,6 +69,7 @@ static int fixture_connect(int fd,const struct sockaddr *address,socklen_t lengt
         struct sockaddr_in *a=(struct sockaddr_in*)&copy;
         fprintf(stderr,"fixture connect: %s:%u\n",inet_ntoa(a->sin_addr),ntohs(a->sin_port));
         route_metadata(a);
+        if(ntohl(a->sin_addr.s_addr)==INADDR_LOOPBACK && ntohs(a->sin_port)==9000 && s3_port("duckdb-minio.com"))a->sin_port=htons((unsigned short)atoi(s3_port("duckdb-minio.com")));
         if(ntohl(a->sin_addr.s_addr)!=INADDR_LOOPBACK) {errno=EACCES;return -1;}
         if(ntohs(a->sin_port)==443) a->sin_port=htons((unsigned short)atoi(getenv("ROASTEDDUCK_FIXTURE_TLS_PORT")));
     } else if(address->sa_family==AF_INET6) {
@@ -77,6 +86,7 @@ static int fixture_connectx(int fd,const sa_endpoints_t *endpoints,sae_associd_t
         struct sockaddr_in *a=(struct sockaddr_in*)&destination;
         fprintf(stderr,"fixture connectx: %s:%u\n",inet_ntoa(a->sin_addr),ntohs(a->sin_port));
         route_metadata(a);
+        if(ntohl(a->sin_addr.s_addr)==INADDR_LOOPBACK && ntohs(a->sin_port)==9000 && s3_port("duckdb-minio.com"))a->sin_port=htons((unsigned short)atoi(s3_port("duckdb-minio.com")));
         if(ntohl(a->sin_addr.s_addr)!=INADDR_LOOPBACK){errno=EACCES;return -1;}
         if(ntohs(a->sin_port)==443)a->sin_port=htons((unsigned short)atoi(getenv("ROASTEDDUCK_FIXTURE_TLS_PORT")));
     } else if(destination.ss_family==AF_INET6) {

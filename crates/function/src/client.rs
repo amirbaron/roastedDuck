@@ -268,6 +268,8 @@ pub struct FunctionClient {
     query: Mutex<roastedduck_common::ByteString>,
     /// The number of statements run so far (DuckDB's query id).
     query_id: AtomicU64,
+    /// Extension state scoped to the current statement, never shared across connections.
+    query_cache: Mutex<Arc<ObjectCache>>,
     http_stats: Mutex<HttpStats>,
     /// The default database (DuckDB's `DatabaseManager::GetDefaultDatabase`).
     database: Mutex<roastedduck_common::ByteString>,
@@ -317,6 +319,7 @@ impl Default for FunctionClient {
             transaction: Mutex::default(),
             query: Mutex::default(),
             query_id: AtomicU64::new(0),
+            query_cache: Mutex::default(),
             http_stats: Mutex::default(),
             database: Mutex::new("memory".into()),
             connection_id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
@@ -372,6 +375,7 @@ impl FunctionClient {
 
     /// Records the text of the statement about to run.
     pub fn set_query(&self, query: impl AsRef<[u8]>) {
+        *self.query_cache.lock().unwrap_or_else(PoisonError::into_inner) = Arc::default();
         {
             let mut stats = self.http_stats.lock().unwrap_or_else(PoisonError::into_inner);
             self.query_id.fetch_add(1, Ordering::Relaxed);
@@ -392,6 +396,13 @@ impl FunctionClient {
     /// The id of the running query (`current_query_id()`).
     pub fn query_id(&self) -> u64 {
         self.query_id.load(Ordering::Relaxed)
+    }
+
+    pub fn query_cache(&self) -> Arc<ObjectCache> {
+        self.query_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     pub fn record_http_request(&self, method: &str, body_length: u64) {

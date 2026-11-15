@@ -14,6 +14,7 @@ mod body;
 pub mod huggingface;
 pub use body::BodyReader;
 mod logging;
+mod metadata_cache;
 mod openssl_tls;
 mod proxy;
 mod redirect;
@@ -32,6 +33,7 @@ fn unquote_etag(value: &str) -> &str {
 
 /// Database-provided HTTP secret selection, shared with the core secret manager.
 pub trait ResolveHttpSecret: std::fmt::Debug + Send + Sync {
+    fn user_agent(&self) -> String;
     fn resolve(&self, url: &str) -> Result<Option<HttpSecret>>;
 }
 
@@ -244,10 +246,16 @@ impl Parameters {
             proxy_password: text("http_proxy_password", ""),
             headers: Vec::new(),
         };
+        let resolver = roastedduck_function::file_system::opener()
+            .and_then(|c| c.object_cache())
+            .and_then(|cache| cache.get::<HttpSecretResolver>(HTTP_SECRET_RESOLVER_KEY));
+        if let Some(resolver) = &resolver {
+            parameters
+                .headers
+                .push(("User-Agent".into(), resolver.0.user_agent()));
+        }
         if enable_http_secret
-            && let Some(resolver) = roastedduck_function::file_system::opener()
-                .and_then(|c| c.object_cache())
-                .and_then(|cache| cache.get::<HttpSecretResolver>(HTTP_SECRET_RESOLVER_KEY))
+            && let Some(resolver) = resolver
             && let Some(secret) = resolver.0.resolve(url)?
         {
             if enable_bearer && let Some(token) = secret.bearer_token {
@@ -635,7 +643,10 @@ impl HttpFile {
                 let initial_url = signing
                     .as_ref()
                     .map_or_else(|| template.clone(), |s| s.request_url(&template, method));
-                let url = location_url.as_ref().unwrap_or(&initial_url);
+                // DuckDB accepts literal spaces in HTTP paths. Preserve existing
+                // escapes (including signed S3 query parameters) byte-for-byte.
+                let encoded_url = location_url.as_ref().unwrap_or(&initial_url).replace(' ', "%20");
+                let url = &encoded_url;
                 let mut headers = Vec::new();
                 if let Some(signing) = &signing {
                     headers.extend(signing.headers(method, payload)?);
@@ -894,6 +905,22 @@ impl HttpFile {
     }
 
     fn initialize_metadata(&mut self) -> Result<()> {
+        let cache = metadata_cache::Cache::current();
+        let cached = cache.as_ref().and_then(|c| c.get(&self.display_url));
+        let entry =
+            cached.or_else(|| metadata_cache::Cache::listing().and_then(|c| c.get(&self.display_url)));
+        if let Some(entry) = entry {
+            if let Some(cache) = &cache {
+                cache.put(self.display_url.clone(), entry.clone());
+            }
+            self.size = entry.size;
+            self.modified = entry.modified;
+            self.etag = entry.etag;
+            if let Some(signing) = &self.signing {
+                signing.restore_metadata(&entry.version, entry.region);
+            }
+            return Ok(());
+        }
         let mut response = self.request("HEAD", None)?;
         let mut method = "HEAD";
         let mut length = response
@@ -949,6 +976,23 @@ impl HttpFile {
             .and_then(|v| httpdate::parse_http_date(v).ok())
             .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
             .map_or(0, |time| time.as_secs().saturating_mul(1_000_000) as i64);
+        if let Some(cache) = cache {
+            let (version, region) = self
+                .signing
+                .as_ref()
+                .map(s3::RequestSigning::cached_metadata)
+                .unwrap_or_default();
+            cache.put(
+                self.display_url.clone(),
+                metadata_cache::Entry {
+                    size: self.size,
+                    modified: self.modified,
+                    etag: self.etag.clone(),
+                    version,
+                    region,
+                },
+            );
+        }
         Ok(())
     }
     fn range_response(&self, offset: u64, end: u64) -> Result<ureq::http::Response<body::Body>> {
@@ -973,6 +1017,9 @@ impl HttpFile {
             && !etag.is_empty()
             && unquote_etag(&self.etag) != unquote_etag(etag)
         {
+            if let Some(cache) = metadata_cache::Cache::current() {
+                cache.erase(&self.display_url);
+            }
             return Err(response_error(
                 Error::new(
                     ErrorKind::Http,

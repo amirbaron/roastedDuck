@@ -348,6 +348,18 @@ impl RequestSigning {
             }
         }
     }
+    pub(crate) fn cached_metadata(&self) -> (String, Option<String>) {
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        (
+            state.version.clone(),
+            Some(state.region.as_ref().unwrap_or(&self.region).clone()),
+        )
+    }
+    pub(crate) fn restore_metadata(&self, version: &str, region: Option<String>) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        version.clone_into(&mut state.version);
+        state.region = region;
+    }
     pub(crate) fn request_url(&self, template: &str, method: &str) -> String {
         let protocol = template
             .split_once("://")
@@ -477,6 +489,7 @@ struct S3Request {
 #[derive(Default)]
 struct ListingPage {
     keys: Vec<String>,
+    metadata: BTreeMap<String, super::metadata_cache::Entry>,
     prefixes: Vec<String>,
     next: String,
 }
@@ -510,6 +523,25 @@ impl ListingPage {
                 .ok_or_else(|| Error::internal(format!("Key not found in S3 response: {contents}")))?;
             let key = decode(key)?;
             if !key.ends_with('/') {
+                // The original OpenFileInfo includes all three fields before
+                // allowing a read handle to skip its initial HEAD request.
+                if let (Some(size), Some(modified), Some(etag)) = (
+                    optional_tag(contents, "Size").and_then(|v| v.parse().ok()),
+                    optional_tag(contents, "LastModified")
+                        .and_then(|v| Timestamp::parse(v.as_bytes(), true).ok())
+                        .map(|(v, _)| v.0),
+                    optional_tag(contents, "ETag"),
+                ) {
+                    result.metadata.insert(
+                        key.clone(),
+                        super::metadata_cache::Entry {
+                            size,
+                            modified,
+                            etag: etag.replace("&quot;", "\"").replace("&#34;", "\""),
+                            ..super::metadata_cache::Entry::default()
+                        },
+                    );
+                }
                 result.keys.push(key);
             }
         }
@@ -701,7 +733,11 @@ impl S3Request {
                 self.parameters.httplib,
             ));
         }
-        ListingPage::parse(&xml)
+        let mut page = ListingPage::parse(&xml)?;
+        for entry in page.metadata.values_mut() {
+            entry.region = Some(signing.region.clone());
+        }
+        Ok(page)
     }
 }
 
@@ -796,10 +832,17 @@ impl GlobResult for S3Glob {
             page
         };
         let mut result = Vec::new();
+        let listing = super::metadata_cache::Cache::listing();
         for key in page.keys {
             let components: Vec<_> = key.split_terminator('/').collect();
             if path_matches(&components, &pattern, true) {
-                result.push(format!("{}{key}{}", self.request.bucket_url, self.request.query_suffix).into());
+                let path = format!("{}{key}{}", self.request.bucket_url, self.request.query_suffix);
+                if let Some(listing) = &listing
+                    && let Some(entry) = page.metadata.get(&key)
+                {
+                    listing.put(path.clone(), entry.clone());
+                }
+                result.push(path.into());
             }
         }
         self.finished = self.main_token.is_empty() && self.current_prefix.is_empty();
@@ -1011,6 +1054,12 @@ impl FileSystem for S3FileSystem {
     }
     fn open(&self, path: &[u8], write: bool) -> Result<Arc<dyn FileHandle>> {
         if write {
+            if let Some(cache) = super::metadata_cache::Cache::listing() {
+                cache.erase(std::str::from_utf8(path).map_err(io_error)?);
+            }
+            if let Some(cache) = super::metadata_cache::Cache::current() {
+                cache.erase(std::str::from_utf8(path).map_err(io_error)?);
+            }
             return write::S3WriteFile::open(Self::prepare(path, false)?, self.manager.clone())
                 .map(|file| Arc::new(file) as Arc<dyn FileHandle>);
         }

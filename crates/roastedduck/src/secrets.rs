@@ -669,7 +669,33 @@ impl std::fmt::Debug for HttpSecretLookup {
     }
 }
 
+fn http_user_agent() -> String {
+    let mut value = format!(
+        "duckdb/{}({})",
+        crate::Database::library_version(),
+        crate::extensions::platform()
+    );
+    for name in ["duckdb_api", "custom_user_agent"] {
+        if let Some(setting) = roastedduck_function::file_system::opener()
+            .and_then(|c| c.settings())
+            .and_then(|s| s.current_setting(name).ok())
+            .filter(|v| !v.is_null())
+            .and_then(|v| v.to_varchar().ok())
+            && !setting.is_empty()
+        {
+            value.push(' ');
+            value.push_str(&setting);
+        }
+    }
+    value.push(' ');
+    value.push_str(crate::Database::source_id());
+    value
+}
+
 impl roastedduck_httpfs::ResolveHttpSecret for HttpSecretLookup {
+    fn user_agent(&self) -> String {
+        http_user_agent()
+    }
     fn resolve(&self, url: &str) -> Result<Option<roastedduck_httpfs::HttpSecret>> {
         let Some(entry) = self.0.lookup_secret(url, "http")? else {
             return Ok(None);

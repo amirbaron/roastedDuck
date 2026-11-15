@@ -1,3 +1,30 @@
+HTTPFS owned S3 checkpoint, November 15, 2026:
+All26 selected unchanged S3 originals pass on both engines against owned MinIO.
+The fixture uses pinned source-built/signed MinIO and mc, per-run config/data,
+real signature/version checks, and child-local hostname/port mapping. No Docker,
+system DNS/routes, user service or cloud resource changes. All services stopped.
+
+Rust now retains HTTP metadata per statement or in the opt-in database cache,
+including S3 version and region. Writes invalidate the selected scope; ETag
+mismatch evicts stale metadata. Listing hints avoid redundant HEAD requests.
+HTTP logging uses unique case-insensitive headers and the engine user agent;
+literal URL spaces are encoded while preserving existing escapes. The generic
+FunctionClient query cache resets at the start of each statement.
+
+All23 two-connection cache records match C++; the prior24 metadata/secret originals
+pass again on Rust. All9 native HTTPFS tests and strict all-target Clippy pass.
+Receipts are under
+.context/artifacts/popular-extensions/httpfs-s3-verification.json. Failed exploratory
+runs remain, including the control corrected after C++ demonstrated the cache
+setting is database-wide. No original SQL/assertions changed.
+
+HTTPFS's retained original inventory is now50/132, leaving82. Next run the large
+MinIO cohort and supply authentic generated DB/presigned fixtures, then HTTP,
+proxy/public/HF originals. See .context/httpfs-acceptance-next.md and
+.context/httpfs-remaining-originals.json. Final core/platform/package qualification
+and PyPI/Homebrew/Core delivery remain open; whole goal remains active. No new
+publication or live-provider acceptance. Preexisting packaging/ remains untouched.
+
 ICU and HTTPFS acceptance checkpoint, November 15, 2026:
 Fresh ICU acceptance passes all63 unchanged original files on both engines, with
 no failures/skips. The inventory was regenerated from the pinned source and has
