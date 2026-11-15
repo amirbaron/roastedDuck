@@ -25,10 +25,11 @@ normalized), all9 HTTPFS native tests and strict Clippy4 pass. Receipt:
 
 HTTPFS still has108 original files outside this first cohort. The upstream MinIO/
 mc native downloads return410; pinned source archives and an authenticated Go1.24.2
-toolchain are on the SSD under popular-extensions/httpfs-services. An owned serial
-build controller was started; revalidate its session before any next heavy job.
-No Docker daemon, system DNS/routes or global toolchain setting was changed.
-See .context/httpfs-acceptance-next.md for the live handle and fixture plan.
+toolchain are on the SSD under popular-extensions/httpfs-services. Both source-built
+tools now compile, are signed and execute --version; build-verification.json records
+source pins and binary hashes. Their build label is DEVELOPMENT.GOGET, not an
+unmodified official binary. No active job remains. No Docker daemon, system DNS/
+routes or global toolchain setting changed. See .context/httpfs-acceptance-next.md.
 
 The whole five-extension goal remains active. Fresh combined service inventories,
 remaining prerequisites/transport scope, final core/platform/package checks and
