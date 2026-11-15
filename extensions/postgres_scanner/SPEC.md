@@ -26,6 +26,48 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 
 Contract recorded; not a claim that new functionality passes acceptance.
 
+## Attached scan checkpoint (November 15)
+
+Attached tables now execute bounded COPY OUT scans with CTID page tasks, pooled
+parallel workers and shared PostgreSQL snapshots for repeatable-read/serializable
+transactions. READ COMMITTED omits snapshot sharing. Version <14, text mode and
+nonpositive relpages disable splitting. Multiple scans reserve/materialize the main
+connection according to the pinned optimizer rules; auxiliary leases return on
+completion/drop. Worker statement/idle timeouts use real server settings.
+
+LIMIT/OFFSET pushdown disables splitting. Supported comparison/IN/NULL/struct
+filters are translated to PostgreSQL SQL, with upstream string collation and blob
+literals. Optional join hints cannot become mandatory predicates. Ordinary rowid
+reads yield NULL; a physical-planning callback enables CTIDs/materialization for
+provider DML even with the optimizer disabled. Provider scans now retain their
+cardinality callback rather than falling back to the native-table path. Query logs
+register the structured PostgresQueryLog type and capture actual executed queries.
+
+Receipt: .context/artifacts/popular-extensions/postgres-parallel-verification.json.
+Latest Rust full 152: 134 PASS/11 FAIL/7 SKIP (postgres-upstream-parallel-all-2).
+C++ reference: 145 PASS/7 SKIP (postgres-upstream-parallel-all-1). All originals stay
+unchanged. The first scan discovery was 132/13/7; the final build fixes partitioned
+EXPLAIN cardinality and filter pushdown with no other status changes. All 9 selected
+scan/pool originals pass in the final Rust full run; C++ passed that cohort in
+postgres-upstream-parallel-4. All 12 paired scan controls pass, including actual
+worker/snapshot/timeout/filter log assertions, tight-pool joins and optimizer-off
+mutations. All 27 attachment, 22 mutation and 6 API cancellation regressions pass.
+All 272 native tests across 41 signed targets pass with TZ=UTC; strict Clippy run 2 passes.
+CLI SHA starts f6f97a144265; SLT starts fb4484d7ed46. All owned fixtures stopped.
+
+Initial control 1 used CLI shell log storage instead of memory and exposed an
+unsupported optional join-filter hint. Control 2 corrected both; control 3 verifies
+the final planner build. Failed receipts are retained. No new dependencies or gates.
+
+Next: 11 original failures remain: main-schema resolution; created composite-type
+field binding; postgres secrets and secret storage; four staleness/cache tests;
+information_schema introspection; two transaction error-compatibility tests. Legacy
+postgres_scan/postgres_scan_pushdown and postgres_query still need unified scan/
+optimizer/logging/settings integration. Remaining authentication/prerequisites and
+all provider/platform/package gates stay open. Full core is still frozen 83d8da21
+and predates later PG work; final current-source core qualification is required.
+No new PyPI/Homebrew release; the all-five goal remains active and incomplete.
+
 ## Connection pool checkpoint (November 15)
 
 Primary transaction sessions now use a per-catalog Rust pool. Force acquisition can

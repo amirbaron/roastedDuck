@@ -847,6 +847,12 @@ impl DatabaseInstance {
                     Arc::new(()),
                 );
             }
+            if extension == StaticExtension::Postgres {
+                self.log_manager
+                    .register_type(crate::postgres::logging::log_type());
+                self.optimizer_rules
+                    .register(Arc::new(crate::postgres::catalog::scan::Rule))?;
+            }
             if extension == StaticExtension::Vss {
                 self.index_types
                     .register(Arc::new(roastedduck_storage::index::hnsw::HnswIndexType))?;

@@ -87,6 +87,9 @@ pub type TableFunctionPushdownFilters =
 pub type TableFunctionFilterSupport =
     Arc<dyn Fn(&dyn FunctionData, usize, &dyn std::any::Any) -> bool + Send + Sync>;
 
+pub type TableFunctionPrepareModify =
+    Arc<dyn Fn(&dyn FunctionData) -> Result<Arc<dyn FunctionData>> + Send + Sync>;
+
 /// The virtual columns of a call (DuckDB's `table_function_get_virtual_columns_t`):
 /// `(column id, name, type)` for columns such as `filename` that can be selected by name
 /// without being part of the function's columns.
@@ -355,6 +358,11 @@ pub struct TableFunction {
     /// a `filter_pushdown` function): returns the bind data that applies them.
     pub pushdown_filters: Option<TableFunctionPushdownFilters>,
     pub filter_support: Option<TableFunctionFilterSupport>,
+    /// Prepare a scan used as input to a provider mutation. Internal storage adapters
+    /// can require materialization and enable physical row identifiers here. This
+    /// runs during physical planning even when optimizer extensions are disabled.
+    #[doc(hidden)]
+    pub prepare_modify: Option<TableFunctionPrepareModify>,
     /// The function's virtual columns (`get_virtual_columns`).
     pub get_virtual_columns: Option<TableFunctionVirtualColumns>,
     /// Column statistics (`statistics`).
@@ -408,6 +416,7 @@ impl TableFunction {
             empty_column: false,
             pushdown_filters: None,
             filter_support: None,
+            prepare_modify: None,
             get_virtual_columns: None,
             statistics: None,
             get_partition_stats: None,

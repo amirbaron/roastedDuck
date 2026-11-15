@@ -3,6 +3,7 @@ pub mod binary_file;
 pub mod codec;
 pub mod config;
 pub mod copy;
+pub mod copy_rows;
 pub mod parameters;
 pub mod pool;
 mod tls;
@@ -439,11 +440,25 @@ impl Session {
         })
     }
     pub fn copy_out(&self, sql: &str) -> Result<CopyReader> {
-        let stream = self.driver.wait(self.client.copy_out(sql))?.map_err(pg_error)?;
+        self.copy_out_interruptible(sql, None)
+    }
+    pub fn copy_out_interruptible(&self, sql: &str, interrupted: Option<&AtomicBool>) -> Result<CopyReader> {
+        let token = self.client.cancel_token();
+        let stream = self
+            .driver
+            .wait(interruptible(
+                self.client.copy_out(sql),
+                interrupted,
+                &token,
+                &self.parameters,
+            ))??
+            .map_err(pg_error)?;
         Ok(CopyReader {
             driver: self.driver.clone(),
             stream: Box::pin(stream),
             exhausted: false,
+            cancel_token: token,
+            parameters: self.parameters.clone(),
         })
     }
     pub fn copy_in(&self, sql: &str) -> Result<CopyWriter> {
@@ -528,6 +543,8 @@ impl Rows {
 }
 pub struct CopyReader {
     driver: Driver,
+    cancel_token: tokio_postgres::CancelToken,
+    parameters: config::Parameters,
     stream: Pin<Box<tokio_postgres::CopyOutStream>>,
     exhausted: bool,
 }
@@ -538,15 +555,26 @@ impl std::fmt::Debug for CopyReader {
 }
 impl CopyReader {
     pub fn next_chunk(&mut self) -> Result<Option<Bytes>> {
+        self.next_chunk_interruptible(None)
+    }
+    pub fn next_chunk_interruptible(&mut self, interrupted: Option<&AtomicBool>) -> Result<Option<Bytes>> {
         if self.exhausted {
             return Ok(None);
         }
         let driver = self.driver.clone();
-        let result = driver.wait(self.stream.as_mut().try_next())?.map_err(pg_error)?;
+        let result = driver
+            .wait(interruptible(
+                self.stream.as_mut().try_next(),
+                interrupted,
+                &self.cancel_token,
+                &self.parameters,
+            ))??
+            .map_err(pg_error)?;
         self.exhausted = result.is_none();
         Ok(result)
     }
 }
+
 pub struct CopyWriter {
     driver: Driver,
     sink: Pin<Box<tokio_postgres::CopyInSink<Bytes>>>,

@@ -2,6 +2,7 @@
 pub(crate) mod binary_file;
 pub(crate) mod catalog;
 pub(crate) mod hstore;
+pub(crate) mod logging;
 mod mutation;
 pub(crate) mod pool;
 mod query;
@@ -181,6 +182,7 @@ pub(crate) fn attach_function() -> TableFunctionSet {
 
 pub(crate) fn options() -> Vec<ExtensionOption> {
     let mut options: Vec<ExtensionOption> = [
+        ("pg_experimental_filter_pushdown", "Whether or not to use filter pushdown", true),
         ("pg_use_text_protocol", "Use text protocol instead of binary protocol", false),
         ("pg_use_binary_copy", "Whether or not to use BINARY copy to read data", true),
         ("pg_array_as_varchar", "Read Postgres arrays as varchar - enables reading mixed dimensional arrays", false),
@@ -205,6 +207,29 @@ pub(crate) fn options() -> Vec<ExtensionOption> {
             Ok(())
         })),
     });
+    for (name, ty, value) in [
+        ("pg_pages_per_task", LogicalType::UBIGINT, Value::ubigint(1000)),
+        ("pg_use_ctid_scan", LogicalType::BOOLEAN, Value::boolean(true)),
+        (
+            "pg_statement_timeout_millis",
+            LogicalType::UINTEGER,
+            Value::null(LogicalType::SQLNULL),
+        ),
+        (
+            "pg_idle_in_transaction_timeout_millis",
+            LogicalType::UINTEGER,
+            Value::null(LogicalType::SQLNULL),
+        ),
+    ] {
+        options.push(ExtensionOption {
+            name: name.into(),
+            description: format!("PostgreSQL scan option {name}"),
+            input_type: ty,
+            default_value: value,
+            set_function: None,
+            global_by_default: false,
+        });
+    }
     options.extend(pool::options());
     options
 }

@@ -50,8 +50,26 @@ impl Decoder {
 }
 
 #[derive(Debug)]
+enum Source {
+    Rows(Rows),
+    Copy(roastedduck_postgres::copy_rows::CopyRows),
+}
+impl Source {
+    fn next_batch_interruptible(
+        &mut self,
+        count: usize,
+        interrupted: Option<&std::sync::atomic::AtomicBool>,
+    ) -> Result<Vec<Vec<Option<Vec<u8>>>>> {
+        match self {
+            Self::Rows(rows) => rows.next_batch_interruptible(count, interrupted),
+            Self::Copy(rows) => rows.next_batch(count, interrupted),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct Cursor {
-    source: Option<Rows>,
+    source: Option<Source>,
     codecs: Vec<Decoder>,
     client: Arc<FunctionClient>,
     buffered: Option<(ColumnDataCollection, ColumnDataScanState)>,
@@ -72,6 +90,11 @@ impl Cursor {
         let types = self.codecs.iter().map(Decoder::logical_type).collect::<Vec<_>>();
         let mut chunk = DataChunk::with_types(&types, batch.len());
         for (row, values) in batch.iter().enumerate() {
+            if values.len() < self.codecs.len() {
+                return Err(Error::invalid_input(
+                    "Postgres row has fewer fields than the bound scan",
+                ));
+            }
             for (column, codec) in self.codecs.iter().enumerate() {
                 let value = codec.decode(values[column].as_deref())?;
                 chunk.column_mut(column).set_value(row, &value)?;
@@ -235,9 +258,11 @@ impl PgTransaction {
         state.cursors.retain(|cursor| cursor.strong_count() > 0);
         if use_transaction {
             if !state.started {
-                state
-                    .session()?
-                    .batch_interruptible(&self.begin, self.client.interrupt_flag().as_deref())?;
+                super::logging::query(&self.client, &self.begin, || {
+                    state
+                        .session()?
+                        .batch_interruptible(&self.begin, self.client.interrupt_flag().as_deref())
+                })?;
                 state.started = true;
             }
         } else if state.started {
@@ -272,20 +297,22 @@ impl PgTransaction {
     pub fn execute(&self, sql: &str, use_transaction: bool) -> Result<()> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         self.prepare(&mut state, use_transaction)?;
-        state
-            .session()?
-            .batch_interruptible(sql, self.client.interrupt_flag().as_deref())
+        super::logging::query(&self.client, sql, || {
+            state
+                .session()?
+                .batch_interruptible(sql, self.client.interrupt_flag().as_deref())
+        })
     }
     /// Small catalog queries are consumed under the session lock. Data scans use
     /// cursors so their result size is not charged to an unbounded metadata vector.
     pub fn metadata(&self, sql: &str, parameters: &[BinaryParameter]) -> Result<Vec<Vec<Value>>> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         self.prepare(&mut state, true)?;
-        let mut rows = state.session()?.stream_interruptible(
-            sql,
-            parameters,
-            self.client.interrupt_flag().as_deref(),
-        )?;
+        let mut rows = super::logging::query(&self.client, sql, || {
+            state
+                .session()?
+                .stream_interruptible(sql, parameters, self.client.interrupt_flag().as_deref())
+        })?;
         let codecs = rows
             .columns
             .iter()
@@ -320,17 +347,21 @@ impl PgTransaction {
     ) -> Result<Arc<Mutex<Cursor>>> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         self.prepare(&mut state, use_transaction)?;
-        let rows = if text {
-            state
-                .session()?
-                .stream_text(sql, parameters, self.client.interrupt_flag().as_deref())?
-        } else {
-            state
-                .session()?
-                .stream_interruptible(sql, parameters, self.client.interrupt_flag().as_deref())?
-        };
+        let rows = super::logging::query(&self.client, sql, || {
+            if text {
+                state
+                    .session()?
+                    .stream_text(sql, parameters, self.client.interrupt_flag().as_deref())
+            } else {
+                state.session()?.stream_interruptible(
+                    sql,
+                    parameters,
+                    self.client.interrupt_flag().as_deref(),
+                )
+            }
+        })?;
         let cursor = Arc::new(Mutex::new(Cursor {
-            source: Some(rows),
+            source: Some(Source::Rows(rows)),
             codecs,
             client: self.client.clone(),
             buffered: None,
@@ -348,12 +379,13 @@ impl PgTransaction {
     ) -> Result<Arc<Mutex<Cursor>>> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         self.prepare(&mut state, use_transaction)?;
-        let rows =
+        let rows = super::logging::query(&self.client, sql, || {
             state
                 .session()?
-                .stream_query(sql, parameters, text, self.client.interrupt_flag().as_deref())?;
+                .stream_query(sql, parameters, text, self.client.interrupt_flag().as_deref())
+        })?;
         let cursor = Arc::new(Mutex::new(Cursor {
-            source: Some(rows),
+            source: Some(Source::Rows(rows)),
             codecs,
             client: self.client.clone(),
             buffered: None,
@@ -361,7 +393,43 @@ impl PgTransaction {
         state.cursors.push(Arc::downgrade(&cursor));
         Ok(cursor)
     }
-    fn finish(&self, commit: bool) -> Result<()> {
+    pub(super) fn start(&self) -> Result<()> {
+        self.prepare(
+            &mut self.state.lock().unwrap_or_else(PoisonError::into_inner),
+            true,
+        )
+    }
+    pub(super) fn snapshot(&self) -> Result<String> {
+        let rows = self.metadata("SELECT pg_export_snapshot()", &[])?;
+        rows.first()
+            .and_then(|r| r.first())
+            .ok_or_else(|| Error::internal("Snapshot query returned no row"))?
+            .to_varchar()
+    }
+    pub(super) fn copy_cursor(&self, sql: &str, codecs: Vec<Decoder>) -> Result<Arc<Mutex<Cursor>>> {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        self.prepare(&mut state, true)?;
+        let rows = super::logging::query(&self.client, sql, || {
+            state
+                .session()?
+                .copy_out_interruptible(sql, self.client.interrupt_flag().as_deref())
+        })?;
+        let cursor = Arc::new(Mutex::new(Cursor {
+            source: Some(Source::Copy(roastedduck_postgres::copy_rows::CopyRows::new(rows))),
+            codecs,
+            client: self.client.clone(),
+            buffered: None,
+        }));
+        state.cursors.push(Arc::downgrade(&cursor));
+        Ok(cursor)
+    }
+    pub(super) fn materialize_cursor(&self, cursor: &Arc<Mutex<Cursor>>) -> Result<()> {
+        cursor
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .materialize(&self.buffer_manager)
+    }
+    pub(super) fn finish(&self, commit: bool) -> Result<()> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         if state.finished {
             return Ok(());
@@ -371,7 +439,8 @@ impl PgTransaction {
             cursor.lock().unwrap_or_else(PoisonError::into_inner).close();
         }
         let result = if state.started {
-            state.session()?.batch(if commit { "COMMIT" } else { "ROLLBACK" })
+            let sql = if commit { "COMMIT" } else { "ROLLBACK" };
+            super::logging::query(&self.client, sql, || state.session()?.batch(sql))
         } else {
             Ok(())
         };

@@ -1,5 +1,4 @@
 //! PostgreSQL-owned catalog metadata and table scans. No native table data is created.
-use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
@@ -10,7 +9,7 @@ use roastedduck_catalog::{
     Transaction, TypeEntry,
 };
 use roastedduck_common::{ByteString, Error, Result};
-use roastedduck_function::{FunctionClient, FunctionData, TableFunction};
+use roastedduck_function::FunctionClient;
 use roastedduck_postgres::{
     BinaryParameter, Driver,
     codec::{Codec, Options},
@@ -19,9 +18,11 @@ use roastedduck_postgres::{
 use roastedduck_types::{DataChunk, LogicalType};
 
 use super::identifier;
-use super::transaction::{Cursor, Decoder, Participant, PgTransaction};
+use super::transaction::{Participant, PgTransaction};
 
 mod ddl;
+mod filter;
+pub(crate) mod scan;
 
 type CacheKey = (CatalogType, String, String, u8);
 
@@ -32,6 +33,7 @@ pub(crate) struct PgCatalog {
     pub(crate) pool: Arc<roastedduck_postgres::pool::Pool>,
     buffer_manager: BufferManager,
     read_only: bool,
+    version: u32,
     isolation: String,
     schemas: Vec<String>,
     default_schema: ByteString,
@@ -61,7 +63,18 @@ impl PgCatalog {
             pool_config,
             Arc::new(move || driver.connect(&parameters)),
         )?;
-        pool.acquire(None)?.session()?.batch("SELECT version()")?;
+        let version = {
+            let lease = pool.acquire(None)?;
+            let mut rows = lease.session()?.stream("SHOW server_version_num", &[])?;
+            let values = rows.next_batch(2)?;
+            values
+                .first()
+                .and_then(|r| r.first())
+                .and_then(Option::as_deref)
+                .and_then(|b| std::str::from_utf8(b).ok())
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0)
+        };
         let default_schema = schemas.first().map_or("public", String::as_str).into();
         Ok(Arc::new_cyclic(|own| Self {
             own: own.clone(),
@@ -69,6 +82,7 @@ impl PgCatalog {
             pool,
             buffer_manager,
             read_only,
+            version,
             isolation,
             schemas,
             default_schema,
@@ -252,7 +266,7 @@ impl PgCatalog {
         };
         let schema = utf8(schema_entry.name())?.to_owned();
         let pg = self.transaction(client, transaction)?;
-        let rows = pg.metadata("SELECT c.oid::int8,c.relname::text,c.relkind::text,obj_description(c.oid,'pg_class') FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1::text AND lower(c.relname::text)=lower($2::text) AND c.relkind IN ('r','v','m','f','p') ORDER BY c.relname::text=$2::text DESC,c.relname", &[text_parameter(&schema),text_parameter(name)])?;
+        let rows = pg.metadata("SELECT c.oid::int8,c.relname::text,c.relkind::text,obj_description(c.oid,'pg_class'),c.relpages::int8 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1::text AND lower(c.relname::text)=lower($2::text) AND c.relkind IN ('r','v','m','f','p') ORDER BY c.relname::text=$2::text DESC,c.relname", &[text_parameter(&schema),text_parameter(name)])?;
         let Some(row) = rows.first() else {
             return Ok(None);
         };
@@ -343,6 +357,11 @@ impl PgCatalog {
             catalog: self.own.clone(),
             relation,
             table_name: name.clone(),
+            pages: if created.is_some() {
+                0
+            } else {
+                row[4].as_i64().unwrap_or(0)
+            },
             names,
             codecs,
             emit_ctid: !matches!(row[2].as_str(), Some("v" | "f")),
@@ -799,6 +818,7 @@ pub(super) fn type_options(client: &FunctionClient) -> Options {
 #[derive(Clone, Debug)]
 struct PgTable {
     table_name: String,
+    pages: i64,
     catalog: Weak<PgCatalog>,
     relation: String,
     names: Vec<String>,
@@ -926,104 +946,8 @@ impl TableBackend for PgTable {
             .transaction(client, transaction)?
             .copy_input(&sql, text, chunks)
     }
-    fn scan(&self, client: &Arc<FunctionClient>, _: &Transaction) -> Result<BackendScan> {
-        let mut function =
-            TableFunction::new("postgres_scan", vec![]).with_scan(|data, column_ids, state, output| {
-                let data = data
-                    .and_then(|d| d.as_any().downcast_ref::<ScanData>())
-                    .ok_or_else(|| Error::internal("Missing Postgres table scan data"))?;
-                if state.local.is_none() {
-                    let pg = data.catalog.current(&data.client)?;
-                    let mut projections = Vec::new();
-                    let mut codecs = Vec::new();
-                    for id in column_ids {
-                        if *id == roastedduck_planner::operator::COLUMN_IDENTIFIER_ROW_ID {
-                            projections.push(
-                                if data.table.emit_ctid {
-                                    "ctid"
-                                } else {
-                                    "NULL::bigint"
-                                }
-                                .to_owned(),
-                            );
-                            codecs.push(if data.text {
-                                Decoder::TextCtid
-                            } else {
-                                Decoder::Ctid
-                            });
-                        } else {
-                            let index = *id as usize;
-                            let codec = data
-                                .table
-                                .codecs
-                                .get(index)
-                                .ok_or_else(|| Error::internal("Invalid Postgres projected column"))?;
-                            projections.push(codec.projection(&identifier(&data.table.names[index]))?);
-                            codecs.push(if data.text {
-                                Decoder::Text(codec.logical_type.clone())
-                            } else {
-                                Decoder::Value(codec.clone())
-                            });
-                        }
-                    }
-                    if projections.is_empty() {
-                        projections.push("1".into());
-                    }
-                    let sql = format!("SELECT {} FROM {}", projections.join(","), data.table.relation);
-                    let cursor = pg.cursor(&sql, &[], codecs, true, data.text)?;
-                    state.local = Some(Box::new(cursor));
-                }
-                let cursor = state
-                    .local
-                    .as_mut()
-                    .and_then(|s| s.downcast_mut::<Arc<Mutex<Cursor>>>())
-                    .ok_or_else(|| Error::internal("Invalid Postgres cursor"))?;
-                if let Some(chunk) = cursor.lock().unwrap_or_else(PoisonError::into_inner).next()? {
-                    state.position += chunk.len() as u64;
-                    *output = chunk;
-                    Ok(true)
-                } else {
-                    output.set_len(0);
-                    Ok(false)
-                }
-            });
-        function.projection_pushdown = true;
-        function.projected_output = true;
-        function.static_explain = Some(Arc::new(|data| {
-            data.and_then(|d| d.as_any().downcast_ref::<ScanData>())
-                .map_or_else(Vec::new, |d| {
-                    vec![("Table".into(), d.table.table_name.as_str().into())]
-                })
-        }));
-        Ok(BackendScan {
-            function,
-            bind_data: Some(Arc::new(ScanData {
-                table: self.clone(),
-                text: super::use_text_protocol(client),
-                catalog: self
-                    .catalog
-                    .upgrade()
-                    .ok_or_else(|| Error::internal("Postgres catalog closed"))?,
-                client: client.clone(),
-            })),
-            virtual_columns: vec![(
-                roastedduck_planner::operator::COLUMN_IDENTIFIER_ROW_ID,
-                "rowid".into(),
-                LogicalType::BIGINT,
-            )],
-        })
-    }
-}
-#[derive(Debug)]
-struct ScanData {
-    text: bool,
-    table: PgTable,
-    catalog: Arc<PgCatalog>,
-    client: Arc<FunctionClient>,
-}
-impl FunctionData for ScanData {
-    fn as_any(&self) -> &dyn Any {
-        self
+    fn scan(&self, client: &Arc<FunctionClient>, transaction: &Transaction) -> Result<BackendScan> {
+        scan::bind(self, client, transaction)
     }
 }
 

@@ -200,6 +200,10 @@ impl Pool {
         self.acquire_mode(mode, interrupted)?
             .ok_or_else(|| pool_error("PooledConnection::GetConnection - no connection available"))
     }
+    pub fn force_acquire(self: &Arc<Self>, interrupted: Option<&AtomicBool>) -> Result<Lease> {
+        self.acquire_mode(AcquireMode::Force, interrupted)?
+            .ok_or_else(|| pool_error("PooledConnection::GetConnection - no connection available"))
+    }
     pub fn try_acquire(self: &Arc<Self>) -> Result<Option<Lease>> {
         self.acquire_mode(AcquireMode::Try, None)
     }

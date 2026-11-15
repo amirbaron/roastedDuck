@@ -1075,6 +1075,13 @@ impl LogManager {
         self.lock().storage.update_config(config)
     }
 
+    pub(crate) fn register_type(&self, info: LogTypeInfo) {
+        let mut state = self.lock();
+        if state.lookup(&info.name).is_none() {
+            state.log_types.push(info);
+        }
+    }
+
     /// `LogManager::LookupLogType`.
     pub(crate) fn lookup_log_type(&self, name: &str) -> Option<LogTypeInfo> {
         self.lock().lookup(name).cloned()

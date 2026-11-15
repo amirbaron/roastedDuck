@@ -1198,7 +1198,37 @@ impl PlanGenerator {
         Ok(plan)
     }
 
-    fn plan_operator(&mut self, op: LogicalOperator) -> Result<PhysicalRef> {
+    fn plan_operator(&mut self, mut op: LogicalOperator) -> Result<PhysicalRef> {
+        let target = match &op.kind {
+            LogicalKind::Insert(node) => Some(&node.table),
+            LogicalKind::Delete(node) => Some(&node.table),
+            LogicalKind::Update(node) => Some(&node.table),
+            LogicalKind::MergeInto(node) => Some(&node.table),
+            _ => None,
+        };
+        let provider_modify = target
+            .is_some_and(|entry| matches!(&entry.kind, EntryKind::Table(table) if table.backend.is_some()))
+            || match &op.kind {
+                LogicalKind::CreateTable(info) => self.context()?.catalog(&info.catalog)?.backend().is_some(),
+                _ => false,
+            };
+        if provider_modify {
+            fn prepare(plan: &mut LogicalOperator) -> Result<()> {
+                if let LogicalKind::Get(get) = &mut plan.kind
+                    && let Some(callback) = &get.function.prepare_modify
+                    && let Some(data) = &get.bind_data
+                {
+                    get.bind_data = Some(callback(data.as_ref())?);
+                }
+                for child in &mut plan.children {
+                    prepare(child)?;
+                }
+                Ok(())
+            }
+            for child in &mut op.children {
+                prepare(child)?;
+            }
+        }
         let operator_type = op.operator_type();
         let LogicalOperator {
             kind,
