@@ -1,3 +1,28 @@
+Core conformance and PostgreSQL backend checkpoint, November 15, 2026:
+`scripts/conformance.sh` completed on code9b1627fe: 4,897 files, 4,844 PASS,
+33 SKIP and the same20 documented FAIL files; zero ratchet regressions. All43
+status changes from the prior full run are SKIP→PASS. The passing baseline is
+unchanged. Evidence: azure-full-conformance-1.log and
+azure-full-conformance-verification.json under `.context/artifacts/popular-extensions/`.
+
+A new Rust PostgreSQL wire backend now provides streaming binary rows/COPY,
+parameter bytes and type modifiers, owned Tokio runtimes, cancellation and TLS.
+The signed wire probe passes actual TLS/non-superuser checks, binary round trips,
+rollback, cancellation, nested-runtime use/teardown, SSL-mode checks, wrong-host
+and wrong-password controls against PostgreSQL17.11. Reference TLS control passes;
+servers stop cleanly. Strict backend Clippy passes. Dependency audit adds41 Rust
+packages and preserves every previously locked version; no new native library
+package is added. See postgres-wire-control-2, postgres-dependency-audit.json and
+postgres-backend-clippy-final-2.log.
+
+The restored-database fixture passes4 unchanged original files on C++ in
+postgres-upstream-fixture-2. This is oracle fixture qualification only. PostgreSQL
+SQL registration, catalog/transaction/mutation integration and the152-file Rust
+cohort are still pending; LOAD postgres is not yet implemented. OAuth/CRL and other
+libpq option parity remain. The all-five goal also still includes remaining AWS
+web identity/RDS, other extension/platform/package gates and publication. No new
+public release was made. Older checkpoints below retain their original scope.
+
 Azure original-SQL milestone, November 15, 2026: all27 unchanged original files
 now PASS on both C++1.5.6 and Rust, with zero skips, fixture errors or invalid
 authorizations. Receipts: `.context/artifacts/popular-extensions/azure-upstream-all-2/`.

@@ -34,3 +34,38 @@ writes, rollback, query pushdown and a local/remote join, then stops the server.
 The first run passes on C++ 1.5.6 and PostgreSQL 17.11; Rust was not tested because
 the connector is not implemented. This does not replace the 152 original SQL
 files or pool/TLS/authentication/concurrency acceptance.
+
+
+## Wire backend checkpoint (November 15)
+
+`crates/postgres` adds a Rust transport foundation using tokio-postgres0.7.18 and
+Rustls/ring. It does not link libpq or implement a C++ engine adapter. The backend
+has streaming binary results and COPY, raw parameter bytes, column OIDs/type
+modifiers, owned runtimes and query cancellation. Connection/environment/service/
+password-file handling and basic TLS modes are present. SQL registration and
+remote catalog/transaction/mutation hooks are not yet integrated; this is not
+`LOAD postgres` support or completed compatibility acceptance.
+
+The signed wire probe passes against a disposable TLS/SCRAM PostgreSQL17.11 server
+using a non-superuser database-owner role. It verifies actual TLS, binary values,
+server rejection of a mismatched binary parameter, exact COPY round trips,
+rollback, cancellation, operation and teardown within another Tokio runtime,
+SSL modes, CA-versus-hostname verification and wrong-password rejection. The C++
+TLS control passes on the same server. Strict all-target backend Clippy passes.
+The dependency audit preserves all existing locked versions;41 packages are added,
+without new native library packages. Transitive WASM updates were pinned back.
+
+The reusable fixture restores a seeded postgresscanner database before each file.
+TPCH/TPCDS generators are explicitly loaded from owned, signed1.5.6 oracle artifacts
+with automatic loading/downloading disabled. Original setup SQL is checked against
+the pinned archive; client-side COPY avoids server-file privileges. Four unchanged
+originals (types, arrays, SSL, uppercase-name creation) pass on C++ with the final
+CA/server chain; servers stop after both runs. Tests remain unmodified, including
+upstream mode-skip directives.
+
+Receipts under `.context/artifacts/popular-extensions/`: postgres-wire-control-2,
+postgres-upstream-fixture-2, postgres-dependency-audit.json,
+postgres-backend-clippy-final-2.log, and postgres-dataset-oracle-1.
+Still required: SQL/catalog/transaction/writes, full codec/options/pool behavior,
+OAuth/CRL and remaining authentication parity,152 originals and supplemental
+controls, full integration conformance and package/platform/publication gates.
