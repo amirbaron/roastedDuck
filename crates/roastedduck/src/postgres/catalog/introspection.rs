@@ -68,7 +68,6 @@ impl PgCatalog {
             pages: 0,
             names,
             codecs,
-            emit_ctid: true,
         }));
         let mut entry = self.native()?.new_entry(name, EntryKind::Table(table));
         entry.internal = schema.starts_with("pg_") || schema == "information_schema";

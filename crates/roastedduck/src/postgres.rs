@@ -3,6 +3,7 @@ pub(crate) mod auth;
 pub(crate) mod binary_file;
 pub(crate) mod catalog;
 pub(crate) mod hstore;
+mod legacy;
 pub(crate) mod logging;
 mod mutation;
 pub(crate) mod pool;
@@ -14,15 +15,11 @@ pub(crate) use query::query_functions;
 use std::any::Any;
 use std::sync::Arc;
 
-use roastedduck_common::{ByteString, Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
 use roastedduck_function::{
     ExtensionOption, FunctionClient, FunctionData, TableFunction, TableFunctionBindOutput, TableFunctionSet,
 };
-use roastedduck_postgres::{
-    BinaryParameter, Driver, Rows, Session,
-    codec::{Codec, Options},
-    config::Parameters,
-};
+use roastedduck_postgres::{BinaryParameter, Driver, codec::Options, config::Parameters};
 use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 
 pub(crate) struct AttachConfig {
@@ -296,110 +293,8 @@ fn type_options(client: &FunctionClient) -> Options {
     }
 }
 
-#[derive(Debug)]
-struct ScanData {
-    text: bool,
-    driver: Driver,
-    parameters: Parameters,
-    relation: String,
-    names: Vec<String>,
-    codecs: Vec<Codec>,
-    client: Arc<FunctionClient>,
-}
-impl FunctionData for ScanData {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-#[derive(Debug)]
-struct ScanState {
-    // Keep the session alive until its stream is exhausted or the scan is dropped.
-    _session: Session,
-    rows: Rows,
-    columns: Vec<usize>,
-}
-
 pub(crate) fn scan_functions() -> Vec<TableFunctionSet> {
-    ["postgres_scan", "postgres_scan_pushdown"].into_iter().map(|name| {
-        let mut function = TableFunction::new(name, vec![LogicalType::VARCHAR; 3])
-            .with_bind(|input| {
-                let context = input.binder.and_then(|c| c.downcast_ref::<roastedduck_planner::ClientContext>())
-                    .ok_or_else(|| Error::internal("Postgres scan requires a client context"))?;
-                if input.inputs.iter().any(Value::is_null) { return Err(Error::invalid_input("Parameters to postgres_scan cannot be NULL")); }
-                let dsn = input.inputs[0].to_varchar()?;
-                let schema = input.inputs[1].to_varchar()?;
-                let table = input.inputs[2].to_varchar()?;
-                let relation = format!("{}.{}", identifier(&schema), identifier(&table));
-                let parameters = Parameters::parse(&dsn)?;
-                let driver = Driver::new()?;
-                let session = driver.connect(&parameters)?;
-                let columns = session.describe(&format!("SELECT * FROM {relation}"))?;
-                if columns.is_empty() { return Err(Error::invalid_input(format!("Table {table} does not contain any columns."))); }
-                // attndims survives a declared multidimensional array even when
-                // RowDescription alone reports the common array OID.
-                let mut dimensions = session.stream(
-                    "SELECT attname::text,attndims::int4 FROM pg_catalog.pg_attribute WHERE attrelid=$1::text::regclass AND attnum>0 AND NOT attisdropped ORDER BY attnum", &[BinaryParameter(Some(relation.as_bytes().to_vec()))])?;
-                let mut dimensions_by_name = std::collections::HashMap::new();
-                loop {
-                    let batch = dimensions.next_batch(STANDARD_VECTOR_SIZE)?;
-                    if batch.is_empty() { break; }
-                    for row in batch {
-                        let name = row[0].as_ref().and_then(|b| std::str::from_utf8(b).ok()).ok_or_else(|| Error::internal("Invalid Postgres column name"))?;
-                        let bytes: [u8; 4] = row[1].as_deref().and_then(|b| b.try_into().ok()).ok_or_else(|| Error::internal("Invalid Postgres array dimensions"))?;
-                        dimensions_by_name.insert(name.to_owned(), i32::from_be_bytes(bytes).max(0) as usize);
-                    }
-                }
-                let options = type_options(&context.function_client);
-                let codecs = columns.iter().map(|c| Codec::new(&c.data_type, c.type_modifier, dimensions_by_name.get(&c.name).copied().unwrap_or(0), options)).collect::<Result<Vec<_>>>()?;
-                let names = columns.into_iter().map(|c| c.name).collect::<Vec<_>>();
-                Ok(TableFunctionBindOutput {
-                    return_types: codecs.iter().map(|c| c.logical_type.clone()).collect(),
-                    names: names.iter().map(|s| ByteString::from(s.as_str())).collect(),
-                    bind_data: Some(Arc::new(ScanData { driver, parameters, relation, names, codecs, text: use_text_protocol(&context.function_client), client: Arc::clone(&context.function_client) })),
-                })
-            })
-            .with_scan(|bind_data, column_ids, state, output| {
-                let data = bind_data.and_then(|b| b.as_any().downcast_ref::<ScanData>()).ok_or_else(|| Error::internal("Postgres scan without bind data"))?;
-                if data.client.interrupt_flag().is_some_and(|f| f.load(std::sync::atomic::Ordering::Relaxed)) {
-                    return Err(Error::new(ErrorKind::Interrupt, "Interrupted!"));
-                }
-                if state.local.is_none() {
-                    let columns = column_ids.iter().map(|id| usize::try_from(*id).map_err(|_| Error::internal("Invalid Postgres projected column"))).collect::<Result<Vec<_>>>()?;
-                    // COUNT(*) can request no physical columns. Keep one wire
-                    // column to carry cardinality without returning it to the engine.
-                    let expressions = if columns.is_empty() { vec!["1".to_owned()] } else {
-                        columns.iter().map(|i| {
-                            let name = data.names.get(*i).ok_or_else(|| Error::internal("Invalid Postgres projected column"))?;
-                            let column = identifier(name);
-                            data.codecs[*i].projection(&column)
-                        }).collect::<Result<Vec<_>>>()?
-                    };
-                    let session = data.driver.connect(&data.parameters)?;
-                    let sql = format!("SELECT {} FROM {}", expressions.join(","), data.relation);
-                    let rows = if data.text {session.stream_text(&sql,&[],data.client.interrupt_flag().as_deref())?}
-                        else {session.stream_interruptible(&sql,&[],data.client.interrupt_flag().as_deref())?};
-                    state.local = Some(Box::new(ScanState { _session: session, rows, columns }));
-                }
-                let local = state.local.as_mut().and_then(|s| s.downcast_mut::<ScanState>()).ok_or_else(|| Error::internal("Invalid Postgres scan state"))?;
-                let rows = local.rows.next_batch_interruptible(STANDARD_VECTOR_SIZE, data.client.interrupt_flag().as_deref())?;
-                let mut vectors = local.columns.iter().map(|i| Vector::flat(data.codecs[*i].logical_type.clone(), rows.len())).collect::<Vec<_>>();
-                for (row_index, row) in rows.iter().enumerate() {
-                    for (output_index, column) in local.columns.iter().enumerate() {
-                        let value = if data.text {text::decode(&data.codecs[*column].logical_type,row[output_index].as_deref())?} else {data.codecs[*column].decode(row[output_index].as_deref())?};
-                        vectors[output_index].set_value(row_index, &value)?;
-                    }
-                }
-                *output = DataChunk::new(vectors, rows.len());
-                state.position += rows.len() as u64;
-                Ok(rows.len() == STANDARD_VECTOR_SIZE)
-            });
-        function.projection_pushdown = true;
-        function.projected_output = true;
-        let mut set = TableFunctionSet::new(name);
-        set.add(function);
-        set
-    }).collect()
+    legacy::functions()
 }
 
 fn use_text_protocol(client: &FunctionClient) -> bool {

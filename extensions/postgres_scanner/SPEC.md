@@ -26,6 +26,47 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 
 Contract recorded; not a claim that new functionality passes acceptance.
 
+## Unified scan checkpoint (November 15)
+
+Standalone postgres_scan/postgres_scan_pushdown and postgres_query now use the same
+scan data and executor as attached tables. Standalone binding reads catalog type
+OIDs/page metadata (or the SQL-standard metadata path) and retains independent
+read-only repeatable-read sessions. It never resolves ATTACH's default secret.
+COPY, CTID tasks, snapshot sharing, worker timeouts, LIMIT/OFFSET pushdown, physical
+DML preparation and mixed-scan optimizer grouping are shared. postgres_query keeps
+its parameter rules, use_transaction=false behavior, no CTID splitting, and the
+upstream lack of filter pushdown/cardinality/explain callbacks. Legacy pushdown is
+controlled by the function name, independently of the attached-table setting.
+
+Standalone sessions close directly on early termination rather than draining COPY
+while issuing ROLLBACK. Partial page chunks are combined to the standard vector
+size; ordinary full/query/materialized chunks use the direct path. View mutations
+now request CTIDs and report the server's missing-column error like upstream,
+instead of failing later on an artificial NULL rowid. Query trailing whitespace/
+semicolon handling follows StringUtil::RTrim's platform C-char behavior.
+
+Receipt: .context/artifacts/popular-extensions/postgres-unified-verification.json.
+The complete 152-file original PG inventory remains 145 PASS / 7 SKIP / 0 FAIL
+(postgres-upstream-unified-all-1), with original SQL unchanged. All 21 new paired
+controls pass (postgres-unified-control-2), including executed COPY/filter/limit/
+snapshot evidence, tight-pool mixed joins, query parameters, optimizer-off execution,
+prepared reexecution, timeouts and view diagnostics. Early-close controls pass on
+both engines against a deliberately slow tail (postgres-unified-early-2).
+Final legacy 26, attachment 27, mutation 22, DDL 16, parallel 12, pool 16, codec 39,
+cache 13, secret 30 and interruption 6 cohorts pass (*-final-1). All 279 native/
+planner tests across 45 signed targets pass with TZ=UTC; strict Clippy 2 passes.
+All owned fixtures stopped; no heavy job remains active. Failed exploratory view
+fixtures remain in views-1/2; final controls assert the server diagnostic specifically.
+
+Next: of 26 pinned settings, pg_debug_show_queries and pg_oauth_token remain
+unimplemented. Source notes are in .context/postgres-auth-settings-next.md. Complete
+those actual behaviors, vendor/version/snapshot/error-path audit, remaining auth
+and skipped-prerequisite supplements, then provider/platform/package qualification
+and PyPI/Homebrew delivery. Keep the original four mysql-scanner guards and other
+skips explicit. The last full core run is frozen 66389563; its ART regression was
+fixed by e6504e3a and the targeted original passes, but final-source full core is
+still required. The all-five goal remains active/incomplete; no new public release.
+
 ## Secrets/storage checkpoint (November 15)
 
 Latest full original PG inventory: 145 PASS / 7 SKIP / 0 FAIL on Rust

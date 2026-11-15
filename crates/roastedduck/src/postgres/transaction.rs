@@ -370,38 +370,6 @@ impl PgTransaction {
         }
         Ok(result)
     }
-    pub fn cursor(
-        &self,
-        sql: &str,
-        parameters: &[BinaryParameter],
-        codecs: Vec<Decoder>,
-        use_transaction: bool,
-        text: bool,
-    ) -> Result<Arc<Mutex<Cursor>>> {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        self.prepare(&mut state, use_transaction)?;
-        let rows = super::logging::query(&self.client, sql, || {
-            if text {
-                state
-                    .session()?
-                    .stream_text(sql, parameters, self.client.interrupt_flag().as_deref())
-            } else {
-                state.session()?.stream_interruptible(
-                    sql,
-                    parameters,
-                    self.client.interrupt_flag().as_deref(),
-                )
-            }
-        })?;
-        let cursor = Arc::new(Mutex::new(Cursor {
-            source: Some(Source::Rows(rows)),
-            codecs,
-            client: self.client.clone(),
-            buffered: None,
-        }));
-        state.cursors.push(Arc::downgrade(&cursor));
-        Ok(cursor)
-    }
     pub fn cursor_query(
         &self,
         sql: &str,
@@ -467,9 +435,14 @@ impl PgTransaction {
             .ok_or_else(|| Error::internal("Snapshot query returned no row"))?
             .to_varchar()
     }
-    pub(super) fn copy_cursor(&self, sql: &str, codecs: Vec<Decoder>) -> Result<Arc<Mutex<Cursor>>> {
+    pub(super) fn copy_cursor(
+        &self,
+        sql: &str,
+        codecs: Vec<Decoder>,
+        use_transaction: bool,
+    ) -> Result<Arc<Mutex<Cursor>>> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        self.prepare(&mut state, true)?;
+        self.prepare(&mut state, use_transaction)?;
         let rows = super::logging::query(&self.client, sql, || {
             state
                 .session()?
@@ -489,6 +462,17 @@ impl PgTransaction {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .materialize(&self.buffer_manager)
+    }
+    /// Standalone scan sessions are closed, not returned to an attached pool.
+    pub(super) fn close(&self) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        state.finished = true;
+        for cursor in state.cursors.drain(..).filter_map(|c| c.upgrade()) {
+            cursor.lock().unwrap_or_else(PoisonError::into_inner).close();
+        }
+        let lease = state.lease.take();
+        drop(state);
+        drop(lease);
     }
     pub(super) fn finish(&self, commit: bool) -> Result<()> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);

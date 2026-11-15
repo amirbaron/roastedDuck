@@ -402,7 +402,6 @@ impl PgCatalog {
             },
             names,
             codecs,
-            emit_ctid: !matches!(row[2].as_str(), Some("v" | "f")),
         }));
         let mut entry = self.native()?.new_entry(name, EntryKind::Table(table));
         entry.comment = row[3].clone();
@@ -920,7 +919,6 @@ struct PgTable {
     relation: String,
     names: Vec<String>,
     codecs: Vec<Codec>,
-    emit_ctid: bool,
 }
 impl TableBackend for PgTable {
     fn validate_insert(&self, returning: bool) -> Result<()> {
