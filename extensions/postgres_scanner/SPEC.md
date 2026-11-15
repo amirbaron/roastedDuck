@@ -26,13 +26,62 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 
 Contract recorded; not a claim that new functionality passes acceptance.
 
+## Codec and legacy scanner checkpoint (November 15)
+
+Normal builds now register bundled `LOAD postgres` / `postgres_scanner`,
+`postgres_scan`, `postgres_scan_pushdown` and legacy `postgres_attach`.
+The scans stream projected binary rows through Rust codecs. The legacy attach
+function creates views using a separate DuckDB connection, matching the pinned
+source; it is not the implementation of SQL `ATTACH ... TYPE postgres`.
+Actual filter pushdown and remote catalog/transaction/mutation hooks are pending.
+
+The codecs distinguish table metadata from `postgres_query`'s narrower OID
+whitelist. They implement numerics, temporal types, UUID byte order, arrays,
+enum/composite values and PostgreSQL geometric primitives. Unknown scalar/array
+element types use PostgreSQL-side VARCHAR/VARCHAR[] casts. Binary parameter
+encoding follows the DuckDB input type. Exhausted row and COPY streams stay
+exhausted; interruptible row reads send PostgreSQL's cancellation request.
+
+The signed development image passes 39 value-and-logical-type comparisons:
+13 actual Rust SQL scans and 26 backend table/query-mapping controls, each compared
+to C++ 1.5.6 on PostgreSQL 17.11. Seven parameter types also round-trip through the
+real server, including DECIMAL(38,38), UUID and nullable multidimensional arrays.
+Twenty-five paired SQL controls pass projections, batching, joins, prepared reuse,
+array shape errors, quoted names, settings and legacy view-creation behavior.
+The Rust API interruption probe waits for `pg_stat_activity.wait_event='PgSleep'`,
+interrupts the query, observes it stop on the server, then reuses the connection.
+All owned servers stop after testing. Strict all-target backend/runtime Clippy
+and all 23 signed runtime library unit tests pass.
+
+Two supplemental assumptions were corrected against the actual pinned source
+and oracle, without changing any upstream SQL: direct legacy scans/attach do not
+check `enable_external_access`; legacy `PostgresBind` leaves parser `type_config`
+at its defaults, so numeric NaN remains NULL after `pg_numeric_nan_as_null=false`.
+The new runtime preserves those behaviors. SQL ATTACH's distinct access checks
+remain required. Legacy attach also accepts but ignores `suffix` and discards
+per-view creation errors, as the pinned `AttachFunction` does.
+
+Receipts under `.context/artifacts/popular-extensions/`:
+`postgres-codec-control-4`, `postgres-scan-control-2`,
+`postgres-scan-clippy-4.log`, `postgres-codec-unit-tests.log`,
+`postgres-wire-control-3`, `postgres-upstream-scanner-1`, and
+`postgres-runtime-unit-tests.{log,json}`. Earlier failures
+remain in control1 directories; they include an exhausted-row-stream defect fixed in the backend and the two
+incorrect supplemental assumptions above. Seven unchanged originals also pass
+on both engines: bug63, count_star,
+decimals (with the upstream slow prerequisite enabled), interval, missing_table,
+nulls and ssl. The four malformed-codec tests and updated wire probe pass.
+These checks do not qualify the 152-file suite or SQL ATTACH/query/write/pool/authentication integration.
+
+## Initial oracle fixture
+
 The pinned `database-connector` submodule is
 `0a8505f775dae7bb30edd37f848d5975bf72884e`. A basic reference fixture is executable
 with `scripts/postgres-tests/oracle_control.py`. It creates a fresh, loopback-only
 PostgreSQL cluster under the supplied artifact directory, verifies remote reads,
 writes, rollback, query pushdown and a local/remote join, then stops the server.
 The first run passes on C++ 1.5.6 and PostgreSQL 17.11; Rust was not tested because
-the connector is not implemented. This does not replace the 152 original SQL
+the connector was not implemented at that checkpoint. This does not replace the 152 original SQL
 files or pool/TLS/authentication/concurrency acceptance.
 
 

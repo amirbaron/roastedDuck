@@ -274,6 +274,7 @@ pub(crate) fn static_extension_loaded(cache: &roastedduck_function::ObjectCache,
 /// An extension linked into the engine whose functions are registered on load.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StaticExtension {
+    Postgres,
     Azure,
     Aws,
     Httpfs,
@@ -301,6 +302,7 @@ impl StaticExtension {
 
     fn from_name(name: &str) -> Option<Self> {
         match name {
+            "postgres_scanner" | "postgres" => Some(Self::Postgres),
             "azure" => Some(Self::Azure),
             "aws" => Some(Self::Aws),
             "httpfs" => Some(Self::Httpfs),
@@ -332,7 +334,9 @@ impl StaticExtension {
             }
             Self::Tpch => PragmaFunction::call("tpch", vec![LogicalType::BIGINT]).with_query(),
             Self::Tpcds => PragmaFunction::call("tpcds", vec![LogicalType::BIGINT]).with_query(),
-            Self::Azure | Self::Aws | Self::Httpfs | Self::Autocomplete | Self::Icu => return Vec::new(),
+            Self::Postgres | Self::Azure | Self::Aws | Self::Httpfs | Self::Autocomplete | Self::Icu => {
+                return Vec::new();
+            }
         };
         vec![PragmaFunctionSet::single(function)]
     }
@@ -343,7 +347,8 @@ impl StaticExtension {
         match self {
             Self::Tpch => name.eq_ignore_ascii_case(b"tpch"),
             Self::Tpcds => name.eq_ignore_ascii_case(b"tpcds"),
-            Self::Azure
+            Self::Postgres
+            | Self::Azure
             | Self::Aws
             | Self::Httpfs
             | Self::Fts
@@ -361,7 +366,8 @@ impl StaticExtension {
         match self {
             Self::Tpch => roastedduck_tpch::pragma_tpch_query(parameters),
             Self::Tpcds => roastedduck_tpcds::pragma_tpcds_query(parameters),
-            Self::Azure
+            Self::Postgres
+            | Self::Azure
             | Self::Aws
             | Self::Httpfs
             | Self::Fts
@@ -382,6 +388,12 @@ impl StaticExtension {
             system.register_pragma_functions(set)?;
         }
         match self {
+            Self::Postgres => {
+                system.register_table_functions(crate::postgres::attach_function())?;
+                for set in crate::postgres::scan_functions() {
+                    system.register_table_functions(set)?;
+                }
+            }
             Self::Aws => {
                 system.register_table_functions(crate::aws::legacy_function())?;
             }
@@ -801,6 +813,11 @@ impl DatabaseInstance {
                     ))),
                 );
                 for option in roastedduck_httpfs::azure::options() {
+                    self.add_extension_option(option);
+                }
+            }
+            if extension == StaticExtension::Postgres {
+                for option in crate::postgres::options() {
                     self.add_extension_option(option);
                 }
             }

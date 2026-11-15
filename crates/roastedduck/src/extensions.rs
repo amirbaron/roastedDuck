@@ -70,8 +70,9 @@ const DEFAULT_EXTENSIONS: [(&str, &str); 30] = [
 ];
 
 /// The extensions the reference build links (loading them is a no-op).
-const LINKED_EXTENSIONS: [&str; 12] = [
+const LINKED_EXTENSIONS: [&str; 13] = [
     "core_functions",
+    "postgres_scanner",
     "azure",
     "aws",
     "httpfs",

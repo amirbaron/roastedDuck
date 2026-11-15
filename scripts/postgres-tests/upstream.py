@@ -49,6 +49,7 @@ def main():
     parser.add_argument('--engine',choices=['cpp','rust','both'],default='cpp')
     parser.add_argument('--file',action='append')
     parser.add_argument('--all',action='store_true')
+    parser.add_argument('--slow',action='store_true',help='Enable POSTGRES_TEST_SLOW for an explicitly selected cohort')
     args=parser.parse_args()
     if args.all and args.file:
         parser.error('--all and --file are mutually exclusive')
@@ -81,7 +82,7 @@ def main():
         env=dict(cluster.environment,POSTGRES_TEST_DATABASE_AVAILABLE='1',
                  SLT_ORACLE_EXTENSION_DIRECTORY=str(extensions),TMPDIR=str(cluster.tmp))
         env.pop('LOCAL_EXTENSION_REPO',None)
-        if args.all:
+        if args.all or args.slow:
             env['POSTGRES_TEST_SLOW']='1'
         for engine in ['cpp','rust']:
             if args.engine not in ['both',engine]:

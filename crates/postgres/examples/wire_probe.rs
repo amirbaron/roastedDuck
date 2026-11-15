@@ -97,6 +97,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     while let Some(chunk) = copied.next_chunk()? {
         output.extend_from_slice(&chunk);
     }
+    if copied.next_chunk()?.is_some() || copied.next_chunk()?.is_some() {
+        return Err("COPY stream resumed after EOF".into());
+    }
     if output != expected {
         return Err("COPY output bytes mismatch".into());
     }

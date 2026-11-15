@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 roastedduck-common.workspace = true
+roastedduck-types.workspace = true
 bytes = "1"
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
 tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "net", "time", "sync", "io-util"] }

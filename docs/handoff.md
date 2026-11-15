@@ -1,3 +1,28 @@
+PostgreSQL codec and legacy SQL checkpoint, November 15, 2026:
+normal builds now register bundled LOAD postgres, postgres_scan,
+postgres_scan_pushdown and postgres_attach. The legacy attach creates views,
+matching upstream; SQL ATTACH's remote catalog/transactions/writes remain pending,
+as do actual filter pushdown, pooling, remaining authentication/options and the
+full 152-file suite. Fresh integration conformance and package/platform gates
+remain. No new public release; the all-five goal remains active.
+
+Seven unchanged scanner originals pass on both engines, including the exhaustive
+slow decimal test (postgres-upstream-scanner-1). Thirty-nine value/type comparisons
+pass: 13 actual SQL scans and 26 backend table/query-mapping cases
+(postgres-codec-control-4). Twenty-five paired SQL controls and the Rust API/server
+cancellation control pass (postgres-scan-control-2). Four malformed-codec tests,
+the updated TLS/SCRAM/wire/COPY probe and strict backend/runtime Clippy pass
+(postgres-codec-unit-tests.log, postgres-wire-control-3, postgres-scan-clippy-4.log).
+All 23 signed runtime library unit tests also pass (postgres-runtime-unit-tests.log).
+Owned PostgreSQL servers are stopped. Receipts are under
+`.context/artifacts/popular-extensions/`; the extension spec records exact scope.
+
+Pinned legacy quirks are preserved: direct scan/attach does not inspect
+`enable_external_access`, and legacy scans keep numeric NaN-as-NULL even after
+`pg_numeric_nan_as_null=false`. SQL ATTACH has separate access checks to implement.
+The backend now preserves EOF on repeated row/COPY reads and sends real PostgreSQL
+cancellation requests while blocked. No locked package version changed.
+
 Core conformance and PostgreSQL backend checkpoint, November 15, 2026:
 `scripts/conformance.sh` completed on code9b1627fe: 4,897 files, 4,844 PASS,
 33 SKIP and the same20 documented FAIL files; zero ratchet regressions. All43

@@ -32,4 +32,18 @@ The initial four-file oracle cohort passes against PostgreSQL17.11. This qualifi
 the fixture, not Rust SQL support. `wire_control.py` separately exercises the signed
 Rust backend probe against an owned CA/server certificate chain and non-superuser
 role. It checks the reference TLS connection, backend protocol controls and server
-cleanup. Runtime SQL/catalog integration is still pending.
+cleanup. Runtime scan/legacy-attach registration is now present; SQL ATTACH's
+catalog/transaction/mutation integration remains pending.
+
+`codec_control.py --probe ... --cli ... --oracle ... --extension ... --out ...`
+compares 39 value and logical-type cases. Thirteen use the Rust SQL runtime; 26
+use the codec driver for table/query mappings whose runtime integration is still
+pending. The probe also round-trips seven parameter types through PostgreSQL.
+`scan_control.py --cli ... --oracle ... --extension ... --out ...` checks 25 paired
+SQL cases; `--interrupt-probe .../postgres_interrupt_probe` adds an API cancellation
+check that observes the server's `PgSleep` state before and after interruption.
+Both drivers require the owned TLS/SCRAM cluster and retain raw results and hashes.
+
+Use `upstream.py --slow` to supply POSTGRES_TEST_SLOW for selected original files,
+such as `test/sql/scanner/decimals.test`; `--all` also supplies it. Original SQL
+and reference expectations remain unchanged.

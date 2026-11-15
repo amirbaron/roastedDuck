@@ -1,4 +1,5 @@
 //! First-party PostgreSQL backend. SQL/catalog integration is owned by the runtime.
+pub mod codec;
 pub mod config;
 mod tls;
 
@@ -8,10 +9,47 @@ use roastedduck_common::{Error, ErrorKind, Result};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio_postgres::types::{FromSql, IsNull, ToSql, Type, to_sql_checked};
 
 fn error(error: impl std::fmt::Display) -> Error {
     Error::new(ErrorKind::Io, error.to_string())
+}
+
+/// Retain the pending future across timer ticks. Dropping/recreating a query on
+/// each tick could execute it twice. On interruption, send PostgreSQL's separate
+/// cancellation request before returning ownership to the caller.
+async fn interruptible<F: Future>(
+    future: F,
+    interrupted: Option<&AtomicBool>,
+    token: &tokio_postgres::CancelToken,
+    parameters: &config::Parameters,
+) -> Result<F::Output> {
+    let Some(interrupted) = interrupted else {
+        return Ok(future.await);
+    };
+    if interrupted.load(Ordering::Relaxed) {
+        return Err(Error::new(ErrorKind::Interrupt, "Interrupted!"));
+    }
+    let mut future = std::pin::pin!(future);
+    loop {
+        match tokio::time::timeout(std::time::Duration::from_millis(20), future.as_mut()).await {
+            Ok(result) => return Ok(result),
+            Err(_) if interrupted.load(Ordering::Relaxed) => {
+                let cancel = async {
+                    if parameters.get("sslmode") == Some("disable") {
+                        let _ = token.cancel_query(tokio_postgres::NoTls).await;
+                    } else if let Ok(connector) = tls::connector(parameters) {
+                        let _ = token.cancel_query(connector).await;
+                    }
+                };
+                // A dead endpoint must not turn cancellation into an unbounded wait.
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), cancel).await;
+                return Err(Error::new(ErrorKind::Interrupt, "Interrupted!"));
+            }
+            Err(_) => {}
+        }
+    }
 }
 
 #[allow(
@@ -198,19 +236,37 @@ impl Session {
             .map_err(pg_error)
     }
     pub fn stream(&self, sql: &str, parameters: &[BinaryParameter]) -> Result<Rows> {
-        let statement = self.driver.wait(self.client.prepare(sql))?.map_err(pg_error)?;
-        let cols = columns(&statement);
-        let stream = self
-            .driver
-            .wait(
-                self.client
-                    .query_raw(&statement, parameters.iter().map(|p| p as &(dyn ToSql + Sync))),
-            )?
-            .map_err(pg_error)?;
+        self.stream_interruptible(sql, parameters, None)
+    }
+    pub fn stream_interruptible(
+        &self,
+        sql: &str,
+        parameters: &[BinaryParameter],
+        interrupted: Option<&AtomicBool>,
+    ) -> Result<Rows> {
+        let token = self.client.cancel_token();
+        let (cols, stream) = self.driver.wait(interruptible(
+            async {
+                let statement = self.client.prepare(sql).await.map_err(pg_error)?;
+                let cols = columns(&statement);
+                let stream = self
+                    .client
+                    .query_raw(&statement, parameters.iter().map(|p| p as &(dyn ToSql + Sync)))
+                    .await
+                    .map_err(pg_error)?;
+                Ok::<_, Error>((cols, stream))
+            },
+            interrupted,
+            &token,
+            &self.parameters,
+        ))???;
         Ok(Rows {
             driver: self.driver.clone(),
             columns: cols,
             stream: Box::pin(stream),
+            exhausted: false,
+            cancel_token: token,
+            parameters: self.parameters.clone(),
         })
     }
     pub fn copy_out(&self, sql: &str) -> Result<CopyReader> {
@@ -218,6 +274,7 @@ impl Session {
         Ok(CopyReader {
             driver: self.driver.clone(),
             stream: Box::pin(stream),
+            exhausted: false,
         })
     }
     pub fn copy_in(&self, sql: &str) -> Result<CopyWriter> {
@@ -248,6 +305,9 @@ pub struct Rows {
     driver: Driver,
     pub columns: Vec<Column>,
     stream: Pin<Box<tokio_postgres::RowStream>>,
+    exhausted: bool,
+    cancel_token: tokio_postgres::CancelToken,
+    parameters: config::Parameters,
 }
 impl std::fmt::Debug for Rows {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -258,30 +318,47 @@ impl std::fmt::Debug for Rows {
 }
 impl Rows {
     pub fn next_batch(&mut self, limit: usize) -> Result<Vec<Vec<Option<Vec<u8>>>>> {
+        self.next_batch_interruptible(limit, None)
+    }
+    pub fn next_batch_interruptible(
+        &mut self,
+        limit: usize,
+        interrupted: Option<&AtomicBool>,
+    ) -> Result<Vec<Vec<Option<Vec<u8>>>>> {
+        if self.exhausted {
+            return Ok(Vec::new());
+        }
         let driver = self.driver.clone();
-        driver.wait(async {
-            let mut result = Vec::new();
-            while result.len() < limit {
-                let Some(row) = self.stream.as_mut().try_next().await.map_err(pg_error)? else {
-                    break;
-                };
-                result.push(
-                    (0..row.len())
-                        .map(|i| {
-                            row.try_get::<_, Option<Raw>>(i)
-                                .map(|v| v.map(|v| v.0))
-                                .map_err(pg_error)
-                        })
-                        .collect::<Result<_>>()?,
-                );
-            }
-            Ok(result)
-        })?
+        driver.wait(interruptible(
+            async {
+                let mut result = Vec::new();
+                while result.len() < limit {
+                    let Some(row) = self.stream.as_mut().try_next().await.map_err(pg_error)? else {
+                        self.exhausted = true;
+                        break;
+                    };
+                    result.push(
+                        (0..row.len())
+                            .map(|i| {
+                                row.try_get::<_, Option<Raw>>(i)
+                                    .map(|v| v.map(|v| v.0))
+                                    .map_err(pg_error)
+                            })
+                            .collect::<Result<_>>()?,
+                    );
+                }
+                Ok(result)
+            },
+            interrupted,
+            &self.cancel_token,
+            &self.parameters,
+        ))??
     }
 }
 pub struct CopyReader {
     driver: Driver,
     stream: Pin<Box<tokio_postgres::CopyOutStream>>,
+    exhausted: bool,
 }
 impl std::fmt::Debug for CopyReader {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -290,8 +367,13 @@ impl std::fmt::Debug for CopyReader {
 }
 impl CopyReader {
     pub fn next_chunk(&mut self) -> Result<Option<Bytes>> {
+        if self.exhausted {
+            return Ok(None);
+        }
         let driver = self.driver.clone();
-        driver.wait(self.stream.as_mut().try_next())?.map_err(pg_error)
+        let result = driver.wait(self.stream.as_mut().try_next())?.map_err(pg_error)?;
+        self.exhausted = result.is_none();
+        Ok(result)
     }
 }
 pub struct CopyWriter {
