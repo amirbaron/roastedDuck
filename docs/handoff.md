@@ -1,3 +1,37 @@
+AWS identity checkpoint, November 15, 2026:
+Both previously unqualified AWS originals (web identity and RDS) now pass unchanged
+on C++ DuckDB1.5.6 and Rust. Original hashes are checked. Owned STS/SSO services
+validate the operation, role/token and account/role/bearer fields. RDS's original
+only creates credentials; PostgreSQL signing/consumer fixtures remain separate.
+Together with the earlier18, this brings the retained original inventory to20/21
+passing. The remaining unchanged-credential refresh original keeps its shared
+C++/Rust failure and unchanged SQL; it is not relabeled as a pass. This is not a
+fresh full21-file run or live-AWS qualification.
+
+Rust legacy SSO now reads its SHA1(startURL) token cache beside the configured
+credentials file, matching the pinned C++ SDK1.11.702 instead of the Rust SDK's
+home-directory assumption. Token presence, JSON/expiry validation, SSO region,
+role response and credential expiry use the real provider path. Session-based
+SSO still uses the SDK path and needs separate cache/refresh qualification.
+
+The C++ oracle uses a test-only macOS transport adapter for fixed service hosts.
+DNS/socket routing and CA injection are confined to that child; no system DNS or
+keychain is modified. Bad-CA and wrong-hostname controls prove rejection before
+an AWS request is sent. The helper is not linked into the product. Rust uses a
+loopback HTTP endpoint override; this does not qualify its AWS TLS behavior.
+
+All7 paired SSO cache controls pass, including missing, expired, malformed, empty,
+invalid-expiry and rejected tokens. Offline SQL31, network4 with
+17 independently checked SigV4 requests, 5 native tests/2 signed targets
+(including13 isolated provider cases), and strict Clippy1 pass. No locked package
+or version was added. Receipt: .context/artifacts/popular-extensions/aws-identity-verification.json.
+All owned fixtures stopped. Failed exploratory fixture receipts are retained.
+
+Next: advanced provider matrix (modern SSO cache/refresh, explicit/no-profile
+selection, assume-role, ECS/IMDS), then remaining transport/prerequisite and final
+core/platform/package/publication gates. Notes: .context/aws-next-control.md.
+The all-five goal remains active; no new public release or Core acceptance.
+
 PostgreSQL version/snapshot and CRL checkpoint, November 15, 2026:
 Version detection now uses the pinned SELECT version()/RDS-settings probe for
 both ATTACH and standalone scans, including UNKNOWN fallback on probe failure.

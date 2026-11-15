@@ -485,6 +485,9 @@ impl Context {
         if profile.get("sso_session").is_none() && profile.get("sso_start_url").is_none() {
             return None;
         }
+        if profile.get("sso_session").is_none() {
+            return crate::sso::legacy(profile, &self.sdk).await;
+        }
         let mut contents = "[profile roastedduck-internal-sso]\n".to_owned();
         append_profile_fields(
             &mut contents,

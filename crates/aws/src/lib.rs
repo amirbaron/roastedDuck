@@ -10,6 +10,7 @@ use std::time::SystemTime;
 mod process;
 mod rds;
 mod resolve;
+mod sso;
 pub use rds::{rds_auth_token, rds_unsigned_token};
 pub use resolve::{Request, Resolution, ResolveError, resolve, resolve_configuration};
 

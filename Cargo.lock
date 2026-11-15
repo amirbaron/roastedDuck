@@ -476,6 +476,7 @@ dependencies = [
  "base64-simd",
  "bytes",
  "bytes-utils",
+ "futures-core",
  "http",
  "http-body",
  "http-body-util",
@@ -484,6 +485,8 @@ dependencies = [
  "ryu",
  "serde",
  "time",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -2115,12 +2118,14 @@ dependencies = [
  "aws-config",
  "aws-credential-types",
  "aws-runtime",
+ "aws-sdk-sso",
  "aws-sigv4",
  "aws-smithy-http-client",
  "aws-smithy-types",
  "aws-types",
  "libc",
  "serde_json",
+ "sha1",
  "tokio",
 ]
 
