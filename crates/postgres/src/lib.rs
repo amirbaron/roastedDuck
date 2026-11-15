@@ -1,4 +1,5 @@
 //! First-party PostgreSQL backend. SQL/catalog integration is owned by the runtime.
+pub mod binary_file;
 pub mod codec;
 pub mod config;
 pub mod copy;

@@ -1,3 +1,44 @@
+PostgreSQL binary-file checkpoint, November 15, 2026:
+Normal builds now provide COPY TO/FROM (FORMAT postgres_binary) and
+read_postgres_binary(path, columns=..., buffer_size=...). The Rust implementation
+uses the pinned 19-byte header/row/footer framing, bounded refill behavior,
+caller-supplied types, decimal scale digits, array/composite OIDs, NULL replacement,
+GEOMETRY/EWKB and scalar/temporal encodings. It routes file I/O through existing
+filesystem hooks, handles file URLs/home paths, and enforces external-access rules.
+Prepared scans get fresh cursors; EOF is fused. Bounds/column-count checks fail
+before decoding malformed layouts.
+
+The original binary-to-real-PostgreSQL round trip exposed the old checked timestamp
+epoch conversion; the pinned reader uses wrapping arithmetic. Decoder/writer epoch
+handling now matches it, and date writes enforce the pinned range/message. The
+pg_null_byte_replacement setter now returns the oracle's Binder error for NUL in
+the replacement. No new dependencies, C/C++ product code or feature gates.
+
+Final receipt: .context/artifacts/popular-extensions/postgres-binary-verification.json.
+All7 unchanged binary originals plus attach_types_date/timestamp pass on both
+engines (postgres-upstream-binary-3). All60 controls pass (postgres-binary-control-4):
+11 raw-byte writer comparisons, both read directions, nested values/geometry,
+header/buffer/EOF boundaries, malformed-file diagnostics, prepared scans, NULL and
+numeric-NaN settings. All4 I/O controls pass (postgres-binary-io-1), including actual
+GETs from an owned HTTP server, home paths and disabled reads/writes with no output.
+The HTTP fixture isolates secret storage/proxy configuration and is stopped.
+All27 attachment,22 mutation,16 DDL/export and39 codec SQL regression cases pass
+(postgres-binary-*-regression-1). All219 native tests across39 signed targets pass
+with TZ=UTC (postgres-binary-unit-results.json), and strict Clippy5 passes. CLI SHA
+starts b21c4235070b; SLT starts d5117bd92e79. All owned fixtures stopped; no jobs live.
+Initial failed receipts remain, including invalid control SQL/CRS/URL setup and the
+real timestamp, file-URL and setter-error mismatches corrected by later runs.
+
+Next PG work: connection pooling/session reuse; remaining settings/filter/limit/
+parallel scans; staleness/rebinding; secrets/RDS/logging/authentication; remaining
+original files and prerequisites. Isolate DuckDB persistent-secret directories in
+the upstream PG fixture before default-secret authentication is enabled. The full152
+inventory discovery is postgres-upstream-all-1, not a current full-suite pass.
+The last full core run is frozen83d8da21 (4,844 PASS/33 SKIP/same20 FAIL, no regression);
+it predates the DDL and binary milestones. Final current-source conformance, remaining
+extension/provider/platform/package gates and PyPI/Homebrew delivery remain open.
+The all-five goal is active and incomplete; no new release has been made.
+
 PostgreSQL DDL/export/hstore checkpoint, November 15, 2026:
 The working implementation now creates and lists server-owned indexes, handles
 CREATE INDEX IF NOT EXISTS, creates/replaces/drops views, and sends CHECKPOINT on

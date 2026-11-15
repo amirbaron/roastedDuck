@@ -26,6 +26,41 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 
 Contract recorded; not a claim that new functionality passes acceptance.
 
+## Binary COPY files checkpoint (November 15)
+
+COPY TO/FROM (FORMAT postgres_binary) and read_postgres_binary are registered in
+normal builds. The reader requires a columns struct and accepts buffer_size
+(default32 MiB); it follows the pinned header/row/footer and refill behavior,
+including rows that fit the buffer only after the header is consumed. It verifies
+bounds and column counts before decoding. Prepared executions open fresh readers,
+and repeated EOF reads do not touch the input again.
+
+The file writer preserves the pinned type whitelist, scalar/temporal representation,
+full decimal scale groups, nested array/composite headers and OID restrictions,
+NULL-byte replacement and GEOMETRY/EWKB behavior. Files are uncompressed regardless
+of filename suffix, as in the pinned file-open flags. Existing filesystem adapters
+provide local/registered reads and writes, file/home path handling, logging and
+external-access checks. No PostgreSQL server is needed for these file functions.
+
+The server round trip also corrected timestamp epoch wrapping and date write-range
+errors in the shared wire codec. Invalid NUL replacement settings now produce the
+pinned Binder error. These changes retain the Rust-only implementation and add no
+new dependency or default-off gate.
+
+All seven original binary files and the original date/timestamp files pass on both
+engines. Sixty paired controls pass, including11 byte-identical writer families and
+both read directions, plus four I/O controls with real loopback HTTP GETs and
+access-denial checks. Three native reader tests cover fragmented input, fused EOF,
+row-size boundaries and malformed layouts. All219 tests across39 signed targets
+and strict Clippy5 pass; prior27 attachment/22 mutation/16 DDL/39 codec SQL controls
+remain green. Receipts are postgres-binary-verification.json,
+postgres-upstream-binary-3, postgres-binary-control-4, postgres-binary-io-1 and
+postgres-binary-*-regression-1 under `.context/artifacts/popular-extensions/`.
+Owned servers stop after testing. Broader malformed-layout equivalence is not
+claimed from the tested fixtures.
+
+Complete PG, provider/platform, final core/package and publication gates remain open.
+
 ## DDL, export and hstore checkpoint (November 15)
 
 roastedDuck's compatible implementation now supports server-owned index creation,

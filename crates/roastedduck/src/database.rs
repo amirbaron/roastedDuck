@@ -389,6 +389,8 @@ impl StaticExtension {
         }
         match self {
             Self::Postgres => {
+                system.register_copy_function(crate::postgres::binary_file::copy_function())?;
+                system.register_table_functions(crate::postgres::binary_file::table_function())?;
                 for set in crate::postgres::hstore::functions() {
                     system.register_scalar_functions(set)?;
                 }

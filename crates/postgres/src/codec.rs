@@ -1,6 +1,7 @@
 //! PostgreSQL binary values and DuckDB 1.5.6 extension type mapping.
 //!
 //! Unknown types must be cast by PostgreSQL, never interpreted as UTF-8 binary data.
+mod file;
 mod numeric;
 mod write;
 pub use write::encode_parameter;
@@ -37,6 +38,8 @@ impl Default for Options {
 
 #[derive(Clone, Debug)]
 enum Encoding {
+    Unsupported,
+    NativeGeometry,
     Bool,
     I16,
     I32,
@@ -77,6 +80,7 @@ pub struct Codec {
     pub oid: u32,
     encoding: Encoding,
     options: Options,
+    file_format: bool,
 }
 impl Codec {
     /// `postgres_query` uses the pinned OID whitelist, unlike a catalog table scan.
@@ -141,6 +145,7 @@ impl Codec {
                 oid: ty.oid(),
                 encoding: Encoding::CastToVarchar,
                 options,
+                file_format: false,
             })
         }
     }
@@ -245,6 +250,7 @@ impl Codec {
             oid: ty.oid(),
             encoding,
             options,
+            file_format: false,
         })
     }
 
@@ -321,8 +327,22 @@ impl Codec {
         let Some(bytes) = bytes else {
             return Ok(Value::null(self.logical_type.clone()));
         };
+        if self.file_format
+            && bytes.is_empty()
+            && self.logical_type.id() == roastedduck_types::LogicalTypeId::List
+        {
+            return Ok(Value::from_children(self.logical_type.clone(), Vec::new()));
+        }
         let mut reader = Reader(bytes);
         let value = match &self.encoding {
+            E::Unsupported => return Err(Error::internal(format!("Unsupported Type {}", self.logical_type))),
+            E::NativeGeometry => {
+                let geometry = roastedduck_types::geometry::from_binary(reader.rest(), true)
+                    .ok()
+                    .flatten()
+                    .ok_or_else(|| invalid("Failed to parse Postgres geometry data"))?;
+                Value::bytes(self.logical_type.clone(), &geometry)
+            }
             E::Bool => Value::boolean(reader.u8()? != 0),
             E::I16 => Value::smallint(reader.i16()?),
             E::I32 => Value::integer(reader.i32()?),
@@ -348,10 +368,7 @@ impl Codec {
             E::Date => Value::date(match reader.i32()? {
                 i32::MAX => Date::INFINITY,
                 i32::MIN => Date::NEG_INFINITY,
-                n => Date(
-                    n.checked_add(DATE_EPOCH)
-                        .ok_or_else(|| invalid("PostgreSQL date overflow"))?,
-                ),
+                n => Date(n.wrapping_add(DATE_EPOCH)),
             }),
             E::Time => Value::time(Time(reader.i64()?)),
             E::TimeTz => {
@@ -366,10 +383,7 @@ impl Codec {
                 let timestamp = match reader.i64()? {
                     i64::MAX => Timestamp::INFINITY,
                     i64::MIN => Timestamp::NEG_INFINITY,
-                    n => Timestamp(
-                        n.checked_add(TIMESTAMP_EPOCH)
-                            .ok_or_else(|| invalid("PostgreSQL timestamp overflow"))?,
-                    ),
+                    n => Timestamp(n.wrapping_add(TIMESTAMP_EPOCH)),
                 };
                 if matches!(self.encoding, E::TimestampTz) {
                     Value::timestamp_tz(timestamp)
@@ -392,10 +406,14 @@ impl Codec {
                     .enum_values()
                     .and_then(|v| v.iter().position(|v| v.as_bytes() == label))
                     .ok_or_else(|| {
-                        invalid(format!(
-                            "Could not map ENUM value {}",
-                            String::from_utf8_lossy(label)
-                        ))
+                        Error::new(
+                            if self.file_format {
+                                ErrorKind::Io
+                            } else {
+                                ErrorKind::InvalidInput
+                            },
+                            format!("Could not map ENUM value {}", String::from_utf8_lossy(label)),
+                        )
                     })?;
                 Value::enum_value(self.logical_type.clone(), index as u32)
             }
@@ -439,7 +457,7 @@ impl Codec {
                     for _ in 0..actual {
                         let n = reader.u32()? as usize;
                         reader.u32()?;
-                        if n == 0 {
+                        if n == 0 && !self.file_format {
                             return Err(invalid("Invalid zero-sized PostgreSQL array dimension"));
                         }
                         size = size

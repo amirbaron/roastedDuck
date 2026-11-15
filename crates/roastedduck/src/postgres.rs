@@ -1,4 +1,5 @@
 //! Runtime integration for roastedDuck's compatible PostgreSQL implementation.
+pub(crate) mod binary_file;
 pub(crate) mod catalog;
 pub(crate) mod hstore;
 mod mutation;
@@ -194,7 +195,7 @@ pub(crate) fn options() -> Vec<ExtensionOption> {
         global_by_default: false,
         set_function: Some(Arc::new(|value| {
             if value.as_bytes().is_some_and(|bytes| bytes.contains(&0)) {
-                return Err(Error::invalid_input(
+                return Err(Error::binder(
                     "NULL byte replacement string cannot contain NULL values",
                 ));
             }

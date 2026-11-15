@@ -34,6 +34,15 @@ fn encode(value: &Value) -> Result<Vec<u8>> {
         L::Varchar | L::Blob => required(value.as_bytes())?.to_vec(),
         L::Date => {
             let date = required(value.as_date())?;
+            if date != Date::INFINITY
+                && date != Date::NEG_INFINITY
+                && (date.0 <= -2_440_589 || date.0 >= 2_145_042_906)
+            {
+                return Err(invalid(format!(
+                    "DATE \"{}\" is out of range for Postgres' DATE field",
+                    value.to_varchar()?
+                )));
+            }
             let wire = if date == Date::INFINITY {
                 i32::MAX
             } else if date == Date::NEG_INFINITY {
@@ -65,9 +74,7 @@ fn encode(value: &Value) -> Result<Vec<u8>> {
                     _ => Some(raw),
                 }
                 .ok_or_else(|| invalid("PostgreSQL timestamp overflow"))?;
-                micros
-                    .checked_sub(TIMESTAMP_EPOCH)
-                    .ok_or_else(|| invalid("PostgreSQL timestamp overflow"))?
+                micros.wrapping_sub(TIMESTAMP_EPOCH)
             };
             wire.to_be_bytes().to_vec()
         }
