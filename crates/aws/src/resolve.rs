@@ -346,12 +346,7 @@ impl Context {
         if std::env::var("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI").is_ok_and(|value| !value.is_empty())
             || std::env::var("AWS_CONTAINER_CREDENTIALS_FULL_URI").is_ok_and(|value| !value.is_empty())
         {
-            aws_config::ecs::EcsCredentialsProvider::builder()
-                .configure(&self.providers)
-                .build()
-                .provide_credentials()
-                .await
-                .ok()
+            crate::metadata::ecs(&self.providers, &self.sdk).await
         } else if !std::env::var("AWS_EC2_METADATA_DISABLED")
             .is_ok_and(|value| value.eq_ignore_ascii_case("true"))
         {
@@ -374,12 +369,7 @@ impl Context {
                 let command = nonempty(self.profiles.get_profile(profile)?.get("credential_process"))?;
                 crate::process::credentials(command).await
             }
-            Provider::Instance => aws_config::imds::credentials::ImdsCredentialsProvider::builder()
-                .configure(&self.providers)
-                .build()
-                .provide_credentials()
-                .await
-                .ok(),
+            Provider::Instance => crate::metadata::instance().await,
             Provider::WebIdentity => {
                 let mut builder =
                     aws_config::web_identity_token::WebIdentityTokenCredentialsProvider::builder()

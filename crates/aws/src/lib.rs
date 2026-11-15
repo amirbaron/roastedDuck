@@ -7,6 +7,7 @@
 use std::fmt;
 use std::time::SystemTime;
 
+mod metadata;
 mod process;
 mod rds;
 mod resolve;

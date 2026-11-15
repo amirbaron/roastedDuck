@@ -1,3 +1,44 @@
+AWS metadata-provider checkpoint, November 15, 2026:
+ECS/container credentials now match optional session-token and invalid/missing
+expiry behavior. Expired ECS credentials can create a secret but do not expose
+usable key fields, as upstream. Empty access keys are rejected. Relative URI
+precedence, invalid relative paths and empty relative/token-file variables are
+handled without mutating process environment; the exceptional direct path applies
+HTTP URI/address and header validation. The normal path retains SDK validation
+and token-file handling, with the pinned one-retry policy and metadata timeout.
+Malformed credential responses do not consume additional retries.
+
+IMDS credentials use the existing Rust connector for v2 tokens, first-role lookup,
+v1 fallback,400-token rejection and the pinned disabled/explicit-instance behavior.
+An explicit instance chain resolves even when the default-chain metadata flag is
+off. Instance-profile credentials omit response expiry like the C++ loader and
+reject InternalServiceException. Default-chain ECS failure does not fall through
+to IMDS. No new HTTP stack, locked package/version or C/C++ product dependency
+was added.
+
+All38 paired scenarios/76 records pass on final signed images. SQL outcomes,
+credential exposure, auth headers, retry counts and timeouts are checked. Relative
+URI tests use process-local mapping of fixed metadata IPs to an owned service;
+no system routes/DNS changed. The original web-identity/RDS files pass unchanged
+on both engines. Offline SQL31, network4 with17 verified SigV4 requests, 5 native
+tests/2 signed targets (13 isolated provider cases), and strict Clippy3 pass.
+Receipt: .context/artifacts/popular-extensions/aws-metadata-verification.json.
+All owned jobs/services stopped; failed exploratory receipts remain.
+
+The raw helper source suggested empty-token fallback for unreadable token files,
+but the actual pinned oracle rejects those before HTTP; the implementation and
+controls preserve that observed behavior. All metadata controls set an explicit
+region. Legacy automatic-region, broader IPv6/profile flags and further failure/
+cancellation variations remain outside this checkpoint. CREATE SECRET's region
+selection ends at explicit/settings/env/profile sources; do not add an inferred
+IMDS region to that path merely because the C++ client probes it internally.
+
+Next: assume-role and web-identity profile fallback, remaining provider/PG
+variations, then frozen full inventories/core, platform/packages and publication.
+The original AWS headline stays20/21 across retained receipts, with one shared
+unchanged-credential refresh failure. The goal remains active; no new release
+or Homebrew Core acceptance. Notes: .context/aws-next-control.md.
+
 AWS session SSO checkpoint, November 15, 2026:
 Session SSO now follows the pinned SDK1.11.702 cache and refresh behavior in Rust.
 It reads SHA1(session-name) under the configured credentials directory, refreshes

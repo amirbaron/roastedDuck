@@ -2122,12 +2122,14 @@ dependencies = [
  "aws-sdk-ssooidc",
  "aws-sigv4",
  "aws-smithy-http-client",
+ "aws-smithy-runtime-api",
  "aws-smithy-types",
  "aws-types",
  "libc",
  "serde_json",
  "sha1",
  "tokio",
+ "url",
 ]
 
 [[package]]

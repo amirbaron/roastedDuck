@@ -21,7 +21,17 @@ static int allowed(const char *host) {
       !strcmp(host,"portal.sso.eu-west-1.amazonaws.com") ||
       !strcmp(host,"oidc.eu-west-1.amazonaws.com") || !strcmp(host,"oidc.us-east-2.amazonaws.com"));
 }
+static const char *metadata_port(const char *host) {
+    const char *port=getenv("ROASTEDDUCK_FIXTURE_HTTP_PORT");
+    if(!port || atoi(port)<=0 || atoi(port)>65535)return NULL;
+    return !strcmp(host,"169.254.170.2") || !strcmp(host,"169.254.170.23") || !strcmp(host,"169.254.169.254") ? port : NULL;
+}
+static void route_metadata(struct sockaddr_in *address) {
+    const char *port=metadata_port(inet_ntoa(address->sin_addr));
+    if(port && ntohs(address->sin_port)==80){address->sin_addr.s_addr=htonl(INADDR_LOOPBACK);address->sin_port=htons((unsigned short)atoi(port));}
+}
 static nw_endpoint_t fixture_endpoint(const char *host,const char *port) {
+    if(metadata_port(host) && !strcmp(port,"80"))return nw_endpoint_create_host("127.0.0.1",metadata_port(host));
     if(allowed(host)) {
         fprintf(stderr,"fixture endpoint: %s:%s\n",host,port);
         return nw_endpoint_create_host("127.0.0.1",getenv("ROASTEDDUCK_FIXTURE_TLS_PORT"));
@@ -38,6 +48,7 @@ static FILE *fixture_fopen(const char *path,const char *mode) {
 }
 static int fixture_getaddrinfo(const char *node,const char *service,const struct addrinfo *hints,struct addrinfo **out) {
     if (allowed(node)) {fprintf(stderr,"fixture DNS: %s\n",node);return getaddrinfo("127.0.0.1",service,hints,out);}
+    if(node && metadata_port(node))return getaddrinfo(node,service,hints,out);
     if (!node || !strcmp(node,"localhost") || !strcmp(node,"127.0.0.1") || !strcmp(node,"::1"))
         return getaddrinfo(node,service,hints,out);
     fprintf(stderr,"fixture denied DNS: %s\n",node);return EAI_NONAME;
@@ -49,6 +60,7 @@ static int fixture_connect(int fd,const struct sockaddr *address,socklen_t lengt
     if(address->sa_family==AF_INET) {
         struct sockaddr_in *a=(struct sockaddr_in*)&copy;
         fprintf(stderr,"fixture connect: %s:%u\n",inet_ntoa(a->sin_addr),ntohs(a->sin_port));
+        route_metadata(a);
         if(ntohl(a->sin_addr.s_addr)!=INADDR_LOOPBACK) {errno=EACCES;return -1;}
         if(ntohs(a->sin_port)==443) a->sin_port=htons((unsigned short)atoi(getenv("ROASTEDDUCK_FIXTURE_TLS_PORT")));
     } else if(address->sa_family==AF_INET6) {
@@ -64,6 +76,7 @@ static int fixture_connectx(int fd,const sa_endpoints_t *endpoints,sae_associd_t
     if(destination.ss_family==AF_INET) {
         struct sockaddr_in *a=(struct sockaddr_in*)&destination;
         fprintf(stderr,"fixture connectx: %s:%u\n",inet_ntoa(a->sin_addr),ntohs(a->sin_port));
+        route_metadata(a);
         if(ntohl(a->sin_addr.s_addr)!=INADDR_LOOPBACK){errno=EACCES;return -1;}
         if(ntohs(a->sin_port)==443)a->sin_port=htons((unsigned short)atoi(getenv("ROASTEDDUCK_FIXTURE_TLS_PORT")));
     } else if(destination.ss_family==AF_INET6) {

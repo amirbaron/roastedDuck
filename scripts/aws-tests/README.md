@@ -64,3 +64,17 @@ failed/empty refresh responses, expired returned tokens, read-only cache files,
 refresh-token rotation/reuse, session/legacy fallback, explicit profile selection
 and AWS_DEFAULT_PROFILE precedence. They inspect actual requests and cache files;
 no live SSO login or account is used. Select a subset with repeated `--case`.
+
+`metadata_control.py --slt ... --shim ... --extensions ... --transport ...
+--out ...` exercises ECS/container and IMDS responses. The matrix includes full/
+relative URI selection, empty-variable handling, token-file precedence, optional
+JSON fields, expiry, disabled/explicit instance selection, v2 tokens, v1 fallback,
+malformed data, transient errors, exhausted retries and timeouts. It checks SQL
+outcomes, exposed credential fields, headers and request counts where applicable.
+
+The test adapter additionally maps the fixed metadata IPv4 addresses to an owned
+HTTP port only when ROASTEDDUCK_FIXTURE_HTTP_PORT is set in the test child. Relative
+URI controls apply this adapter to both engines. Other controls use explicit
+loopback endpoints. No system routes, DNS or proxy configuration is changed.
+Controls set a region explicitly; legacy automatic region discovery and broader
+IPv6/profile-flag variations need separate qualification.
