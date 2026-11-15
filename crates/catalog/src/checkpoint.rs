@@ -1247,6 +1247,15 @@ fn build_index_entry(
     info: &CreateInfo,
     stored: UnboundIndexStorage,
 ) -> Result<(CatalogEntry, Arc<DataTable>)> {
+    // CheckpointReader::ReadIndex normalizes files written before property 209.
+    // The catalog entry must retain this default too, including for SQL export.
+    let mut normalized = info.clone();
+    if let CreateInfoKind::Index(index) = &mut normalized.kind
+        && index.index_type_name.is_empty()
+    {
+        index.index_type_name = "ART".into();
+    }
+    let info = &normalized;
     let CreateInfoKind::Index(index) = &info.kind else {
         return Err(Error::internal("expected an index"));
     };

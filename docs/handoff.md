@@ -1,3 +1,17 @@
+Core refresh / legacy ART export correction, November 15, 2026:
+The frozen 66389563 full run finished: 4,843 PASS / 33 SKIP / 21 FAIL. Its only
+status change from the preceding full run was test_art_duckdb_versions.test.
+Exporting the 0.9.1 fixture emitted `USING (` because the old checkpoint omitted
+index_type_name. Pinned CheckpointReader::ReadIndex assigns ART before constructing
+the index entry; the Rust reader now does the same. The unchanged original passes
+(postgres-core-art-fixed-1.jsonl). CPP/Rust export reproduction is retained in
+postgres-core-art-export-1; the full failed snapshot remains in
+postgres-cache-conformance-1. The dashboard reflects latest per-file verdicts,
+including the targeted correction; it is not a full run of the current working tree.
+The passing baseline remains unchanged. Receipt: postgres-core-art-verification.json.
+No heavy core job remains active. PostgreSQL secrets changes are uncommitted and
+under test; inspect current live tools/processes before launching more heavy work.
+
 PostgreSQL catalog/cache checkpoint, November 15, 2026:
 The PostgreSQL full original suite now reports 143 PASS / 2 FAIL / 7 SKIP on Rust
 (postgres-upstream-cache-all-2), versus 145 PASS / 7 SKIP on the C++ oracle. Nine
