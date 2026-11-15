@@ -870,6 +870,8 @@ impl DatabaseInstance {
     }
 
     fn register_http_file_system(&self) -> Result<()> {
+        self.log_manager
+            .register_type(roastedduck_httpfs::client_cache::log_type());
         roastedduck_function::registered_files::Registry::initialize(&self.object_cache)
             .register(Arc::new(roastedduck_httpfs::HttpFileSystem))?;
         roastedduck_function::registered_files::Registry::initialize(&self.object_cache)

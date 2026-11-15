@@ -1,3 +1,34 @@
+HTTPFS connection-pool checkpoint, November 16, 2026:
+Real database-local HTTP client pooling is implemented. Clients are acquired on
+first I/O, shared by file/stream clones and returned on last lease close. Idle
+entries are bounded at256; backend resets reject returning old-generation leases.
+Transport configurations remain isolated; timeouts apply per request. HTTPFSInfo
+hit/miss events reflect actual acquisitions. Default/NULL setting metadata matches
+C++. Azure's separate transport does not enter this HTTPFS pool.
+
+All19 owned scenarios match C++ SQL outcomes, settings, cache events and independent
+wire receipts, including exactly10 accepted TCP connections each. Controls cover
+shared DB connections, credential replacement/removal, timeouts, proxies, disabling/
+re-enabling and backend resets. Both unchanged HTTP and S3 cache originals pass.
+The first Rust control exposed a real issue despite matching cache logs: exact
+range reads dropped bodies before EOF and closed sockets. Finalizing their decoders
+now returns the sockets to ureq's idle pool; streaming ranges finalize likewise.
+Failed exploratory receipts remain; no log-only fake acceptance.
+
+All26 S3 and24 metadata raw-status regressions pass Rust;8 paired diagnostics,
+10 paired download scenarios and42 logging records/request sequences match.
+All15 native HTTPFS tests and strict Clippy2 pass. Final signed pool-build5 is
+qualified by pool-rust-5 and upstream-pool-2. No new dependencies or default-off
+build gate. Receipt: .context/artifacts/popular-extensions/httpfs-pool-verification.json.
+
+Retained aggregate is now97 active originals passing both engines,5 upstream
+mode-disabled files and30 active unresolved: httpfs-originals-audit-3.json. It is
+not a frozen full sweep. Query verification remains a genuine engine gap, not an
+accepted waiver; shared csvbase HTTP500 and C++ large-upload OOM remain explicit.
+Next: query verification and remaining fixtures, then frozen core/platform/package
+qualification and PyPI/Homebrew/Core publication. All owned jobs/services stopped.
+No new publication. packaging/ untouched. See .context/httpfs-acceptance-next.md.
+
 HTTPFS diagnostics/logging checkpoint, November 16, 2026:
 Four more unchanged active originals pass both engines: ca_cert_file, globbing,
 file_system_logging and http_logging. The retained audit is now95 active passing

@@ -295,7 +295,11 @@ impl RequestSigning {
                     .truncate(request.signing.path.len() - request.key.len());
                 request.signing.bucket_request = true;
             }
-            HttpFile::new_request(request.url, request.parameters, Some(request.signing))
+            Ok(HttpFile::new_request(
+                request.url,
+                request.parameters,
+                Some(request.signing),
+            ))
         };
         let changed = |candidate: &HttpFile| {
             let Some(signing) = &candidate.signing else {
@@ -673,7 +677,7 @@ impl S3Request {
             encode(&signing.path, false),
             signing.query
         );
-        let request = HttpFile::new_request(url, self.parameters.clone(), Some(signing.clone()))?;
+        let request = HttpFile::new_request(url, self.parameters.clone(), Some(signing.clone()));
         let mut response = request.request("GET", None)?;
         let status = response.status();
         let info = response.extensions().get::<RequestInfo>().cloned();

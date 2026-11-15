@@ -480,7 +480,7 @@ fn send(
             .headers
             .push(("Content-Type".into(), "application/x-www-form-urlencoded".into()));
     }
-    let mut request = HttpFile::new_request(url.into(), parameters, None)?;
+    let mut request = HttpFile::new_request(url.into(), parameters, None);
     request.logger = None;
     request.azure_stats = Some(false);
     request.request_payload(method, None, payload, true)

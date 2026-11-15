@@ -320,7 +320,7 @@ impl Client {
         }
         let mut parameters = self.parameters.clone();
         parameters.headers = headers;
-        let mut request = HttpFile::new_request(url, parameters, None)?;
+        let mut request = HttpFile::new_request(url, parameters, None);
         let split = |value: String| {
             value
                 .split(';')

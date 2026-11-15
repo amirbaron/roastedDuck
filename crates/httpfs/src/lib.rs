@@ -11,6 +11,7 @@ use ureq::unversioned::transport::{Connector as _, TcpConnector};
 
 pub mod azure;
 mod body;
+pub mod client_cache;
 mod download;
 pub mod huggingface;
 pub use body::BodyReader;
@@ -31,6 +32,18 @@ fn unquote_etag(value: &str) -> &str {
         .strip_prefix('"')
         .and_then(|v| v.strip_suffix('"'))
         .unwrap_or(value)
+}
+
+fn finish_range(reader: &mut impl Read) -> Result<()> {
+    // Completing the decoder returns its TCP connection to ureq's idle pool.
+    // Dropping an exact-length read before EOF would close that connection.
+    if reader.read(&mut [0_u8; 1]).map_err(io_error)? != 0 {
+        return Err(Error::new(
+            ErrorKind::Http,
+            "Server sent back more data than expected, `SET force_download=true` might help in this case",
+        ));
+    }
+    Ok(())
 }
 
 /// Database-provided HTTP secret selection, shared with the core secret manager.
@@ -66,6 +79,12 @@ impl std::fmt::Debug for HttpSecret {
 /// separate: this provider handles only HTTP and HTTPS paths.
 pub fn options() -> Vec<ExtensionOption> {
     let entries = [
+        (
+            "httpfs_connection_caching",
+            "Enable connection caching for HTTP requests",
+            LogicalType::BOOLEAN,
+            Value::boolean(false),
+        ),
         (
             "http_timeout",
             "HTTP timeout read/write/connection/retry (in seconds)",
@@ -163,6 +182,11 @@ pub fn options() -> Vec<ExtensionOption> {
                 if !matches!(value.to_varchar()?.as_str(), "default" | "curl" | "httplib") {
                     return Err(Error::invalid_input("Unsupported option for httpfs_client_implementation, only `curl`, `httplib` and `default` are currently supported"));
                 }
+                client_cache::reset(value.to_varchar()? == "httplib");
+                Ok(())
+            })),
+            "httpfs_connection_caching" => Some(Arc::new(|value| {
+                client_cache::set_enabled(value.as_bool().unwrap_or(false));
                 Ok(())
             })),
             "ca_cert_file" => Some(Arc::new(|value| {
@@ -307,6 +331,15 @@ impl Parameters {
         self.agent_with_resolver(proxy::RequestResolver)
     }
 
+    fn configure_request<B>(&self, request: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
+        request
+            .config()
+            .timeout_connect(Some(Duration::from_secs(self.timeout)))
+            .timeout_per_read(Some(Duration::from_secs(self.timeout)))
+            .timeout_per_write(Some(Duration::from_secs(self.timeout)))
+            .build()
+    }
+
     fn agent_with_resolver(
         &self,
         resolver: impl ureq::unversioned::resolver::Resolver,
@@ -357,7 +390,7 @@ struct HttpFile {
     etag: String,
     download: Arc<download::State>,
     parameters: Parameters,
-    agent: ureq::Agent,
+    agent: Arc<client_cache::Client>,
     signing: Option<s3::RequestSigning>,
     logger: Option<logging::HttpLogger>,
     // Azure's opt-in stats count Content-Length even on HEAD; HTTPFS counts streamed bytes.
@@ -657,6 +690,7 @@ impl HttpFile {
                 template.push('?');
                 template.push_str(query);
             }
+            let agent = agent.get(parameters, &template, self.azure_stats.is_none())?;
             for attempt in 0..=self.parameters.retries {
                 if attempt >= 2 {
                     let delay =
@@ -703,7 +737,7 @@ impl HttpFile {
                     for (name, value) in &headers {
                         request = request.header(name.as_str(), value.as_str());
                     }
-                    request.call()
+                    parameters.configure_request(request).call()
                 } else if matches!(request_method, "POST" | "PUT" | "PATCH") {
                     let mut request = if request_method == "POST" {
                         agent.post(url)
@@ -715,13 +749,13 @@ impl HttpFile {
                     for (name, value) in &headers {
                         request = request.header(name.as_str(), value.as_str());
                     }
-                    request.send(request_payload)
+                    parameters.configure_request(request).send(request_payload)
                 } else if request_method == "DELETE" {
                     let mut request = agent.delete(url);
                     for (name, value) in &headers {
                         request = request.header(name.as_str(), value.as_str());
                     }
-                    request.call()
+                    parameters.configure_request(request).call()
                 } else {
                     let mut request = agent.get(url);
                     for (name, value) in &headers {
@@ -730,7 +764,7 @@ impl HttpFile {
                     if let Some((start, end)) = range {
                         request = request.header("Range", format!("bytes={start}-{end}"));
                     }
-                    request.call()
+                    parameters.configure_request(request).call()
                 };
                 if let Ok(response) = &mut result {
                     response.extensions_mut().insert(observed_headers.names());
@@ -917,24 +951,24 @@ impl HttpFile {
     }
 
     fn open_with(url: String, parameters: Parameters, signing: Option<s3::RequestSigning>) -> Result<Self> {
-        let mut file = Self::new_request(url, parameters, signing)?;
+        let mut file = Self::new_request(url, parameters, signing);
         file.initialize_metadata()?;
         Ok(file)
     }
 
     fn open_with_display(url: String, display_url: String, parameters: Parameters) -> Result<Self> {
-        let mut file = Self::new_request(url, parameters, None)?;
+        let mut file = Self::new_request(url, parameters, None);
         file.display_url = display_url;
         file.initialize_metadata()?;
         Ok(file)
     }
 
-    fn new_request(url: String, parameters: Parameters, signing: Option<s3::RequestSigning>) -> Result<Self> {
-        let agent = parameters.agent()?;
+    fn new_request(url: String, parameters: Parameters, signing: Option<s3::RequestSigning>) -> Self {
+        let agent = Arc::new(client_cache::Client::default());
         let display_url = signing
             .as_ref()
             .map_or_else(|| url.clone(), |s| s.original_path.clone());
-        Ok(Self {
+        Self {
             download: download::State::current(&display_url),
             display_url,
             url,
@@ -949,7 +983,7 @@ impl HttpFile {
             client: roastedduck_function::file_system::opener()
                 .as_ref()
                 .map(Arc::downgrade),
-        })
+        }
     }
 
     fn initialize_metadata(&mut self) -> Result<()> {
@@ -1195,6 +1229,7 @@ impl FileHandle for HttpFile {
             }
         }
         body.read_exact(&mut buffer[..count]).map_err(io_error)?;
+        finish_range(&mut body)?;
         Ok(count)
     }
     fn read_stream(&self) -> Result<Option<Box<dyn Read + Send>>> {
@@ -1294,6 +1329,9 @@ impl Read for HttpReadStream {
             ));
         }
         self.position += read as u64;
+        if self.position == self.end {
+            finish_range(body).map_err(io::Error::other)?;
+        }
         Ok(read)
     }
 }

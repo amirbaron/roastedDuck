@@ -140,3 +140,28 @@ Receipts: `.context/artifacts/popular-extensions/httpfs-observability-verificati
 and `httpfs-originals-audit-2.json`. This is not a frozen full core/platform/package
 sweep. Connection pooling, query verification, remaining fixtures and publication
 are still open.
+
+## Connection cache checkpoint (November 16)
+
+`httpfs_connection_caching` now retains real HTTP clients in a bounded database
+pool, acquiring them lazily on first I/O and returning them when their file's
+last lease closes. HTTPFSInfo events describe actual cache acquisitions. Backend
+resets invalidate old leases; timeout changes apply per request; credential
+headers are rebuilt per request. Completing range response decoders returns TCP
+connections to the client pool instead of closing them prematurely.
+
+Both unchanged HTTP/S3 connection-cache originals pass. Nineteen owned controls
+match C++ in SQL outcomes, setting values, cache events, request sequences and
+ten accepted TCP connections. They cover two connections sharing a database,
+credential replacement/removal, timeouts, proxy traffic, disable/re-enable and
+backend resets. Two native checks cover bounded idle storage and returning a
+client borrowed before a backend reset. All 15 native HTTPFS tests and strict
+Clippy pass; the 26 S3 and 24 metadata raw-status regressions pass, as do the
+paired error/download controls and 42 logging-control records.
+
+The retained audit is now **97 active originals passing both engines**, five
+upstream-disabled files and **30 active originals unresolved**. This is not a
+frozen full sweep. The query-verification gap, external-service failures, remaining
+fixtures, final core/platform/package gates and publication remain open. Evidence:
+`.context/artifacts/popular-extensions/httpfs-pool-verification.json` and
+`httpfs-originals-audit-3.json`.

@@ -238,7 +238,7 @@ impl FileSystem for HuggingFaceFileSystem {
                 "{ENDPOINT}{}{fragment}",
                 if fragment.starts_with('/') { "" } else { "/" }
             );
-            let request = HttpFile::new_request(url, params.clone(), None)?;
+            let request = HttpFile::new_request(url, params.clone(), None);
             let mut response = request.request("GET", None)?;
             let status = response.status().as_u16();
             if status >= 400 {

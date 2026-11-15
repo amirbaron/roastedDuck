@@ -81,3 +81,10 @@ loading, glob errors, cold/warm secret storage with disabled filesystems, and
 prepared secret enumeration. Preserve its verification-enabled cold-bind
 difference until engine query verification is implemented; successful error-status
 assertions alone do not prove matching error text or state transitions.
+
+`connection_cache_control.py` uses an owned HTTP/1.1 keep-alive server to identify
+accepted TCP connections independently of engine logs. Its comparisons cover
+shared-database connections, credentials, timeout changes, proxy requests,
+disable/re-enable and backend resets. Cache-event matches alone are insufficient:
+the server must also observe the expected connection reuse. Only owned endpoint
+ports are normalized in the paired record comparison.
