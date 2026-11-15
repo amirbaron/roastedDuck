@@ -595,9 +595,10 @@ fn create_s3_secret(input: &CreateSecretInput) -> Result<KeyValueSecret> {
             }
         };
         let cast = value.default_cast_as(&ty).map_err(|error| {
+            let message = error.raw_message();
+            let message = message.strip_prefix("Failed to cast value: ").unwrap_or(&message);
             Error::binder(format!(
-                "Failed to cast option '{lower}' to type '{ty}': '{}'",
-                error.raw_message()
+                "Failed to cast option '{lower}' to type '{ty}': '{message}'"
             ))
         })?;
         refresh_fields.push((native, cast.clone()));
@@ -1340,9 +1341,10 @@ impl SecretManager {
             let ty = http_parameter_type(lower)
                 .ok_or_else(|| Error::internal("known HTTP parameter missing type"))?;
             let cast = value.default_cast_as(&ty).map_err(|error| {
+                let message = error.raw_message();
+                let message = message.strip_prefix("Failed to cast value: ").unwrap_or(&message);
                 Error::binder(format!(
-                    "Failed to cast option '{lower}' to type '{ty}': '{}'",
-                    error.raw_message()
+                    "Failed to cast option '{lower}' to type '{ty}': '{message}'"
                 ))
             })?;
             options.insert(lower.to_owned(), cast);
@@ -1610,7 +1612,7 @@ impl SecretManager {
                 matches.push(TEMPORARY_STORAGE);
             }
         } else {
-            match storage {
+            match storage.to_ascii_lowercase().as_slice() {
                 b"local_file" if state.local_file.is_some() => {
                     if in_local {
                         matches.push(LOCAL_FILE_STORAGE);

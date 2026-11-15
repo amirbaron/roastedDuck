@@ -1,3 +1,40 @@
+ICU and HTTPFS acceptance checkpoint, November 15, 2026:
+Fresh ICU acceptance passes all63 unchanged original files on both engines, with
+no failures/skips. The inventory was regenerated from the pinned source and has
+no omitted extension-local SQL files. LOCAL_EXTENSION_REPO is scoped only to its
+requiring original; setting it globally changes runner mode and was an invalid
+fixture configuration (the failed run is retained). Signed ICU/JSON packages now
+supply the local-repository prerequisite. Original SQL and assertions are intact.
+
+Exact Unicode differential output matches72,473 sort keys over137 locale/tag forms
+and528 strings plus NULL. All82 public C API collation records match, including
+values, metadata and errors; all6 ICU native tests pass. The embedded ICU66 data
+SHA256 remains9b5516e7609c98b7e25b6ed27ae60ae2ae49ebe1386fa8ef3bccb37b9df3d5ac.
+Receipt: .context/artifacts/popular-extensions/icu-verification.json. This refresh
+is bounded; it does not claim a rerun of the earlier62-million-key stress set.
+
+The first HTTPFS cohort now passes all24 unchanged metadata/secret originals on
+both engines, including6 authentic historical secret files verified from the
+source archive with private file permissions. Fixes preserve method/URL context
+and curl/httplib reasons for DNS/timeouts, remove a redundant secret-cast wrapper,
+and fold local storage identifiers for DROP SECRET. The HuggingFace cache uses an
+owned token rather than an explicitly missing file. All8 paired diagnostics match,
+all24 transaction cases/412 public C API records match (only owned paths/ports
+normalized), all9 HTTPFS native tests and strict Clippy4 pass. Receipt:
+.context/artifacts/popular-extensions/httpfs-metadata-verification.json.
+
+HTTPFS still has108 original files outside this first cohort. The upstream MinIO/
+mc native downloads return410; pinned source archives and an authenticated Go1.24.2
+toolchain are on the SSD under popular-extensions/httpfs-services. An owned serial
+build controller was started; revalidate its session before any next heavy job.
+No Docker daemon, system DNS/routes or global toolchain setting was changed.
+See .context/httpfs-acceptance-next.md for the live handle and fixture plan.
+
+The whole five-extension goal remains active. Fresh combined service inventories,
+remaining prerequisites/transport scope, final core/platform/package checks and
+PyPI/Homebrew/Core publication are still required. Preexisting packaging/ remains
+untouched. No new public release is claimed.
+
 AWS assume-role/web-identity checkpoint, November 15, 2026:
 STS client region is now separate from the generated secret's region. The client
 uses the pinned SDK default-region precedence and default base credentials;

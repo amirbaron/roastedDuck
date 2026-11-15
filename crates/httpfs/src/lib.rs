@@ -278,7 +278,7 @@ impl Parameters {
     }
 
     fn agent(&self) -> Result<ureq::Agent> {
-        self.agent_with_resolver(ureq::unversioned::resolver::DefaultResolver::default())
+        self.agent_with_resolver(proxy::RequestResolver)
     }
 
     fn agent_with_resolver(
@@ -448,6 +448,26 @@ fn request_error(error: &ureq::Error, method: &str, url: &str, httplib: bool) ->
         };
         return io_error(format!("{reason} error for HTTP {method} to '{url}'"));
     }
+    if let ureq::Error::Other(error) = error {
+        let reason = if error.is::<proxy::HostNameResolutionError>() {
+            Some(if httplib {
+                "Could not establish connection"
+            } else {
+                "Could not resolve hostname"
+            })
+        } else if error.is::<proxy::ProxyNameResolutionError>() {
+            Some(if httplib {
+                "Could not establish connection"
+            } else {
+                "Could not resolve proxy name"
+            })
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            return io_error(format!("{reason} error for HTTP {method} to '{url}'"));
+        }
+    }
     let connection_reason = if httplib {
         "Could not establish connection"
     } else {
@@ -463,7 +483,17 @@ fn request_error(error: &ureq::Error, method: &str, url: &str, httplib: bool) ->
         "URL using bad/illegal format or missing URL"
     };
     let reason = match error {
-        ureq::Error::ConnectionFailed => Some(connection_reason),
+        ureq::Error::Timeout(_) if !httplib => Some("Timeout was reached"),
+        ureq::Error::Timeout(ureq::Timeout::Connect) => Some("Connection timed out"),
+        ureq::Error::Timeout(ureq::Timeout::Resolve) | ureq::Error::ConnectionFailed => {
+            Some(connection_reason)
+        }
+        ureq::Error::Timeout(
+            ureq::Timeout::PerRead | ureq::Timeout::RecvResponse | ureq::Timeout::RecvBody,
+        ) => Some("Failed to read connection"),
+        ureq::Error::Timeout(
+            ureq::Timeout::PerWrite | ureq::Timeout::SendRequest | ureq::Timeout::SendBody,
+        ) => Some("Failed to write connection"),
         ureq::Error::HostNotFound if httplib => Some(connection_reason),
         ureq::Error::BadUri(_) => Some(uri_reason),
         ureq::Error::Io(error)
@@ -484,7 +514,7 @@ fn request_error(error: &ureq::Error, method: &str, url: &str, httplib: bool) ->
     if let Some(reason) = reason {
         return io_error(format!("{reason} error for HTTP {method} to '{url}'"));
     }
-    io_error(error)
+    io_error(format!("{error} error for HTTP {method} to '{url}'"))
 }
 
 /// The installer's streaming GET result. Installer retries and publication stay
@@ -513,7 +543,7 @@ pub fn extension_get(url: &str, etag: Option<&[u8]>) -> std::result::Result<Exte
     parameters.redirects = 0;
     parameters.keep_alive = false;
     let agent = parameters
-        .agent_with_resolver(proxy::InstallerResolver)
+        .agent_with_resolver(proxy::RequestResolver)
         .map_err(|error| error.raw_message().into_owned())?;
     let mut request = agent.get(url);
     for (name, value) in &parameters.headers {

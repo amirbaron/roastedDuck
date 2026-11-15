@@ -41,3 +41,18 @@ Strict all-target Clippy passes; targeted conformance has zero regressions.
 Receipts: `.context/artifacts/popular-extensions/bundled-final/` and
 `conformance-final/`. This does not qualify all 132 upstream HTTPFS files or
 real-cloud interoperability, and is not yet included in a public package.
+
+## Metadata/secret originals checkpoint (November 15)
+
+All24 selected original metadata/secret files pass unchanged on both engines,
+including authentic historical serialized secrets. HTTP DNS/timeout errors now
+retain the method, URL and selected transport's reason. Secret option binding
+uses the underlying cast diagnostic, and local DROP storage names fold case.
+The owned HuggingFace fixture supplies a real fake-token cache file.
+
+Eight paired error controls,24 transaction cases/412 public C API records and9
+native HTTPFS tests pass; strict Clippy4 passes. Receipts are in
+`.context/artifacts/popular-extensions/httpfs-metadata-verification.json`.
+The other108 originals still require service fixtures; this is not full HTTPFS
+or package/release acceptance. Pinned MinIO/mc source preparation is recorded in
+`.context/artifacts/popular-extensions/httpfs-services/source-pins.json`.

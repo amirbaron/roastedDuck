@@ -12,4 +12,10 @@ Acceptance: unchanged upstream ICU SQL tests plus existing normalization, sort-k
 DST and non-Gregorian differential controls against C++ 1.5.6. Data upgrades need
 separate qualification. No new runtime dependency on ICU C/C++.
 
-Status: existing implementation; fresh acceptance pending.
+Status: fresh source acceptance passes63/63 original files on both engines,
+72,473 exact sort keys across137 locale/tag forms,82 matching public C API
+records and6 native tests. Original files and prerequisites are unchanged; the
+local-repository variable is scoped to its requiring test. Data SHA256 remains
+9b5516e7609c98b7e25b6ed27ae60ae2ae49ebe1386fa8ef3bccb37b9df3d5ac.
+Receipt: `.context/artifacts/popular-extensions/icu-verification.json`.
+Final package/platform/source-freeze checks remain separate.
