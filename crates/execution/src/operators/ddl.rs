@@ -35,6 +35,36 @@ pub trait DdlAction: Send + Sync + fmt::Debug {
     fn execute(&self, transaction: &Transaction) -> Result<()>;
 }
 
+#[derive(Debug)]
+pub struct BackendCreateAction {
+    pub catalog: Arc<Catalog>,
+    pub client: Arc<roastedduck_function::FunctionClient>,
+    pub info: CreateInfo,
+}
+impl DdlAction for BackendCreateAction {
+    fn execute(&self, transaction: &Transaction) -> Result<()> {
+        self.catalog
+            .backend()
+            .ok_or_else(|| Error::internal("CREATE without catalog backend"))?
+            .create(&self.client, transaction, &self.info)?;
+        Ok(())
+    }
+}
+#[derive(Debug)]
+pub struct BackendDropAction {
+    pub catalog: Arc<Catalog>,
+    pub client: Arc<roastedduck_function::FunctionClient>,
+    pub info: DropInfo,
+}
+impl DdlAction for BackendDropAction {
+    fn execute(&self, transaction: &Transaction) -> Result<()> {
+        self.catalog
+            .backend()
+            .ok_or_else(|| Error::internal("DROP without catalog backend"))?
+            .drop_entry(&self.client, transaction, &self.info)
+    }
+}
+
 /// Runs a catalog change once and returns no rows.
 #[derive(Debug)]
 pub struct PhysicalDdl {

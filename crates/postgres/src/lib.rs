@@ -1,6 +1,8 @@
 //! First-party PostgreSQL backend. SQL/catalog integration is owned by the runtime.
 pub mod codec;
 pub mod config;
+pub mod copy;
+pub mod parameters;
 mod tls;
 
 use bytes::{Bytes, BytesMut};
@@ -157,6 +159,38 @@ impl Driver {
 /// type, so the server can reject a mismatched inferred type as upstream does.
 #[derive(Clone, Debug)]
 pub struct BinaryParameter(pub Option<Vec<u8>>);
+
+/// SQL `postgres_query` parameters use the pinned extension's per-value wire format.
+#[derive(Clone, Debug)]
+pub struct QueryParameter {
+    pub bytes: Option<Vec<u8>>,
+    pub text: bool,
+}
+impl ToSql for QueryParameter {
+    fn to_sql(
+        &self,
+        _ty: &Type,
+        out: &mut BytesMut,
+    ) -> std::result::Result<IsNull, Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(bytes) = &self.bytes {
+            out.extend_from_slice(bytes);
+            Ok(IsNull::No)
+        } else {
+            Ok(IsNull::Yes)
+        }
+    }
+    fn accepts(_ty: &Type) -> bool {
+        true
+    }
+    fn encode_format(&self, _ty: &Type) -> tokio_postgres::types::Format {
+        if self.text {
+            tokio_postgres::types::Format::Text
+        } else {
+            tokio_postgres::types::Format::Binary
+        }
+    }
+    to_sql_checked!();
+}
 impl ToSql for BinaryParameter {
     fn to_sql(
         &self,
@@ -197,6 +231,12 @@ pub struct Column {
     pub table_oid: Option<u32>,
     pub column_id: Option<i16>,
 }
+
+#[derive(Clone, Debug)]
+pub struct Description {
+    pub columns: Vec<Column>,
+    pub parameter_types: Vec<Type>,
+}
 fn columns(statement: &tokio_postgres::Statement) -> Vec<Column> {
     statement
         .columns()
@@ -229,10 +269,45 @@ impl Session {
             .wait(self.client.batch_execute(sql))?
             .map_err(pg_error)
     }
+    pub fn batch_interruptible(&self, sql: &str, interrupted: Option<&AtomicBool>) -> Result<()> {
+        self.driver
+            .wait(interruptible(
+                self.client.batch_execute(sql),
+                interrupted,
+                &self.client.cancel_token(),
+                &self.parameters,
+            ))??
+            .map_err(pg_error)
+    }
     pub fn describe(&self, sql: &str) -> Result<Vec<Column>> {
         self.driver
             .wait(self.client.prepare(sql))?
             .map(|s| columns(&s))
+            .map_err(pg_error)
+    }
+    pub fn describe_interruptible(&self, sql: &str, interrupted: Option<&AtomicBool>) -> Result<Vec<Column>> {
+        self.driver
+            .wait(interruptible(
+                self.client.prepare(sql),
+                interrupted,
+                &self.client.cancel_token(),
+                &self.parameters,
+            ))??
+            .map(|statement| columns(&statement))
+            .map_err(pg_error)
+    }
+    pub fn describe_query(&self, sql: &str, interrupted: Option<&AtomicBool>) -> Result<Description> {
+        self.driver
+            .wait(interruptible(
+                self.client.prepare(sql),
+                interrupted,
+                &self.client.cancel_token(),
+                &self.parameters,
+            ))??
+            .map(|statement| Description {
+                columns: columns(&statement),
+                parameter_types: statement.params().to_vec(),
+            })
             .map_err(pg_error)
     }
     pub fn stream(&self, sql: &str, parameters: &[BinaryParameter]) -> Result<Rows> {
@@ -244,16 +319,55 @@ impl Session {
         parameters: &[BinaryParameter],
         interrupted: Option<&AtomicBool>,
     ) -> Result<Rows> {
+        let parameters = parameters
+            .iter()
+            .map(|p| p as &(dyn ToSql + Sync))
+            .collect::<Vec<_>>();
+        self.stream_parameters(sql, &parameters, false, interrupted)
+    }
+    pub fn stream_text(
+        &self,
+        sql: &str,
+        parameters: &[BinaryParameter],
+        interrupted: Option<&AtomicBool>,
+    ) -> Result<Rows> {
+        let parameters = parameters
+            .iter()
+            .map(|p| p as &(dyn ToSql + Sync))
+            .collect::<Vec<_>>();
+        self.stream_parameters(sql, &parameters, true, interrupted)
+    }
+    pub fn stream_query(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+        text: bool,
+        interrupted: Option<&AtomicBool>,
+    ) -> Result<Rows> {
+        let parameters = parameters
+            .iter()
+            .map(|p| p as &(dyn ToSql + Sync))
+            .collect::<Vec<_>>();
+        self.stream_parameters(sql, &parameters, text, interrupted)
+    }
+    fn stream_parameters(
+        &self,
+        sql: &str,
+        parameters: &[&(dyn ToSql + Sync)],
+        text: bool,
+        interrupted: Option<&AtomicBool>,
+    ) -> Result<Rows> {
         let token = self.client.cancel_token();
         let (cols, stream) = self.driver.wait(interruptible(
             async {
                 let statement = self.client.prepare(sql).await.map_err(pg_error)?;
                 let cols = columns(&statement);
-                let stream = self
-                    .client
-                    .query_raw(&statement, parameters.iter().map(|p| p as &(dyn ToSql + Sync)))
-                    .await
-                    .map_err(pg_error)?;
+                let stream = if text {
+                    self.client.query_raw_text(&statement, parameters.to_vec()).await
+                } else {
+                    self.client.query_raw(&statement, parameters.to_vec()).await
+                }
+                .map_err(pg_error)?;
                 Ok::<_, Error>((cols, stream))
             },
             interrupted,
@@ -282,6 +396,8 @@ impl Session {
         Ok(CopyWriter {
             driver: self.driver.clone(),
             sink: Box::pin(sink),
+            cancel_token: self.client.cancel_token(),
+            parameters: self.parameters.clone(),
         })
     }
     pub fn cancel(&self) -> Result<()> {
@@ -379,6 +495,8 @@ impl CopyReader {
 pub struct CopyWriter {
     driver: Driver,
     sink: Pin<Box<tokio_postgres::CopyInSink<Bytes>>>,
+    cancel_token: tokio_postgres::CancelToken,
+    parameters: config::Parameters,
 }
 impl std::fmt::Debug for CopyWriter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -387,11 +505,31 @@ impl std::fmt::Debug for CopyWriter {
 }
 impl CopyWriter {
     pub fn write(&mut self, bytes: Bytes) -> Result<()> {
-        let driver = self.driver.clone();
-        driver.wait(self.sink.as_mut().send(bytes))?.map_err(pg_error)
+        self.write_interruptible(bytes, None)
     }
-    pub fn finish(mut self) -> Result<u64> {
+    pub fn write_interruptible(&mut self, bytes: Bytes, interrupted: Option<&AtomicBool>) -> Result<()> {
         let driver = self.driver.clone();
-        driver.wait(self.sink.as_mut().finish())?.map_err(pg_error)
+        driver
+            .wait(interruptible(
+                self.sink.as_mut().send(bytes),
+                interrupted,
+                &self.cancel_token,
+                &self.parameters,
+            ))??
+            .map_err(pg_error)
+    }
+    pub fn finish(self) -> Result<u64> {
+        self.finish_interruptible(None)
+    }
+    pub fn finish_interruptible(mut self, interrupted: Option<&AtomicBool>) -> Result<u64> {
+        let driver = self.driver.clone();
+        driver
+            .wait(interruptible(
+                self.sink.as_mut().finish(),
+                interrupted,
+                &self.cancel_token,
+                &self.parameters,
+            ))??
+            .map_err(pg_error)
     }
 }

@@ -1,4 +1,9 @@
 //! Runtime integration for roastedDuck's compatible PostgreSQL implementation.
+pub(crate) mod catalog;
+mod query;
+mod text;
+mod transaction;
+pub(crate) use query::query_functions;
 use std::any::Any;
 use std::sync::Arc;
 
@@ -12,6 +17,69 @@ use roastedduck_postgres::{
     config::Parameters,
 };
 use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
+
+pub(crate) struct AttachConfig {
+    pub isolation: String,
+    pub schemas: Vec<String>,
+}
+impl AttachConfig {
+    pub fn parse(info: &roastedduck_ast::AttachInfo) -> Result<Self> {
+        let mut result = Self {
+            isolation: "REPEATABLE READ".into(),
+            schemas: Vec::new(),
+        };
+        for (name, value) in info.options.iter() {
+            match name.to_ascii_lowercase().as_bytes() {
+                b"type" | b"readonly" | b"read_only" | b"readwrite" | b"read_write" | b"hidden"
+                | b"default_table" => {}
+                b"isolation_level" => {
+                    let value = value.to_varchar()?;
+                    result.isolation = match value.to_ascii_lowercase().as_str() {
+                        "read committed" => "READ COMMITTED", "repeatable read" => "REPEATABLE READ", "serializable" => "SERIALIZABLE",
+                        _ => return Err(Error::binder(format!("Invalid value \"{value}\" for isolation_level, expected READ COMMITTED, REPEATABLE READ or SERIALIZABLE"))),
+                    }.into();
+                }
+                b"schema" => {
+                    if value.is_null() {
+                        return Err(Error::binder("Value for \"SCHEMA\" option must not be null"));
+                    }
+                    let values = if value.logical_type() == &LogicalType::VARCHAR {
+                        vec![value.clone()]
+                    } else if value.logical_type().child_type() == Some(&LogicalType::VARCHAR) {
+                        value.children().unwrap_or_default().to_vec()
+                    } else {
+                        return Err(Error::binder(format!(
+                            "Value for \"SCHEMA\" option must be either \"VARCHAR\" or \"VARCHAR[]\", was: \"{}\"",
+                            value.logical_type()
+                        )));
+                    };
+                    for value in values {
+                        if value.is_null() {
+                            return Err(Error::binder("Values for \"SCHEMA\" option must not be null"));
+                        }
+                        let name = value.to_varchar()?;
+                        if name.is_empty() {
+                            return Err(Error::binder("Value \"SCHEMA\" option must be not empty"));
+                        }
+                        result.schemas.push(name);
+                    }
+                }
+                b"secret_storage_table" if value.to_varchar()?.is_empty() => {}
+                b"secret" | b"secret_storage_table" => {
+                    return Err(Error::not_implemented(
+                        "Postgres secret-backed attachment is not implemented yet",
+                    ));
+                }
+                _ => {
+                    return Err(Error::binder(roastedduck_common::byte_format!(
+                        "Unrecognized option for Postgres attach: {name}"
+                    )));
+                }
+            }
+        }
+        Ok(result)
+    }
+}
 
 fn identifier(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
@@ -106,14 +174,32 @@ pub(crate) fn attach_function() -> TableFunctionSet {
 }
 
 pub(crate) fn options() -> Vec<ExtensionOption> {
-    [
+    let mut options: Vec<ExtensionOption> = [
+        ("pg_use_text_protocol", "Use text protocol instead of binary protocol", false),
+        ("pg_use_binary_copy", "Whether or not to use BINARY copy to read data", true),
         ("pg_array_as_varchar", "Read Postgres arrays as varchar - enables reading mixed dimensional arrays", false),
         ("pg_numeric_as_varchar", "Read Postgres numerics without precision and scale or precision > 38 as varchar instead of double", false),
         ("pg_numeric_nan_as_null", "Read Postgres numeric NaN value as NULL instead of throwing an error", true),
     ].into_iter().map(|(name, description, default)| ExtensionOption {
         name: name.into(), description: description.into(), input_type: LogicalType::BOOLEAN,
         default_value: Value::boolean(default), set_function: None, global_by_default: false,
-    }).collect()
+    }).collect();
+    options.push(ExtensionOption {
+        name: "pg_null_byte_replacement".into(),
+        description: "When writing NULL bytes to Postgres, replace them with the given character".into(),
+        input_type: LogicalType::VARCHAR,
+        default_value: Value::null(LogicalType::SQLNULL),
+        global_by_default: false,
+        set_function: Some(Arc::new(|value| {
+            if value.as_bytes().is_some_and(|bytes| bytes.contains(&0)) {
+                return Err(Error::invalid_input(
+                    "NULL byte replacement string cannot contain NULL values",
+                ));
+            }
+            Ok(())
+        })),
+    });
+    options
 }
 
 fn type_options(client: &FunctionClient) -> Options {
@@ -137,6 +223,7 @@ fn type_options(client: &FunctionClient) -> Options {
 
 #[derive(Debug)]
 struct ScanData {
+    text: bool,
     driver: Driver,
     parameters: Parameters,
     relation: String,
@@ -194,7 +281,7 @@ pub(crate) fn scan_functions() -> Vec<TableFunctionSet> {
                 Ok(TableFunctionBindOutput {
                     return_types: codecs.iter().map(|c| c.logical_type.clone()).collect(),
                     names: names.iter().map(|s| ByteString::from(s.as_str())).collect(),
-                    bind_data: Some(Arc::new(ScanData { driver, parameters, relation, names, codecs, client: Arc::clone(&context.function_client) })),
+                    bind_data: Some(Arc::new(ScanData { driver, parameters, relation, names, codecs, text: use_text_protocol(&context.function_client), client: Arc::clone(&context.function_client) })),
                 })
             })
             .with_scan(|bind_data, column_ids, state, output| {
@@ -214,7 +301,9 @@ pub(crate) fn scan_functions() -> Vec<TableFunctionSet> {
                         }).collect::<Result<Vec<_>>>()?
                     };
                     let session = data.driver.connect(&data.parameters)?;
-                    let rows = session.stream_interruptible(&format!("SELECT {} FROM {}", expressions.join(","), data.relation), &[], data.client.interrupt_flag().as_deref())?;
+                    let sql = format!("SELECT {} FROM {}", expressions.join(","), data.relation);
+                    let rows = if data.text {session.stream_text(&sql,&[],data.client.interrupt_flag().as_deref())?}
+                        else {session.stream_interruptible(&sql,&[],data.client.interrupt_flag().as_deref())?};
                     state.local = Some(Box::new(ScanState { _session: session, rows, columns }));
                 }
                 let local = state.local.as_mut().and_then(|s| s.downcast_mut::<ScanState>()).ok_or_else(|| Error::internal("Invalid Postgres scan state"))?;
@@ -222,7 +311,7 @@ pub(crate) fn scan_functions() -> Vec<TableFunctionSet> {
                 let mut vectors = local.columns.iter().map(|i| Vector::flat(data.codecs[*i].logical_type.clone(), rows.len())).collect::<Vec<_>>();
                 for (row_index, row) in rows.iter().enumerate() {
                     for (output_index, column) in local.columns.iter().enumerate() {
-                        let value = data.codecs[*column].decode(row[output_index].as_deref())?;
+                        let value = if data.text {text::decode(&data.codecs[*column].logical_type,row[output_index].as_deref())?} else {data.codecs[*column].decode(row[output_index].as_deref())?};
                         vectors[output_index].set_value(row_index, &value)?;
                     }
                 }
@@ -231,8 +320,17 @@ pub(crate) fn scan_functions() -> Vec<TableFunctionSet> {
                 Ok(rows.len() == STANDARD_VECTOR_SIZE)
             });
         function.projection_pushdown = true;
+        function.projected_output = true;
         let mut set = TableFunctionSet::new(name);
         set.add(function);
         set
     }).collect()
+}
+
+fn use_text_protocol(client: &FunctionClient) -> bool {
+    client
+        .settings()
+        .and_then(|s| s.current_setting("pg_use_text_protocol").ok())
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
 }

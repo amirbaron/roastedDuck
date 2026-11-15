@@ -47,3 +47,16 @@ Both drivers require the owned TLS/SCRAM cluster and retain raw results and hash
 Use `upstream.py --slow` to supply POSTGRES_TEST_SLOW for selected original files,
 such as `test/sql/scanner/decimals.test`; `--all` also supplies it. Original SQL
 and reference expectations remain unchanged.
+
+`codec_control.py --runtime-all` moves all 39 mappings onto the Rust SQL runtime.
+`attach_control.py` tests real attachments, queries, DDL/COPY, transaction behavior,
+permissions, self-insert and replacement CTAS. It restores a separate owned database
+for each engine/case. `--case NAME` selects a diagnostic subset.
+`interrupt_control.py --probe .../postgres_interrupt_probe --out ...` verifies
+legacy reads, attached reads and COPY inserts through the public Rust API. It
+observes real server sleep/cancellation, rolled-back rows and transaction cleanup.
+These do not replace the full 152-file inventory or package/platform gates.
+
+For native persistence tests, use `TZ=UTC`: an existing timestamp-rendering
+expectation is explicitly UTC. The local-zone failed receipt remains in the
+checkpoint artifacts; SQL expected results were not rewritten.

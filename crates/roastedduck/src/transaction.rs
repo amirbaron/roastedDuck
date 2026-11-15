@@ -69,6 +69,7 @@ impl TransactionContext {
     /// context.
     fn take_current(&mut self) -> Option<Arc<Transaction>> {
         self.client.set_transaction_context(None);
+        self.client.set_active_transaction(None);
         self.current.take()
     }
 
@@ -101,7 +102,10 @@ impl TransactionContext {
     /// The transaction a statement runs in, starting one if needed. Statements that
     /// require a valid transaction check [`TransactionContext::is_invalidated`] once bound.
     pub fn current(&mut self) -> Arc<Transaction> {
-        Arc::clone(self.current.get_or_insert_with(|| Arc::new(self.manager.begin())))
+        let transaction = Arc::clone(self.current.get_or_insert_with(|| Arc::new(self.manager.begin())));
+        let erased: Arc<dyn std::any::Any + Send + Sync> = transaction.clone();
+        self.client.set_active_transaction(Some(Arc::downgrade(&erased)));
+        transaction
     }
 
     /// The transaction a statement should run in, starting one if needed; fails if the
@@ -233,7 +237,9 @@ impl TransactionContext {
         self.auto_commit = true;
         self.invalidated = false;
         if let Some(transaction) = self.take_current() {
+            let external_result = transaction.rollback_participants();
             self.manager.rollback(&transaction);
+            external_result?;
         }
         Ok(())
     }

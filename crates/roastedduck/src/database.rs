@@ -390,6 +390,9 @@ impl StaticExtension {
         match self {
             Self::Postgres => {
                 system.register_table_functions(crate::postgres::attach_function())?;
+                for set in crate::postgres::query_functions() {
+                    system.register_table_functions(set)?;
+                }
                 for set in crate::postgres::scan_functions() {
                     system.register_table_functions(set)?;
                 }
@@ -1686,6 +1689,7 @@ impl DatabaseInstance {
             return Ok(());
         };
         let storage = match &database.storage {
+            crate::attached::DatabaseStorage::Postgres(_) => return Ok(()),
             crate::attached::DatabaseStorage::File(storage) => storage,
             crate::attached::DatabaseStorage::InMemory(storage) => {
                 storage.add_wal_size(estimated_size);
@@ -4778,6 +4782,32 @@ impl Connection {
                 let duckdb_type = db_type.as_deref() == Some(b"duckdb".as_slice());
                 if let Some(db_type) = db_type.filter(|db_type| db_type != "duckdb") {
                     self.load_storage_extension(&db_type)?;
+                    if db_type.eq_ignore_ascii_case(b"postgres")
+                        || db_type.eq_ignore_ascii_case(b"postgres_scanner")
+                    {
+                        if self.current_setting("enable_external_access")?.as_bool() == Some(false) {
+                            return Err(Error::new(
+                                ErrorKind::Permission,
+                                "Attaching Postgres databases is disabled through configuration",
+                            ));
+                        }
+                        let config = crate::postgres::AttachConfig::parse(info)?;
+                        let instance = self.database.instance();
+                        let attached = instance.databases.attach_postgres(
+                            info,
+                            path,
+                            &options,
+                            config,
+                            &instance.env.buffer_manager,
+                            &instance.validity,
+                        )?;
+                        if let Some(attached) = attached
+                            && !self.transactions.is_auto_commit()
+                        {
+                            self.transaction_attaches.push(attached);
+                        }
+                        return Ok(StatementRun::Done(nothing()));
+                    }
                     return Err(Error::binder(roastedduck_common::byte_format!(
                         "Unrecognized storage type \"{db_type}\""
                     )));

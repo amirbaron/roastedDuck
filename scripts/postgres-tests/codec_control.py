@@ -37,6 +37,7 @@ def main():
     for name in ['probe', 'oracle', 'extension', 'out']:
         parser.add_argument('--'+name, required=True, type=Path)
     parser.add_argument('--cli', type=Path)
+    parser.add_argument('--runtime-all', action='store_true', help='Use the Rust SQL runtime for attached-table and postgres_query cases too')
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=False)
@@ -64,8 +65,9 @@ def main():
             sql = f"LOAD {literal(str(args.extension.resolve()))}; {setup} ATTACH 'dbname=postgresscanner' AS p(TYPE postgres); {statement};"
             cpp = subprocess.run([str(args.oracle.resolve()), '-batch', '-bail', '-csv', '-noheader', '-nullvalue', '__NULL__', '-init', '/dev/null', ':memory:'],
                                  input=sql, env=cluster.environment, text=True, capture_output=True, timeout=40)
-            if args.cli and '--legacy' in flags:
-                rust_sql = f"LOAD postgres; {setup} {statement};"
+            if args.cli and ('--legacy' in flags or args.runtime_all):
+                attachment = "" if '--legacy' in flags else "ATTACH 'dbname=postgresscanner' AS p(TYPE postgres);"
+                rust_sql = f"LOAD postgres; {setup} {attachment} {statement};"
                 rust = subprocess.run([str(args.cli.resolve()), '-batch', '-bail', '-csv', '-noheader', '-nullvalue', '__NULL__', '-init', '/dev/null', ':memory:'],
                                       input=rust_sql, env=cluster.environment, text=True, capture_output=True, timeout=40)
             else:
@@ -74,9 +76,9 @@ def main():
             describe_sql = f"LOAD {literal(str(args.extension.resolve()))}; {setup} ATTACH 'dbname=postgresscanner' AS p(TYPE postgres); DESCRIBE {statement};"
             cpp_types = subprocess.run([str(args.oracle.resolve()), '-batch', '-bail', '-csv', '-noheader', '-init', '/dev/null', ':memory:'],
                                        input=describe_sql, env=cluster.environment, text=True, capture_output=True, timeout=40)
-            if args.cli and '--legacy' in flags:
+            if args.cli and ('--legacy' in flags or args.runtime_all):
                 rust_types = subprocess.run([str(args.cli.resolve()), '-batch', '-bail', '-csv', '-noheader', '-init', '/dev/null', ':memory:'],
-                                            input=f"LOAD postgres; {setup} DESCRIBE {statement};", env=cluster.environment, text=True, capture_output=True, timeout=40)
+                                            input=f"LOAD postgres; {setup} {attachment} DESCRIBE {statement};", env=cluster.environment, text=True, capture_output=True, timeout=40)
                 actual_types = [row[1] for row in csv.reader(io.StringIO(rust_types.stdout))]
             else:
                 rust_types = subprocess.run([str(args.probe.resolve()), str(sql_file), '--types', *flags], env=cluster.environment,
@@ -91,7 +93,7 @@ def main():
             results.append(dict(name=name, rust_exit=rust.returncode, cpp_exit=cpp.returncode, equal=equal, types_equal=types_equal,
                                 passed=rust.returncode == cpp.returncode == 0 and equal and types_equal))
             print(json.dumps(results[-1]), flush=True)
-    report = dict(cases=results, server_stopped=json.loads((out/'cluster/cluster.json').read_text())['server_stopped'],
+    report = dict(runtime_cases=len(results) if args.runtime_all else (len(CASES) if args.cli else 0), cases=results, server_stopped=json.loads((out/'cluster/cluster.json').read_text())['server_stopped'],
                   sha256={name: hashlib.sha256(getattr(args, name).read_bytes()).hexdigest() for name in ['probe','oracle','extension'] + (['cli'] if args.cli else [])})
     (out/'verification.json').write_text(json.dumps(report, indent=2)+'\n')
     if not report['server_stopped'] or not all(r['passed'] for r in results):

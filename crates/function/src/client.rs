@@ -292,6 +292,7 @@ pub struct FunctionClient {
     /// C API reaches through `ClientContext` while `HasActiveTransaction()` (catalog
     /// lookups, constant folding).
     transaction_context: Mutex<Option<Weak<dyn Any + Send + Sync>>>,
+    active_transaction: Mutex<Option<Weak<dyn Any + Send + Sync>>>,
 }
 
 /// The connection's temporary catalog, for functions that keep tables of their own
@@ -327,6 +328,7 @@ impl Default for FunctionClient {
             client_requests: Mutex::default(),
             temp_catalog: Mutex::default(),
             transaction_context: Mutex::default(),
+            active_transaction: Mutex::default(),
         }
     }
 }
@@ -481,6 +483,21 @@ impl FunctionClient {
     /// transaction is open and a statement still uses it.
     pub fn transaction_context(&self) -> Option<Arc<dyn Any + Send + Sync>> {
         self.transaction_context
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .and_then(Weak::upgrade)
+    }
+
+    /// The engine transaction, independent of short-lived planner contexts.
+    pub fn set_active_transaction(&self, transaction: Option<Weak<dyn Any + Send + Sync>>) {
+        *self
+            .active_transaction
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = transaction;
+    }
+    pub fn active_transaction(&self) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.active_transaction
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .as_ref()

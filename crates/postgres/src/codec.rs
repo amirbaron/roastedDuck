@@ -251,6 +251,38 @@ impl Codec {
     pub fn needs_text_cast(&self) -> bool {
         matches!(self.encoding, Encoding::CastToVarchar)
     }
+    pub fn requires_text_copy(&self) -> bool {
+        use Encoding as E;
+        let supported_oid = |ty: &LogicalType| match ty.id() {
+            roastedduck_types::LogicalTypeId::Boolean => Some(16),
+            roastedduck_types::LogicalTypeId::SmallInt => Some(21),
+            roastedduck_types::LogicalTypeId::Integer => Some(23),
+            roastedduck_types::LogicalTypeId::BigInt => Some(20),
+            roastedduck_types::LogicalTypeId::Float => Some(700),
+            roastedduck_types::LogicalTypeId::Double => Some(701),
+            roastedduck_types::LogicalTypeId::Varchar => Some(1043),
+            roastedduck_types::LogicalTypeId::Blob => Some(17),
+            roastedduck_types::LogicalTypeId::Date => Some(1082),
+            roastedduck_types::LogicalTypeId::Time => Some(1083),
+            roastedduck_types::LogicalTypeId::Timestamp => Some(1114),
+            roastedduck_types::LogicalTypeId::TimestampTz => Some(1184),
+            roastedduck_types::LogicalTypeId::TimeTz => Some(1266),
+            roastedduck_types::LogicalTypeId::Interval => Some(1186),
+            roastedduck_types::LogicalTypeId::Uuid => Some(2950),
+            _ => None,
+        };
+        match &self.encoding {
+            E::CastToVarchar | E::FixedChar | E::Jsonb | E::Point | E::Geometry(_) => true,
+            E::Numeric => self.logical_type.decimal_properties().is_none(),
+            E::Array { element, .. } => {
+                supported_oid(&element.logical_type) != Some(element.oid) || element.requires_text_copy()
+            }
+            E::Composite(children) => children
+                .iter()
+                .any(|c| supported_oid(&c.logical_type).is_none() || c.requires_text_copy()),
+            _ => false,
+        }
+    }
 
     /// Server projection corresponding to the pinned scan's casts. Arrays of
     /// unsupported elements remain LIST(VARCHAR), unless the whole-array setting

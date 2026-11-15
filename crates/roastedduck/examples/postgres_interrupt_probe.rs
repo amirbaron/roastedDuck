@@ -3,11 +3,17 @@ use roastedduck_postgres::{Driver, config::Parameters};
 use std::time::{Duration, Instant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mode = std::env::args().nth(1).unwrap_or_else(|| "legacy".into());
     let driver = Driver::new()?;
     let observer = driver.connect(&Parameters::parse("dbname=postgresscanner")?)?;
     let database = roastedduck::Database::open_in_memory()?;
     let mut connection = database.connect()?;
     connection.query("LOAD postgres")?;
+    if mode != "legacy" {
+        connection.query(
+            "ATTACH 'dbname=postgresscanner application_name=roastedduck-scan-interrupt' AS p(TYPE postgres)",
+        )?;
+    }
     let handle = connection.client_handle();
     std::thread::scope(|scope| -> Result<(), Box<dyn std::error::Error>> {
         let watcher = scope.spawn(move || {
@@ -30,13 +36,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Ok::<_, String>(())
         });
-        let error = connection.query("SELECT * FROM postgres_scan('dbname=postgresscanner application_name=roastedduck-scan-interrupt','public','slow_scan')")
-            .err().ok_or("query succeeded despite interruption")?;
+        let sql = match mode.as_str() {
+            "legacy" => {
+                "SELECT * FROM postgres_scan('dbname=postgresscanner application_name=roastedduck-scan-interrupt','public','slow_scan')"
+            }
+            "attached" => "SELECT * FROM p.slow_scan",
+            "insert" => "INSERT INTO p.slow_insert VALUES (1)",
+            _ => return Err("unknown interrupt probe mode".into()),
+        };
+        let error = connection
+            .query(sql)
+            .err()
+            .ok_or("query succeeded despite interruption")?;
         watcher.join().map_err(|_| "interrupt watcher panicked")??;
         if error.kind() != roastedduck_common::ErrorKind::Interrupt {
             return Err(format!("wrong error kind: {error}").into());
         }
         connection.query("SELECT 42")?;
+        let check = driver.connect(&Parameters::parse("dbname=postgresscanner")?)?;
+        if mode == "insert" {
+            let mut rows = check.stream("SELECT count(*)::int4 FROM slow_insert", &[])?;
+            if rows.next_batch(1)? != vec![vec![Some(0i32.to_be_bytes().to_vec())]] {
+                return Err("cancelled COPY committed a row".into());
+            }
+        }
+        let mut rows=check.stream("SELECT count(*)::int4 FROM pg_stat_activity WHERE application_name='roastedduck-scan-interrupt' AND state LIKE 'idle in transaction%'",&[])?;
+        if rows.next_batch(1)? != vec![vec![Some(0i32.to_be_bytes().to_vec())]] {
+            return Err("interruption left an open remote transaction".into());
+        }
         println!("interrupt-ok");
         Ok(())
     })

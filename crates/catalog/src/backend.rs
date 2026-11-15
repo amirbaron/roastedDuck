@@ -21,6 +21,26 @@ pub trait CatalogBackend: std::fmt::Debug + Send + Sync {
         schema: &[u8],
         name: &[u8],
     ) -> Result<Option<Arc<CatalogEntry>>>;
+    fn create(
+        &self,
+        _client: &Arc<FunctionClient>,
+        _transaction: &Transaction,
+        _info: &roastedduck_ast::CreateInfo,
+    ) -> Result<Option<Arc<CatalogEntry>>> {
+        Err(roastedduck_common::Error::not_implemented(
+            "CREATE is not implemented for this catalog",
+        ))
+    }
+    fn drop_entry(
+        &self,
+        _client: &Arc<FunctionClient>,
+        _transaction: &Transaction,
+        _info: &roastedduck_ast::DropInfo,
+    ) -> Result<()> {
+        Err(roastedduck_common::Error::not_implemented(
+            "DROP is not implemented for this catalog",
+        ))
+    }
 }
 
 /// A real table entry can bind a provider scan while keeping its table identity
@@ -28,6 +48,26 @@ pub trait CatalogBackend: std::fmt::Debug + Send + Sync {
 #[doc(hidden)]
 pub trait TableBackend: std::fmt::Debug + Send + Sync {
     fn scan(&self, client: &Arc<FunctionClient>, transaction: &Transaction) -> Result<BackendScan>;
+    fn validate_insert(&self, returning: bool) -> Result<()> {
+        if returning {
+            Err(roastedduck_common::Error::not_implemented(
+                "RETURNING is not implemented for this table",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+    fn insert(
+        &self,
+        _client: &Arc<FunctionClient>,
+        _transaction: &Transaction,
+        _columns: &[usize],
+        _chunks: &mut dyn Iterator<Item = Result<roastedduck_types::DataChunk>>,
+    ) -> Result<u64> {
+        Err(roastedduck_common::Error::not_implemented(
+            "INSERT is not implemented for this table",
+        ))
+    }
 }
 
 #[derive(Clone, Debug)]

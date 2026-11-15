@@ -17,6 +17,7 @@ PUSH = "postgres_scan_pushdown('dbname=postgresscanner','public','scan_rows')"
 MATRIX = "postgres_scan('dbname=postgresscanner','public','scan_matrix')"
 CASES = [
     ('projection', f'SELECT label, id FROM {SCAN} WHERE id IN (1,2048,2049,5000) ORDER BY id', None),
+    ('nonfirst-column', f'SELECT label FROM {SCAN} ORDER BY label LIMIT 3', None),
     ('count', f'SELECT count(*) FROM {SCAN}', None),
     ('zero-column-projection', f'SELECT 42 FROM {SCAN} LIMIT 3', None),
     ('aggregate', f'SELECT count(*),sum(id),max(id),min(label) FROM {SCAN}', None),

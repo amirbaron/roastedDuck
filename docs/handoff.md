@@ -1,3 +1,30 @@
+PostgreSQL real-attachment checkpoint, November 15, 2026:
+working source now uses a real remote catalog and transaction-owned sessions for
+ATTACH, reads, query/execute, CREATE/DROP and INSERT/CTAS via COPY. It buffers through
+the existing spillable column storage, including materializing a replacing CTAS
+before dropping its source. This is partial implementation: UPDATE/DELETE/MERGE,
+remaining DDL/metadata/cache/pool/settings/secrets/auth and the full suite remain.
+
+All 27 paired attachment controls pass (postgres-attach-control-5), all 39 value/type
+cases now pass through actual Rust SQL (postgres-codec-runtime-2), and 15 unchanged
+originals pass on both engines (postgres-upstream-attach-2). Three API cancellation
+modes pass, including COPY rollback and no lingering remote transaction
+(postgres-interrupt-control-2). Strict Clippy10 passes. All 216 unit/integration tests across 39 signed targets
+pass with TZ=UTC (postgres-attach-unit-utc-results.json). One existing persistence
+test assumes UTC rendering; its local-timezone failure is retained in the first run. Receipts are under `.context/artifacts/popular-extensions/`.
+
+A small Rust-only tokio-postgres 0.7.18 patch provides raw text-format rows; only two
+upstream source files differ and licenses remain. SQL parameters now use the pinned
+mixed-format/width rules, separately from COPY. No package version changes. Direct
+native-transaction handles replace weak planner-context reliance in PG execution.
+Projection and CTAS ordering failures were corrected; raw failed receipts remain.
+
+The frozen d8f61a2f core run finished: 4,844 PASS / 33 SKIP / same 20 documented FAIL,
+zero regressions or status changes, passing baseline unchanged. Evidence is
+postgres-hooks-conformance-verification.json; release SLT SHA starts 5c5b59f55bbe.
+This full run predates the new attachment changes. Fresh final integration,
+platform/package gates and PyPI/Homebrew publication remain. Goal active, incomplete.
+
 Remote-catalog engine hooks checkpoint, November 15, 2026:
 internal Rust CatalogBackend/TableBackend traits now provide fallible metadata
 lookup, catalog-specific default schemas and provider scans on real table entries.

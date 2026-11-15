@@ -482,6 +482,28 @@ impl PlanGenerator {
     /// from the input are computed by a projection (`PhysicalInsert::ResolveDefaults`).
     fn plan_insert(&self, insert: &LogicalInsert, child: PhysicalRef) -> Result<PhysicalRef> {
         let context = self.context()?;
+        if let EntryKind::Table(table) = &insert.table.kind
+            && let Some(backend) = &table.backend
+        {
+            backend.validate_insert(insert.return_chunk)?;
+            let mut columns = vec![0; child.types().len()];
+            if insert.column_index_map.is_empty() {
+                columns = (0..child.types().len()).collect();
+            } else {
+                for (column, input) in insert.column_index_map.iter().enumerate() {
+                    if let Some(input) = input {
+                        columns[*input] = column;
+                    }
+                }
+            }
+            return Ok(Arc::new(crate::operators::PhysicalRemoteInsert::new(
+                child,
+                crate::operators::RemoteInsertTarget::Table(backend.clone()),
+                columns,
+                context.transaction.clone(),
+                context.client.function_client.clone(),
+            )));
+        }
         // `BindIndexes` of the operator's initialization.
         bind_table_indexes(&context.client, &insert.table)?;
         let storage = table_storage(&insert.table)?;
@@ -1205,27 +1227,68 @@ impl PlanGenerator {
                 let context = self.context()?;
                 let info = *info;
                 let catalog = context.catalog(&info.catalog)?;
-                let io = Arc::clone(catalog.io()?);
-                let creator = Arc::new(CatalogTableCreator {
-                    catalog,
-                    schema: info.schema,
-                    info: info.info,
-                    io,
-                });
-                match children.next() {
-                    Some(query) => insert_operator(
-                        context,
-                        query,
-                        InsertTarget::Create(creator),
-                        TableConstraints::default(),
-                        false,
-                        true,
-                    ),
-                    None => Arc::new(PhysicalCreateTable::new(
-                        creator,
-                        Arc::clone(&context.transaction),
-                    )),
+                if catalog.backend().is_some() {
+                    match children.next() {
+                        Some(query) => {
+                            let columns = (0..query.types().len()).collect();
+                            Arc::new(crate::operators::PhysicalRemoteInsert::new(
+                                query,
+                                crate::operators::RemoteInsertTarget::Create {
+                                    catalog,
+                                    info: Box::new(info.info),
+                                },
+                                columns,
+                                context.transaction.clone(),
+                                context.client.function_client.clone(),
+                            ))
+                        }
+                        None => self.ddl(
+                            "CREATE_TABLE",
+                            types,
+                            Arc::new(crate::operators::BackendCreateAction {
+                                catalog,
+                                info: info.info,
+                                client: context.client.function_client.clone(),
+                            }),
+                        )?,
+                    }
+                } else {
+                    let io = Arc::clone(catalog.io()?);
+                    let creator = Arc::new(CatalogTableCreator {
+                        catalog,
+                        schema: info.schema,
+                        info: info.info,
+                        io,
+                    });
+                    match children.next() {
+                        Some(query) => insert_operator(
+                            context,
+                            query,
+                            InsertTarget::Create(creator),
+                            TableConstraints::default(),
+                            false,
+                            true,
+                        ),
+                        None => Arc::new(PhysicalCreateTable::new(
+                            creator,
+                            Arc::clone(&context.transaction),
+                        )),
+                    }
                 }
+            }
+            LogicalKind::Create { info, .. }
+                if self.context()?.catalog(&info.catalog)?.backend().is_some() =>
+            {
+                let context = self.context()?;
+                self.ddl(
+                    "CREATE",
+                    types,
+                    Arc::new(crate::operators::BackendCreateAction {
+                        catalog: context.catalog(&info.catalog)?,
+                        client: context.client.function_client.clone(),
+                        info: *info,
+                    }),
+                )?
             }
             LogicalKind::Create { operator_type, info } => {
                 let catalog = self.context()?.catalog(&info.catalog)?;
@@ -1296,6 +1359,18 @@ impl PlanGenerator {
                         action: alter.action,
                         dependents_allowed: alter.dependents_allowed,
                         info: alter.info,
+                    }),
+                )?
+            }
+            LogicalKind::Drop(info) if self.context()?.catalog(&info.catalog)?.backend().is_some() => {
+                let context = self.context()?;
+                self.ddl(
+                    "DROP",
+                    types,
+                    Arc::new(crate::operators::BackendDropAction {
+                        catalog: context.catalog(&info.catalog)?,
+                        client: context.client.function_client.clone(),
+                        info: *info,
                     }),
                 )?
             }

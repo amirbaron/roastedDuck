@@ -86,17 +86,25 @@ impl Catalog {
         name: impl Into<ByteString>,
         allocator: Arc<crate::OidAllocator>,
     ) -> Result<Self> {
-        Self::with_registration(name, allocator, true)
+        Self::with_registration(name, allocator, true, true)
     }
 
     pub fn unregistered(name: impl Into<ByteString>, allocator: Arc<crate::OidAllocator>) -> Result<Self> {
-        Self::with_registration(name, allocator, false)
+        Self::with_registration(name, allocator, false, true)
+    }
+
+    pub fn unregistered_remote(
+        name: impl Into<ByteString>,
+        allocator: Arc<crate::OidAllocator>,
+    ) -> Result<Self> {
+        Self::with_registration(name, allocator, false, false)
     }
 
     fn with_registration(
         name: impl Into<ByteString>,
         allocator: Arc<crate::OidAllocator>,
         registered: bool,
+        native_schema: bool,
     ) -> Result<Self> {
         let name = CatalogName::with_oid_allocator(name.into(), allocator);
         let provisional_oid = if registered { 0 } else { name.next_oid() };
@@ -117,12 +125,14 @@ impl Catalog {
         if registered && !catalog.name().eq_ignore_ascii_case(b"system") {
             catalog.finalize_registration();
         }
-        let mut main = catalog.new_entry(
-            DEFAULT_SCHEMA,
-            EntryKind::Schema(SchemaEntry::new(&catalog.name, DEFAULT_SCHEMA)),
-        );
-        main.internal = true;
-        catalog.schemas.create_committed_chain(main)?;
+        if native_schema {
+            let mut main = catalog.new_entry(
+                DEFAULT_SCHEMA,
+                EntryKind::Schema(SchemaEntry::new(&catalog.name, DEFAULT_SCHEMA)),
+            );
+            main.internal = true;
+            catalog.schemas.create_committed_chain(main)?;
+        }
         Ok(catalog)
     }
 

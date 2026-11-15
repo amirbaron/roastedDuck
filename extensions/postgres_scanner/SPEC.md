@@ -26,6 +26,59 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 
 Contract recorded; not a claim that new functionality passes acceptance.
 
+## Real attachment and insert checkpoint (November 15)
+
+The runtime now attaches a PostgreSQL-owned catalog with real table entries and
+transaction-owned sessions. It implements reads, postgres_query/postgres_execute,
+cache clearing, schema filters, isolation/read-only options, CREATE table/schema/
+type, DROP and INSERT/CTAS through remote DDL and COPY. Table data is not copied
+into native DuckDB tables. Unread cursor rows and insert inputs use the engine's
+existing spillable column storage when their connection must perform another
+operation. Replacing CTAS reads the old relation before DROP/CREATE.
+
+The final attachment controls pass all 27 paired cases, including replacement and
+ignored CTAS, self-insert, overlapping queries, defaults, enums, binary/text COPY,
+NUL replacement, permissions and transaction rollback. Thirty-nine value/type
+comparisons now run entirely through Rust SQL, including attached tables and query
+functions. Fifteen unchanged upstream files pass on both engines: the prior seven
+scanner files plus types, arrays, query, query_params, query_error, uppercase-name
+creation, null-byte handling and binary-COPY settings. API interruption controls
+observe actual server PgSleep and verify cancellation of legacy/attached reads and
+COPY inserts, zero committed inserted rows and no idle remote transaction.
+
+Text protocol is actual PostgreSQL wire format zero. A small vendored Rust driver
+patch adds a raw-text method; its original MIT/Apache licenses remain. Only
+src/client.rs and src/query.rs differ from tokio-postgres 0.7.18. No package version
+or native dependency is added. SQL query parameters have their own pinned encoder
+(VARCHAR text; tiny/utiny/small two bytes; usmall/int four; uint/big eight; float and
+double; other non-NULL types rejected). Binary COPY's rejection of parameters is
+preserved through the server's actual error. COPY uses its separate value encoder.
+
+Receipts under `.context/artifacts/popular-extensions/`: postgres-attach-control-5,
+postgres-codec-runtime-2, postgres-upstream-attach-2, postgres-interrupt-control-2,
+postgres-driver-patch-audit.json and postgres-text-driver-audit.json. The final
+wire probe and 26 paired legacy-scan controls also pass (postgres-wire-control-4
+and postgres-scan-control-3). Earlier
+failures are retained, including nonfirst-column projection, weak planner-context
+lifetime and replacing-CTAS ordering regressions. Supplemental fixture mistakes
+(parameter protocol selection and a reserved SQL alias) were corrected against the
+oracle; original test SQL and expected results were not changed.
+
+Full core conformance on the preceding hook commit d8f61a2f passes its ratchet:
+4,844 PASS / 33 SKIP / the same 20 documented FAIL, zero status changes and no
+baseline changes (postgres-hooks-conformance-verification.json). That frozen run
+does not qualify the later attachment implementation. Fresh integration and
+package/platform gates remain before publication.
+
+Still required: UPDATE/DELETE/MERGE and remaining DDL; complete catalog listings,
+cache/staleness/rebinding, filter/parallel scan behavior, pooling, secrets/RDS,
+OAuth/CRL/options and other remaining upstream surfaces; all 152 originals and
+supplemental controls; full five-extension and publication acceptance. All 216 unit/integration tests across 39 signed targets pass with TZ=UTC; the
+existing UTC-rendering assumption in one persistence test is recorded with its
+local-timezone failure (postgres-attach-unit-results.json and
+postgres-attach-unit-utc-results.json). Strict all-target Clippy passes. No release
+has been published from this checkpoint.
+
 ## Internal engine hooks checkpoint (November 15)
 
 The catalog now accepts engine-owned Rust metadata and table backends. Fallible

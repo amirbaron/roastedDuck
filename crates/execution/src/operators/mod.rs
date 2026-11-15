@@ -31,6 +31,7 @@ mod perfect_hash_aggregate;
 mod pivot;
 mod projection;
 mod radix_sink;
+mod remote_insert;
 mod result_collector;
 mod sample;
 mod seq_scan;
@@ -54,9 +55,9 @@ pub use create_type::{CreateTypeGlobal, PhysicalCreateType};
 pub use cross_product::{CrossProductExecutor, CrossProductGlobal, PhysicalCrossProduct};
 pub use cte::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte, RecursiveCteState};
 pub use ddl::{
-    CatalogTableCreator, CreateEntryAction, CreateIndexAction, CreateSchemaAction, CreateSequenceAction,
-    CreateViewAction, DdlAction, DropAction, IndexBindIntent, PhysicalDdl, bind_table_indexes,
-    bind_table_indexes_with_intent,
+    BackendCreateAction, BackendDropAction, CatalogTableCreator, CreateEntryAction, CreateIndexAction,
+    CreateSchemaAction, CreateSequenceAction, CreateViewAction, DdlAction, DropAction, IndexBindIntent,
+    PhysicalDdl, bind_table_indexes, bind_table_indexes_with_intent,
 };
 pub use delete::PhysicalDelete;
 pub use delim::{DelimData, DelimGlobal, DelimShared, PhysicalDelimJoin, PhysicalDelimScan};
@@ -87,6 +88,7 @@ pub use perfect_hash_aggregate::{
 };
 pub use pivot::PhysicalPivot;
 pub use projection::PhysicalProjection;
+pub use remote_insert::{PhysicalRemoteInsert, RemoteInsertTarget};
 pub use result_collector::{
     CollectedResult, CollectedRows, CollectorKind, PhysicalResultCollector, QueryResultMemoryType,
 };

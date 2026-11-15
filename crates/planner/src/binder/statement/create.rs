@@ -282,7 +282,12 @@ pub fn bind_create_schema(scope: &BindScope<'_>, info: &mut CreateInfo) -> Resul
     if found.name().eq_ignore_ascii_case(b"system") {
         return Err(Error::binder("Cannot create entry in system catalog"));
     }
-    let Some(schema_entry) = found.schema(&scope.context.transaction, &schema) else {
+    let Some(schema_entry) = found.lookup_schema(
+        &scope.context.function_client,
+        &scope.context.transaction,
+        &schema,
+    )?
+    else {
         return Err(Error::catalog(roastedduck_common::byte_format!(
             "Schema with name {schema} does not exist!"
         )));
