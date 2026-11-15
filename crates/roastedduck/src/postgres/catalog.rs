@@ -11,9 +11,8 @@ use roastedduck_catalog::{
 use roastedduck_common::{ByteString, Error, Result};
 use roastedduck_function::FunctionClient;
 use roastedduck_postgres::{
-    BinaryParameter, Driver,
+    BinaryParameter,
     codec::{Codec, Options},
-    config::Parameters,
 };
 use roastedduck_types::{DataChunk, LogicalType};
 
@@ -53,19 +52,15 @@ impl PgCatalog {
     }
     pub fn new(
         native: &Arc<Catalog>,
-        parameters: Parameters,
+        factory: Arc<dyn Fn() -> Result<roastedduck_postgres::Session> + Send + Sync>,
         buffer_manager: BufferManager,
         read_only: bool,
         isolation: String,
         schemas: Vec<String>,
         pool_config: roastedduck_postgres::pool::Config,
     ) -> Result<Arc<Self>> {
-        let driver = Driver::new()?;
         // Construction validates the endpoint before the attachment is published.
-        let pool = roastedduck_postgres::pool::Pool::new(
-            pool_config,
-            Arc::new(move || driver.connect(&parameters)),
-        )?;
+        let pool = roastedduck_postgres::pool::Pool::new(pool_config, factory)?;
         let version = {
             let lease = pool.acquire(None)?;
             let mut rows = lease.session()?.stream("SHOW server_version_num", &[])?;

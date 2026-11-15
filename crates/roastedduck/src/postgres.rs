@@ -1,4 +1,5 @@
 //! Runtime integration for roastedDuck's compatible PostgreSQL implementation.
+pub(crate) mod auth;
 pub(crate) mod binary_file;
 pub(crate) mod catalog;
 pub(crate) mod hstore;
@@ -6,6 +7,7 @@ pub(crate) mod logging;
 mod mutation;
 pub(crate) mod pool;
 mod query;
+pub(crate) mod secret_storage;
 mod text;
 mod transaction;
 pub(crate) use query::query_functions;
@@ -27,6 +29,10 @@ pub(crate) struct AttachConfig {
     pub isolation: String,
     pub schemas: Vec<String>,
     pub pool: roastedduck_postgres::pool::Config,
+    pub secret: String,
+    pub secret_table: String,
+    pub explicit_secret_table: bool,
+    pub secret_entry: Option<crate::secrets::KeyValueSecret>,
 }
 impl AttachConfig {
     pub fn parse(info: &roastedduck_ast::AttachInfo) -> Result<Self> {
@@ -34,6 +40,10 @@ impl AttachConfig {
             isolation: "REPEATABLE READ".into(),
             schemas: Vec::new(),
             pool: roastedduck_postgres::pool::Config::default(),
+            secret: String::new(),
+            secret_table: "duckdb_secrets".into(),
+            explicit_secret_table: false,
+            secret_entry: None,
         };
         for (name, value) in info.options.iter() {
             match name.to_ascii_lowercase().as_bytes() {
@@ -71,11 +81,12 @@ impl AttachConfig {
                         result.schemas.push(name);
                     }
                 }
-                b"secret_storage_table" if value.to_varchar()?.is_empty() => {}
-                b"secret" | b"secret_storage_table" => {
-                    return Err(Error::not_implemented(
-                        "Postgres secret-backed attachment is not implemented yet",
-                    ));
+                b"secret_storage_table" => {
+                    result.secret_table = value.to_varchar()?;
+                    result.explicit_secret_table = true;
+                }
+                b"secret" => {
+                    result.secret = value.to_varchar()?;
                 }
                 _ => {
                     return Err(Error::binder(roastedduck_common::byte_format!(

@@ -91,10 +91,18 @@ type Material = Option<aws_credential_types::Credentials>;
 /// Fetch credentials without exposing SDK errors that may contain secret material.
 /// The SQL adapter supplies the pinned extension's validation diagnostic on None.
 pub fn resolve(request: &Request) -> Result<Resolution, ResolveError> {
+    resolve_mode(request, true)
+}
+/// Resolve the region and validate provider construction without fetching credentials.
+/// RDS template creation defers credential I/O until a token is generated.
+pub fn resolve_configuration(request: &Request) -> Result<Resolution, ResolveError> {
+    resolve_mode(request, false)
+}
+fn resolve_mode(request: &Request, fetch_credentials: bool) -> Result<Resolution, ResolveError> {
     // Synchronous SQL may be called from a Tokio-based application. Drive our
     // credential futures on a separate thread rather than nesting runtimes.
     if tokio::runtime::Handle::try_current().is_ok() {
-        return std::thread::scope(|scope| scope.spawn(|| resolve(request)).join())
+        return std::thread::scope(|scope| scope.spawn(|| resolve_mode(request, fetch_credentials)).join())
             .map_err(|_| ResolveError::Runtime("AWS credential worker panicked".into()))?;
     }
     if !request.assume_role.is_empty() && request.chain.is_empty() {
@@ -114,7 +122,7 @@ pub fn resolve(request: &Request) -> Result<Resolution, ResolveError> {
     runtime.block_on(async {
         if let Some(interrupted) = &request.interrupted {
             tokio::select! {
-                result = resolve_async(request, &chain) => result,
+                result = resolve_async(request, &chain, fetch_credentials) => result,
                 () = async {
                     while !interrupted.load(Ordering::Acquire) {
                         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -122,7 +130,7 @@ pub fn resolve(request: &Request) -> Result<Resolution, ResolveError> {
                 } => Err(ResolveError::Interrupted),
             }
         } else {
-            resolve_async(request, &chain).await
+            resolve_async(request, &chain, fetch_credentials).await
         }
     })
 }
@@ -140,7 +148,11 @@ async fn read_profiles(files: &EnvConfigFiles, profile: Option<&str>) -> EnvConf
     .unwrap_or_default()
 }
 
-async fn resolve_async(request: &Request, chain: &[&str]) -> Result<Resolution, ResolveError> {
+async fn resolve_async(
+    request: &Request,
+    chain: &[&str],
+    fetch_credentials: bool,
+) -> Result<Resolution, ResolveError> {
     let profiles = read_profiles(&EnvConfigFiles::default(), request.profile.as_deref()).await;
     let config_profiles = read_profiles(
         &EnvConfigFiles::builder()
@@ -238,6 +250,13 @@ async fn resolve_async(request: &Request, chain: &[&str]) -> Result<Resolution, 
             ));
         }
         providers.push(provider);
+    }
+    if !fetch_credentials {
+        return Ok(Resolution {
+            credentials: None,
+            region,
+            effective_chain: request.chain.clone(),
+        });
     }
     let mut effective_chain = request.chain.clone();
     let credentials = if chain.is_empty() {

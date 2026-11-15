@@ -10,8 +10,8 @@ use std::time::SystemTime;
 mod process;
 mod rds;
 mod resolve;
-pub use rds::rds_auth_token;
-pub use resolve::{Request, Resolution, ResolveError, resolve};
+pub use rds::{rds_auth_token, rds_unsigned_token};
+pub use resolve::{Request, Resolution, ResolveError, resolve, resolve_configuration};
 
 /// Credential material is never included in Debug output.
 #[derive(Clone)]

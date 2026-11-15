@@ -87,9 +87,15 @@ pub(crate) fn create_secret(input: &CreateSecretInput) -> Result<KeyValueSecret>
             | "validation" => LogicalType::VARCHAR,
             "use_ssl" | "url_compatibility_mode" => LogicalType::BOOLEAN,
             "account_id" if input.secret_type == "r2" => LogicalType::VARCHAR,
+            "rds_user" | "rds_host" | "rds_port" | "rds_template_secret_name"
+                if input.secret_type == "rds" =>
+            {
+                LogicalType::VARCHAR
+            }
             _ => {
+                let default = if input.provider.is_empty() { "default " } else { "" };
                 return Err(Error::binder(byte_format!(
-                    "Unknown parameter '{name}' for secret type '{}' with provider 'credential_chain'",
+                    "Unknown parameter '{name}' for secret type '{}' with {default}provider 'credential_chain'",
                     input.secret_type
                 )));
             }
@@ -136,6 +142,62 @@ pub(crate) fn create_secret(input: &CreateSecretInput) -> Result<KeyValueSecret>
         legacy: false,
         interrupted: roastedduck_function::file_system::opener().and_then(|client| client.interrupt_flag()),
     };
+    if input.secret_type == "rds" {
+        if !request.assume_role.is_empty() && request.chain.is_empty() {
+            return Err(Error::new(
+                ErrorKind::InvalidConfiguration,
+                "Must pass CHAIN value when passing ASSUME_ROLE_ARN",
+            ));
+        }
+        if request.chain.is_empty() {
+            return Err(Error::new(
+                ErrorKind::InvalidConfiguration,
+                "Invalid RDS secret parameters, 'CHAIN' option must be specified",
+            ));
+        }
+        let configuration = roastedduck_aws::resolve_configuration(&request).map_err(provider_error)?;
+        let user = text("rds_user")?;
+        let host = text("rds_host")?;
+        let port = text("rds_port")?;
+        if user.is_empty() || host.is_empty() || port.is_empty() || configuration.region.is_empty() {
+            return Err(Error::invalid_input(
+                "Invalid RDS secret parameters, 'RDS_USER', 'RDS_HOST', 'RDS_PORT' and 'REGION' options must be specified",
+            ));
+        }
+        let map = if text("rds_template_secret_name")?.is_empty() {
+            options.clone()
+        } else {
+            let resolution = roastedduck_aws::resolve(&request).map_err(provider_error)?;
+            if resolution.credentials.is_none() && request.require_credentials {
+                return Err(validation_error(&request, &resolution.effective_chain));
+            }
+            let token = resolution
+                .credentials
+                .as_ref()
+                .map(|credentials| {
+                    roastedduck_aws::rds_auth_token(
+                        credentials,
+                        &user,
+                        &host,
+                        &port,
+                        &configuration.region,
+                        SystemTime::now(),
+                    )
+                    .map_err(provider_error)
+                })
+                .transpose()?
+                .unwrap_or_else(|| roastedduck_aws::rds_unsigned_token(&user, &host, &port));
+            BTreeMap::from([("session_token".into(), Value::varchar(token))])
+        };
+        return Ok(KeyValueSecret {
+            name: input.name.clone(),
+            secret_type: "rds".into(),
+            provider: "credential_chain".into(),
+            scope: Vec::new(),
+            map,
+            redact_keys: BTreeSet::from(["secret".into(), "session_token".into()]),
+        });
+    }
     let resolution = roastedduck_aws::resolve(&request).map_err(provider_error)?;
     if resolution.region.is_empty()
         && let Some(logger) = roastedduck_function::file_system::opener().and_then(|client| client.logger())

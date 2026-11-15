@@ -206,7 +206,7 @@ fn database_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
         let info = catalog.attach_info();
         let internal = info.is_none();
         let path = info
-            .filter(|info| !info.path.is_empty())
+            .filter(|info| !info.path.is_empty() || catalog.backend().is_some())
             .map_or_else(|| Ok(null_text()), |info| text(info.path.clone()))?;
         rows.push((
             catalog.name().to_ascii_lowercase().into(),

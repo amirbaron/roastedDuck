@@ -20,6 +20,11 @@ fn encode(value: &str) -> String {
     out
 }
 
+/// The SDK returns this unsigned URL when validation is disabled and no credentials exist.
+pub fn rds_unsigned_token(user: &str, host: &str, port: &str) -> String {
+    format!("{host}:{port}/?Action=connect&DBUser={}", encode(user))
+}
+
 pub fn rds_auth_token(
     credentials: &Credentials,
     user: &str,

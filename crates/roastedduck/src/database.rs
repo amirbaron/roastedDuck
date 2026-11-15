@@ -826,6 +826,7 @@ impl DatabaseInstance {
                 }
             }
             if extension == StaticExtension::Postgres {
+                self.secrets.register_postgres_type();
                 for option in crate::postgres::options() {
                     self.add_extension_option(option);
                 }
@@ -4866,15 +4867,33 @@ impl Connection {
                         }
                         let mut config = crate::postgres::AttachConfig::parse(info)?;
                         config.pool = crate::postgres::pool::from_client(&self.function_client)?;
-                        let instance = self.database.instance();
-                        let attached = instance.databases.attach_postgres(
-                            info,
-                            path,
-                            &options,
-                            config,
-                            &instance.env.buffer_manager,
-                            &instance.validity,
-                        )?;
+                        let instance = &self.database.instance;
+                        let name = if config.secret.is_empty() {
+                            "__default_postgres"
+                        } else {
+                            &config.secret
+                        };
+                        let mut secret =
+                            instance
+                                .secrets
+                                .get_secret_by_name(name, None, &self.transactions.current())?;
+                        if secret.is_none() {
+                            secret = instance.secrets.get_secret_by_name(
+                                name,
+                                Some("local_file"),
+                                &self.transactions.current(),
+                            )?;
+                        }
+                        if secret.is_none() && !config.secret.is_empty() {
+                            return Err(Error::binder(format!(
+                                "Secret with name \"{}\" not found",
+                                config.secret
+                            )));
+                        }
+                        config.secret_entry = secret.map(|s| s.secret);
+                        let attached = instance
+                            .databases
+                            .attach_postgres(info, path, &options, config, instance)?;
                         if let Some(attached) = attached
                             && !self.transactions.is_auto_commit()
                         {

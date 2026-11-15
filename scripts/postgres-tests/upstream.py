@@ -102,11 +102,22 @@ def main():
         env.pop('LOCAL_EXTENSION_REPO',None)
         if args.all or args.slow:
             env['POSTGRES_TEST_SLOW']='1'
+        # Original INSTALL statements resolve only the pinned owned artifacts.
+        # Keep extension caches on the fixture volume, away from the user's home.
+        probe=subprocess.run([str(args.oracle.resolve()),'-batch','-init','/dev/null','-csv','-noheader',':memory:','-c','SELECT version(); PRAGMA platform;'],env=cluster.environment,text=True,capture_output=True,check=True)
+        version,platform=probe.stdout.strip().splitlines()
+        assert version=='v1.5.6',version
+        for engine in ['cpp','rust']:
+            installed=out/'installed-extensions'/engine/version/platform
+            installed.mkdir(parents=True)
+            for extension in ['httpfs','aws','postgres_scanner']:
+                source=args.extension.parent/(extension+'.duckdb_extension')
+                if source.is_file():(installed/source.name).symlink_to(source.resolve())
         for engine in ['cpp','rust']:
             if args.engine not in ['both',engine]:
                 continue
             target=out/engine;target.mkdir();rows=[]
-            engine_env=dict(env)
+            engine_env=dict(env,SLT_FIXTURE_EXTENSION_DIRECTORY=str((out/'installed-extensions'/engine).resolve()))
             if engine=='cpp':
                 engine_env['SLT_REQUIRE_EXTENSION_PATHS']=json.dumps({name:str((extensions/(name+'.duckdb_extension')).resolve()) for name in ['tpch','tpcds']})
             for index,name in enumerate(files):

@@ -22,6 +22,7 @@ use roastedduck_types::{LogicalType, Value};
 
 mod azure;
 mod catalog;
+pub(crate) mod postgres;
 pub(crate) use azure::AzureSecretLookup;
 use catalog::SecretCatalog;
 use roastedduck_storage::transaction::Transaction;
@@ -80,10 +81,14 @@ pub(crate) fn autoload_extensions(input: &CreateSecretInput) -> [Option<&'static
         .find(|(name, _)| name.eq_ignore_ascii_case(&input.secret_type))
         .map(|(_, extension)| *extension);
     let key = format!("{}/{}", input.secret_type, input.provider);
-    let provider = EXTENSION_SECRET_PROVIDERS
-        .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case(&key))
-        .map(|(_, extension)| *extension);
+    let provider = if input.secret_type == "rds" && input.provider.is_empty() {
+        Some("aws")
+    } else {
+        EXTENSION_SECRET_PROVIDERS
+            .iter()
+            .find(|(name, _)| name.eq_ignore_ascii_case(&key))
+            .map(|(_, extension)| *extension)
+    };
     [secret_type, provider]
 }
 
@@ -918,6 +923,8 @@ struct ManagerState {
     httpfs_registered: bool,
     aws_registered: bool,
     azure_registered: bool,
+    postgres_registered: bool,
+    remote: BTreeMap<String, Arc<crate::postgres::secret_storage::PostgresSecretStorage>>,
 }
 
 /// The secrets of a database instance (DuckDB's `SecretManager`).
@@ -950,6 +957,8 @@ impl Default for SecretManager {
                 httpfs_registered: false,
                 aws_registered: false,
                 azure_registered: false,
+                postgres_registered: false,
+                remote: BTreeMap::new(),
             }),
         }
     }
@@ -1050,8 +1059,34 @@ impl SecretManager {
         self.lock().azure_registered = true;
     }
 
+    pub fn register_postgres_type(&self) {
+        self.lock().postgres_registered = true;
+    }
+    pub(crate) fn register_postgres_storage(
+        &self,
+        storage: Arc<crate::postgres::secret_storage::PostgresSecretStorage>,
+    ) {
+        self.lock()
+            .remote
+            .entry(storage.name.to_ascii_lowercase())
+            .or_insert(storage);
+    }
     pub fn secret_types(&self) -> Vec<SecretType> {
         let mut types = SECRET_TYPES.to_vec();
+        if self.lock().postgres_registered {
+            types.extend([
+                SecretType {
+                    name: "postgres",
+                    default_provider: "config",
+                    extension: "postgres_scanner",
+                },
+                SecretType {
+                    name: "rds",
+                    default_provider: "credential_chain",
+                    extension: "postgres_scanner",
+                },
+            ]);
+        }
         if self.lock().azure_registered {
             types.push(SecretType {
                 name: "azure",
@@ -1081,6 +1116,16 @@ impl SecretManager {
         transaction: &Transaction,
     ) -> Result<Option<KeyValueSecret>> {
         let mut state = self.lock();
+        if let Some(remote) = state.remote.get(&storage.to_ascii_lowercase()).cloned() {
+            drop(state);
+            return remote
+                .get(
+                    std::str::from_utf8(name)
+                        .map_err(|_| Error::invalid_input("Invalid Postgres secret name"))?,
+                    Some(transaction),
+                )
+                .map(|entry| entry.map(|entry| entry.secret));
+        }
         let key = ByteString::from(name.to_ascii_lowercase());
         match storage {
             TEMPORARY_STORAGE => Ok(state.temporary.get(&key, Some(transaction))),
@@ -1090,6 +1135,69 @@ impl SecretManager {
             },
             _ => Ok(None),
         }
+    }
+
+    pub(crate) fn get_secret_by_name(
+        &self,
+        name: &str,
+        storage: Option<&str>,
+        transaction: &Transaction,
+    ) -> Result<Option<SecretEntry>> {
+        let mut state = self.lock();
+        Self::initialize(&mut state)?;
+        let key = ByteString::from(name.to_ascii_lowercase());
+        let mut result = Vec::new();
+        if storage.is_none_or(|s| s.eq_ignore_ascii_case(TEMPORARY_STORAGE))
+            && let Some(secret) = state.temporary.get(&key, Some(transaction))
+        {
+            result.push(SecretEntry {
+                secret,
+                persistent: false,
+                storage: TEMPORARY_STORAGE.into(),
+            });
+        }
+        if storage.is_none_or(|s| s.eq_ignore_ascii_case(LOCAL_FILE_STORAGE))
+            && let Some(local) = state.local_file.as_mut()
+            && let Some(secret) = local.catalog_get(&key, Some(transaction))?
+        {
+            result.push(SecretEntry {
+                secret,
+                persistent: true,
+                storage: LOCAL_FILE_STORAGE.into(),
+            });
+        }
+        let remotes = state
+            .remote
+            .values()
+            .filter(|s| storage.is_none_or(|name| name.eq_ignore_ascii_case(&s.name)))
+            .cloned()
+            .collect::<Vec<_>>();
+        let known = storage.is_none_or(|s| {
+            s.eq_ignore_ascii_case(TEMPORARY_STORAGE)
+                || s.eq_ignore_ascii_case(LOCAL_FILE_STORAGE) && state.local_file.is_some()
+                || state.remote.contains_key(&s.to_ascii_lowercase())
+        });
+        drop(state);
+        if !known {
+            return Err(Error::invalid_input(format!(
+                "Unknown secret storage found: '{}'",
+                storage.unwrap_or_default()
+            )));
+        }
+        for remote in remotes {
+            if let Some(secret) = remote.get(name, Some(transaction))? {
+                result.push(secret);
+            }
+        }
+        if result.len() > 1 {
+            return Err(Error::new(
+                ErrorKind::InvalidConfiguration,
+                format!(
+                    "Ambiguity detected for secret name '{name}', secret occurs in multiple storage backends."
+                ),
+            ));
+        }
+        Ok(result.pop())
     }
 
     /// `SET secret_directory` / `allow_persistent_secrets` / `default_secret_storage`
@@ -1152,28 +1260,49 @@ impl SecretManager {
         // Without a provider the type must exist (its default provider is used);
         // otherwise the type's provider must.
         let was_default = input.provider.is_empty();
-        if state.aws_registered
-            && input.provider == "credential_chain"
-            && matches!(input.secret_type.as_str(), "s3" | "aws" | "r2" | "gcs")
+        if state.postgres_registered && input.secret_type == "postgres" {
+            let secret = postgres::create(input)?;
+            return Self::register_created(state, secret, input, transaction);
+        }
+        if state.postgres_registered
+            && input.secret_type == "rds"
+            && (!state.aws_registered || !input.provider.is_empty() && input.provider != "credential_chain")
         {
-            if !state.httpfs_registered {
+            return Err(provider_not_found(
+                "rds",
+                if input.provider.is_empty() {
+                    "credential_chain"
+                } else {
+                    &input.provider
+                },
+                input.provider.is_empty(),
+            ));
+        }
+        if state.aws_registered
+            && (input.provider == "credential_chain"
+                || input.secret_type == "rds" && input.provider.is_empty())
+            && matches!(input.secret_type.as_str(), "s3" | "aws" | "r2" | "gcs" | "rds")
+        {
+            if input.secret_type == "rds" && !state.postgres_registered
+                || input.secret_type != "rds" && !state.httpfs_registered
+            {
                 return Err(type_not_found(&input.secret_type));
             }
             // Credential providers perform file/process/network I/O. Unrelated
             // secret readers must not wait on the catalog lock during that I/O.
             drop(state);
             let secret = crate::aws::create_secret(input)?;
-            return Self::register(&mut self.lock(), secret, input, transaction);
+            return Self::register_created(self.lock(), secret, input, transaction);
         }
         if state.azure_registered && input.secret_type == "azure" {
-            return Self::register(&mut state, azure::create(input)?, input, transaction);
+            return Self::register_created(state, azure::create(input)?, input, transaction);
         }
         if state.httpfs_registered && input.secret_type == "huggingface" {
-            return Self::register(&mut state, create_huggingface_secret(input)?, input, transaction);
+            return Self::register_created(state, create_huggingface_secret(input)?, input, transaction);
         }
         if state.httpfs_registered && matches!(input.secret_type.as_str(), "s3" | "aws" | "r2" | "gcs") {
             let secret = create_s3_secret(input)?;
-            return Self::register(&mut state, secret, input, transaction);
+            return Self::register_created(state, secret, input, transaction);
         }
         let known_type = SECRET_TYPES
             .iter()
@@ -1240,6 +1369,40 @@ impl SecretManager {
                 .map(str::to_owned)
                 .collect(),
         };
+        Self::register_created(state, secret, input, transaction)
+    }
+    fn register_created(
+        mut state: MutexGuard<'_, ManagerState>,
+        secret: KeyValueSecret,
+        input: &CreateSecretInput,
+        transaction: &Transaction,
+    ) -> Result<()> {
+        let storage = if input.storage.is_empty() {
+            if input.persist_type == SecretPersistType::Persistent {
+                state.config.default_storage.clone()
+            } else {
+                TEMPORARY_STORAGE.into()
+            }
+        } else {
+            match std::str::from_utf8(input.storage.as_bytes()) {
+                Ok(storage) => storage.to_owned(),
+                Err(_) => return Self::register(&mut state, secret, input, transaction),
+            }
+        };
+        if let Some(remote) = state.remote.get(&storage.to_ascii_lowercase()).cloned() {
+            if input.persist_type == SecretPersistType::Temporary {
+                return Err(Error::invalid_input(
+                    "Cannot create temporary secrets in a persistent secret storage!",
+                ));
+            }
+            if !state.config.allow_persistent_secrets {
+                return Err(Error::invalid_input(
+                    "Persistent secrets are currently disabled. To enable them, restart duckdb and run 'SET allow_persistent_secrets=true'",
+                ));
+            }
+            drop(state);
+            return remote.store(&secret, input.on_conflict, transaction);
+        }
         Self::register(&mut state, secret, input, transaction)
     }
 
@@ -1344,6 +1507,94 @@ impl SecretManager {
         let storage = storage.as_ref();
         let mut state = self.lock();
         Self::initialize(&mut state)?;
+        let remotes = state.remote.values().cloned().collect::<Vec<_>>();
+        if remotes.is_empty() {
+            drop(state);
+            return self.drop_local_secret(name, if_not_found, persist_type, storage, transaction);
+        }
+        if !storage.is_empty() {
+            let remote = remotes
+                .iter()
+                .find(|r| r.name.as_bytes().eq_ignore_ascii_case(storage))
+                .cloned();
+            drop(state);
+            return if let Some(remote) = remote {
+                remote.drop_secret(
+                    std::str::from_utf8(name)
+                        .map_err(|_| Error::invalid_input("Invalid Postgres secret name"))?,
+                    if_not_found,
+                    transaction,
+                )
+            } else {
+                self.drop_local_secret(name, if_not_found, persist_type, storage, transaction)
+            };
+        }
+        let key = ByteString::from(name.to_ascii_lowercase());
+        let mut matches = Vec::new();
+        if persist_type != SecretPersistType::Temporary
+            && let Some(local) = state.local_file.as_mut()
+            && local.catalog_get(&key, Some(transaction))?.is_some()
+        {
+            matches.push(LOCAL_FILE_STORAGE.to_owned());
+        }
+        if persist_type != SecretPersistType::Persistent
+            && state.temporary.get(&key, Some(transaction)).is_some()
+        {
+            matches.push(TEMPORARY_STORAGE.to_owned());
+        }
+        drop(state);
+        if persist_type != SecretPersistType::Temporary {
+            for remote in &remotes {
+                if remote
+                    .get(
+                        std::str::from_utf8(name)
+                            .map_err(|_| Error::invalid_input("Invalid Postgres secret name"))?,
+                        Some(transaction),
+                    )?
+                    .is_some()
+                {
+                    matches.push(remote.name.clone());
+                }
+            }
+        }
+        if matches.len() > 1 {
+            matches.sort();
+            return Err(Error::invalid_input(byte_format!(
+                "Ambiguity found for secret name '{name}', secret occurs in multiple storages: [{}] Please specify which secret to drop using: 'DROP <PERSISTENT|TEMPORARY> SECRET [FROM <storage>]'.",
+                matches.join(",")
+            )));
+        }
+        if let Some(remote) = matches
+            .first()
+            .and_then(|name| remotes.iter().find(|r| &r.name == name))
+        {
+            return remote.drop_secret(
+                std::str::from_utf8(name)
+                    .map_err(|_| Error::invalid_input("Invalid Postgres secret name"))?,
+                if_not_found,
+                transaction,
+            );
+        }
+        self.drop_local_secret(
+            name,
+            if_not_found,
+            persist_type,
+            matches.first().map_or(storage, |s| s.as_bytes()),
+            transaction,
+        )
+    }
+
+    fn drop_local_secret(
+        &self,
+        name: &[u8],
+        if_not_found: OnEntryNotFound,
+        persist_type: SecretPersistType,
+        storage: impl AsRef<[u8]>,
+        transaction: &Transaction,
+    ) -> Result<()> {
+        let storage = storage.as_ref();
+        let mut state = self.lock();
+        Self::initialize(&mut state)?;
         let key = ByteString::from(name.to_ascii_lowercase());
         let in_local = match state.local_file.as_mut() {
             Some(local) => local.catalog_get(&key, Some(transaction))?.is_some(),
@@ -1411,16 +1662,16 @@ impl SecretManager {
         }
     }
 
-    /// `SecretManager::AllSecrets`: the storages in name order (`local_file`, `memory`).
-    pub fn all_secrets(&self) -> Result<Vec<SecretEntry>> {
-        let transaction = roastedduck_function::file_system::opener()
-            .and_then(|client| client.transaction_context())
-            .and_then(|context| context.downcast::<roastedduck_planner::ClientContext>().ok())
-            .map(|context| Arc::clone(&context.transaction));
-        self.all_secrets_in(transaction.as_deref())
-    }
-
+    /// `SecretManager::AllSecrets`: local catalogs followed by registered storages.
     pub fn all_secrets_in(&self, transaction: Option<&Transaction>) -> Result<Vec<SecretEntry>> {
+        let mut result = self.local_secrets_in(transaction)?;
+        let remotes = self.lock().remote.values().cloned().collect::<Vec<_>>();
+        for remote in remotes {
+            result.extend(remote.all(transaction)?);
+        }
+        Ok(result)
+    }
+    fn local_secrets_in(&self, transaction: Option<&Transaction>) -> Result<Vec<SecretEntry>> {
         let mut state = self.lock();
         Self::initialize(&mut state)?;
         // Each storage lists its secrets by upper-cased name, like a catalog set.
@@ -1456,14 +1707,26 @@ impl SecretManager {
     /// `path` best (`SecretStorage::SelectBestMatch`).
     pub fn lookup_secret(&self, path: &str, secret_type: &str) -> Result<Option<SecretEntry>> {
         let mut best: Option<(i64, SecretEntry)> = None;
-        for entry in self.all_secrets()? {
+        let transaction = roastedduck_function::file_system::opener()
+            .and_then(|c| c.active_transaction())
+            .and_then(|t| t.downcast::<Transaction>().ok());
+        let mut entries = self.local_secrets_in(transaction.as_deref())?;
+        let remotes = self.lock().remote.values().cloned().collect::<Vec<_>>();
+        for remote in remotes {
+            entries.extend(remote.for_type(secret_type, transaction.as_deref())?);
+        }
+        for entry in entries {
             if !entry.secret.secret_type.eq_ignore_ascii_case(secret_type) {
                 continue;
             }
             let Some(score) = entry.secret.match_score(path) else {
                 continue;
             };
-            let offset = if entry.persistent { 20 } else { 10 };
+            let offset = self
+                .lock()
+                .remote
+                .get(&entry.storage.to_ascii_lowercase())
+                .map_or(if entry.persistent { 20 } else { 10 }, |r| r.offset);
             let score = 100 * score - offset;
             let better = match &best {
                 None => true,

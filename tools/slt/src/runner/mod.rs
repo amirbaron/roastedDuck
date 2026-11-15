@@ -117,16 +117,21 @@ impl<'a, E: Engine> Runner<'a, E> {
         let mut config = engine.test_config().map_err(Failure::new)?;
         // Service fixtures isolate persistent credentials before either backend
         // opens a database. Original SQL and ordinary corpus defaults stay intact.
-        if let Ok(directory) = std::env::var("SLT_FIXTURE_SECRET_DIRECTORY") {
-            let path = std::path::Path::new(&directory);
-            if !path.is_absolute() || !path.is_dir() {
-                return Err(Failure::new(
-                    "SLT_FIXTURE_SECRET_DIRECTORY must be an existing absolute directory",
-                ));
+        for (variable, setting) in [
+            ("SLT_FIXTURE_SECRET_DIRECTORY", "secret_directory"),
+            ("SLT_FIXTURE_EXTENSION_DIRECTORY", "extension_directory"),
+        ] {
+            if let Ok(directory) = std::env::var(variable) {
+                let path = std::path::Path::new(&directory);
+                if !path.is_absolute() || !path.is_dir() {
+                    return Err(Failure::new(format!(
+                        "{variable} must be an existing absolute directory"
+                    )));
+                }
+                engine
+                    .set_option(&mut config, setting, &directory)
+                    .map_err(Failure::new)?;
             }
-            engine
-                .set_option(&mut config, "secret_directory", &directory)
-                .map_err(Failure::new)?;
         }
         // Native corpus runs can use the same default memory budget as a bounded
         // VM. This applies to both backends; tests may still set their own limit.

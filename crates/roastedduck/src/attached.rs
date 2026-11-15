@@ -777,9 +777,10 @@ impl DatabaseManager {
         path: &[u8],
         options: &AttachOptions,
         config: crate::postgres::AttachConfig,
-        buffer_manager: &roastedduck_buffer::BufferManager,
-        instance_validity: &Arc<ValidChecker>,
+        instance: &Arc<crate::database::DatabaseInstance>,
     ) -> Result<Option<Arc<AttachedDatabase>>> {
+        let buffer_manager = &instance.env.buffer_manager;
+        let instance_validity = &instance.validity;
         let name = info.name.as_bytes();
         let on_conflict = info.on_conflict;
         let _guard = self.attach_lock.lock().unwrap_or_else(PoisonError::into_inner);
@@ -818,12 +819,23 @@ impl DatabaseManager {
             .map_err(|_| Error::invalid_input("Invalid Postgres connection string"))?;
         let postgres = crate::postgres::catalog::PgCatalog::new(
             &catalog,
-            roastedduck_postgres::config::Parameters::parse(dsn)?,
+            crate::postgres::auth::factory(
+                Arc::downgrade(instance),
+                &String::from_utf8_lossy(name.as_bytes()),
+                dsn,
+                config.secret_entry.as_ref(),
+            )?,
             buffer_manager.clone(),
             options.read_only(),
             config.isolation,
             config.schemas,
             config.pool,
+        )?;
+        let register_storage = crate::postgres::secret_storage::initialize(
+            &postgres,
+            &config.secret_table,
+            config.explicit_secret_table,
+            &String::from_utf8_lossy(name.as_bytes()),
         )?;
         catalog.set_backend(postgres.clone())?;
         catalog.set_attach_info(roastedduck_catalog::AttachedInfo {
@@ -862,6 +874,16 @@ impl DatabaseManager {
             let _ = previous.close(true, CloseAction::TryCheckpoint);
         }
         databases.push(database.clone());
+        drop(databases);
+        if register_storage {
+            instance.secrets.register_postgres_storage(
+                crate::postgres::secret_storage::PostgresSecretStorage::new(
+                    Arc::downgrade(instance),
+                    String::from_utf8_lossy(name.as_bytes()).into_owned(),
+                    config.secret_table,
+                ),
+            );
+        }
         Ok(Some(database))
     }
 

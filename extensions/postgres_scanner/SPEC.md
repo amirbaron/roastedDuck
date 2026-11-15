@@ -26,6 +26,64 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 
 Contract recorded; not a claim that new functionality passes acceptance.
 
+## Secrets/storage checkpoint (November 15)
+
+Latest full original PG inventory: 145 PASS / 7 SKIP / 0 FAIL on Rust
+(postgres-upstream-secrets-all-3), matching the C++ eligible-file count. The two
+formerly failing secret files now pass unchanged on both engines. Four skips are
+original mysql_scanner requirements; the other three require PGOAUTHTOKEN,
+HAS_POSTGIS and AWS_RDS_DATABASE_AVAILABLE. Do not call the skips coverage.
+
+The config provider accepts the pinned libpq option names/aliases, ordered alias
+precedence, string conversion, redaction and ignored SCOPE behavior. ATTACH resolves
+explicit/default secrets with ambiguity checks, preserves the original displayed
+path, handles URI conflicts and applies attach-path overrides. Empty provider paths
+are empty VARCHARs rather than NULL in duckdb_databases().
+
+PostgreSQL secret storage probes before publishing ATTACH, creates a table only
+when explicitly requested, preserves quoted/schema-qualified names, and reuses
+registrations across detach/reattach. CRUD participates in the caller's transaction;
+lookup uses scope/tie-break ordering and type-filtered SQL. The global manager lock
+is released before remote I/O. Serialized-secret error text is redacted. Existing
+DuckDB key/value serialization is reused; C++ writes/Rust reads and Rust writes/C++
+reads both pass, including a write-back in the opposite engine.
+
+RDS templates validate configuration without fetching credentials. Token generation
+uses a separate connection/temporary secret/rollback lifecycle, existing Rust SigV4
+signing, and the source's 840-second cache-age comparison. The signed token is used
+as the PostgreSQL password on new pool connections. No-credential validation=none
+returns the pinned unsigned URL. RDS name/password trimming follows the platform
+C-char rule (including the observed non-ASCII suffix behavior), not Unicode trim.
+
+Receipt: .context/artifacts/popular-extensions/postgres-secrets-verification.json.
+All 30 paired secret controls pass (postgres-secret-control-3), including alias
+collisions with 1..25 padding options, transactional rollback, storage conflicts,
+scope/tie priority and URI handling. Both storage interop directions pass
+(postgres-secret-interop-3). RDS controls validate SigV4 passwords and token reuse
+across three connections per engine plus paired error diagnostics (postgres-rds-
+control-3); this is an owned loopback protocol fixture, not live AWS validation.
+The no-credential/provider SQL cohort passes both engines (postgres-rds-sql-control-3).
+All 13 cache, 27 attachment, 22 mutation, 16 DDL, 12 parallel, 16 pool, 39 codec and
+6 interruption regressions pass (postgres-secrets-*-1). All 284 native/planner/AWS
+tests across 47 signed targets pass with TZ=UTC; strict Clippy 4 passes. Earlier
+failed receipts remain. All owned fixtures stopped; no heavy job remains active.
+
+PG fixtures now set SLT_FIXTURE_EXTENSION_DIRECTORY before either backend opens a
+database. Pinned oracle artifacts are staged on the SSD, so original INSTALL
+statements do not write extension binaries into the user's home. Ordinary corpus
+defaults and original SQL remain unchanged.
+
+Next: unify standalone postgres_scan[_pushdown] and postgres_query with attached
+COPY/parallel/filter/limit/optimizer behavior (notes: .context/postgres-unified-scan-next.md).
+Qualify remaining authentication/settings and skipped prerequisites, including the
+AWS aws_secret_rds.test using an owned SSO fixture; its SQL only creates templates/
+tokens, so no real RDS account is needed. Keep original wrong-require/mode-skip
+files intact and use explicit supplements where appropriate. Finish remaining
+provider/platform/package gates and PyPI/Homebrew delivery. The full core run of
+66389563 had one ART export regression corrected in e6504e3a; targeted core secrets
+and ART checks pass, but a full final-source core run is still required.
+The all-five goal remains active/incomplete; no new release has been published.
+
 ## Catalog/cache checkpoint (November 15)
 
 The PostgreSQL full original suite now reports 143 PASS / 2 FAIL / 7 SKIP on Rust
