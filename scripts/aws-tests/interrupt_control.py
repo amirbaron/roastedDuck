@@ -25,11 +25,12 @@ def main():
     parser.add_argument('--cli', type=Path, required=True)
     parser.add_argument('--api-probe', type=Path)
     parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--extension', choices=['aws', 'azure'], default='aws')
     args = parser.parse_args()
     args.out = args.out.resolve()
     args.out.mkdir(parents=True, exist_ok=False)
     helper, marker = args.out / 'slow.py', args.out / 'children.json'
-    helper.write_text("import json,os,pathlib,subprocess,sys,time\np=subprocess.Popen(['sleep','30'])\npathlib.Path(sys.argv[1]).write_text(json.dumps({'helper':os.getpid(),'child':p.pid,'group':os.getpgrp()}))\ntime.sleep(30)\nprint(json.dumps({'Version':1,'AccessKeyId':'fixture-key','SecretAccessKey':'fixture-secret'}))\n")
+    helper.write_text("import json,os,pathlib,subprocess,sys,time\np=subprocess.Popen(['sleep','30'])\ntarget=pathlib.Path(sys.argv[1]); temp=target.with_suffix('.tmp'); temp.write_text(json.dumps({'helper':os.getpid(),'child':p.pid,'group':os.getpgrp()})); temp.replace(target)\ntime.sleep(30)\nprint(json.dumps({'Version':1,'AccessKeyId':'fixture-key','SecretAccessKey':'fixture-secret'}))\n")
     command = ' '.join(shlex.quote(str(p)) for p in [sys.executable, helper, marker])
     config, credentials = args.out / 'config', args.out / 'credentials'
     config.write_text(f'[profile slow]\nregion=us-east-1\ncredential_process={command}\n')
@@ -38,8 +39,20 @@ def main():
     env.update(AWS_CONFIG_FILE=str(config), AWS_SHARED_CREDENTIALS_FILE=str(credentials),
                AWS_EC2_METADATA_DISABLED='true', AWS_REGION='us-east-1')
     sql = "SET allow_persistent_secrets=false;\nLOAD httpfs;\nLOAD aws;\nCREATE SECRET fixture(TYPE s3, PROVIDER credential_chain, CHAIN 'process', PROFILE 'slow');\n"
+    if args.extension == 'azure':
+        executable_dir = args.out / 'bin'
+        executable_dir.mkdir()
+        azure_cli = executable_dir / 'az'
+        script = helper.read_text().replace('pathlib.Path(sys.argv[1])', f'pathlib.Path({str(marker)!r})')
+        azure_cli.write_text('#!/usr/bin/env python3\n' + script)
+        azure_cli.chmod(0o755)
+        env = {k: v for k,v in env.items() if not k.startswith(('AZURE_', 'IDENTITY_', 'MSI_', 'IMDS_'))}
+        env['PATH'] = str(executable_dir) + os.pathsep + os.environ['PATH']
+        sql = "SET allow_persistent_secrets=false; LOAD azure; CREATE SECRET fixture(TYPE azure, PROVIDER credential_chain, CHAIN 'cli', ACCOUNT_NAME 'fixture'); SELECT * FROM 'az://fixture/input.csv';\n"
     command = ([str(args.api_probe.resolve()), str(marker)] if args.api_probe else
                [str(args.cli.resolve()), '-batch', '-bail', '-init', '/dev/null', ':memory:'])
+    if args.api_probe and args.extension == 'azure':
+        command.append('azure')
     process = subprocess.Popen(command,
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                text=True, env=env, start_new_session=True)
@@ -64,6 +77,7 @@ def main():
             time.sleep(0.02)
         stopped = all(not alive(children[k]) for k in ['helper', 'child'])
         report = dict(sql=sql, mode='api' if args.api_probe else 'cli',
+                      extension=args.extension,
                       exit=process.returncode, stdout=stdout, stderr=stderr,
                       interrupt_diagnostic='INTERRUPT Error: Interrupted!' in stderr,
                       helper_processes_stopped=stopped)
@@ -76,6 +90,11 @@ def main():
         (args.out / 'verification.json').write_text(json.dumps(report, indent=2) + '\n')
         print(json.dumps(report))
         assert report['passed']
+    except Exception as error:
+        if not (args.out / 'verification.json').exists():
+            (args.out / 'verification.json').write_text(json.dumps(dict(passed=False, extension=args.extension,
+                error=str(error), helper_started=marker.exists()), indent=2)+'\n')
+        raise
     finally:
         if process.poll() is None:
             process.kill()

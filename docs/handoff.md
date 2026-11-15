@@ -1,3 +1,21 @@
+Azure identity checkpoint, November 15, 2026: Rust now acquires environment,
+workload, CLI, managed-identity and service-principal/certificate tokens. Twenty-five
+paired identity controls pass on the final signed development image, with matching
+provider request traces and CLI arguments/environment. Certificates are independently
+verified (RSA signatures and claims), and all client/object/resource selectors are
+covered. The pinned Unix CLI PATH-only environment, valid token JSON on nonzero exit,
+13-second timeout, legacy timestamp rules and direct-managed transport behavior are
+preserved. Native CLI and Rust API interruption checks stop helper descendants; the
+API returns ErrorKind::Interrupt. Nine unchanged Blob/VFS originals and 12 ADLS
+protocol controls per engine remain passing. Strict HTTPFS/runtime/SLT Clippy passes.
+Receipts: azure-identity-control-4, azure-interrupt-{api,cli}-final,
+azure-identity-blob-regression-1, azure-identity-dfs-regression-1 and
+azure-identity-clippy-final-2.log under `.context/artifacts/popular-extensions/`.
+The full goal remains incomplete: unchanged cloud originals, advanced option/
+refresh/challenge/network-cancellation behavior, platform qualification, AWS web
+identity/RDS, PostgreSQL, full conformance and publication remain. Azure Arc's macOS
+rejection matches; Linux/Windows Arc success is unverified. No public release made.
+
 Azure ADLS checkpoint, November 15, 2026: Azure now registers both Blob and
 ADLS (`abfss://` and `abfs://`) Rust filesystems. SharedKey-authenticated protocol
 fixtures pass 12 SQL controls per engine, including directory traversal, paginated

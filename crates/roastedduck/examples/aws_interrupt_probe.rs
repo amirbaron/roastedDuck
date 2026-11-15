@@ -1,12 +1,17 @@
-//! Development probe for query cancellation during an AWS credential process.
+//! Development probe for query cancellation during an AWS process or Azure CLI lookup.
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let marker = PathBuf::from(std::env::args().nth(1).ok_or("missing helper-ready path")?);
+    let azure = std::env::args().nth(2).is_some_and(|name| name == "azure");
     let database = roastedduck::Database::open_in_memory()?;
     let mut connection = database.connect()?;
-    connection.query("SET allow_persistent_secrets=false; LOAD httpfs; LOAD aws;")?;
+    connection.query(if azure {
+        "SET allow_persistent_secrets=false; LOAD azure;"
+    } else {
+        "SET allow_persistent_secrets=false; LOAD httpfs; LOAD aws;"
+    })?;
     let handle = connection.client_handle();
     std::thread::scope(|scope| -> Result<(), Box<dyn std::error::Error>> {
         let watcher = scope.spawn(move || {
@@ -21,9 +26,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             handle.interrupt();
             Ok(())
         });
-        let result = connection.query(
-            "CREATE SECRET fixture(TYPE s3, PROVIDER credential_chain, CHAIN 'process', PROFILE 'slow');",
-        );
+        let result = connection.query(if azure {
+            "CREATE SECRET fixture(TYPE azure, PROVIDER credential_chain, CHAIN 'cli', ACCOUNT_NAME 'fixture'); SELECT * FROM 'az://fixture/input.csv';"
+        } else {
+            "CREATE SECRET fixture(TYPE s3, PROVIDER credential_chain, CHAIN 'process', PROFILE 'slow');"
+        });
         watcher.join().map_err(|_| "interrupt watcher panicked")??;
         let error = result
             .err()

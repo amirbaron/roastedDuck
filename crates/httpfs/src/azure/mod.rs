@@ -6,9 +6,12 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 mod blob;
+mod certificate;
 mod client;
 mod config;
 mod dfs;
+mod identity;
+mod process;
 mod url;
 use super::io_error;
 pub use blob::AzureBlobFileSystem;

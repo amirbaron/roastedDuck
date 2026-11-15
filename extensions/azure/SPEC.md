@@ -24,8 +24,8 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 
 ## Status
 
-In progress. Blob storage has a first Rust implementation; full Azure compatibility
-is not yet accepted. See the verification checkpoint below.
+In progress. Blob, ADLS and identity-provider implementations are present in normal
+builds; full Azure compatibility is not yet accepted. See the checkpoints below.
 
 The pinned source additionally registers managed-identity client/object/resource IDs
 and service-principal certificate authentication. These are required even though
@@ -109,3 +109,45 @@ no new package or native dependency is introduced.
 This is partial Azure acceptance. Identity token acquisition, remaining cloud
 originals, complete option/cancellation semantics, full conformance and release
 qualification remain required. The profile original's raw failure above remains.
+
+## Identity acquisition checkpoint (November 15)
+
+Rust now resolves credential_chain, managed_identity and service_principal tokens
+for Blob and ADLS. The implementation follows the pinned default/explicit provider
+order, AZURE_TOKEN_CREDENTIALS selection, environment/workload settings, CLI command
+and environment, managed-identity endpoint precedence and selectors, token lifetime
+parsing and proactive refresh rules. RSA certificate assertions use ring; no new
+crypto/native package is added. Unix CLI subprocess groups are owned until exit and
+are killed/reaped on interruption. The SDK's 13-second CLI timeout is preserved.
+
+Twenty-five paired local identity controls pass, with matching provider request
+traces and CLI arguments/environment for all cases. These include direct/environment
+client secrets, certificates (independently verified RSA signatures and x5t/kid
+thumbprints), workload tokens, CLI/default fallback, managed App Service 2019/2017,
+Cloud Shell, IMDS, client/object/resource selectors, malformed configurations,
+untrusted managed TLS, legacy timestamp cache behavior and nonzero CLI exit with
+valid token JSON. The pinned direct-managed provider drops custom transport options;
+the fixture and Rust preserve that behavior rather than broadening its CA trust.
+Azure Arc's restricted challenge-file handling is implemented; only its pinned
+macOS unsupported-platform result has been exercised, not Linux/Windows Arc success.
+
+The actual Rust public API returns ErrorKind::Interrupt while the fake CLI is
+running; both API and native CLI controls prove the helper and descendant stop.
+The final signed development image retains nine passing Blob/VFS originals and
+12 passing ADLS protocol controls per engine. Strict all-target HTTPFS/runtime/SLT
+Clippy passes. libc becomes a direct dependency using its existing locked version;
+no package versions or native dependency set change.
+
+Receipts under `.context/artifacts/popular-extensions/`:
+`azure-identity-control-4/`, `azure-interrupt-api-final/`,
+`azure-interrupt-cli-final/`, `azure-identity-blob-regression-1/`,
+`azure-identity-dfs-regression-1/`, and `azure-identity-clippy-final-2.log`.
+Earlier failed fixtures are retained: the first CLI fixture incorrectly expected
+an environment variable that C++ strips, and managed HTTPS incorrectly depended on
+custom CA propagation; the first interrupt CLI input lacked its terminating newline.
+
+Still required: unchanged cloud original suites through local protocol fixtures,
+remaining option/refresh/challenge/error and network-cancellation controls,
+Linux/Windows Arc acceptance where applicable, full conformance, cross-platform
+package qualification and publication. These checks do not establish live Entra,
+Azure policy or production-cloud acceptance.

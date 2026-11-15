@@ -39,3 +39,22 @@ cover `abfs://` and `abfss://`, reads, the upstream glob restrictions, intermedi
 commits, close=true and partitioned Parquet. It takes `--cli`, `--oracle`,
 `--extension` and `--out`; `--engine cpp` can qualify the fixture independently.
 This is protocol-fixture acceptance, not an Azurite ADLS capability or live Azure.
+
+`identity_control.py` runs paired identity controls using an owned TLS certificate,
+local token/storage services, and a fake `az` executable. It verifies OAuth fields,
+RSA assertion signatures/thumbprints/claims, workload assertions, managed-identity
+selectors, fallback ordering, CLI environment/arguments, cache behavior for expired
+legacy timestamps, and relevant failures. No system trust store, cloud profile or
+real Azure CLI installation is changed. It takes the same executable arguments as
+`dfs_control.py`. Use the local-services virtual environment (cryptography is required).
+
+The Unix CLI helper's restricted environment and acceptance of valid JSON on
+nonzero exit match the pinned SDK. Direct managed_identity deliberately ignores
+the custom Azure CA setting, as the pinned source does; its positive metadata
+fixtures use ordinary loopback HTTP and storage remains TLS. The test also proves
+that the custom CA does not silently become trusted by that provider.
+
+`scripts/aws-tests/interrupt_control.py --extension azure` verifies cancellation of
+the real SQL lookup, including helper descendants. Pass `--api-probe` pointing at
+the signed `aws_interrupt_probe` example to verify the actual Rust ErrorKind as
+well as the native CLI behavior.

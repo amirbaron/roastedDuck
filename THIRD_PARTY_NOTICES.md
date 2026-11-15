@@ -12,6 +12,7 @@ does not replace those terms or grant rights to third-party trademarks.
 | DuckDB FTS indexing SQL and stopwords | Pinned `duckdb-fts` source; [retained MIT notice](crates/roastedduck/src/fts/LICENSE). |
 | DuckDB VSS table macros | Pinned `duckdb-vss` SQL; [retained MIT notice](crates/roastedduck/src/vss/LICENSE). The HNSW graph is independently implemented in Rust. |
 | DuckDB Azure URL, option and secret semantics | Pinned `duckdb-azure` source; [retained MIT notice](crates/httpfs/src/azure/LICENSE). Storage requests and signing are implemented in Rust. |
+| Azure identity compatibility semantics | Azure SDK for C++ 1.13.2 source contracts, reimplemented in Rust; [retained Microsoft MIT notice](crates/httpfs/src/azure/LICENSE-SDK). The C++ SDK is not linked into the product. |
 | ICU data and implementation | [ICU license](crates/icu/LICENSE-ICU) |
 | utf8proc data | [utf8proc license](crates/common/data/utf8proc-LICENSE) |
 | Zstandard | [Retained ZSTD license](crates/zstd/LICENSE-ZSTD) |

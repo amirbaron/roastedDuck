@@ -27,6 +27,7 @@ enum Auth {
     SharedKey(Vec<u8>),
     Sas(String),
     Bearer(String),
+    Identity(std::sync::Arc<super::identity::Identity>),
 }
 impl std::fmt::Debug for Auth {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -176,18 +177,23 @@ impl Client {
             };
             let auth = match provider {
                 "config" if secret.is_none() && !setting("azure_credential_chain", "").is_empty() => {
-                    return Err(Error::not_implemented(
-                        "Azure credential chain is not implemented yet",
-                    ));
+                    let secret = super::AzureSecret {
+                        name: "azure_credential_chain".into(),
+                        provider: "credential_chain".into(),
+                        values: BTreeMap::from([(
+                            "chain".into(),
+                            roastedduck_types::Value::varchar(setting("azure_credential_chain", "")),
+                        )]),
+                    };
+                    Auth::Identity(std::sync::Arc::new(super::identity::Identity::new(&secret)?))
                 }
                 "config" => Auth::Anonymous,
                 "access_token" => Auth::Bearer(required("access_token")?),
-                // Identity providers resolve at file access, as in the pinned SDK.
-                _ => {
-                    return Err(Error::not_implemented(format!(
-                        "Azure identity provider '{provider}' is not implemented yet"
-                    )));
-                }
+                _ => Auth::Identity(std::sync::Arc::new(super::identity::Identity::new(
+                    secret
+                        .as_ref()
+                        .ok_or_else(|| Error::internal("Missing Azure identity secret"))?,
+                )?)),
             };
             (format!("https://{account}.{endpoint}"), auth)
         };
@@ -286,6 +292,12 @@ impl Client {
             }
             Auth::Bearer(token) => {
                 headers.push(("Authorization".into(), format!("Bearer {token}")));
+            }
+            Auth::Identity(identity) => {
+                headers.push((
+                    "Authorization".into(),
+                    format!("Bearer {}", identity.token(&self.parameters)?),
+                ));
             }
             Auth::Anonymous | Auth::Sas(_) => {}
         }

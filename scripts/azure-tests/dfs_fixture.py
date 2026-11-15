@@ -14,22 +14,36 @@ DATE = 'Sun, 15 Nov 2026 00:00:00 GMT'
 
 
 class DfsFixture:
-    def __init__(self):
+    def __init__(self, tls_context=None, bearer_token=None):
         self.entries = {'': None, 'folder': None, 'folder/a': None, 'folder/b': None,
                         'input.csv': b'value\n1\n2\n3\n',
                         'folder/a/one.csv': b'value\n1\n', 'folder/b/two.csv': b'value\n2\n'}
         self.pending = {}
         self.requests = []
         self.lock = threading.RLock()
+        self.tls_context = tls_context
+        self.bearer_token = bearer_token
+        self.disconnects = 0
+
+    def handle_identity(self, handler, parsed, body):
+        return False
 
     def __enter__(self):
         owner = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
+            def handle(self):
+                try:
+                    super().handle()
+                except (ConnectionResetError, BrokenPipeError):
+                    owner.disconnects += 1
+
             def log_message(self, *_):
                 pass
 
             def authenticate(self, parsed):
+                if owner.bearer_token is not None and self.headers.get('Authorization', '').startswith('Bearer '):
+                    return hmac.compare_digest(self.headers['Authorization'], 'Bearer ' + owner.bearer_token)
                 fields = [self.command]
                 for name in ['content-encoding', 'content-language', 'content-length', 'content-md5',
                              'content-type', 'date', 'if-modified-since', 'if-match', 'if-none-match',
@@ -68,9 +82,13 @@ class DfsFixture:
 
             def handle_request(self):
                 parsed = urllib.parse.urlsplit(self.path)
-                valid = self.authenticate(parsed)
                 body = self.rfile.read(int(self.headers.get('Content-Length', '0')))
-                request = dict(method=self.command, path=self.path, valid_signature=valid, body_length=len(body))
+                if owner.handle_identity(self, parsed, body):
+                    return
+                valid = self.authenticate(parsed)
+                shared_key = self.headers.get('Authorization', '').startswith('SharedKey ')
+                request = dict(method=self.command, path=self.path, valid_signature=valid if shared_key else None,
+                               valid_authorization=valid, authentication='shared_key' if shared_key else 'bearer', body_length=len(body))
                 with owner.lock:
                     owner.requests.append(request)
                     if not valid:
@@ -150,11 +168,14 @@ class DfsFixture:
                         return self.respond(200)
                     return self.error(400, 'UnsupportedFixtureOperation')
 
-            do_GET = do_HEAD = do_PUT = do_PATCH = do_DELETE = handle_request
+            do_GET = do_HEAD = do_POST = do_PUT = do_PATCH = do_DELETE = handle_request
 
         self.server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-        self.endpoint = f'http://127.0.0.1:{self.server.server_port}/{ACCOUNT}'
-        self.connection = f'DefaultEndpointsProtocol=http;AccountName={ACCOUNT};AccountKey={KEY};BlobEndpoint={self.endpoint};DfsEndpoint={self.endpoint};'
+        scheme = 'https' if self.tls_context else 'http'
+        if self.tls_context:
+            self.server.socket = self.tls_context.wrap_socket(self.server.socket, server_side=True)
+        self.endpoint = f'{scheme}://127.0.0.1:{self.server.server_port}/{ACCOUNT}'
+        self.connection = f'DefaultEndpointsProtocol={scheme};AccountName={ACCOUNT};AccountKey={KEY};BlobEndpoint={self.endpoint};DfsEndpoint={self.endpoint};'
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         return self
