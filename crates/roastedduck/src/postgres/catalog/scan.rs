@@ -81,6 +81,7 @@ pub(crate) struct Data {
     use_transaction: bool,
     client: Arc<FunctionClient>,
     text: bool,
+    version: crate::postgres::version::Version,
     pages: u64,
     per_task: u64,
     max_threads: usize,
@@ -425,7 +426,7 @@ impl Data {
         relation: String,
         table_name: String,
         can_emit_ctid: bool,
-        version: u32,
+        version: crate::postgres::version::Version,
         approx_pages: i64,
         read_only: bool,
     ) -> Self {
@@ -434,7 +435,7 @@ impl Data {
             .and_then(|v| v.as_u64())
             .filter(|n| *n > 0)
             .unwrap_or(1000);
-        let pages = if version >= 140_000
+        let pages = if version.major() >= 14
             && !text
             && setting(&client, "pg_use_ctid_scan").and_then(|v| v.as_bool()) != Some(false)
         {
@@ -447,6 +448,7 @@ impl Data {
         } else {
             1
         };
+        let text = text || version.redshift();
         let materialize = source.catalog().is_some();
         Self {
             source,
@@ -458,6 +460,7 @@ impl Data {
             parameters: Vec::new(),
             use_transaction: true,
             text,
+            version,
             pages,
             per_task,
             max_threads,
@@ -504,7 +507,7 @@ impl Data {
         columns: Columns,
         relation: String,
         table_name: String,
-        version: u32,
+        version: crate::postgres::version::Version,
         pages: i64,
     ) -> Self {
         Self::new(
@@ -615,7 +618,7 @@ pub(crate) fn function(name: &str, arguments: Vec<LogicalType>, filter_pushdown:
             };
             let snapshot =
                 if !data.materialize && data.max_threads > 1 && data.source.isolation() != "READ COMMITTED" {
-                    main.snapshot()?
+                    main.snapshot(data.version)?
                 } else {
                     String::new()
                 };

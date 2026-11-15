@@ -428,11 +428,26 @@ impl PgTransaction {
             true,
         )
     }
-    pub(super) fn snapshot(&self) -> Result<String> {
-        let rows = self.metadata("SELECT pg_export_snapshot()", &[])?;
-        rows.first()
-            .and_then(|r| r.first())
-            .ok_or_else(|| Error::internal("Snapshot query returned no row"))?
+    pub(super) fn snapshot(&self, version: super::version::Version) -> Result<String> {
+        let old = version.before(9, 6);
+        let sql = if old {
+            "SELECT pg_is_in_recovery(), pg_export_snapshot()"
+        } else {
+            "SELECT pg_export_snapshot()"
+        };
+        // TryQuery failures disable snapshot sharing. Do not reset the server's
+        // transaction here: its aborted state must still affect later queries.
+        let Ok(rows) = self.metadata(sql, &[]) else {
+            return Ok(String::new());
+        };
+        let Some(row) = rows.first() else {
+            return Ok(String::new());
+        };
+        if old && row.first().and_then(Value::as_bool) == Some(true) {
+            return Ok(String::new());
+        }
+        row.get(usize::from(old))
+            .ok_or_else(|| Error::internal("Snapshot query returned no column"))?
             .to_varchar()
     }
     pub(super) fn copy_cursor(

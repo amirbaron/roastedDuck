@@ -92,3 +92,15 @@ libpq OAuth plugins/device flows are outside this supplied-token control.
 process-global behavior across two SQL connections. `rds_control.py` checks SigV4
 passwords and token reuse on an owned protocol endpoint. These fixtures establish
 local protocol compatibility, not live OAuth or AWS acceptance.
+
+`version_control.py --cli ... --oracle ... --extension ... --out ...` uses owned
+schema functions to control the version/RDS probe and snapshot-export response.
+It checks attached, standalone and query scans, enum visibility, Redshift text
+reads and subsequent transaction failure after an unsuccessful snapshot export.
+The server is PostgreSQL17; this is not live Redshift/Aurora or old-server evidence.
+
+`crl_control.py` accepts the same arguments and generates disposable CA/server
+certificates and v2 CRLs. It compares extension-free and profile-compliant lists,
+revocation, expiration, future dates, signature/issuer/critical-extension failures,
+missing/invalid-PEM files, certificate-only stores and verify-ca/full hostname
+policy. No real credentials, user certificate store or external service is changed.

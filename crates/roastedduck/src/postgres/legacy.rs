@@ -42,13 +42,7 @@ fn bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOutput> {
                 .map_err(|e| super::transaction::query_error(sql, e))
         })
     };
-    let version = read("SHOW server_version_num")?
-        .rows
-        .first()
-        .and_then(|r| r.first())
-        .and_then(Option::as_deref)
-        .and_then(|s| s.parse::<u32>().ok())
-        .unwrap_or(0);
+    let version = super::version::Version::read(session, client);
     let info_schema = client
         .settings()
         .and_then(|s| s.current_setting("pg_use_information_schema_introspection").ok())

@@ -832,6 +832,7 @@ impl DatabaseManager {
                 config.isolation,
                 config.schemas,
                 config.pool,
+                client,
             )
         })?;
         let register_storage = crate::postgres::secret_storage::initialize(

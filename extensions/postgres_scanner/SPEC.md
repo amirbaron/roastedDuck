@@ -26,6 +26,47 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 
 Contract recorded; not a claim that new functionality passes acceptance.
 
+## Version, snapshot and CRL checkpoint (November 15)
+
+Version detection now uses the pinned SELECT version()/RDS-settings probe for
+both ATTACH and standalone scans, including UNKNOWN fallback on probe failure.
+Numeric component parsing, Aurora/Redshift precedence and pre-8.3 enum visibility
+follow upstream. Redshift forces text reads. Snapshot-export errors disable
+sharing without resetting an aborted server transaction, so the later scan reports
+the server's transaction failure as upstream does. The old-version recovery query
+is retained for the pinned version-dependent snapshot branch.
+
+File-based v2 CRLs now use Rustls chain, signature, issuer, revocation and expiry
+verification; thisUpdate is checked separately because webpki omits it. verify-ca
+omits only hostname checking, while verify-full retains it. Existing root files
+also enable chain verification in prefer mode, following the pinned source.
+Missing/unreadable/invalid-PEM CRL files do not activate revocation checking;
+loaded malformed or unsupported DER fails explicitly. A certificate-only CRL file
+requires a CRL and fails. This is not a claim of every OpenSSL CRL format/option:
+v1/delta CRLs, CRL directories and system-root option behavior remain unqualified.
+
+The rustls-webpki 0.103.17 patch permits the optional extensions field to be absent
+in a v2 CRL, as libpq accepts. Signed bytes and verification algorithms are
+unchanged. Registry archive/license audit: only src/crl/types.rs differs among
+33 audited source/manifest/license files. The new direct x509-cert dependency was
+already locked; no package version or C/C++ dependency was added.
+
+All 9 paired version/snapshot controls and 16 paired CRL controls pass, including
+failed probes, Redshift text mode, revoked/expired/future/bad-signature/wrong-issuer
+and critical-extension rejection. Parallel12, cache13, unified-scan21, OAuth48
+records (including the unchanged original on both engines) and debug8 pass.
+The full original PG inventory remains 145 PASS / 7 SKIP / 0 FAIL; its separately
+qualified OAuth prerequisite remains explicit. These are owned fixtures on PG17,
+not live Redshift/Aurora or old-server acceptance.
+
+Receipt: .context/artifacts/popular-extensions/postgres-transport-verification.json.
+All 284 native/planner/AWS tests across 47 signed targets pass with TZ=UTC;
+strict Clippy2 passes. All owned fixtures stopped; no heavy job remains active.
+Next prioritize remaining AWS originals/providers using .context/aws-next-control.md,
+then final core/platform/package/PyPI/Homebrew qualification. Remaining transport
+notes are in .context/postgres-auth-settings-next.md. The full all-five goal stays
+active; no new public release or Homebrew Core acceptance is claimed.
+
 ## OAuth/debug checkpoint (November 15)
 
 All 26 pinned extension settings now have runtime registrations, including

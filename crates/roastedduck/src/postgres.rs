@@ -11,6 +11,7 @@ mod query;
 pub(crate) mod secret_storage;
 mod text;
 mod transaction;
+mod version;
 pub(crate) use query::query_functions;
 use std::any::Any;
 use std::sync::Arc;

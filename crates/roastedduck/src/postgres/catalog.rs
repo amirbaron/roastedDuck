@@ -34,7 +34,7 @@ pub(crate) struct PgCatalog {
     pub(crate) pool: Arc<roastedduck_postgres::pool::Pool>,
     buffer_manager: BufferManager,
     read_only: bool,
-    version: u32,
+    version: super::version::Version,
     isolation: String,
     schemas: Vec<String>,
     default_schema: ByteString,
@@ -50,6 +50,7 @@ impl PgCatalog {
         }
         transaction.modify_database(native.name(), None, native.locks(), false, false)
     }
+    #[allow(clippy::too_many_arguments, reason = "Remote catalog construction context")]
     pub fn new(
         native: &Arc<Catalog>,
         factory: Arc<dyn Fn() -> Result<roastedduck_postgres::Session> + Send + Sync>,
@@ -58,20 +59,13 @@ impl PgCatalog {
         isolation: String,
         schemas: Vec<String>,
         pool_config: roastedduck_postgres::pool::Config,
+        client: &Arc<FunctionClient>,
     ) -> Result<Arc<Self>> {
         // Construction validates the endpoint before the attachment is published.
         let pool = roastedduck_postgres::pool::Pool::new(pool_config, factory)?;
         let version = {
             let lease = pool.acquire(None)?;
-            let mut rows = lease.session()?.stream("SHOW server_version_num", &[])?;
-            let values = rows.next_batch(2)?;
-            values
-                .first()
-                .and_then(|r| r.first())
-                .and_then(Option::as_deref)
-                .and_then(|b| std::str::from_utf8(b).ok())
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0)
+            super::version::Version::read(lease.session()?, client)
         };
         let default_schema = schemas.first().map_or("public", String::as_str).into();
         Ok(Arc::new_cyclic(|own| Self {
@@ -220,7 +214,7 @@ impl PgCatalog {
                 CatalogType::Schema => pg.metadata("SELECT nspname::text FROM pg_catalog.pg_namespace ORDER BY oid", &[])?,
                 CatalogType::Table | CatalogType::View => pg.metadata("SELECT c.relname::text FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1::text AND c.relkind IN ('r','v','m','f','p') ORDER BY c.oid", &[text_parameter(schema)])?,
                 CatalogType::Index => pg.metadata("SELECT indexname::text FROM pg_catalog.pg_indexes WHERE schemaname=$1::text ORDER BY indexname", &[text_parameter(schema)])?,
-                CatalogType::Type => pg.metadata("SELECT t.typname::text FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname=$1::text AND t.typtype IN ('e','c') ORDER BY t.oid", &[text_parameter(schema)])?,
+                CatalogType::Type => pg.metadata(&format!("SELECT t.typname::text FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname=$1::text AND t.typtype IN ({}) ORDER BY t.oid", self.type_kinds()), &[text_parameter(schema)])?,
                 _ => return Ok(Vec::new()),
             }
             };
@@ -409,6 +403,13 @@ impl PgCatalog {
         entry.internal = schema_entry.internal;
         Ok(Some(Arc::new(entry)))
     }
+    fn type_kinds(&self) -> &'static str {
+        if self.version.before(8, 3) {
+            "'c'"
+        } else {
+            "'e','c'"
+        }
+    }
     fn user_type(
         &self,
         client: &Arc<FunctionClient>,
@@ -418,7 +419,7 @@ impl PgCatalog {
         options: Options,
     ) -> Result<Option<Arc<CatalogEntry>>> {
         let pg = self.transaction(client, transaction)?;
-        let rows = pg.metadata("SELECT t.typname::text FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname=$1::text AND lower(t.typname::text)=lower($2::text) AND t.typtype IN ('e','c') ORDER BY t.typname::text=$2::text DESC,t.typname", &[text_parameter(schema), text_parameter(name)])?;
+        let rows = pg.metadata(&format!("SELECT t.typname::text FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname=$1::text AND lower(t.typname::text)=lower($2::text) AND t.typtype IN ({}) ORDER BY t.typname::text=$2::text DESC,t.typname", self.type_kinds()), &[text_parameter(schema), text_parameter(name)])?;
         let Some(row) = rows.first() else {
             return Ok(None);
         };

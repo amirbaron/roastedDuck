@@ -120,6 +120,7 @@ class Cluster:
                 .add_extension(x509.SubjectAlternativeName([x509.DNSName('localhost'),
                                 x509.IPAddress(ipaddress.ip_address('127.0.0.1'))]),critical=False)
                 .sign(root_key,hashes.SHA256()))
+        self.root_certificate, self.root_key, self.server_certificate = root, root_key, cert
         (self.data/'server.crt').write_bytes(cert.public_bytes(serialization.Encoding.PEM))
         private=self.data/'server.key'
         private.write_bytes(key.private_bytes(serialization.Encoding.PEM,
