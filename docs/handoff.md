@@ -1,3 +1,46 @@
+HTTPFS download/attachment/public checkpoint, November 15, 2026:
+Owned large S3 originals now pass8/8 on Rust; C++ passes7 across receipts. Its
+unchanged upload_large_file.test_slow exceeds the test's2.5GB memory limit with
+this Mac's14 default threads. Preserve the raw failure; no SQL, memory limit or
+thread default was weakened. The oracle shim now permits authenticated TPCDS
+loading, closing its former prerequisite skip. All17 selected attachment/local
+HTTP/encryption originals pass both engines across receipts; the nonexistent
+extension-install test needs its public endpoint's real404, not denied DNS.
+
+HTTP force_download/force_download_threshold now use statement-scoped downloads
+in accounted, spillable Rust buffers. Range mismatches exhaust retries before
+fallback; warnings, disabled fallback and mismatched HEAD lengths match controls.
+HTTP/S3 FileExists follows upstream's catch-failure-as-absent behavior, allowing
+presigned DB attachments without authorization to read their optional WAL URL.
+Actual reads retain failures. Native tests prove bounded-memory spill reads and
+cleanup after a partial download disconnect; all11 HTTPFS tests pass. Ten paired
+HTTP controls match results, warnings, errors and request sequences after only
+owned-port/build-source-ID normalization. Strict Clippy passes. The original50
+raw-status cohort passes again on Rust after these changes.
+
+A fresh29-file public cohort gives C++28pass/1skip and Rust22pass/4fail/3skip.
+Rust's unresolved cases: connection-caching option/implementation; FileSystem
+logs; response header case and enable_http_logging; CA-file error context;
+glob error kind/text; LocalFileSystem-disabled path. The shared CSV skip is an
+actual HTTP500 from csvbase.com. Its raw ignored errors are retained in logs.
+The CA fixture should also copy the pinned README.md before asserting its failure.
+
+Coverage audit correction: five source originals disable all SQL with mode skip.
+Their SLT PASS verdicts remain raw but do not qualify exercised coverage. One
+(secret_types_function) was included in the earlier50 count. Current aggregate:
+91 active originals pass both engines;5 upstream-disabled;36 active unresolved.
+Raw latest: Rust96pass/4fail/3skip/29not-run; C++101pass/1fail/1skip/29not-run.
+This is retained per-file evidence across candidates, not a frozen full sweep.
+See httpfs-originals-audit-1.json and httpfs-download-verification.json under
+.context/artifacts/popular-extensions. No publication or full-goal completion.
+
+Final signed build4 differs from the extensively tested build3 only in the exact
+upstream force_download_threshold description; the two setting rows were checked
+against C++ afterwards. All owned jobs/services stopped at this checkpoint.
+Next: close the six public-cohort Rust gaps, then remaining public slow/S3/proxy/HF
+and local-repository originals. Keep core/platform/package/PyPI/Homebrew/Core
+acceptance in scope. Notes: .context/httpfs-acceptance-next.md. packaging/ untouched.
+
 HTTPFS owned S3 checkpoint, November 15, 2026:
 All26 selected unchanged S3 originals pass on both engines against owned MinIO.
 The fixture uses pinned source-built/signed MinIO and mc, per-run config/data,

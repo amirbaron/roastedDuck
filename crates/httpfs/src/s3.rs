@@ -1086,16 +1086,8 @@ impl FileSystem for S3FileSystem {
         Ok(Some(Box::new(S3Glob::new(request, first))))
     }
     fn is_file(&self, path: &[u8]) -> Result<bool> {
-        match Self::open_file(path) {
-            Ok(_) => Ok(true),
-            Err(error)
-                if error.kind() == roastedduck_common::ErrorKind::Http
-                    && error.raw_message().contains("HTTP 404") =>
-            {
-                Ok(false)
-            }
-            Err(error) => Err(error),
-        }
+        // S3 inherits HTTPFileSystem::FileExists in the pinned extension.
+        Ok(Self::open_file(path).is_ok())
     }
     fn is_dir(&self, _: &[u8]) -> Result<bool> {
         Ok(true)

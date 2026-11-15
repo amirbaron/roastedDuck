@@ -43,9 +43,33 @@ URLs, pre-generated databases, proxies or public datasets need those additional
 fixtures; this runner does not silently replace them or count missing prerequisites
 as passes.
 
+`generate_s3_seeds.py` creates the database and Parquet prerequisites with the
+pinned C++ CLI and authenticated TPCH package. It checks the core SQL against
+`--core-manifest` and records generated file hashes. Pass its output with
+`upstream_s3.py --seeds`. Small presigned fixtures come from the pinned core data
+and are checked against its adjacent manifest. Presigned URLs use the real MinIO
+share command. Python-server originals get an owned standard HTTP server without
+Range support, matching their upstream prerequisite.
+
+For originals that intentionally query public services, `--public-network`
+disables child-local transport mapping and labels the report accordingly. Such
+results qualify the observed public endpoint, not an owned emulator. Keep shared
+service failures, skips and upstream memory-limit failures explicit.
+
+`audit_originals.py` combines ordered receipts and separately lists files whose
+SQL is entirely disabled by upstream `mode skip`. Their raw SLT pass verdicts do
+not count as exercised coverage. The audit is a retained per-file inventory, not
+a fresh sweep of one frozen candidate.
+
 `metadata_cache_control.py` supplements the originals with two-connection cache
 boundaries and actual versioned MinIO objects. Run it separately for each signed
 C API library, supplying `--library`, `--package`, `--tools` and a fresh `--out`.
 Its assertions first run against the C++ oracle. Existing `s3_*_control.py` scripts
 also check signatures, redirects, refresh, partitions and version behavior using
 bounded loopback protocol fixtures.
+
+`download_control.py` compares forced downloads, strict threshold boundaries,
+range retries/fallback, invalid HEAD sizes and empty files with independent
+request receipts. Compare its C++ and Rust records with only owned ports and
+the engine build-source ID normalized. Native download tests additionally verify
+spill-backed reads across block boundaries and buffer release after disconnects.
