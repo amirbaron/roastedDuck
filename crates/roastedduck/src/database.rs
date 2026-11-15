@@ -3626,6 +3626,7 @@ impl Connection {
         }
         crate::postgres::pool::validate_setting(&self.function_client, name, &target_value, scope)?;
         self.apply_postgres_pool_limit(name, &target_value);
+        self.apply_postgres_cache_setting(name);
         if scope == SetScope::Global || (scope == SetScope::Automatic && option.global_by_default) {
             instance.set_extension_global(&option, Some(target_value));
         } else {
@@ -3651,6 +3652,7 @@ impl Connection {
         }
         crate::postgres::pool::validate_setting(&self.function_client, name, &option.default_value, scope)?;
         self.apply_postgres_pool_limit(name, &option.default_value);
+        self.apply_postgres_cache_setting(name);
         if scope == SetScope::Global || (scope == SetScope::Automatic && option.global_by_default) {
             instance.set_extension_global(&option, None);
         } else {
@@ -3658,6 +3660,23 @@ impl Connection {
                 .insert(&option.name, option.default_value.clone());
         }
         Ok(())
+    }
+
+    fn apply_postgres_cache_setting(&self, name: &[u8]) {
+        if [
+            b"pg_use_information_schema_introspection".as_slice(),
+            b"pg_staleness_query_enabled",
+            b"pg_staleness_query",
+        ]
+        .iter()
+        .any(|option| name.eq_ignore_ascii_case(option))
+        {
+            for database in self.database.instance.databases.all() {
+                if let crate::attached::DatabaseStorage::Postgres(pg) = &database.storage {
+                    pg.clear_cache();
+                }
+            }
+        }
     }
 
     fn apply_postgres_pool_limit(&mut self, name: &[u8], value: &Value) {

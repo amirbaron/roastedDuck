@@ -266,7 +266,63 @@ impl Drop for Session {
         self.task.abort();
     }
 }
+/// The last result of a Simple Query message, as returned by upstream `PQexec`.
+#[derive(Debug, Default)]
+pub struct TextResult {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<Option<String>>>,
+}
 impl Session {
+    pub fn catalog_column(
+        &self,
+        name: String,
+        oid: u32,
+        modifier: i32,
+        interrupted: Option<&AtomicBool>,
+    ) -> Result<Column> {
+        let data_type = self
+            .driver
+            .wait(interruptible(
+                self.client.resolve_type(oid),
+                interrupted,
+                &self.client.cancel_token(),
+                &self.parameters,
+            ))??
+            .map_err(pg_error)?;
+        Ok(Column {
+            name,
+            data_type,
+            type_modifier: modifier,
+            table_oid: None,
+            column_id: None,
+        })
+    }
+    pub fn text_query(&self, sql: &str, interrupted: Option<&AtomicBool>) -> Result<TextResult> {
+        let messages = self
+            .driver
+            .wait(interruptible(
+                self.client.simple_query(sql),
+                interrupted,
+                &self.client.cancel_token(),
+                &self.parameters,
+            ))??
+            .map_err(pg_error)?;
+        let mut current = TextResult::default();
+        let mut last = TextResult::default();
+        for message in messages {
+            match message {
+                tokio_postgres::SimpleQueryMessage::RowDescription(columns) => {
+                    current.columns = columns.iter().map(|c| c.name().to_owned()).collect();
+                }
+                tokio_postgres::SimpleQueryMessage::Row(row) => current
+                    .rows
+                    .push((0..row.len()).map(|i| row.get(i).map(str::to_owned)).collect()),
+                tokio_postgres::SimpleQueryMessage::CommandComplete(_) => last = std::mem::take(&mut current),
+                _ => {}
+            }
+        }
+        Ok(last)
+    }
     /// A pool health check succeeds only for a tuple-producing final command.
     pub fn ping(&self, sql: &str) -> Result<bool> {
         if self.is_closed() {

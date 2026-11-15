@@ -83,6 +83,36 @@ pub struct Codec {
     file_format: bool,
 }
 impl Codec {
+    /// Type names supplied by the pinned SQL-standard metadata query. Unknown
+    /// ARRAY/USER-DEFINED types are projected through PostgreSQL's VARCHAR cast.
+    pub fn from_information_schema(name: &str, mut options: Options) -> Result<Self> {
+        let lower = name.to_ascii_lowercase();
+        let mapped = match lower.as_str() {
+            "boolean" => "bool",
+            "smallint" => "int2",
+            "integer" => "int4",
+            "bigint" => "int8",
+            "real" => "float4",
+            "double precision" => "float8",
+            "character varying" => "varchar",
+            "character" => "bpchar",
+            "\"char\"" => "char",
+            "time without time zone" => "time",
+            "time with time zone" => "timetz",
+            "timestamp without time zone" => "timestamp",
+            "timestamp with time zone" => "timestamptz",
+            "bit varying" => "varbit",
+            _ => name,
+        };
+        options.resolve_custom_types = false;
+        Self::new(
+            &Type::new(mapped.to_owned(), 0, Kind::Simple, "pg_catalog".into()),
+            -1,
+            0,
+            options,
+        )
+    }
+
     /// `postgres_query` uses the pinned OID whitelist, unlike a catalog table scan.
     pub fn for_query(ty: &Type, modifier: i32, mut options: Options) -> Result<Self> {
         options.resolve_custom_types = false;

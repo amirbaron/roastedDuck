@@ -305,13 +305,6 @@ impl ClientContext {
             .map_or(DEFAULT_SCHEMA.as_bytes(), |(_, schema)| schema.as_bytes())
     }
 
-    fn implicit_schema_for(&self, catalog: impl AsRef<[u8]>) -> ByteString {
-        self.catalog(catalog).map_or_else(
-            || ByteString::from(DEFAULT_SCHEMA),
-            |c| ByteString::from(c.default_schema()),
-        )
-    }
-
     /// The default schema of `catalog` (`CatalogSearchPath::GetDefaultSchema`): that of
     /// the first search path entry in it, else `main`.
     pub fn default_schema_for(&self, catalog: impl AsRef<[u8]>) -> ByteString {
@@ -353,10 +346,7 @@ impl ClientContext {
             paths.push((ByteString::from(TEMP_CATALOG), ByteString::from(DEFAULT_SCHEMA)));
         }
         paths.extend(self.search_path.iter().cloned());
-        paths.push((
-            self.default_catalog(),
-            self.implicit_schema_for(self.default_catalog()),
-        ));
+        paths.push((self.default_catalog(), ByteString::from(DEFAULT_SCHEMA)));
         paths.push((ByteString::from("system"), ByteString::from(DEFAULT_SCHEMA)));
         paths.push((ByteString::from("system"), ByteString::from("pg_catalog")));
         let mut unique: Vec<(ByteString, ByteString)> = Vec::with_capacity(paths.len());
@@ -428,10 +418,7 @@ impl ClientContext {
         }
         paths.extend(self.view_search_path.iter().cloned());
         paths.extend(self.search_path.iter().cloned());
-        paths.push((
-            self.default_catalog(),
-            self.implicit_schema_for(self.default_catalog()),
-        ));
+        paths.push((self.default_catalog(), ByteString::from(DEFAULT_SCHEMA)));
         paths.push((ByteString::from("system"), ByteString::from(DEFAULT_SCHEMA)));
         paths.push((ByteString::from("system"), ByteString::from("pg_catalog")));
         let mut unique: Vec<(ByteString, ByteString)> = Vec::with_capacity(paths.len());

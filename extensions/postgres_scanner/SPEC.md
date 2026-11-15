@@ -26,6 +26,55 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 
 Contract recorded; not a claim that new functionality passes acceptance.
 
+## Catalog/cache checkpoint (November 15)
+
+The PostgreSQL full original suite now reports 143 PASS / 2 FAIL / 7 SKIP on Rust
+(postgres-upstream-cache-all-2), versus 145 PASS / 7 SKIP on the C++ oracle. Nine
+prior failures moved to PASS, with no other status changes. The remaining failures
+are attach_secret.test and attach_secret_storage.test. No original SQL was edited.
+
+Schema lookup retains the implicit main schema even when USE selects public.
+CREATE-time composite/enum columns lose their outer alias while preserving JSON,
+matching PostgresTableEntry. The first postgres_execute query sends BEGIN and SQL
+in one Simple Query message. Disallowed use_transaction=false and query failures
+use the upstream Invalid Error classification and statement context.
+
+The information_schema mode now uses SQL-standard discovery queries, maps the
+pinned data_type names, returns no discovered enums/composites/indexes, and preserves
+CREATE-time layouts until cache reload. Seeded zero-column tables are omitted like
+upstream. pg_staleness_query_enabled is registered FALSE by the pinned source,
+despite its description; explicit NULL selects the inverse of information_schema
+mode. The paired default-setting control verifies that behavior.
+
+Table signatures contain identity/name/revision with the source separators, sampled
+through a separate pooled Simple Query connection. Custom placeholders, NULLs,
+column-count validation, ignored extra columns and multi-statement last-result
+semantics are implemented. Signatures are staged per transaction and promoted only
+on commit; a generation guard prevents promotion into a cleared/replaced cache.
+Settings changes clear attached caches. Table/view invalidation preserves other sets.
+
+A supplementary lock test found normal catalog discovery was preparing SELECT *
+over the user table and blocking external DDL in an open transaction. Discovery
+now resolves catalog OIDs/types directly. The previously failing case passes on
+both engines. The Rust driver patch still changes only client.rs/query.rs across
+33 source files from tokio-postgres 0.7.18; both licenses are unchanged.
+
+Receipt: .context/artifacts/popular-extensions/postgres-cache-verification.json.
+All 13 paired catalog controls pass (postgres-cache-control-2), including executed
+SQL evidence for the standard metadata path, type reloads, custom signatures and
+rollback/cache-clear behavior. Final 27 attachment, 22 mutation, 16 DDL, 12 parallel,
+16 pool, 39 codec and 6 interruption regressions pass (*-2 directories). All 279
+native/planner tests across 45 signed targets pass with TZ=UTC; strict Clippy 5
+passes. Initial failing receipts remain. All owned PostgreSQL fixtures stopped.
+
+Next: postgres/RDS secrets and PostgreSQL secret storage; unified legacy/query scans,
+remaining authentication/settings and skipped-prerequisite supplements; final
+provider/platform/package gates and PyPI/Homebrew delivery. A fresh full core run
+will be launched from this checkpoint under postgres-cache-conformance-1; inspect
+its controller log/receipt and live process before starting another heavy job.
+Until that run completes, the last qualified full core remains frozen 83d8da21.
+The all-five goal remains active/incomplete; no new release has been published.
+
 ## Attached scan checkpoint (November 15)
 
 Attached tables now execute bounded COPY OUT scans with CTID page tasks, pooled

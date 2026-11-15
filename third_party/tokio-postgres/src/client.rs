@@ -785,6 +785,11 @@ impl Client {
         self.cancel_token().cancel_query_raw(stream, tls).await
     }
 
+    /// Resolves a catalog type OID without preparing a query over a user relation.
+    pub async fn resolve_type(&self, oid: u32) -> Result<Type, Error> {
+        prepare::get_type(&self.inner, oid).await
+    }
+
     /// Clears the client's type information cache.
     ///
     /// When user-defined types are used in a query, the client loads their definitions from the database and caches

@@ -230,6 +230,38 @@ pub(crate) fn options() -> Vec<ExtensionOption> {
             global_by_default: false,
         });
     }
+    for (name, description, ty, value, global) in [
+        (
+            "pg_use_information_schema_introspection",
+            "Use SQL-standard information_schema views for ATTACH-time schema discovery instead of pg_catalog.For compatibility with pg protocol compatible databases like spanner, cockroach, redshift, ...",
+            LogicalType::BOOLEAN,
+            Value::boolean(false),
+            false,
+        ),
+        (
+            "pg_staleness_query_enabled",
+            "Whether or not the table catalog cache checks Postgres for external DDL changes before serving a cache hit. Defaults to the opposite of pg_use_information_schema_introspection when not explicitly set (off for pg protocol compatible databases that may not support the underlying query, on for Postgres).",
+            LogicalType::BOOLEAN,
+            Value::boolean(false),
+            true,
+        ),
+        (
+            "pg_staleness_query",
+            "Custom query used in place of the default table staleness query when pg_staleness_query_enabled resolves to true. Must contain a ${SCHEMA} placeholder and return at least 3 columns (identity, name, revision marker). Empty (default) uses the built-in pg_class/xmin query.",
+            LogicalType::VARCHAR,
+            Value::null(LogicalType::SQLNULL),
+            true,
+        ),
+    ] {
+        options.push(ExtensionOption {
+            name: name.into(),
+            description: description.into(),
+            input_type: ty,
+            default_value: value,
+            set_function: None,
+            global_by_default: global,
+        });
+    }
     options.extend(pool::options());
     options
 }

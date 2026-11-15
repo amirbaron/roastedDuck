@@ -22,7 +22,9 @@ use super::transaction::{Participant, PgTransaction};
 
 mod ddl;
 mod filter;
+mod introspection;
 pub(crate) mod scan;
+mod staleness;
 
 type CacheKey = (CatalogType, String, String, u8);
 
@@ -39,6 +41,7 @@ pub(crate) struct PgCatalog {
     default_schema: ByteString,
     cache: Mutex<HashMap<CacheKey, Arc<CatalogEntry>>>,
     listings: Mutex<HashMap<(CatalogType, String), Vec<String>>>,
+    signatures: Mutex<staleness::Signatures>,
 }
 impl PgCatalog {
     fn mark_write(&self, transaction: &Transaction) -> Result<()> {
@@ -88,6 +91,7 @@ impl PgCatalog {
             default_schema,
             cache: Mutex::default(),
             listings: Mutex::default(),
+            signatures: Mutex::default(),
         }))
     }
     fn native(&self) -> Result<Arc<Catalog>> {
@@ -127,6 +131,11 @@ impl PgCatalog {
         self.transaction(client, transaction)
     }
     pub fn clear_cache(&self) {
+        {
+            let mut signatures = self.signatures.lock().unwrap_or_else(PoisonError::into_inner);
+            signatures.generation = signatures.generation.wrapping_add(1);
+            signatures.values.clear();
+        }
         self.cache.lock().unwrap_or_else(PoisonError::into_inner).clear();
         self.listings
             .lock()
@@ -188,6 +197,11 @@ impl PgCatalog {
         kind: CatalogType,
         schema: &str,
     ) -> Result<Vec<String>> {
+        let signature = if matches!(kind, CatalogType::Table | CatalogType::View) {
+            self.check_staleness(client, schema)?
+        } else {
+            None
+        };
         let key = (kind, schema.to_owned());
         let cached = self
             .listings
@@ -199,12 +213,20 @@ impl PgCatalog {
             names
         } else {
             let pg = self.transaction(client, transaction)?;
-            let rows = match kind {
+            let rows = if staleness::information_schema(client) {
+                match kind {
+                    CatalogType::Schema => pg.metadata("SELECT schema_name::text FROM information_schema.schemata WHERE schema_name NOT IN ('information_schema','pg_catalog','pg_toast') ORDER BY schema_name", &[])?,
+                    CatalogType::Table | CatalogType::View => pg.metadata("SELECT DISTINCT table_name::text FROM information_schema.columns WHERE table_schema=$1::text AND table_schema NOT IN ('information_schema','pg_catalog','pg_toast') ORDER BY 1", &[text_parameter(schema)])?,
+                    _ => Vec::new(),
+                }
+            } else {
+                match kind {
                 CatalogType::Schema => pg.metadata("SELECT nspname::text FROM pg_catalog.pg_namespace ORDER BY oid", &[])?,
                 CatalogType::Table | CatalogType::View => pg.metadata("SELECT c.relname::text FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1::text AND c.relkind IN ('r','v','m','f','p') ORDER BY c.oid", &[text_parameter(schema)])?,
                 CatalogType::Index => pg.metadata("SELECT indexname::text FROM pg_catalog.pg_indexes WHERE schemaname=$1::text ORDER BY indexname", &[text_parameter(schema)])?,
                 CatalogType::Type => pg.metadata("SELECT t.typname::text FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname=$1::text AND t.typtype IN ('e','c') ORDER BY t.oid", &[text_parameter(schema)])?,
                 _ => return Ok(Vec::new()),
+            }
             };
             let names = rows
                 .iter()
@@ -216,6 +238,7 @@ impl PgCatalog {
                 .insert(key, names.clone());
             names
         };
+        self.stage_loaded_signature(client, transaction, schema, signature)?;
         Ok(names)
     }
 
@@ -229,7 +252,12 @@ impl PgCatalog {
             return Ok(None);
         }
         let pg = self.transaction(client, transaction)?;
-        let rows = pg.metadata("SELECT nspname::text FROM pg_catalog.pg_namespace WHERE lower(nspname::text)=lower($1::text) ORDER BY nspname::text=$1::text DESC,nspname", &[text_parameter(name)])?;
+        let sql = if staleness::information_schema(client) {
+            "SELECT schema_name::text FROM information_schema.schemata WHERE schema_name NOT IN ('information_schema','pg_catalog','pg_toast') AND lower(schema_name)=lower($1::text) ORDER BY schema_name=$1::text DESC,schema_name"
+        } else {
+            "SELECT nspname::text FROM pg_catalog.pg_namespace WHERE lower(nspname::text)=lower($1::text) ORDER BY nspname::text=$1::text DESC,nspname"
+        };
+        let rows = pg.metadata(sql, &[text_parameter(name)])?;
         let Some(row) = rows.first() else {
             return Ok(None);
         };
@@ -265,6 +293,9 @@ impl PgCatalog {
             return Ok(None);
         };
         let schema = utf8(schema_entry.name())?.to_owned();
+        if staleness::information_schema(client) {
+            return self.information_schema_table(client, transaction, &schema, name, options, created);
+        }
         let pg = self.transaction(client, transaction)?;
         let rows = pg.metadata("SELECT c.oid::int8,c.relname::text,c.relkind::text,obj_description(c.oid,'pg_class'),c.relpages::int8 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1::text AND lower(c.relname::text)=lower($2::text) AND c.relkind IN ('r','v','m','f','p') ORDER BY c.relname::text=$2::text DESC,c.relname", &[text_parameter(&schema),text_parameter(name)])?;
         let Some(row) = rows.first() else {
@@ -275,11 +306,22 @@ impl PgCatalog {
             .ok_or_else(|| Error::internal("Invalid Postgres table OID"))?;
         let name = row[1].to_varchar()?;
         let relation = format!("{}.{}", identifier(&schema), identifier(&name));
-        let columns = pg.describe(&format!("SELECT * FROM {relation}"), true)?;
-        let attributes = pg.metadata("SELECT a.attname::text,a.attndims::int4,a.attnotnull,col_description(a.attrelid,a.attnum),a.attnum::int4 FROM pg_catalog.pg_attribute a WHERE a.attrelid=$1::int8::oid AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum", &[BinaryParameter(Some(oid.to_be_bytes().to_vec()))])?;
-        if attributes.len() != columns.len() {
-            return Err(Error::internal("Postgres table metadata changed during binding"));
+        let attributes = pg.metadata("SELECT a.attname::text,a.attndims::int4,a.attnotnull,col_description(a.attrelid,a.attnum),a.attnum::int4,a.atttypid::int8,a.atttypmod::int4 FROM pg_catalog.pg_attribute a WHERE a.attrelid=$1::int8::oid AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum", &[BinaryParameter(Some(oid.to_be_bytes().to_vec()))])?;
+        // Catalog discovery must not parse a SELECT over the user relation: that
+        // holds an AccessShareLock and would block external DDL until commit.
+        if attributes.is_empty() && created.is_none() {
+            return Ok(None);
         }
+        let columns = attributes
+            .iter()
+            .map(|row| {
+                let oid = row[5]
+                    .as_i64()
+                    .and_then(|v| u32::try_from(v).ok())
+                    .ok_or_else(|| Error::internal("Invalid Postgres type OID"))?;
+                pg.catalog_column(row[0].to_varchar()?, oid, row[6].as_i32().unwrap_or(-1))
+            })
+            .collect::<Result<Vec<_>>>()?;
         let options = if created.is_some() {
             Options {
                 array_as_varchar: false,
@@ -304,6 +346,7 @@ impl PgCatalog {
             for (codec, column) in codecs.iter_mut().zip(&created.columns) {
                 let declared = roastedduck_postgres::copy::postgres_type(&column.logical_type);
                 codec.logical_type = retain_aliases(&codec.logical_type, &declared);
+                codec.logical_type = remove_created_alias(codec.logical_type.clone())?;
             }
         }
         let names = columns.iter().map(|c| c.name.clone()).collect::<Vec<_>>();
@@ -416,7 +459,14 @@ impl CatalogBackend for PgCatalog {
         let names = self.listing(client, transaction, kind, schema)?;
         let mut entries = Vec::with_capacity(names.len());
         for name in names {
-            if let Some(entry) = self.lookup(client, transaction, kind, schema.as_bytes(), name.as_bytes())? {
+            if let Some(entry) = self.lookup_impl(
+                client,
+                transaction,
+                kind,
+                schema.as_bytes(),
+                name.as_bytes(),
+                false,
+            )? {
                 entries.push(entry);
             }
         }
@@ -494,6 +544,7 @@ impl CatalogBackend for PgCatalog {
         self.mark_write(transaction)?;
         self.transaction(client, transaction)?.execute(&sql, true)?;
         self.clear_cache();
+        self.refresh_signature(client, transaction, utf8(&info.schema)?)?;
         Ok(())
     }
     fn drop_entry(
@@ -546,6 +597,9 @@ impl CatalogBackend for PgCatalog {
             },
             utf8(&info.name)?,
         );
+        if matches!(kind, CatalogType::Table | CatalogType::View) {
+            self.refresh_signature(client, transaction, utf8(schema)?)?;
+        }
         Ok(())
     }
     fn create(
@@ -651,6 +705,9 @@ impl CatalogBackend for PgCatalog {
         } else {
             info.schema.as_bytes()
         };
+        if matches!(kind, CatalogType::Table | CatalogType::View) {
+            self.refresh_signature(client, transaction, utf8(&info.schema)?)?;
+        }
         if let Some(created) = created_columns {
             let entry = self.table(
                 client,
@@ -673,6 +730,28 @@ impl CatalogBackend for PgCatalog {
             }
             return Ok(entry);
         }
+        if staleness::information_schema(client)
+            && let K::Type(ty) = &info.kind
+        {
+            let mut entry = self.native()?.new_entry(
+                name.clone(),
+                EntryKind::Type(TypeEntry {
+                    user_type: ty.logical_type.clone().with_alias(name.clone()),
+                }),
+            );
+            entry.internal = info.schema.starts_with(b"pg_") || info.schema == "information_schema";
+            let entry = Arc::new(entry);
+            self.remember_entry(
+                (
+                    CatalogType::Type,
+                    utf8(&info.schema)?.to_owned(),
+                    utf8(&name)?.to_owned(),
+                    type_flags(client),
+                ),
+                entry.clone(),
+            )?;
+            return Ok(Some(entry));
+        }
         self.lookup(client, transaction, kind, schema, &name)
     }
 
@@ -689,6 +768,19 @@ impl CatalogBackend for PgCatalog {
         kind: CatalogType,
         schema: &[u8],
         name: &[u8],
+    ) -> Result<Option<Arc<CatalogEntry>>> {
+        self.lookup_impl(client, transaction, kind, schema, name, true)
+    }
+}
+impl PgCatalog {
+    fn lookup_impl(
+        &self,
+        client: &Arc<FunctionClient>,
+        transaction: &Transaction,
+        kind: CatalogType,
+        schema: &[u8],
+        name: &[u8],
+        check_stale: bool,
     ) -> Result<Option<Arc<CatalogEntry>>> {
         // PostgreSQL views and tables share the same upstream catalog set.
         let kind = if kind == CatalogType::View {
@@ -723,6 +815,11 @@ impl CatalogBackend for PgCatalog {
         let schema = schema_entry
             .as_ref()
             .map_or(Ok(schema), |entry| utf8(entry.name()))?;
+        let signature = if kind == CatalogType::Table && check_stale {
+            self.check_staleness(client, schema)?
+        } else {
+            None
+        };
         let options = type_options(client);
         let flags = type_flags(client);
         let flags = if kind == CatalogType::Index { 0 } else { flags };
@@ -737,8 +834,12 @@ impl CatalogBackend for PgCatalog {
             CatalogType::Table | CatalogType::View => {
                 self.table(client, transaction, schema, name, options, None)?
             }
-            CatalogType::Type => self.user_type(client, transaction, schema, name, options)?,
-            CatalogType::Index => self.index(client, transaction, schema, name)?,
+            CatalogType::Type if !staleness::information_schema(client) => {
+                self.user_type(client, transaction, schema, name, options)?
+            }
+            CatalogType::Index if !staleness::information_schema(client) => {
+                self.index(client, transaction, schema, name)?
+            }
             _ => None,
         };
         if let Some(entry) = &entry {
@@ -755,6 +856,7 @@ impl CatalogBackend for PgCatalog {
             }
             self.remember_entry(key, entry.clone())?;
         }
+        self.stage_loaded_signature(client, transaction, schema, signature)?;
         Ok(entry)
     }
 }
@@ -983,4 +1085,19 @@ impl PgTable {
         let sql = format!("COPY {}{column_list} FROM STDIN (FORMAT {format})", self.relation);
         Ok((sql, text))
     }
+}
+
+fn remove_created_alias(ty: LogicalType) -> Result<LogicalType> {
+    if let Some(alias) = ty.alias()
+        && !alias.eq_ignore_ascii_case(b"json")
+    {
+        if !matches!(
+            ty.id(),
+            roastedduck_types::LogicalTypeId::Struct | roastedduck_types::LogicalTypeId::Enum
+        ) {
+            return Err(Error::internal("Unsupported logical type for RemoveAlias"));
+        }
+        return Ok(ty.with_alias(""));
+    }
+    Ok(ty)
 }

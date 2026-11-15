@@ -3,7 +3,7 @@ use std::any::Any;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use roastedduck_buffer::{BufferManager, MemoryTag};
-use roastedduck_common::{Error, Result, STANDARD_VECTOR_SIZE};
+use roastedduck_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
 use roastedduck_function::FunctionClient;
 use roastedduck_function::cast::ValueCast;
 use roastedduck_postgres::{
@@ -134,12 +134,20 @@ impl Cursor {
     }
 }
 
+#[derive(Debug)]
+struct PendingSignature {
+    catalog: Weak<super::catalog::PgCatalog>,
+    schema: String,
+    signature: Vec<u8>,
+    generation: u64,
+}
 #[derive(Debug, Default)]
 struct State {
     lease: Option<roastedduck_postgres::pool::Lease>,
     started: bool,
     finished: bool,
     cursors: Vec<Weak<Mutex<Cursor>>>,
+    signatures: Vec<PendingSignature>,
 }
 
 impl State {
@@ -153,7 +161,7 @@ impl State {
 
 #[derive(Debug)]
 pub(crate) struct PgTransaction {
-    client: Arc<FunctionClient>,
+    pub(super) client: Arc<FunctionClient>,
     buffer_manager: BufferManager,
     begin: String,
     read_only: bool,
@@ -245,7 +253,7 @@ impl PgTransaction {
             }),
         })
     }
-    fn prepare(&self, state: &mut State, use_transaction: bool) -> Result<()> {
+    fn prepare_cursors(&self, state: &mut State) -> Result<()> {
         if state.finished {
             return Err(Error::internal("Postgres transaction already finished"));
         }
@@ -256,6 +264,10 @@ impl PgTransaction {
                 .materialize(&self.buffer_manager)?;
         }
         state.cursors.retain(|cursor| cursor.strong_count() > 0);
+        Ok(())
+    }
+    fn prepare(&self, state: &mut State, use_transaction: bool) -> Result<()> {
+        self.prepare_cursors(state)?;
         if use_transaction {
             if !state.started {
                 super::logging::query(&self.client, &self.begin, || {
@@ -266,15 +278,24 @@ impl PgTransaction {
                 state.started = true;
             }
         } else if state.started {
-            return Err(Error::invalid_input(
+            return Err(Error::new(
+                ErrorKind::Invalid,
                 "Execution without a Transaction is not possible if a Transaction already started",
             ));
         } else if self.read_only {
-            return Err(Error::invalid_input(
+            return Err(Error::new(
+                ErrorKind::Invalid,
                 "Execution without a Transaction is not possible in Read Only Mode",
             ));
         }
         Ok(())
+    }
+    pub(super) fn catalog_column(&self, name: String, oid: u32, modifier: i32) -> Result<Column> {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        self.prepare(&mut state, true)?;
+        state
+            .session()?
+            .catalog_column(name, oid, modifier, self.client.interrupt_flag().as_deref())
     }
     pub fn describe(&self, sql: &str, use_transaction: bool) -> Result<Vec<Column>> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
@@ -296,11 +317,23 @@ impl PgTransaction {
     }
     pub fn execute(&self, sql: &str, use_transaction: bool) -> Result<()> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        self.prepare(&mut state, use_transaction)?;
+        self.prepare_cursors(&mut state)?;
+        let query;
+        let sql = if use_transaction && !state.started {
+            // PostgresTransaction::Query sends BEGIN and the first statement in
+            // one Simple Query message; transaction state advances before I/O.
+            state.started = true;
+            query = format!("{};\n{sql}", self.begin);
+            query.as_str()
+        } else {
+            self.prepare(&mut state, use_transaction)?;
+            sql
+        };
         super::logging::query(&self.client, sql, || {
             state
                 .session()?
                 .batch_interruptible(sql, self.client.interrupt_flag().as_deref())
+                .map_err(|error| query_error(sql, error))
         })
     }
     /// Small catalog queries are consumed under the session lock. Data scans use
@@ -393,6 +426,34 @@ impl PgTransaction {
         state.cursors.push(Arc::downgrade(&cursor));
         Ok(cursor)
     }
+    pub(super) fn text_query(&self, sql: &str) -> Result<roastedduck_postgres::TextResult> {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        self.prepare(&mut state, true)?;
+        super::logging::query(&self.client, sql, || {
+            state
+                .session()?
+                .text_query(sql, self.client.interrupt_flag().as_deref())
+                .map_err(|error| query_error(sql, error))
+        })
+    }
+    pub(super) fn stage_signature(
+        &self,
+        catalog: Weak<super::catalog::PgCatalog>,
+        schema: String,
+        signature: Vec<u8>,
+    ) {
+        let generation = catalog.upgrade().map_or(0, |c| c.signature_generation());
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .signatures
+            .push(PendingSignature {
+                catalog,
+                schema,
+                signature,
+                generation,
+            });
+    }
     pub(super) fn start(&self) -> Result<()> {
         self.prepare(
             &mut self.state.lock().unwrap_or_else(PoisonError::into_inner),
@@ -444,8 +505,16 @@ impl PgTransaction {
         } else {
             Ok(())
         };
+        let signatures = std::mem::take(&mut state.signatures);
         let lease = state.lease.take();
         drop(state);
+        if commit && result.is_ok() {
+            for pending in signatures {
+                if let Some(catalog) = pending.catalog.upgrade() {
+                    catalog.promote_signature(pending.schema, pending.signature, pending.generation);
+                }
+            }
+        }
         drop(lease);
         result
     }
@@ -463,4 +532,30 @@ impl TransactionParticipant for Participant {
     fn rollback(&self) -> Result<()> {
         self.0.finish(false)
     }
+}
+
+/// The extension's Query wrapper converts provider failures to `std::runtime_error`
+/// (DuckDB Invalid Error). Keep local interruption and engine failures typed.
+pub(super) fn query_error(sql: &str, error: Error) -> Error {
+    if error.kind() != ErrorKind::Io {
+        return error;
+    }
+    let raw = error.raw_message();
+    let message = raw
+        .lines()
+        .map(|line| {
+            if let Some((kind, message)) = line.split_once(": ")
+                && matches!(kind, "ERROR" | "FATAL" | "PANIC" | "DETAIL" | "HINT")
+            {
+                format!("{kind}:  {message}")
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Error::new(
+        ErrorKind::Invalid,
+        format!("Failed to execute query \"{sql}\": {message}\n"),
+    )
 }
