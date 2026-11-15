@@ -823,6 +823,7 @@ impl DatabaseManager {
             options.read_only(),
             config.isolation,
             config.schemas,
+            config.pool,
         )?;
         catalog.set_backend(postgres.clone())?;
         catalog.set_attach_info(roastedduck_catalog::AttachedInfo {

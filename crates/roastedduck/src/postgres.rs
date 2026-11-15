@@ -3,6 +3,7 @@ pub(crate) mod binary_file;
 pub(crate) mod catalog;
 pub(crate) mod hstore;
 mod mutation;
+pub(crate) mod pool;
 mod query;
 mod text;
 mod transaction;
@@ -24,12 +25,14 @@ use roastedduck_types::{DataChunk, LogicalType, Value, Vector};
 pub(crate) struct AttachConfig {
     pub isolation: String,
     pub schemas: Vec<String>,
+    pub pool: roastedduck_postgres::pool::Config,
 }
 impl AttachConfig {
     pub fn parse(info: &roastedduck_ast::AttachInfo) -> Result<Self> {
         let mut result = Self {
             isolation: "REPEATABLE READ".into(),
             schemas: Vec::new(),
+            pool: roastedduck_postgres::pool::Config::default(),
         };
         for (name, value) in info.options.iter() {
             match name.to_ascii_lowercase().as_bytes() {
@@ -202,6 +205,7 @@ pub(crate) fn options() -> Vec<ExtensionOption> {
             Ok(())
         })),
     });
+    options.extend(pool::options());
     options
 }
 

@@ -26,6 +26,41 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 
 Contract recorded; not a claim that new functionality passes acceptance.
 
+## Connection pool checkpoint (November 15)
+
+Primary transaction sessions now use a per-catalog Rust pool. Force acquisition can
+exceed the cache limit; try acquisition fails immediately at capacity, and wait
+acquisition uses a fixed deadline. Leases are returned at transaction completion,
+with health checks, DISCARD ALL and driver type-cache invalidation. Open/failed
+transactions are rolled back first using the protocol's transaction status. Temporary
+objects and session settings therefore do not leak between borrowers.
+
+The implementation includes idle/lifetime expiry, background reaping, the pinned
+single thread-local cache slot and its thread-exit return, resizing and shutdown.
+postgres_configure_pool applies live options and reports real counters. Global
+pg_pool_* defaults affect future attachments; deprecated pg_connection_limit and
+pg_connection_cache callbacks update attached pools and propagate their setting
+aliases. Parallel scan acquisition still needs its engine integration.
+
+The generic pool source is database-connector commit
+0a8505f775dae7bb30edd37f848d5975bf72884e; ten source blobs and their verified Git hashes
+are retained in postgres-pool-source under the artifact directory. The Rust driver
+patch remains limited to client.rs/query.rs, with unchanged licenses/dependencies.
+
+Evidence: postgres-pool-verification.json, postgres-pool-backend-4,
+postgres-pool-control-3 and postgres-upstream-pool-4. All28 real-server lifecycle
+checks,16 paired SQL cases and five unchanged originals pass. The original files
+are pool options/configure, autoload, multi_join and concurrent_queries. The slow
+pool and early-release originals remain unqualified until parallel scan/settings
+work is complete. Prior27 attachment/22 mutation/16 DDL/39 codec comparisons and
+six API cancellation modes pass. All272 native/runner tests across41 signed targets
+and strict Clippy5 pass. All owned services stopped.
+
+Fixture-only secret-directory isolation is applied before opening the oracle/Rust
+databases, without editing original SQL. Platform-specific hardware-derived defaults,
+complete PG inventories and the final core/provider/package/publication gates remain
+open. This milestone is not a full extension acceptance claim.
+
 ## Binary COPY files checkpoint (November 15)
 
 COPY TO/FROM (FORMAT postgres_binary) and read_postgres_binary are registered in

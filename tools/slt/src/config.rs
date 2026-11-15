@@ -3,7 +3,9 @@
 //!
 //! The harness always runs DuckDB's default configuration: no `--test-config` file, no
 //! `DUCKDB_TEST_*` overrides. What remains is the per-process temporary directory, the test
-//! variables (`{TEST_DIR}`, `${DATA_DIR}`, ...) and the `--require` list.
+//! variables (`{TEST_DIR}`, `${DATA_DIR}`, ...) and the `--require` list. Explicit
+//! runner-only overrides can bound memory/threads or isolate a service fixture's
+//! persistent-secret directory; ordinary corpus runs retain their defaults.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;

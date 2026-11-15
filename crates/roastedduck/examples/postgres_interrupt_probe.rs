@@ -6,7 +6,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mode = std::env::args().nth(1).unwrap_or_else(|| "legacy".into());
     let driver = Driver::new()?;
     let observer = driver.connect(&Parameters::parse("dbname=postgresscanner")?)?;
-    let database = roastedduck::Database::open_in_memory()?;
+    let mut config = roastedduck::Config::default();
+    if let Ok(directory) = std::env::var("ROASTEDDUCK_TEST_SECRET_DIRECTORY") {
+        config = config.with_option("secret_directory", roastedduck::Value::varchar(directory));
+    }
+    let database = roastedduck::Database::open(":memory:", &config)?;
     let mut connection = database.connect()?;
     connection.query("LOAD postgres")?;
     if mode != "legacy" {

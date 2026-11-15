@@ -51,6 +51,8 @@ def main():
             cluster.sql("DROP VIEW IF EXISTS codec_case; CREATE VIEW codec_case AS " + query, database=DATABASE)
             sql_file = out/(name+'.sql')
             sql_file.write_text(query)
+            secrets=out/'secrets'/name;secrets.mkdir(parents=True)
+            startup = "SET secret_directory="+literal(str(secrets))+"; "
             setup = "SET TimeZone='UTC';"
             if '--numeric-as-varchar' in flags:
                 setup += ' SET pg_numeric_as_varchar=true;'
@@ -62,23 +64,23 @@ def main():
                 statement = "SELECT * FROM postgres_scan('dbname=postgresscanner','public','codec_case')"
             else:
                 statement = "SELECT * FROM p.public.codec_case"
-            sql = f"LOAD {literal(str(args.extension.resolve()))}; {setup} ATTACH 'dbname=postgresscanner' AS p(TYPE postgres); {statement};"
+            sql = f"{startup}LOAD {literal(str(args.extension.resolve()))}; {setup} ATTACH 'dbname=postgresscanner' AS p(TYPE postgres); {statement};"
             cpp = subprocess.run([str(args.oracle.resolve()), '-batch', '-bail', '-csv', '-noheader', '-nullvalue', '__NULL__', '-init', '/dev/null', ':memory:'],
                                  input=sql, env=cluster.environment, text=True, capture_output=True, timeout=40)
             if args.cli and ('--legacy' in flags or args.runtime_all):
                 attachment = "" if '--legacy' in flags else "ATTACH 'dbname=postgresscanner' AS p(TYPE postgres);"
-                rust_sql = f"LOAD postgres; {setup} {attachment} {statement};"
+                rust_sql = f"{startup}LOAD postgres; {setup} {attachment} {statement};"
                 rust = subprocess.run([str(args.cli.resolve()), '-batch', '-bail', '-csv', '-noheader', '-nullvalue', '__NULL__', '-init', '/dev/null', ':memory:'],
                                       input=rust_sql, env=cluster.environment, text=True, capture_output=True, timeout=40)
             else:
                 rust = subprocess.run([str(args.probe.resolve()), str(sql_file), *flags], env=cluster.environment,
                                       text=True, capture_output=True, timeout=40)
-            describe_sql = f"LOAD {literal(str(args.extension.resolve()))}; {setup} ATTACH 'dbname=postgresscanner' AS p(TYPE postgres); DESCRIBE {statement};"
+            describe_sql = f"{startup}LOAD {literal(str(args.extension.resolve()))}; {setup} ATTACH 'dbname=postgresscanner' AS p(TYPE postgres); DESCRIBE {statement};"
             cpp_types = subprocess.run([str(args.oracle.resolve()), '-batch', '-bail', '-csv', '-noheader', '-init', '/dev/null', ':memory:'],
                                        input=describe_sql, env=cluster.environment, text=True, capture_output=True, timeout=40)
             if args.cli and ('--legacy' in flags or args.runtime_all):
                 rust_types = subprocess.run([str(args.cli.resolve()), '-batch', '-bail', '-csv', '-noheader', '-init', '/dev/null', ':memory:'],
-                                            input=f"LOAD postgres; {setup} {attachment} DESCRIBE {statement};", env=cluster.environment, text=True, capture_output=True, timeout=40)
+                                            input=f"{startup}LOAD postgres; {setup} {attachment} DESCRIBE {statement};", env=cluster.environment, text=True, capture_output=True, timeout=40)
                 actual_types = [row[1] for row in csv.reader(io.StringIO(rust_types.stdout))]
             else:
                 rust_types = subprocess.run([str(args.probe.resolve()), str(sql_file), '--types', *flags], env=cluster.environment,

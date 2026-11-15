@@ -4,6 +4,7 @@ pub mod codec;
 pub mod config;
 pub mod copy;
 pub mod parameters;
+pub mod pool;
 mod tls;
 
 use bytes::{Bytes, BytesMut};
@@ -265,6 +266,59 @@ impl Drop for Session {
     }
 }
 impl Session {
+    /// A pool health check succeeds only for a tuple-producing final command.
+    pub fn ping(&self, sql: &str) -> Result<bool> {
+        if self.is_closed() {
+            return Ok(false);
+        }
+        if sql.is_empty() {
+            return Ok(true);
+        }
+        let messages = self
+            .driver
+            .wait(self.client.simple_query(sql))?
+            .map_err(pg_error)?;
+        let mut rows = false;
+        let mut last = false;
+        for message in messages {
+            match message {
+                tokio_postgres::SimpleQueryMessage::RowDescription(_) => rows = true,
+                tokio_postgres::SimpleQueryMessage::CommandComplete(_) => {
+                    last = rows;
+                    rows = false;
+                }
+                _ => {}
+            }
+        }
+        Ok(last)
+    }
+
+    pub fn reset_for_pool(&mut self, health_check: &str) -> Result<()> {
+        if !matches!(self.client.transaction_status(), b'I' | b'T' | b'E') {
+            self.driver
+                .wait(self.client.check_connection())?
+                .map_err(pg_error)?;
+        }
+        let in_transaction = matches!(self.client.transaction_status(), b'T' | b'E');
+        self.client.clear_session_cache();
+        let reset = if in_transaction {
+            self.batch("ROLLBACK")
+        } else {
+            Ok(())
+        };
+        // DISCARD ALL must be the only command in its protocol query message.
+        if reset.and_then(|()| self.batch("DISCARD ALL")).is_ok() {
+            return Ok(());
+        }
+        let session = self.driver.connect(&self.parameters)?;
+        *self = session;
+        if self.ping(health_check)? {
+            Ok(())
+        } else {
+            Err(Error::internal("Connection reset failure"))
+        }
+    }
+
     pub fn batch(&self, sql: &str) -> Result<()> {
         self.driver
             .wait(self.client.batch_execute(sql))?

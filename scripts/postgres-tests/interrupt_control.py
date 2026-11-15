@@ -16,6 +16,8 @@ def main():
     results=[]
     with Cluster(out/'cluster') as cluster:
         cluster.reset()
+        secrets=out/'secrets';secrets.mkdir()
+        cluster.environment['ROASTEDDUCK_TEST_SECRET_DIRECTORY']=str(secrets)
         cluster.sql("""CREATE VIEW slow_scan AS SELECT 1::integer id FROM pg_sleep(30);
 CREATE TABLE slow_insert(id integer);
 CREATE FUNCTION pause_insert() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN PERFORM pg_sleep(30); RETURN NEW; END$$;

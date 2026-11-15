@@ -33,6 +33,7 @@ use std::net::IpAddr;
 use std::path::PathBuf;
 use std::pin::pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::task::{Context, Poll, ready};
 #[cfg(feature = "runtime")]
 use std::time::Duration;
@@ -41,6 +42,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 pub struct Responses {
     receiver: mpsc::Receiver<BackendMessages>,
     cur: BackendMessages,
+    transaction_status: Arc<AtomicU8>,
 }
 
 impl Responses {
@@ -48,7 +50,12 @@ impl Responses {
         loop {
             match self.cur.next().map_err(Error::parse)? {
                 Some(Message::ErrorResponse(body)) => return Poll::Ready(Err(Error::db(body))),
-                Some(message) => return Poll::Ready(Ok(message)),
+                Some(message) => {
+                    if let Message::ReadyForQuery(body) = &message {
+                        self.transaction_status.store(body.status(), Ordering::Release);
+                    }
+                    return Poll::Ready(Ok(message));
+                }
                 None => {}
             }
 
@@ -87,6 +94,7 @@ struct CachedTypeInfo {
 pub struct InnerClient {
     sender: mpsc::UnboundedSender<Request>,
     cached_typeinfo: Mutex<CachedTypeInfo>,
+    transaction_status: Arc<AtomicU8>,
 
     /// A buffer to use when writing out postgres commands.
     buffer: Mutex<BytesMut>,
@@ -96,6 +104,7 @@ impl InnerClient {
     pub fn send(&self, messages: RequestMessages) -> Result<Responses, Error> {
         let (sender, receiver) = mpsc::channel(1);
         let request = Request { messages, sender };
+        self.transaction_status.store(b'A', Ordering::Release);
         self.sender
             .unbounded_send(request)
             .map_err(|_| Error::closed())?;
@@ -103,6 +112,7 @@ impl InnerClient {
         Ok(Responses {
             receiver,
             cur: BackendMessages::empty(),
+            transaction_status: self.transaction_status.clone(),
         })
     }
 
@@ -140,6 +150,10 @@ impl InnerClient {
 
     pub fn clear_type_cache(&self) {
         self.cached_typeinfo.lock().types.clear();
+    }
+
+    pub fn clear_session_cache(&self) {
+        *self.cached_typeinfo.lock() = CachedTypeInfo::default();
     }
 
     /// Call the given function with a buffer to be used when writing out
@@ -200,6 +214,7 @@ impl Client {
             inner: Arc::new(InnerClient {
                 sender,
                 cached_typeinfo: Default::default(),
+                transaction_status: Arc::new(AtomicU8::new(b'I')),
                 buffer: Default::default(),
             }),
             #[cfg(feature = "runtime")]
@@ -777,6 +792,16 @@ impl Client {
     /// to flush the local cache and allow the new, updated definitions to be loaded.
     pub fn clear_type_cache(&self) {
         self.inner().clear_type_cache();
+    }
+
+    /// Clears type definitions and their prepared statements before DISCARD ALL.
+    pub fn clear_session_cache(&self) {
+        self.inner().clear_session_cache();
+    }
+
+    /// Last consumed ReadyForQuery status, or A while a request is outstanding.
+    pub fn transaction_status(&self) -> u8 {
+        self.inner.transaction_status.load(Ordering::Acquire)
     }
 
     /// Determines if the connection to the server has already closed.

@@ -113,14 +113,23 @@ impl Cursor {
 
 #[derive(Debug, Default)]
 struct State {
+    lease: Option<roastedduck_postgres::pool::Lease>,
     started: bool,
     finished: bool,
     cursors: Vec<Weak<Mutex<Cursor>>>,
 }
 
+impl State {
+    fn session(&self) -> Result<&Session> {
+        self.lease
+            .as_ref()
+            .ok_or_else(|| Error::internal("Postgres session already returned"))?
+            .session()
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct PgTransaction {
-    session: Session,
     client: Arc<FunctionClient>,
     buffer_manager: BufferManager,
     begin: String,
@@ -146,7 +155,7 @@ impl PgTransaction {
             .and_then(|s| s.current_setting("pg_null_byte_replacement").ok())
             .and_then(|v| if v.is_null() { None } else { Some(v.to_varchar()) })
             .transpose()?;
-        let mut writer = self.session.copy_in(sql)?;
+        let mut writer = state.session()?.copy_in(sql)?;
         let interrupted = self.client.interrupt_flag();
         let mut count = 0;
         if !text {
@@ -193,14 +202,13 @@ impl PgTransaction {
         Ok(count)
     }
     pub fn new(
-        session: Session,
+        lease: roastedduck_postgres::pool::Lease,
         client: Arc<FunctionClient>,
         buffer_manager: BufferManager,
         isolation: &str,
         read_only: bool,
     ) -> Arc<Self> {
         Arc::new(Self {
-            session,
             client,
             buffer_manager,
             read_only,
@@ -208,7 +216,10 @@ impl PgTransaction {
                 "BEGIN TRANSACTION ISOLATION LEVEL {isolation}{}",
                 if read_only { " READ ONLY" } else { "" }
             ),
-            state: Mutex::default(),
+            state: Mutex::new(State {
+                lease: Some(lease),
+                ..State::default()
+            }),
         })
     }
     fn prepare(&self, state: &mut State, use_transaction: bool) -> Result<()> {
@@ -224,7 +235,8 @@ impl PgTransaction {
         state.cursors.retain(|cursor| cursor.strong_count() > 0);
         if use_transaction {
             if !state.started {
-                self.session
+                state
+                    .session()?
                     .batch_interruptible(&self.begin, self.client.interrupt_flag().as_deref())?;
                 state.started = true;
             }
@@ -242,7 +254,8 @@ impl PgTransaction {
     pub fn describe(&self, sql: &str, use_transaction: bool) -> Result<Vec<Column>> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         self.prepare(&mut state, use_transaction)?;
-        self.session
+        state
+            .session()?
             .describe_interruptible(sql, self.client.interrupt_flag().as_deref())
     }
     pub fn describe_query(
@@ -252,13 +265,15 @@ impl PgTransaction {
     ) -> Result<roastedduck_postgres::Description> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         self.prepare(&mut state, use_transaction)?;
-        self.session
+        state
+            .session()?
             .describe_query(sql, self.client.interrupt_flag().as_deref())
     }
     pub fn execute(&self, sql: &str, use_transaction: bool) -> Result<()> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         self.prepare(&mut state, use_transaction)?;
-        self.session
+        state
+            .session()?
             .batch_interruptible(sql, self.client.interrupt_flag().as_deref())
     }
     /// Small catalog queries are consumed under the session lock. Data scans use
@@ -266,9 +281,11 @@ impl PgTransaction {
     pub fn metadata(&self, sql: &str, parameters: &[BinaryParameter]) -> Result<Vec<Vec<Value>>> {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         self.prepare(&mut state, true)?;
-        let mut rows =
-            self.session
-                .stream_interruptible(sql, parameters, self.client.interrupt_flag().as_deref())?;
+        let mut rows = state.session()?.stream_interruptible(
+            sql,
+            parameters,
+            self.client.interrupt_flag().as_deref(),
+        )?;
         let codecs = rows
             .columns
             .iter()
@@ -304,10 +321,12 @@ impl PgTransaction {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         self.prepare(&mut state, use_transaction)?;
         let rows = if text {
-            self.session
+            state
+                .session()?
                 .stream_text(sql, parameters, self.client.interrupt_flag().as_deref())?
         } else {
-            self.session
+            state
+                .session()?
                 .stream_interruptible(sql, parameters, self.client.interrupt_flag().as_deref())?
         };
         let cursor = Arc::new(Mutex::new(Cursor {
@@ -330,7 +349,8 @@ impl PgTransaction {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         self.prepare(&mut state, use_transaction)?;
         let rows =
-            self.session
+            state
+                .session()?
                 .stream_query(sql, parameters, text, self.client.interrupt_flag().as_deref())?;
         let cursor = Arc::new(Mutex::new(Cursor {
             source: Some(rows),
@@ -350,10 +370,15 @@ impl PgTransaction {
         for cursor in state.cursors.drain(..).filter_map(|c| c.upgrade()) {
             cursor.lock().unwrap_or_else(PoisonError::into_inner).close();
         }
-        if state.started {
-            self.session.batch(if commit { "COMMIT" } else { "ROLLBACK" })?;
-        }
-        Ok(())
+        let result = if state.started {
+            state.session()?.batch(if commit { "COMMIT" } else { "ROLLBACK" })
+        } else {
+            Ok(())
+        };
+        let lease = state.lease.take();
+        drop(state);
+        drop(lease);
+        result
     }
 }
 

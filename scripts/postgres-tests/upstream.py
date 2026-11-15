@@ -111,6 +111,8 @@ def main():
                 engine_env['SLT_REQUIRE_EXTENSION_PATHS']=json.dumps({name:str((extensions/(name+'.duckdb_extension')).resolve()) for name in ['tpch','tpcds']})
             for index,name in enumerate(files):
                 cluster.reset()
+                secrets=target/f'{index}-secrets';secrets.mkdir()
+                engine_env['SLT_FIXTURE_SECRET_DIRECTORY']=str(secrets.resolve())
                 result=target/f'{index}.jsonl'
                 command=[str(args.slt.resolve()),'run','--engine',engine,'--root',str(reference),
                          '--jobs','1','--timeout-secs','600','--require','postgres_scanner',

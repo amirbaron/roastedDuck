@@ -1,3 +1,47 @@
+PostgreSQL pool checkpoint, November 15, 2026:
+Primary transaction connections now use a real per-catalog Rust pool. Leases return
+at transaction completion, health-check sessions, clear prepared type-info caches,
+roll back open/failed transactions and DISCARD ALL before reuse. Force/wait/try,
+limits, timeout/interruption, lifetime/idle expiry, thread-local caching, thread-exit
+return and background reaping are implemented. postgres_configure_pool exposes live
+configuration and counters; pg_pool_* settings initialize future pools, while the
+deprecated connection limit/cache callbacks update attached pools as upstream does.
+
+The first lifecycle probe caught ROLLBACK and DISCARD ALL sharing a query message;
+Postgres rejects that. They are separate now, with ReadyForQuery status tracking
+and Sync when needed, so idle sessions are not sent spurious ROLLBACKs. The driver
+patch still changes only client.rs/query.rs from tokio-postgres0.7.18; licenses and
+dependency versions stay unchanged (postgres-pool-driver-audit.json). Pinned pool
+source0a8505f775dae7bb30edd37f848d5975bf72884e and verified Git blob hashes are in
+postgres-pool-source. No C/C++ product code or default-off feature gates were added.
+
+Final receipt: .context/artifacts/popular-extensions/postgres-pool-verification.json.
+28 real-server backend checks pass (postgres-pool-backend-4), including PID reuse,
+DISCARD cleanup, prepared-type cache reset, contention/timeout/cancellation,
+expiry/reaper/TLS cache and failed transaction recovery; zero spurious rollback
+warnings. All16 paired SQL controls pass (postgres-pool-control-3). Five unchanged
+originals pass both engines (postgres-upstream-pool-4): pool options/configure,
+autoload, multi_join and concurrent_queries. The source slow-pool/early-release
+files still need the missing parallel scan/settings implementation; they are not
+claimed from these results. Earlier27 attachment/22 mutation/16 DDL/39 codec SQL
+cohorts pass (postgres-pool-*-regression-2), plus all6 API cancellation modes
+(postgres-pool-interrupt-2). All272 native/runner tests across41 signed targets and
+strict Clippy5 pass. CLI SHA startsadb1811df77e; SLT startsfdcf0e446b84. All owned
+fixtures stopped and no jobs remain active. Initial failed receipts are retained.
+
+SLT_FIXTURE_SECRET_DIRECTORY now sets an owned existing absolute credential
+storage directory in either backend's startup configuration. The original SQL stays
+unchanged. PG upstream/CLI/codec/interruption harnesses isolate secret storage before
+authentication, preserving ordinary corpus defaults when the override is absent.
+
+Next: implement pg_pages_per_task/CTID/parallel scan integration and pushdowns,
+remaining settings/logging, full cache staleness/rebinding, secrets/RDS/authentication
+and missing prerequisites. Verify platform-specific hardware-derived pool defaults
+in the platform qualification. The full152 discovery remains postgres-upstream-all-1,
+not current acceptance. The last full core run is frozen83d8da21 and predates later
+milestones. Complete final core, remaining extension/provider/platform/package gates,
+then PyPI/Homebrew delivery. The all-five goal remains active/incomplete; no release.
+
 PostgreSQL binary-file checkpoint, November 15, 2026:
 Normal builds now provide COPY TO/FROM (FORMAT postgres_binary) and
 read_postgres_binary(path, columns=..., buffer_size=...). The Rust implementation

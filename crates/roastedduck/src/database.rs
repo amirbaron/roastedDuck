@@ -389,6 +389,7 @@ impl StaticExtension {
         }
         match self {
             Self::Postgres => {
+                system.register_table_functions(crate::postgres::pool::function())?;
                 system.register_copy_function(crate::postgres::binary_file::copy_function())?;
                 system.register_table_functions(crate::postgres::binary_file::table_function())?;
                 for set in crate::postgres::hstore::functions() {
@@ -3605,7 +3606,7 @@ impl Connection {
         scope: SetScope,
     ) -> Result<()> {
         let name = name.as_ref();
-        let instance = self.database.instance();
+        let instance = Arc::clone(&self.database.instance);
         let option = instance.extension_option(name).ok_or_else(|| {
             Error::invalid_input(roastedduck_common::byte_format!(
                 "Extension parameter {name} was not found after autoloading"
@@ -3617,6 +3618,8 @@ impl Connection {
         if let Some(set_function) = &option.set_function {
             set_function(&mut target_value)?;
         }
+        crate::postgres::pool::validate_setting(&self.function_client, name, &target_value, scope)?;
+        self.apply_postgres_pool_limit(name, &target_value);
         if scope == SetScope::Global || (scope == SetScope::Automatic && option.global_by_default) {
             instance.set_extension_global(&option, Some(target_value));
         } else {
@@ -3630,7 +3633,7 @@ impl Connection {
     /// option's default scope says).
     fn reset_extension_variable(&mut self, name: impl AsRef<[u8]>, scope: SetScope) -> Result<()> {
         let name = name.as_ref();
-        let instance = self.database.instance();
+        let instance = Arc::clone(&self.database.instance);
         let option = instance.extension_option(name).ok_or_else(|| {
             Error::invalid_input(roastedduck_common::byte_format!(
                 "Extension parameter {name} was not found after autoloading"
@@ -3640,6 +3643,8 @@ impl Connection {
             let mut default_value = option.default_value.clone();
             set_function(&mut default_value)?;
         }
+        crate::postgres::pool::validate_setting(&self.function_client, name, &option.default_value, scope)?;
+        self.apply_postgres_pool_limit(name, &option.default_value);
         if scope == SetScope::Global || (scope == SetScope::Automatic && option.global_by_default) {
             instance.set_extension_global(&option, None);
         } else {
@@ -3647,6 +3652,22 @@ impl Connection {
                 .insert(&option.name, option.default_value.clone());
         }
         Ok(())
+    }
+
+    fn apply_postgres_pool_limit(&mut self, name: &[u8], value: &Value) {
+        let Some(value) = crate::postgres::pool::legacy_limit(name, value) else {
+            return;
+        };
+        let instance = Arc::clone(&self.database.instance);
+        for database in instance.databases.all() {
+            if let crate::attached::DatabaseStorage::Postgres(pg) = &database.storage {
+                pg.pool.set_max_connections(value.as_u64().unwrap_or(0));
+            }
+        }
+        if let Some(option) = instance.extension_option(b"pg_connection_limit") {
+            instance.set_extension_global(&option, Some(value.clone()));
+        }
+        self.extension_session.insert("pg_pool_max_connections", value);
     }
 
     /// Records a `SET` / `RESET` (`value` `None`) of option `name` with `scope`: a global
@@ -4818,7 +4839,8 @@ impl Connection {
                                 "Attaching Postgres databases is disabled through configuration",
                             ));
                         }
-                        let config = crate::postgres::AttachConfig::parse(info)?;
+                        let mut config = crate::postgres::AttachConfig::parse(info)?;
+                        config.pool = crate::postgres::pool::from_client(&self.function_client)?;
                         let instance = self.database.instance();
                         let attached = instance.databases.attach_postgres(
                             info,

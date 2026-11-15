@@ -29,8 +29,7 @@ type CacheKey = (CatalogType, String, String, u8);
 pub(crate) struct PgCatalog {
     own: Weak<Self>,
     native: Weak<Catalog>,
-    driver: Driver,
-    parameters: Parameters,
+    pub(crate) pool: Arc<roastedduck_postgres::pool::Pool>,
     buffer_manager: BufferManager,
     read_only: bool,
     isolation: String,
@@ -54,16 +53,20 @@ impl PgCatalog {
         read_only: bool,
         isolation: String,
         schemas: Vec<String>,
+        pool_config: roastedduck_postgres::pool::Config,
     ) -> Result<Arc<Self>> {
         let driver = Driver::new()?;
         // Construction validates the endpoint before the attachment is published.
-        driver.connect(&parameters)?.batch("SELECT version()")?;
+        let pool = roastedduck_postgres::pool::Pool::new(
+            pool_config,
+            Arc::new(move || driver.connect(&parameters)),
+        )?;
+        pool.acquire(None)?.session()?.batch("SELECT version()")?;
         let default_schema = schemas.first().map_or("public", String::as_str).into();
         Ok(Arc::new_cyclic(|own| Self {
             own: own.clone(),
             native: Arc::downgrade(native),
-            driver,
-            parameters,
+            pool,
             buffer_manager,
             read_only,
             isolation,
@@ -85,7 +88,7 @@ impl PgCatalog {
     ) -> Result<Arc<PgTransaction>> {
         let catalog = self.native()?;
         let participant = transaction.participant(&catalog.name(), || {
-            let session = self.driver.connect(&self.parameters)?;
+            let session = self.pool.acquire(client.interrupt_flag().as_deref())?;
             Ok(Arc::new(Participant(PgTransaction::new(
                 session,
                 client.clone(),
