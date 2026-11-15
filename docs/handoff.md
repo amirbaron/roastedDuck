@@ -1,3 +1,25 @@
+PostgreSQL mutation checkpoint, November 15, 2026:
+working source now implements UPDATE, DELETE, MERGE and ON CONFLICT through remote
+mutation state. MERGE materializes input before interleaved action sinks; delete
+CTID batches and temporary-table updates follow the pinned algorithms. PK/UNIQUE
+metadata maps actual PostgreSQL attnums, including dropped-column gaps. The four
+supported remote ALTER operations now dispatch directly; ADD COLUMN resolves its
+type first, and missing DROP IF EXISTS resolves the catalog default schema.
+
+All 22 paired mutation/ALTER controls pass (postgres-mutation-control-4). Nine
+unchanged upstream files pass on both engines, including the million-row deletion
+(postgres-upstream-mutation-2). The later mode-skip in attach_delete stays intact:
+its passing result covers the executed prefix, not the skipped suffix. Combined
+with the prior cohort, 24 original files have passing Rust/C++ receipts. All six
+API cancellation modes pass and leave rows/transaction state unchanged as expected
+(postgres-mutation-interrupt-1). Strict final Clippy 9 passes, as do all 216 native tests across 39 signed targets
+with TZ=UTC (postgres-mutation-unit-results.json). All owned servers stopped.
+
+The all-five goal is still incomplete: catalog listings/staleness/rebinding,
+pooling/session retention, secrets/RDS, remaining settings/authentication/DDL and
+the complete 152-file PG suite remain, followed by remaining extension, full core,
+platform/package and publication gates. No release made.
+
 PostgreSQL real-attachment checkpoint, November 15, 2026:
 working source now uses a real remote catalog and transaction-owned sessions for
 ATTACH, reads, query/execute, CREATE/DROP and INSERT/CTAS via COPY. It buffers through

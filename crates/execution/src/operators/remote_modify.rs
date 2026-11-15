@@ -2,7 +2,7 @@
 //! then transfer it in one provider operation. Input scans cannot overlap COPY IN.
 use crate::operator::{ErasedSink, ErasedSource, PhysicalOperator, PhysicalRef, SinkState};
 use crate::{ExecutionContext, Sink, SinkFinalize, SinkResult, Source, SourceResult};
-use roastedduck_catalog::backend::TableBackend;
+use roastedduck_catalog::backend::{TableBackend, TableMutation};
 use roastedduck_catalog::{Catalog, EntryKind, Transaction};
 use roastedduck_common::{Error, Result};
 use roastedduck_function::FunctionClient;
@@ -12,26 +12,29 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 #[derive(Debug)]
-pub enum RemoteInsertTarget {
-    Table(Arc<dyn TableBackend>),
+pub enum RemoteModifyTarget {
+    Insert(Arc<dyn TableBackend>),
+    Update(Arc<dyn TableBackend>, bool),
+    Delete(Arc<dyn TableBackend>, usize),
     Create {
         catalog: Arc<Catalog>,
         info: Box<roastedduck_ast::CreateInfo>,
     },
 }
 #[derive(Debug)]
-pub struct PhysicalRemoteInsert {
+pub struct PhysicalRemoteModify {
     child: [PhysicalRef; 1],
-    target: RemoteInsertTarget,
+    target: RemoteModifyTarget,
     columns: Vec<usize>,
     transaction: Arc<Transaction>,
     client: Arc<FunctionClient>,
     types: Vec<LogicalType>,
+    streaming: bool,
 }
-impl PhysicalRemoteInsert {
+impl PhysicalRemoteModify {
     pub fn new(
         child: PhysicalRef,
-        target: RemoteInsertTarget,
+        target: RemoteModifyTarget,
         columns: Vec<usize>,
         transaction: Arc<Transaction>,
         client: Arc<FunctionClient>,
@@ -43,15 +46,39 @@ impl PhysicalRemoteInsert {
             transaction,
             client,
             types: vec![LogicalType::BIGINT],
+            streaming: false,
+        }
+    }
+    #[must_use]
+    pub fn with_streaming(mut self) -> Self {
+        self.streaming = true;
+        self
+    }
+    fn begin(&self, table: &Arc<dyn TableBackend>) -> Result<Box<dyn TableMutation>> {
+        match &self.target {
+            RemoteModifyTarget::Insert(_) => {
+                table.begin_insert(&self.client, &self.transaction, &self.columns)
+            }
+            RemoteModifyTarget::Update(_, defaults) => {
+                table.begin_update(&self.client, &self.transaction, &self.columns, *defaults)
+            }
+            RemoteModifyTarget::Delete(_, row_id) => {
+                table.begin_delete(&self.client, &self.transaction, *row_id)
+            }
+            RemoteModifyTarget::Create { .. } => Err(Error::internal("CTAS cannot stream remote mutations")),
         }
     }
 }
-impl PhysicalOperator for PhysicalRemoteInsert {
+impl PhysicalOperator for PhysicalRemoteModify {
     fn sink_order_dependent(&self) -> bool {
         true
     }
     fn name(&self) -> &'static str {
-        "INSERT"
+        match self.target {
+            RemoteModifyTarget::Update(..) => "PG_UPDATE",
+            RemoteModifyTarget::Delete(..) => "PG_DELETE",
+            _ => "INSERT",
+        }
     }
     fn types(&self) -> &[LogicalType] {
         &self.types
@@ -72,14 +99,17 @@ pub struct Global {
     table: Option<Arc<dyn TableBackend>>,
     skip: bool,
     count: AtomicU64,
+    mutation: Mutex<Option<Box<dyn TableMutation>>>,
 }
-impl Sink for PhysicalRemoteInsert {
+impl Sink for PhysicalRemoteModify {
     type Global = Global;
     type Local = ();
     fn global_sink_state(&self, context: &ExecutionContext) -> Result<Global> {
         let (table, skip) = match &self.target {
-            RemoteInsertTarget::Table(table) => (Some(table.clone()), false),
-            RemoteInsertTarget::Create { catalog, info } => {
+            RemoteModifyTarget::Insert(table)
+            | RemoteModifyTarget::Update(table, _)
+            | RemoteModifyTarget::Delete(table, _) => (Some(table.clone()), false),
+            RemoteModifyTarget::Create { catalog, info } => {
                 let skip = if info.on_conflict == roastedduck_ast::OnCreateConflict::IgnoreOnConflict {
                     let roastedduck_ast::CreateInfoKind::Table(table) = &info.kind else {
                         return Err(Error::internal("Remote CTAS without table definition"));
@@ -99,7 +129,13 @@ impl Sink for PhysicalRemoteInsert {
                 (None, skip)
             }
         };
+        let mutation = if self.streaming {
+            table.as_ref().map(|t| self.begin(t)).transpose()?
+        } else {
+            None
+        };
         Ok(Global {
+            mutation: Mutex::new(mutation),
             table,
             skip,
             count: AtomicU64::new(0),
@@ -126,6 +162,16 @@ impl Sink for PhysicalRemoteInsert {
         if global.skip {
             return Ok(SinkResult::Finished);
         }
+        if self.streaming {
+            global
+                .mutation
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .as_mut()
+                .ok_or_else(|| Error::internal("Remote streaming mutation has no state"))?
+                .sink(chunk)?;
+            return Ok(SinkResult::NeedMoreInput);
+        }
         let mut input = global.input.lock().unwrap_or_else(PoisonError::into_inner);
         let (collection, state) = &mut *input;
         collection.append(state, chunk)?;
@@ -138,9 +184,20 @@ impl Sink for PhysicalRemoteInsert {
         if global.skip {
             return Ok(SinkFinalize::Ready);
         }
+        if self.streaming {
+            let count = global
+                .mutation
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .as_mut()
+                .ok_or_else(|| Error::internal("Remote streaming mutation has no state"))?
+                .finish()?;
+            global.count.store(count, Ordering::Release);
+            return Ok(SinkFinalize::Ready);
+        }
         // A replacing CTAS must finish reading the old relation before DROP/CREATE.
         // Buffered input also prevents nested source scans from overlapping COPY IN.
-        if let RemoteInsertTarget::Create { catalog, info } = &self.target {
+        if let RemoteModifyTarget::Create { catalog, info } = &self.target {
             let backend = catalog
                 .backend()
                 .ok_or_else(|| Error::internal("Remote CREATE without backend"))?;
@@ -156,13 +213,24 @@ impl Sink for PhysicalRemoteInsert {
             let input = global.input.lock().unwrap_or_else(PoisonError::into_inner);
             let mut state = input.0.initialize_scan();
             let mut chunks = std::iter::from_fn(|| input.0.scan(&mut state).transpose());
-            let count = table.insert(&self.client, &self.transaction, &self.columns, &mut chunks)?;
+            let count = if matches!(
+                self.target,
+                RemoteModifyTarget::Insert(_) | RemoteModifyTarget::Create { .. }
+            ) {
+                table.insert(&self.client, &self.transaction, &self.columns, &mut chunks)?
+            } else {
+                let mut mutation = self.begin(table)?;
+                for chunk in chunks {
+                    mutation.sink(&chunk?)?;
+                }
+                mutation.finish()?
+            };
             global.count.store(count, Ordering::Release);
         }
         Ok(SinkFinalize::Ready)
     }
 }
-impl Source for PhysicalRemoteInsert {
+impl Source for PhysicalRemoteModify {
     type Global = (SinkState, AtomicBool);
     type Local = ();
     fn global_source_state(&self, _: &ExecutionContext, sink: Option<&SinkState>) -> Result<Self::Global> {

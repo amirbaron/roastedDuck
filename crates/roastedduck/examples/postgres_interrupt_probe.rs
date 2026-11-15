@@ -42,6 +42,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             "attached" => "SELECT * FROM p.slow_scan",
             "insert" => "INSERT INTO p.slow_insert VALUES (1)",
+            "update" => "UPDATE p.slow_mutation SET value=2 WHERE id=1",
+            "delete" => "DELETE FROM p.slow_mutation WHERE id=1",
+            "merge" => {
+                "MERGE INTO p.slow_mutation t USING (VALUES(1,2)) s(id,value) USING(id) WHEN MATCHED THEN UPDATE SET value=s.value"
+            }
             _ => return Err("unknown interrupt probe mode".into()),
         };
         let error = connection
@@ -58,6 +63,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut rows = check.stream("SELECT count(*)::int4 FROM slow_insert", &[])?;
             if rows.next_batch(1)? != vec![vec![Some(0i32.to_be_bytes().to_vec())]] {
                 return Err("cancelled COPY committed a row".into());
+            }
+        }
+        if matches!(mode.as_str(), "update" | "delete" | "merge") {
+            let mut rows = check.stream("SELECT id::int4,value::int4 FROM slow_mutation", &[])?;
+            if rows.next_batch(2)?
+                != vec![vec![
+                    Some(1i32.to_be_bytes().to_vec()),
+                    Some(1i32.to_be_bytes().to_vec()),
+                ]]
+            {
+                return Err("cancelled mutation changed the persisted row".into());
             }
         }
         let mut rows=check.stream("SELECT count(*)::int4 FROM pg_stat_activity WHERE application_name='roastedduck-scan-interrupt' AND state LIKE 'idle in transaction%'",&[])?;

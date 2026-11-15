@@ -41,6 +41,16 @@ pub trait CatalogBackend: std::fmt::Debug + Send + Sync {
             "DROP is not implemented for this catalog",
         ))
     }
+    fn alter(
+        &self,
+        _client: &Arc<FunctionClient>,
+        _transaction: &Transaction,
+        _info: &roastedduck_ast::AlterInfo,
+    ) -> Result<()> {
+        Err(roastedduck_common::Error::not_implemented(
+            "ALTER is not implemented for this catalog",
+        ))
+    }
 }
 
 /// A real table entry can bind a provider scan while keeping its table identity
@@ -57,6 +67,52 @@ pub trait TableBackend: std::fmt::Debug + Send + Sync {
             Ok(())
         }
     }
+    fn validate_update(&self, _returning: bool, _defaults: bool) -> Result<()> {
+        Err(roastedduck_common::Error::not_implemented(
+            "UPDATE is not implemented for this table",
+        ))
+    }
+    fn validate_delete(&self, _returning: bool) -> Result<()> {
+        Err(roastedduck_common::Error::not_implemented(
+            "DELETE is not implemented for this table",
+        ))
+    }
+    fn validate_merge(&self, _returning: bool) -> Result<()> {
+        Err(roastedduck_common::Error::not_implemented(
+            "MERGE is not implemented for this table",
+        ))
+    }
+    fn begin_insert(
+        &self,
+        _client: &Arc<FunctionClient>,
+        _transaction: &Transaction,
+        _columns: &[usize],
+    ) -> Result<Box<dyn TableMutation>> {
+        Err(roastedduck_common::Error::not_implemented(
+            "Streaming INSERT is not implemented for this table",
+        ))
+    }
+    fn begin_update(
+        &self,
+        _client: &Arc<FunctionClient>,
+        _transaction: &Transaction,
+        _columns: &[usize],
+        _defaults: bool,
+    ) -> Result<Box<dyn TableMutation>> {
+        Err(roastedduck_common::Error::not_implemented(
+            "UPDATE is not implemented for this table",
+        ))
+    }
+    fn begin_delete(
+        &self,
+        _client: &Arc<FunctionClient>,
+        _transaction: &Transaction,
+        _row_id: usize,
+    ) -> Result<Box<dyn TableMutation>> {
+        Err(roastedduck_common::Error::not_implemented(
+            "DELETE is not implemented for this table",
+        ))
+    }
     fn insert(
         &self,
         _client: &Arc<FunctionClient>,
@@ -68,6 +124,13 @@ pub trait TableBackend: std::fmt::Debug + Send + Sync {
             "INSERT is not implemented for this table",
         ))
     }
+}
+
+/// State of one remote mutation, including chunk boundaries and deferred work.
+#[doc(hidden)]
+pub trait TableMutation: std::fmt::Debug + Send {
+    fn sink(&mut self, chunk: &roastedduck_types::DataChunk) -> Result<()>;
+    fn finish(&mut self) -> Result<u64>;
 }
 
 #[derive(Clone, Debug)]

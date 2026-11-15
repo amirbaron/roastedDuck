@@ -9,8 +9,10 @@ Bundled LOAD postgres registers scans, legacy postgres_attach, postgres_query,
 postgres_execute and pg_clear_cache. SQL ATTACH supports schema selection,
 isolation and read-only mode. CREATE table/schema/type, DROP and INSERT/CTAS use
 remote DDL and COPY; rows are never stored in native DuckDB tables as a substitute.
-UPDATE/DELETE/MERGE, complete metadata listings/cache behavior, pooling, secrets
-and remaining settings/authentication are still pending. This is not a completed
+UPDATE/DELETE/MERGE and upserts use CTIDs and temporary update data; the pinned
+rename/add/drop column ALTER operations are also implemented. Complete metadata
+listings/cache behavior, pooling, secrets and remaining settings/authentication
+are still pending. This is not a completed
 extension or release qualification.
 
 Binary codecs cover numeric and temporal values, UUIDs, arrays, enum/composite

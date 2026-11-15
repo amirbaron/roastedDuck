@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use roastedduck_buffer::BufferManager;
-use roastedduck_catalog::backend::{BackendScan, CatalogBackend, TableBackend};
+use roastedduck_catalog::backend::{BackendScan, CatalogBackend, TableBackend, TableMutation};
 use roastedduck_catalog::{
     Catalog, CatalogEntry, CatalogName, CatalogType, EntryKind, SchemaEntry, TableColumn, TableEntry,
     Transaction, TypeEntry,
@@ -158,7 +158,7 @@ impl PgCatalog {
         let name = row[1].to_varchar()?;
         let relation = format!("{}.{}", identifier(&schema), identifier(&name));
         let columns = pg.describe(&format!("SELECT * FROM {relation}"), true)?;
-        let attributes = pg.metadata("SELECT a.attname::text,a.attndims::int4,a.attnotnull,col_description(a.attrelid,a.attnum) FROM pg_catalog.pg_attribute a WHERE a.attrelid=$1::int8::oid AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum", &[BinaryParameter(Some(oid.to_be_bytes().to_vec()))])?;
+        let attributes = pg.metadata("SELECT a.attname::text,a.attndims::int4,a.attnotnull,col_description(a.attrelid,a.attnum),a.attnum::int4 FROM pg_catalog.pg_attribute a WHERE a.attrelid=$1::int8::oid AND a.attnum>0 AND NOT a.attisdropped ORDER BY a.attnum", &[BinaryParameter(Some(oid.to_be_bytes().to_vec()))])?;
         if attributes.len() != columns.len() {
             return Err(Error::internal("Postgres table metadata changed during binding"));
         }
@@ -189,6 +189,27 @@ impl PgCatalog {
             if attribute[2].as_bool() == Some(true) {
                 table.not_null_columns.push(index);
             }
+        }
+        let constraints=pg.metadata("SELECT contype::text,conkey FROM pg_catalog.pg_constraint WHERE conrelid=$1::int8::oid AND contype IN ('p','u') ORDER BY oid", &[BinaryParameter(Some(oid.to_be_bytes().to_vec()))])?;
+        for constraint in constraints {
+            let mut names = Vec::new();
+            for key in constraint[1].children().unwrap_or_default() {
+                let attnum = key
+                    .as_i128()
+                    .ok_or_else(|| Error::internal("Invalid Postgres constraint column"))?;
+                let index = attributes
+                    .iter()
+                    .position(|a| a[4].as_i128() == Some(attnum))
+                    .ok_or_else(|| Error::internal("Postgres constraint references a missing column"))?;
+                names.push(table.columns[index].name.clone());
+            }
+            table.constraints.push(roastedduck_ast::Constraint::Unique(
+                roastedduck_ast::UniqueConstraint {
+                    is_primary_key: constraint[0].as_str() == Some("p"),
+                    index: roastedduck_common::LogicalIndex(u64::MAX),
+                    columns: names,
+                },
+            ));
         }
         table.backend = Some(Arc::new(PgTable {
             catalog: self.own.clone(),
@@ -232,6 +253,80 @@ impl PgCatalog {
     }
 }
 impl CatalogBackend for PgCatalog {
+    fn alter(
+        &self,
+        client: &Arc<FunctionClient>,
+        transaction: &Transaction,
+        info: &roastedduck_ast::AlterInfo,
+    ) -> Result<()> {
+        use roastedduck_ast::{AlterInfoKind, AlterTableInfo as A, ParsedExpressionKind};
+        let AlterInfoKind::AlterTable(alter) = &info.kind else {
+            return Err(Error::binder("Only altering tables is supported for now"));
+        };
+        let entry = self.lookup(client, transaction, CatalogType::Table, &info.schema, &info.name)?;
+        let column_name = |name: &ByteString| -> Result<String> {
+            let actual = entry
+                .as_ref()
+                .and_then(|e| match &e.kind {
+                    EntryKind::Table(t) => t.column(name).map(|(_, c)| c.name.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| name.clone());
+            Ok(utf8(&actual)?.to_owned())
+        };
+        let name = entry.as_ref().map_or(&info.name, |e| e.name());
+        let prefix = format!(
+            "ALTER TABLE {}.{}",
+            identifier(utf8(&info.schema)?),
+            identifier(utf8(name)?)
+        );
+        let sql = match alter {
+            A::RenameTable(rename) => {
+                format!("{prefix} RENAME TO {}", identifier(utf8(&rename.new_table_name)?))
+            }
+            A::RenameColumn(rename) => format!(
+                "{prefix} RENAME COLUMN {} TO {}",
+                identifier(&column_name(&rename.old_name)?),
+                identifier(utf8(&rename.new_name)?)
+            ),
+            A::RemoveColumn(remove) => format!(
+                "{prefix} DROP COLUMN {}{}",
+                if remove.if_column_exists { "IF EXISTS " } else { "" },
+                identifier(&column_name(&remove.removed_column)?)
+            ),
+            A::AddColumn(add) => {
+                let mut sql = format!(
+                    "{prefix} ADD COLUMN {}{} {}",
+                    if add.if_column_not_exists {
+                        "IF NOT EXISTS "
+                    } else {
+                        ""
+                    },
+                    identifier(utf8(&add.new_column.name)?),
+                    add.new_column.logical_type
+                );
+                if let Some(expression) = &add.new_column.expression {
+                    let ParsedExpressionKind::Constant(value) = &expression.kind else {
+                        return Err(Error::binder(
+                            "Unsupported ALTER TABLE DEFAULT expression type - only constant DEFAULT expressions are supported",
+                        ));
+                    };
+                    sql.push_str(" DEFAULT ");
+                    sql.push_str(utf8(&value.value.try_to_sql_string()?)?);
+                }
+                sql
+            }
+            _ => {
+                return Err(Error::binder(
+                    "Unsupported ALTER TABLE type - Postgres tables only support RENAME TABLE, RENAME COLUMN, ADD COLUMN and DROP COLUMN",
+                ));
+            }
+        };
+        self.mark_write(transaction)?;
+        self.transaction(client, transaction)?.execute(&sql, true)?;
+        self.clear_cache();
+        Ok(())
+    }
     fn drop_entry(
         &self,
         client: &Arc<FunctionClient>,
@@ -253,14 +348,15 @@ impl CatalogBackend for PgCatalog {
             }
         };
         self.mark_write(transaction)?;
+        let schema = if info.schema.is_empty() {
+            &self.default_schema
+        } else {
+            &info.schema
+        };
         let object = if info.catalog_type == C::SchemaEntry {
             identifier(utf8(&info.name)?)
         } else {
-            format!(
-                "{}.{}",
-                identifier(utf8(&info.schema)?),
-                identifier(utf8(&info.name)?)
-            )
+            format!("{}.{}", identifier(utf8(schema)?), identifier(utf8(&info.name)?))
         };
         let exists = if info.if_not_found == roastedduck_ast::OnEntryNotFound::ReturnNull {
             "IF EXISTS "
@@ -452,6 +548,100 @@ impl TableBackend for PgTable {
             Ok(())
         }
     }
+    fn validate_update(&self, returning: bool, _defaults: bool) -> Result<()> {
+        if returning {
+            return Err(Error::binder(
+                "RETURNING clause not yet supported for updates of a Postgres table",
+            ));
+        }
+        Ok(())
+    }
+    fn validate_delete(&self, returning: bool) -> Result<()> {
+        if returning {
+            Err(Error::binder(
+                "RETURNING clause not yet supported for deletion of a Postgres table",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+    fn validate_merge(&self, returning: bool) -> Result<()> {
+        if returning {
+            Err(Error::not_implemented(
+                "RETURNING is not implemented for Postgres yet",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+    fn begin_insert(
+        &self,
+        client: &Arc<FunctionClient>,
+        transaction: &Transaction,
+        columns: &[usize],
+    ) -> Result<Box<dyn TableMutation>> {
+        let catalog = self
+            .catalog
+            .upgrade()
+            .ok_or_else(|| Error::internal("Postgres catalog closed"))?;
+        catalog.mark_write(transaction)?;
+        let (sql, text) = self.insert_sql(client, columns)?;
+        Ok(super::mutation::insert(
+            catalog.transaction(client, transaction)?,
+            sql,
+            text,
+        ))
+    }
+    fn begin_update(
+        &self,
+        client: &Arc<FunctionClient>,
+        transaction: &Transaction,
+        columns: &[usize],
+        defaults: bool,
+    ) -> Result<Box<dyn TableMutation>> {
+        let catalog = self
+            .catalog
+            .upgrade()
+            .ok_or_else(|| Error::internal("Postgres catalog closed"))?;
+        catalog.mark_write(transaction)?;
+        let names = columns
+            .iter()
+            .map(|i| {
+                self.names
+                    .get(*i)
+                    .cloned()
+                    .ok_or_else(|| Error::internal("Invalid Postgres updated column"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let types = columns
+            .iter()
+            .map(|i| self.codecs[*i].logical_type.clone())
+            .collect::<Vec<_>>();
+        super::mutation::update(
+            catalog.transaction(client, transaction)?,
+            &self.relation,
+            &names,
+            &types,
+            defaults,
+        )
+    }
+    fn begin_delete(
+        &self,
+        client: &Arc<FunctionClient>,
+        transaction: &Transaction,
+        row_id: usize,
+    ) -> Result<Box<dyn TableMutation>> {
+        let catalog = self
+            .catalog
+            .upgrade()
+            .ok_or_else(|| Error::internal("Postgres catalog closed"))?;
+        catalog.mark_write(transaction)?;
+        Ok(super::mutation::delete(
+            catalog.transaction(client, transaction)?,
+            self.relation.clone(),
+            row_id,
+        ))
+    }
     fn insert(
         &self,
         client: &Arc<FunctionClient>,
@@ -464,28 +654,7 @@ impl TableBackend for PgTable {
             .upgrade()
             .ok_or_else(|| Error::internal("Postgres catalog closed"))?;
         catalog.mark_write(transaction)?;
-        let text = client
-            .settings()
-            .and_then(|s| s.current_setting("pg_use_binary_copy").ok())
-            .and_then(|v| v.as_bool())
-            == Some(false)
-            || self.codecs.iter().any(Codec::requires_text_copy);
-        let names = columns
-            .iter()
-            .map(|column| {
-                self.names
-                    .get(*column)
-                    .map(|s| identifier(s))
-                    .ok_or_else(|| Error::internal("Invalid Postgres insert column"))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let column_list = if names.is_empty() {
-            String::new()
-        } else {
-            format!(" ({})", names.join(","))
-        };
-        let format = if text { "TEXT, NULL '\u{0008}'" } else { "BINARY" };
-        let sql = format!("COPY {}{column_list} FROM STDIN (FORMAT {format})", self.relation);
+        let (sql, text) = self.insert_sql(client, columns)?;
         catalog
             .transaction(client, transaction)?
             .copy_input(&sql, text, chunks)
@@ -595,4 +764,32 @@ fn utf8(value: &ByteString) -> Result<&str> {
     value
         .to_str()
         .map_err(|_| Error::invalid_input("Invalid UTF-8 in Postgres identifier"))
+}
+
+impl PgTable {
+    fn insert_sql(&self, client: &Arc<FunctionClient>, columns: &[usize]) -> Result<(String, bool)> {
+        let text = client
+            .settings()
+            .and_then(|s| s.current_setting("pg_use_binary_copy").ok())
+            .and_then(|v| v.as_bool())
+            == Some(false)
+            || self.codecs.iter().any(Codec::requires_text_copy);
+        let names = columns
+            .iter()
+            .map(|column| {
+                self.names
+                    .get(*column)
+                    .map(|s| identifier(s))
+                    .ok_or_else(|| Error::internal("Invalid Postgres insert column"))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let column_list = if names.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", names.join(","))
+        };
+        let format = if text { "TEXT, NULL '\u{0008}'" } else { "BINARY" };
+        let sql = format!("COPY {}{column_list} FROM STDIN (FORMAT {format})", self.relation);
+        Ok((sql, text))
+    }
 }

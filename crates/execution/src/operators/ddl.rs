@@ -56,6 +56,21 @@ pub struct BackendDropAction {
     pub client: Arc<roastedduck_function::FunctionClient>,
     pub info: DropInfo,
 }
+
+#[derive(Debug)]
+pub struct BackendAlterAction {
+    pub catalog: Arc<Catalog>,
+    pub client: Arc<roastedduck_function::FunctionClient>,
+    pub info: roastedduck_ast::AlterInfo,
+}
+impl DdlAction for BackendAlterAction {
+    fn execute(&self, transaction: &Transaction) -> Result<()> {
+        self.catalog
+            .backend()
+            .ok_or_else(|| Error::internal("ALTER without catalog backend"))?
+            .alter(&self.client, transaction, &self.info)
+    }
+}
 impl DdlAction for BackendDropAction {
     fn execute(&self, transaction: &Transaction) -> Result<()> {
         self.catalog

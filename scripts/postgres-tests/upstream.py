@@ -50,6 +50,7 @@ def main():
     parser.add_argument('--file',action='append')
     parser.add_argument('--all',action='store_true')
     parser.add_argument('--slow',action='store_true',help='Enable POSTGRES_TEST_SLOW for an explicitly selected cohort')
+    parser.add_argument('--duckdb-source',type=Path,help='Pinned DuckDB 1.5.6 source for unchanged TPCH/TPCDS expected-result files')
     args=parser.parse_args()
     if args.all and args.file:
         parser.error('--all and --file are mutually exclusive')
@@ -68,10 +69,24 @@ def main():
             assert data==(args.source/name).read_bytes(),name
             fixture_hashes[name]=hashlib.sha256(data).hexdigest()
     reference=out/'reference'
+    needs_duckdb_source=False
     for name in files:
         data=(args.source/name).read_bytes()
         assert hashlib.sha256(data).hexdigest()==manifest['sql_tests'][name],name
         target=reference/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(data)
+        needs_duckdb_source |= b'<FILE>:duckdb/' in data
+    answer_hashes={}
+    if needs_duckdb_source:
+        if args.duckdb_source is None:
+            parser.error('--duckdb-source is required by the selected originals')
+        duckdb_source=args.duckdb_source.resolve()
+        for folder in ['extension/tpch/dbgen/answers/sf0.01','extension/tpcds/dsdgen/answers/sf0.01']:
+            directory=duckdb_source/folder
+            if not directory.is_dir():
+                parser.error(f'missing pinned answer directory: {directory}')
+            for answer in directory.glob('*.csv'):
+                answer_hashes[str(answer.relative_to(duckdb_source))]=hashlib.sha256(answer.read_bytes()).hexdigest()
+        (reference/'duckdb').symlink_to(duckdb_source,target_is_directory=True)
     extensions=out/'extensions';extensions.mkdir()
     (extensions/'postgres_scanner.duckdb_extension').symlink_to(args.extension.resolve())
     for name in ['tpch','tpcds']:
@@ -107,6 +122,7 @@ def main():
     report['sha256']={name:hashlib.sha256(getattr(args,name).read_bytes()).hexdigest()
                       for name in ['slt','shim','oracle','extension']}
     report['fixture_sha256']=fixture_hashes
+    report['duckdb_answer_sha256']=answer_hashes
     report['dataset_extension_sha256']={name:hashlib.sha256((args.dataset_extensions/(name+'.duckdb_extension')).read_bytes()).hexdigest() for name in ['tpch','tpcds']}
     report['scope']='Disposable local PostgreSQL; original SQL unchanged; separate restored database per file'
     (out/'verification.json').write_text(json.dumps(report,indent=2)+'\n')

@@ -496,9 +496,9 @@ impl PlanGenerator {
                     }
                 }
             }
-            return Ok(Arc::new(crate::operators::PhysicalRemoteInsert::new(
+            return Ok(Arc::new(crate::operators::PhysicalRemoteModify::new(
                 child,
-                crate::operators::RemoteInsertTarget::Table(backend.clone()),
+                crate::operators::RemoteModifyTarget::Insert(backend.clone()),
                 columns,
                 context.transaction.clone(),
                 context.client.function_client.clone(),
@@ -557,6 +557,22 @@ impl PlanGenerator {
         child: PhysicalRef,
     ) -> Result<PhysicalRef> {
         let context = self.context()?;
+        if let EntryKind::Table(table) = &delete.table.kind
+            && let Some(backend) = &table.backend
+        {
+            backend.validate_delete(delete.return_chunk)?;
+            let row_id = match expressions.first().map(|e| &e.kind) {
+                Some(ExpressionKind::Reference(r)) => r.index as usize,
+                _ => return Err(Error::internal("DELETE without row identity")),
+            };
+            return Ok(Arc::new(crate::operators::PhysicalRemoteModify::new(
+                child,
+                crate::operators::RemoteModifyTarget::Delete(backend.clone(), row_id),
+                vec![],
+                context.transaction.clone(),
+                context.client.function_client.clone(),
+            )));
+        }
         // `BindIndexes` of the operator's initialization.
         bind_table_indexes(&context.client, &delete.table)?;
         let storage = table_storage(&delete.table)?;
@@ -592,6 +608,39 @@ impl PlanGenerator {
         child: PhysicalRef,
     ) -> Result<PhysicalRef> {
         let context = self.context()?;
+        if let EntryKind::Table(table) = &update.table.kind
+            && let Some(backend) = &table.backend
+        {
+            let defaults = expressions
+                .iter()
+                .any(|e| matches!(e.kind, ExpressionKind::Default));
+            backend.validate_update(update.return_chunk, defaults)?;
+            let row_id = child
+                .types()
+                .len()
+                .checked_sub(1)
+                .ok_or_else(|| Error::internal("UPDATE without row identity"))?;
+            let mut projections = expressions
+                .into_iter()
+                .map(|e| {
+                    if matches!(e.kind, ExpressionKind::Default) {
+                        Expression::constant(Value::null(e.return_type))
+                    } else {
+                        e
+                    }
+                })
+                .collect::<Vec<_>>();
+            projections.push(Expression::reference("", LogicalType::BIGINT, row_id as u64));
+            let types = projections.iter().map(|e| e.return_type.clone()).collect();
+            let child: PhysicalRef = Arc::new(PhysicalProjection::new(types, projections, child));
+            return Ok(Arc::new(crate::operators::PhysicalRemoteModify::new(
+                child,
+                crate::operators::RemoteModifyTarget::Update(backend.clone(), defaults),
+                update.columns,
+                context.transaction.clone(),
+                context.client.function_client.clone(),
+            )));
+        }
         // `BindIndexes` of the operator's initialization.
         bind_table_indexes(&context.client, &update.table)?;
         let storage = table_storage(&update.table)?;
@@ -639,6 +688,12 @@ impl PlanGenerator {
     /// operators that append share one append.
     fn plan_merge_into(&self, merge: LogicalMergeInto, child: PhysicalRef) -> Result<PhysicalRef> {
         let context = self.context()?;
+        if let EntryKind::Table(table) = &merge.table.kind
+            && let Some(backend) = &table.backend
+        {
+            let backend = backend.clone();
+            return self.plan_remote_merge(merge, child, &backend);
+        }
         // `BindIndexes` of the operator's initialization.
         bind_table_indexes(&context.client, &merge.table)?;
         let storage = table_storage(&merge.table)?;
@@ -774,6 +829,142 @@ impl PlanGenerator {
             types,
             action,
             Arc::clone(&context.transaction),
+        )))
+    }
+
+    fn plan_remote_merge(
+        &self,
+        merge: LogicalMergeInto,
+        child: PhysicalRef,
+        backend: &Arc<dyn roastedduck_catalog::backend::TableBackend>,
+    ) -> Result<PhysicalRef> {
+        let context = self.context()?;
+        backend.validate_merge(merge.return_chunk)?;
+        let EntryKind::Table(table) = &merge.table.kind else {
+            return Err(Error::internal("MERGE target is not a table"));
+        };
+        let table_types = table
+            .columns
+            .iter()
+            .map(|c| c.logical_type.clone())
+            .collect::<Vec<_>>();
+        let input_types = child.types().to_vec();
+        let row_id = Expression::reference("", LogicalType::BIGINT, merge.row_id_start as u64);
+        let mut actions = Vec::new();
+        for (condition, clauses) in merge.actions {
+            let mut planned = Vec::new();
+            for action in clauses {
+                let mut operator = MergeIntoOperator {
+                    action_type: action.action_type,
+                    condition: action.condition,
+                    op: None,
+                    expressions: Vec::new(),
+                };
+                let mutation = match action.action_type {
+                    MergeActionType::MergeUpdate if action.columns.is_empty() => {
+                        operator.action_type = MergeActionType::MergeDoNothing;
+                        None
+                    }
+                    MergeActionType::MergeUpdate => {
+                        let defaults = action
+                            .expressions
+                            .iter()
+                            .any(|e| matches!(e.kind, ExpressionKind::Default));
+                        backend.validate_update(false, defaults)?;
+                        operator.expressions = action
+                            .expressions
+                            .into_iter()
+                            .map(|e| {
+                                if matches!(e.kind, ExpressionKind::Default) {
+                                    Expression::constant(Value::null(e.return_type))
+                                } else {
+                                    e
+                                }
+                            })
+                            .collect();
+                        operator.expressions.push(row_id.clone());
+                        Some((
+                            crate::operators::RemoteModifyTarget::Update(backend.clone(), defaults),
+                            action.columns,
+                        ))
+                    }
+                    MergeActionType::MergeDelete => {
+                        backend.validate_delete(false)?;
+                        Some((
+                            crate::operators::RemoteModifyTarget::Delete(backend.clone(), merge.row_id_start),
+                            vec![],
+                        ))
+                    }
+                    MergeActionType::MergeInsert => {
+                        backend.validate_insert(false)?;
+                        operator.expressions = if action.column_index_map.is_empty() {
+                            action.expressions
+                        } else {
+                            action
+                                .column_index_map
+                                .iter()
+                                .enumerate()
+                                .map(|(column, input)| match input {
+                                    Some(input) => {
+                                        action.expressions.get(*input).cloned().ok_or_else(|| {
+                                            Error::internal("MERGE insert column out of range")
+                                        })
+                                    }
+                                    None => merge
+                                        .bound_defaults
+                                        .get(column)
+                                        .cloned()
+                                        .ok_or_else(|| Error::internal("MERGE insert missing default")),
+                                })
+                                .collect::<Result<Vec<_>>>()?
+                        };
+                        Some((
+                            crate::operators::RemoteModifyTarget::Insert(backend.clone()),
+                            (0..table_types.len()).collect(),
+                        ))
+                    }
+                    MergeActionType::MergeError => {
+                        operator.expressions = action.expressions;
+                        None
+                    }
+                    MergeActionType::MergeDoNothing => None,
+                };
+                if let Some((target, columns)) = mutation {
+                    let types = if operator.expressions.is_empty() {
+                        input_types.clone()
+                    } else {
+                        operator
+                            .expressions
+                            .iter()
+                            .map(|e| e.return_type.clone())
+                            .collect()
+                    };
+                    let placeholder: PhysicalRef = Arc::new(PhysicalDummyScan::new(types));
+                    operator.op = Some(Arc::new(
+                        crate::operators::PhysicalRemoteModify::new(
+                            placeholder,
+                            target,
+                            columns,
+                            context.transaction.clone(),
+                            context.client.function_client.clone(),
+                        )
+                        .with_streaming(),
+                    ));
+                }
+                planned.push(operator);
+            }
+            actions.push((condition, planned));
+        }
+        let inner: PhysicalRef = Arc::new(PhysicalMergeInto::new(
+            child.clone(),
+            table_types,
+            actions,
+            merge.row_id_start,
+            merge.source_marker,
+            false,
+        ));
+        Ok(Arc::new(crate::operators::PhysicalBufferedModify::new(
+            child, inner,
         )))
     }
 
@@ -1231,9 +1422,9 @@ impl PlanGenerator {
                     match children.next() {
                         Some(query) => {
                             let columns = (0..query.types().len()).collect();
-                            Arc::new(crate::operators::PhysicalRemoteInsert::new(
+                            Arc::new(crate::operators::PhysicalRemoteModify::new(
                                 query,
-                                crate::operators::RemoteInsertTarget::Create {
+                                crate::operators::RemoteModifyTarget::Create {
                                     catalog,
                                     info: Box::new(info.info),
                                 },
@@ -1343,6 +1534,22 @@ impl PlanGenerator {
                         info: create.info,
                         table: create.table,
                         expressions: create.expressions,
+                    }),
+                )?
+            }
+            LogicalKind::Alter(alter)
+                if alter.info.is_some() && self.context()?.catalog(&alter.catalog)?.backend().is_some() =>
+            {
+                let context = self.context()?;
+                self.ddl(
+                    "ALTER",
+                    types,
+                    Arc::new(crate::operators::BackendAlterAction {
+                        catalog: context.catalog(&alter.catalog)?,
+                        client: context.client.function_client.clone(),
+                        info: *alter
+                            .info
+                            .ok_or_else(|| Error::internal("Remote ALTER without info"))?,
                     }),
                 )?
             }

@@ -26,6 +26,38 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 
 Contract recorded; not a claim that new functionality passes acceptance.
 
+## Mutation and ALTER checkpoint (November 15)
+
+Remote UPDATE, DELETE and MERGE now execute through internal mutation state.
+Updates stage values and CTIDs in PostgreSQL temporary tables; deletes flush CTID
+lists at the pinned threshold. MERGE buffers its input through existing spillable
+storage, then uses the native action classifier with interleaved provider sinks.
+COPY inserts complete per MERGE chunk, updates apply on finalization, and delete
+batches retain their state across chunks. Counts follow input rows as upstream does.
+RETURNING and SET DEFAULT retain the pinned restrictions, including the zero-row
+UPDATE DEFAULT case. ON CONFLICT is rewritten to MERGE; it is supported through
+PG key metadata rather than rejected using the older PlanInsert check.
+
+PK/UNIQUE metadata maps constraint attnums onto live columns, preserving correctness
+after DROP COLUMN. Remote ALTER supports rename table/column and add/drop column;
+other ALTER forms retain the pinned rejection. The backend performs the schema
+change and invalidates its cache; native table storage is not reconstructed.
+
+Twenty-two paired controls pass, as do nine unchanged originals on both engines:
+update, delete, merge, on_conflict, on_conflict_dropped_column, alter,
+alter_add_column_default, alter_rollback and large_delete. The million-row case
+runs with its unchanged data and expected results. attach_delete's later mode-skip
+remains in place and does not qualify its skipped suffix. Six API interruption
+modes pass, including actual server sleep/cancellation and rollback of update,
+delete and merge effects. Servers stop after verification.
+
+Receipts: postgres-mutation-control-4, postgres-upstream-mutation-2 and
+postgres-mutation-interrupt-1 under `.context/artifacts/popular-extensions/`.
+Earlier failures (unbound ADD COLUMN type and absent-table DROP schema) remain.
+All 216 native tests across 39 signed targets pass with TZ=UTC; strict final
+Clippy 9 passes. Receipts: postgres-mutation-unit-results.json and
+postgres-mutation-clippy-9.log. The full PG and five-extension/release gates remain open.
+
 ## Real attachment and insert checkpoint (November 15)
 
 The runtime now attaches a PostgreSQL-owned catalog with real table entries and

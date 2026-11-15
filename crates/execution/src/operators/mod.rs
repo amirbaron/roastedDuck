@@ -4,6 +4,7 @@ mod alter;
 mod batch_insert;
 mod batch_memory_manager;
 pub mod buffered_data;
+mod buffered_modify;
 mod column_data_scan;
 mod copy_to_file;
 mod create_table;
@@ -31,7 +32,7 @@ mod perfect_hash_aggregate;
 mod pivot;
 mod projection;
 mod radix_sink;
-mod remote_insert;
+mod remote_modify;
 mod result_collector;
 mod sample;
 mod seq_scan;
@@ -48,6 +49,7 @@ mod window;
 
 pub use alter::AlterEntryAction;
 pub use batch_insert::{BatchInsertGlobal, PhysicalBatchInsert};
+pub use buffered_modify::PhysicalBufferedModify;
 pub use column_data_scan::PhysicalColumnDataScan;
 pub use copy_to_file::{CopyGlobal, CopyToFileOptions, PhysicalCopyToFile};
 pub use create_table::PhysicalCreateTable;
@@ -55,9 +57,9 @@ pub use create_type::{CreateTypeGlobal, PhysicalCreateType};
 pub use cross_product::{CrossProductExecutor, CrossProductGlobal, PhysicalCrossProduct};
 pub use cte::{CteData, PhysicalCte, PhysicalCteScan, PhysicalRecursiveCte, RecursiveCteState};
 pub use ddl::{
-    BackendCreateAction, BackendDropAction, CatalogTableCreator, CreateEntryAction, CreateIndexAction,
-    CreateSchemaAction, CreateSequenceAction, CreateViewAction, DdlAction, DropAction, IndexBindIntent,
-    PhysicalDdl, bind_table_indexes, bind_table_indexes_with_intent,
+    BackendAlterAction, BackendCreateAction, BackendDropAction, CatalogTableCreator, CreateEntryAction,
+    CreateIndexAction, CreateSchemaAction, CreateSequenceAction, CreateViewAction, DdlAction, DropAction,
+    IndexBindIntent, PhysicalDdl, bind_table_indexes, bind_table_indexes_with_intent,
 };
 pub use delete::PhysicalDelete;
 pub use delim::{DelimData, DelimGlobal, DelimShared, PhysicalDelimJoin, PhysicalDelimScan};
@@ -88,7 +90,7 @@ pub use perfect_hash_aggregate::{
 };
 pub use pivot::PhysicalPivot;
 pub use projection::PhysicalProjection;
-pub use remote_insert::{PhysicalRemoteInsert, RemoteInsertTarget};
+pub use remote_modify::{PhysicalRemoteModify, RemoteModifyTarget};
 pub use result_collector::{
     CollectedResult, CollectedRows, CollectorKind, PhysicalResultCollector, QueryResultMemoryType,
 };

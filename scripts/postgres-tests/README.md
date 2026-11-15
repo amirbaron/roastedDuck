@@ -60,3 +60,12 @@ These do not replace the full 152-file inventory or package/platform gates.
 For native persistence tests, use `TZ=UTC`: an existing timestamp-rendering
 expectation is explicitly UTC. The local-zone failed receipt remains in the
 checkpoint artifacts; SQL expected results were not rewritten.
+
+`mutation_control.py` adds paired UPDATE/DELETE/MERGE/upsert and ALTER cases using
+the same restored-database harness. Interruption now covers six modes: legacy and
+attached reads, INSERT, UPDATE, DELETE and MERGE. The fixture observes real server
+sleep and checks that mutation cancellation preserves stored data.
+
+When selecting TPCH/TPCDS originals (including --all), supply --duckdb-source
+pointing at the pinned DuckDB1.5.6 source. The harness links its unchanged expected
+answer files into the reference layout and records their hashes.

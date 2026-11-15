@@ -1,5 +1,6 @@
 //! Runtime integration for roastedDuck's compatible PostgreSQL implementation.
 pub(crate) mod catalog;
+mod mutation;
 mod query;
 mod text;
 mod transaction;
