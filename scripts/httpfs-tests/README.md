@@ -73,3 +73,11 @@ range retries/fallback, invalid HEAD sizes and empty files with independent
 request receipts. Compare its C++ and Rust records with only owned ports and
 the engine build-source ID normalized. Native download tests additionally verify
 spill-backed reads across block boundaries and buffer release after disconnects.
+
+`logging_control.py` checks mixed-case and duplicate response headers, redirect
+responses, and the deprecated logging setting's manager/client interaction. It
+records the server's requests independently. `diagnostics_control.py` covers CA
+loading, glob errors, cold/warm secret storage with disabled filesystems, and
+prepared secret enumeration. Preserve its verification-enabled cold-bind
+difference until engine query verification is implemented; successful error-status
+assertions alone do not prove matching error text or state transitions.

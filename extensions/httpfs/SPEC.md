@@ -115,3 +115,28 @@ HTTP 500 to both engines. No skip or shared failure is counted as acceptance.
 Receipts: `.context/artifacts/popular-extensions/httpfs-download-verification.json`
 and `httpfs-originals-audit-1.json`. Final core/platform/package qualification and
 publication remain open.
+
+## Diagnostics and logging checkpoint (November 16)
+
+Four additional active originals pass on both engines: CA-file diagnostics, HTTP
+glob diagnostics, filesystem logs, and HTTP logs. Response header spelling is
+observed from bounded raw HTTP heads after TLS decoding; logs no longer guess
+capitalization after ureq has normalized names. Interim responses, redirects and
+duplicate headers preserve the upstream behavior. The deprecated HTTP logging
+setting now applies its logging-manager side effects and independent client flag.
+
+All 42 logging-control records and request receipts match. Secret enumeration is
+deferred to execution, so prepared queries see current secrets and storage errors
+occur at the upstream execution phase. Partial initialization retains the memory
+storage registration as upstream. The diagnostic/state control matches 44 of 45
+records; the remaining debug-verification difference is explicitly documented in
+`conformance/divergences.md`, and its original remains failed.
+
+The retained audit is now **95 active originals passing both engines**, five
+upstream-disabled files, and **32 active originals unresolved**. The 24 metadata
+and 26 S3 raw-status regressions pass, as do four targeted core originals on both
+engines, 412 paired transaction records, 13 native HTTPFS tests and strict Clippy.
+Receipts: `.context/artifacts/popular-extensions/httpfs-observability-verification.json`
+and `httpfs-originals-audit-2.json`. This is not a frozen full core/platform/package
+sweep. Connection pooling, query verification, remaining fixtures and publication
+are still open.

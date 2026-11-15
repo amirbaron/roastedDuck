@@ -945,6 +945,7 @@ struct SecretConfig {
 struct ManagerState {
     config: SecretConfig,
     initialized: bool,
+    temporary_storage_registered: bool,
     temporary: Arc<SecretCatalog>,
     local_file: Option<LocalFileStorage>,
     httpfs_registered: bool,
@@ -979,6 +980,7 @@ impl Default for SecretManager {
                     default_storage: LOCAL_FILE_STORAGE.to_owned(),
                 },
                 initialized: false,
+                temporary_storage_registered: false,
                 temporary: Arc::default(),
                 local_file: None,
                 httpfs_registered: false,
@@ -1270,6 +1272,16 @@ impl SecretManager {
         if state.initialized {
             return Ok(());
         }
+        // Upstream registers memory storage before opening persistent storage.
+        // A failed persistent initialization retains that registration, so a
+        // subsequent attempt reports the duplicate instead of bypassing access.
+        if state.temporary_storage_registered {
+            return Err(Error::new(
+                ErrorKind::InvalidConfiguration,
+                "Secret Storage with name 'memory' already registered!",
+            ));
+        }
+        state.temporary_storage_registered = true;
         if state.config.allow_persistent_secrets {
             let path = expand_home(&state.config.secret_path);
             roastedduck_function::file_system::verify_can_access_directory(&path)?;

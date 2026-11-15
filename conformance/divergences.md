@@ -311,3 +311,25 @@ upgrading the engine updates their implementations. This differs intentionally
 from installing independently distributed DuckDB extension binaries. Other names
 and explicit file paths retain their existing behavior. See the
 [developer workflow](../extensions/README.md) and [loading guide](../website/docs/extensions.md).
+
+## Query verification pragmas: observed HTTPFS acceptance gap
+
+`PRAGMA enable_verification` and related debug verification pragmas remain in
+roastedDuck's no-op pragma list. This is a known implementation gap, not a waiver
+of extension acceptance. The unchanged HTTPFS original
+`test/sql/settings/test_disabled_file_system_httpfs.test` exposes it: C++'s
+verification attempts a cold HTTP bind before the normal execution. Local secret
+storage initialization first fails with a permission error, then its retained
+memory-storage registration produces an invalid-configuration error on retry.
+Rust's ordinary execution currently reports the first permission error.
+
+The permission boundary is preserved. Direct API controls match the cold failure,
+subsequent duplicate-registration error, warmed storage, disabled persistence, and
+prepared secret enumeration. Of 45 diagnostic/state records, 44 match; the one
+verification-enabled cold bind remains different. The original's raw failure is
+retained and excluded from exercised passing coverage. Do not change the test or
+globally rewrite permission errors to conceal this difference.
+
+Evidence: `.context/artifacts/popular-extensions/httpfs-diagnostics-{cpp,rust}-2/`
+and `httpfs-upstream-diagnostics-1/`. Full query verification and the corresponding
+acceptance gate remain open.

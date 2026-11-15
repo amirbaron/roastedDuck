@@ -22,11 +22,18 @@ class HttpServer:
             def log_message(self, *args):
                 pass
 
+            def handle(self):
+                try:
+                    super().handle()
+                except (BrokenPipeError, ConnectionResetError):
+                    self.close_connection = True
+
             def log_request(self, code='-', size='-'):
                 with lock:
-                    log.write(json.dumps(dict(method=self.command, path=self.path, status=code,
-                                              range=self.headers.get('Range'),
-                                              user_agent=self.headers.get('User-Agent'))) + '\n')
+                    headers = getattr(self, 'headers', {})
+                    log.write(json.dumps(dict(method=getattr(self, 'command', None), path=getattr(self, 'path', None), status=code,
+                                              range=headers.get('Range'),
+                                              user_agent=headers.get('User-Agent'))) + '\n')
                     log.flush()
 
             def copyfile(self, source, outputfile):

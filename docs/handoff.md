@@ -1,3 +1,42 @@
+HTTPFS diagnostics/logging checkpoint, November 16, 2026:
+Four more unchanged active originals pass both engines: ca_cert_file, globbing,
+file_system_logging and http_logging. The retained audit is now95 active passing
+both,5 upstream-disabled and32 active unresolved; not a frozen full sweep.
+Receipt: .context/artifacts/popular-extensions/httpfs-observability-verification.json
+and httpfs-originals-audit-2.json. All owned jobs/services stopped. No publication.
+
+HTTP response logs preserve actual wire header spelling through a bounded128KiB
+observer after TLS decoding. It observes names only; ureq still validates/parses
+HTTP. Interim/redirect responses and duplicate names are covered. Generic HTTP
+file handles now emit OPEN/READ/CLOSE events through the existing filesystem logger.
+Invalid CA-file errors distinguish curl/httplib; glob errors match pinned text.
+The deprecated HTTP logging setting now applies its manager side effects and an
+independent per-client flag; Azure logging retains its separate controls.
+
+Secret initialization retains upstream's partially registered memory storage on
+failure. duckdb_secrets enumeration now occurs during execution, matching errors
+and prepared-query visibility without weakening filesystem permission checks.
+The45-record diagnostic control matches44 records. The sole mismatch is verified
+cold HTTP binding: C++ query verification triggers a second bind after an initial
+permission failure, exposing duplicate memory-storage registration. Rust still
+reports the first permission failure because enable_verification is a no-op.
+The unchanged disabled-filesystem original remains FAIL, explicitly documented in
+conformance/divergences.md. Do not fake an error-kind rewrite or call this accepted.
+
+All42 logging records AND independent request receipts match;13 native HTTPFS
+checks and strict all-target Clippy pass. All24 metadata originals pass both;
+26 S3 regressions pass Rust;24 transaction cases/412 C API records match;4 targeted
+core filesystem/secret originals pass both. Source/expected SQL stays unchanged.
+Final signed observability-build5 and logging-{cpp,rust}-2 include the final flag
+interaction check (re-enable global manager while client HTTP logging stays false).
+Most earlier receipts use build4; the last changes remove a redundant no-op arm
+and honor that client flag. Final frozen qualification still remains pending.
+
+NEXT: real HTTP connection pooling plus HTTPFSInfo events (the remaining public
+cohort feature gap), then query verification and remaining original fixtures.
+See .context/httpfs-acceptance-next.md. Keep AWS/Azure/ICU/PostgreSQL, final core,
+platform/package/PyPI/Homebrew/Core acceptance in scope. packaging/ untouched.
+
 HTTPFS download/attachment/public checkpoint, November 15, 2026:
 Owned large S3 originals now pass8/8 on Rust; C++ passes7 across receipts. Its
 unchanged upload_large_file.test_slow exceeds the test's2.5GB memory limit with

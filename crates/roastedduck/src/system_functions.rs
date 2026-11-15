@@ -1319,7 +1319,11 @@ fn scan_rows(
     let data = bind_data
         .and_then(|data| data.as_any().downcast_ref::<Rows>())
         .ok_or_else(|| Error::internal("catalog function without rows"))?;
-    let start = usize::try_from(state.position)
+    scan_row_values(data, &mut state.position, chunk)
+}
+
+fn scan_row_values(data: &Rows, position: &mut u64, chunk: &mut DataChunk) -> Result<bool> {
+    let start = usize::try_from(*position)
         .unwrap_or(usize::MAX)
         .min(data.rows.len());
     let end = (start + STANDARD_VECTOR_SIZE).min(data.rows.len());
@@ -1334,7 +1338,7 @@ fn scan_rows(
         }
     }
     *chunk = DataChunk::new(columns, end - start);
-    state.position = end as u64;
+    *position = end as u64;
     Ok(end < data.rows.len())
 }
 
@@ -2602,6 +2606,18 @@ const SECRET_COLUMNS: Columns = &[
     ("secret_string", varchar),
 ];
 
+#[derive(Debug)]
+struct SecretsData {
+    manager: Arc<crate::secrets::SecretManager>,
+    client: Arc<roastedduck_function::FunctionClient>,
+    redact: bool,
+}
+impl FunctionData for SecretsData {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// `duckdb_secrets(redact := true)` (`DuckDBSecretsFunction`).
 fn secrets_function() -> TableFunctionSet {
     let mut function = TableFunction::new("duckdb_secrets", Vec::new()).with_bind(|input| {
@@ -2619,31 +2635,55 @@ fn secrets_function() -> TableFunctionSet {
         if !redact && !allow_unredacted {
             return Err(Error::invalid_input("Displaying unredacted secrets is disabled"));
         }
-        let mut rows = Vec::new();
-        for entry in secret_manager(context)?.all_secrets_in(Some(&context.transaction))? {
-            let secret = &entry.secret;
-            rows.push(vec![
-                text(&secret.name)?,
-                text(&secret.secret_type)?,
-                text(&secret.provider)?,
-                Value::boolean(entry.persistent),
-                text(&entry.storage)?,
-                Value::list(
-                    LogicalType::VARCHAR,
-                    secret.scope.iter().map(text).collect::<Result<_>>()?,
-                ),
-                text(secret.to_display_string(redact)?)?,
-            ]);
-        }
         let types: Vec<LogicalType> = SECRET_COLUMNS.iter().map(|(_, ty)| ty()).collect();
         Ok(TableFunctionBindOutput {
             return_types: types.clone(),
             names: SECRET_COLUMNS.iter().map(|(name, _)| (*name).into()).collect(),
-            bind_data: Some(Arc::new(Rows { types, rows })),
+            bind_data: Some(Arc::new(SecretsData {
+                manager: Arc::clone(&crate::database::instance_state(context)?.secrets),
+                client: Arc::clone(&context.function_client),
+                redact,
+            })),
         })
     });
     function.named_parameters = vec![("redact".to_owned(), LogicalType::BOOLEAN)];
-    let function = function.with_scan(|bind_data, _, state, chunk| scan_rows(bind_data, state, chunk));
+    let function = function.with_scan(|bind_data, _, state, chunk| {
+        let data = bind_data
+            .and_then(|data| data.as_any().downcast_ref::<SecretsData>())
+            .ok_or_else(|| Error::internal("secret scan without bind data"))?;
+        if state.local.is_none() {
+            let transaction = data
+                .client
+                .active_transaction()
+                .and_then(|transaction| transaction.downcast::<roastedduck_storage::Transaction>().ok());
+            let mut rows = Vec::new();
+            for entry in data.manager.all_secrets_in(transaction.as_deref())? {
+                let secret = &entry.secret;
+                rows.push(vec![
+                    text(&secret.name)?,
+                    text(&secret.secret_type)?,
+                    text(&secret.provider)?,
+                    Value::boolean(entry.persistent),
+                    text(&entry.storage)?,
+                    Value::list(
+                        LogicalType::VARCHAR,
+                        secret.scope.iter().map(text).collect::<Result<_>>()?,
+                    ),
+                    text(secret.to_display_string(data.redact)?)?,
+                ]);
+            }
+            state.local = Some(Box::new(Rows {
+                types: SECRET_COLUMNS.iter().map(|(_, ty)| ty()).collect(),
+                rows,
+            }));
+        }
+        let rows = state
+            .local
+            .as_ref()
+            .and_then(|data| data.downcast_ref::<Rows>())
+            .ok_or_else(|| Error::internal("secret scan without rows"))?;
+        scan_row_values(rows, &mut state.position, chunk)
+    });
     let mut set = TableFunctionSet::new("duckdb_secrets");
     set.add(function);
     set

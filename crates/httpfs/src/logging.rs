@@ -2,12 +2,105 @@
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use roastedduck_common::Result;
 use roastedduck_function::logging::{ClientLogger, LogLevel, LogScope};
+use roastedduck_function::registered_files::FileHandle;
 use roastedduck_types::{LogicalType, Timestamp, Value};
+use std::io::Read;
+
+#[derive(Debug)]
+struct FileLog(roastedduck_function::logging::FileSystemLogger);
+impl Drop for FileLog {
+    fn drop(&mut self) {
+        self.0.close();
+    }
+}
+
+#[derive(Debug)]
+struct LoggedFile {
+    inner: Arc<dyn FileHandle>,
+    log: Arc<FileLog>,
+}
+
+pub(super) fn logged_file(
+    inner: Arc<dyn FileHandle>,
+    name: &'static str,
+    path: &[u8],
+) -> Arc<dyn FileHandle> {
+    let Some(log) = roastedduck_function::logging::FileSystemLogger::open_for_system(
+        roastedduck_function::file_system::opener().as_deref(),
+        path,
+        name,
+    ) else {
+        return inner;
+    };
+    Arc::new(LoggedFile {
+        inner,
+        log: Arc::new(FileLog(log)),
+    })
+}
+
+impl FileHandle for LoggedFile {
+    fn read_at(&self, offset: u64, buffer: &mut [u8]) -> Result<usize> {
+        let count = self.inner.read_at(offset, buffer)?;
+        self.log.0.read(count as u64, offset);
+        Ok(count)
+    }
+    fn read_stream(&self) -> Result<Option<Box<dyn Read + Send>>> {
+        Ok(self.inner.read_stream()?.map(|reader| {
+            Box::new(LoggedStream {
+                reader,
+                log: Arc::clone(&self.log),
+                position: 0,
+            }) as Box<dyn Read + Send>
+        }))
+    }
+    fn write_at(&self, offset: u64, buffer: &[u8]) -> Result<usize> {
+        let count = self.inner.write_at(offset, buffer)?;
+        self.log.0.write(count as u64, offset);
+        Ok(count)
+    }
+    fn size(&self) -> Result<u64> {
+        self.inner.size()
+    }
+    fn modified(&self) -> Result<i64> {
+        self.inner.modified()
+    }
+    fn version_tag(&self) -> Result<String> {
+        self.inner.version_tag()
+    }
+    fn flush(&self) -> Result<()> {
+        self.inner.flush()
+    }
+    fn close(&self) -> Result<()> {
+        self.inner.close()
+    }
+    fn sync(&self) -> Result<()> {
+        self.inner.sync()
+    }
+    fn truncate(&self, size: u64) -> Result<()> {
+        self.inner.truncate(size)
+    }
+}
+
+struct LoggedStream {
+    reader: Box<dyn Read + Send>,
+    log: Arc<FileLog>,
+    position: u64,
+}
+impl Read for LoggedStream {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let count = self.reader.read(buffer)?;
+        self.log.0.read(count as u64, self.position);
+        self.position += count as u64;
+        Ok(count)
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(super) struct HttpLogger {
     client: Arc<dyn ClientLogger>,
+    http_enabled: bool,
     azure_redaction: Option<(Vec<String>, Vec<String>)>,
 }
 
@@ -24,8 +117,14 @@ impl HttpLogger {
     }
 
     pub(super) fn current() -> Option<Self> {
+        let client = roastedduck_function::file_system::opener()?;
         Some(Self {
-            client: roastedduck_function::file_system::opener()?.logger()?,
+            http_enabled: client
+                .settings()
+                .and_then(|settings| settings.current_setting("enable_http_logging").ok())
+                .and_then(|value| value.as_bool())
+                .unwrap_or(true),
+            client: client.logger()?,
             azure_redaction: None,
         })
     }
@@ -84,6 +183,9 @@ impl HttpLogger {
         elapsed: Instant,
         response: &std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error>,
     ) {
+        if self.azure_redaction.is_none() && !self.http_enabled {
+            return;
+        }
         if !self
             .client
             .should_log(LogScope::Connection, "HTTP", LogLevel::Debug)
@@ -149,7 +251,10 @@ impl HttpLogger {
                     .headers()
                     .iter()
                     .map(|(name, value)| {
-                        self.header(name.as_str(), &String::from_utf8_lossy(value.as_bytes()))
+                        self.header(
+                            super::wire_headers::name(response, name.as_str()),
+                            &String::from_utf8_lossy(value.as_bytes()),
+                        )
                     })
                     .collect(),
             ),

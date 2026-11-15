@@ -796,6 +796,7 @@ pub(crate) fn is_logging_setting(name: &str) -> bool {
     matches!(
         name.to_lowercase().as_str(),
         "enable_logging"
+            | "enable_http_logging"
             | "logging_level"
             | "logging_mode"
             | "logging_storage"
@@ -823,6 +824,18 @@ fn split_types(value: &Value) -> Result<Vec<String>> {
 pub(crate) fn apply_setting(manager: &LogManager, name: &str, value: Option<&Value>) -> Result<()> {
     use roastedduck_function::cast::ValueCast;
     match (name.to_lowercase().as_str(), value) {
+        ("enable_http_logging", Some(value)) => {
+            let enabled = value
+                .default_cast_as(&LogicalType::BOOLEAN)?
+                .as_bool()
+                .unwrap_or(false);
+            manager.set_enabled(enabled);
+            if enabled {
+                manager.set_level(LogLevel::Debug);
+                manager.set_enabled_log_types(vec!["HTTP".to_owned()]);
+                manager.set_storage("stdout")?;
+            }
+        }
         ("enable_logging", Some(value)) => {
             let enabled = value
                 .default_cast_as(&LogicalType::BOOLEAN)?

@@ -20,6 +20,7 @@ mod openssl_tls;
 mod proxy;
 mod redirect;
 pub mod s3;
+mod wire_headers;
 
 fn io_error(error: impl std::fmt::Display) -> Error {
     Error::new(ErrorKind::Io, error.to_string())
@@ -334,14 +335,15 @@ impl Parameters {
             }
             config = config.proxy(Some(builder.build().map_err(io_error)?));
         }
-        let connector =
-            ().chain(proxy::ProxyConnector)
-                .chain(TcpConnector::default())
-                .chain(openssl_tls::TlsConnector::new(
-                    self.ca.clone(),
-                    self.verify,
-                    !self.httplib || self.ca.is_empty(),
-                ));
+        let connector = ()
+            .chain(proxy::ProxyConnector)
+            .chain(TcpConnector::default())
+            .chain(openssl_tls::TlsConnector::new(
+                self.ca.clone(),
+                self.verify,
+                !self.httplib || self.ca.is_empty(),
+            ))
+            .chain(wire_headers::HeaderConnector);
         Ok(ureq::Agent::with_parts(config.build(), connector, resolver))
     }
 }
@@ -475,7 +477,13 @@ fn request_error(error: &ureq::Error, method: &str, url: &str, httplib: bool) ->
         return io_error(format!("{reason} error for HTTP {method} to '{url}'"));
     }
     if let ureq::Error::Other(error) = error {
-        let reason = if error.is::<proxy::HostNameResolutionError>() {
+        let reason = if error.is::<openssl_tls::CertificateFileError>() {
+            Some(if httplib {
+                "SSL certificate loading failed"
+            } else {
+                "Problem with the SSL CA cert (path? access rights?)"
+            })
+        } else if error.is::<proxy::HostNameResolutionError>() {
             Some(if httplib {
                 "Could not establish connection"
             } else {
@@ -689,7 +697,8 @@ impl HttpFile {
                         client.record_http_request(request_method, request_payload.len() as u64);
                     }
                 }
-                let result = if request_method == "HEAD" {
+                let observed_headers = wire_headers::Scope::enter();
+                let mut result = if request_method == "HEAD" {
                     let mut request = agent.head(url);
                     for (name, value) in &headers {
                         request = request.header(name.as_str(), value.as_str());
@@ -723,6 +732,9 @@ impl HttpFile {
                     }
                     request.call()
                 };
+                if let Ok(response) = &mut result {
+                    response.extensions_mut().insert(observed_headers.names());
+                }
                 if let Some(logger) = &self.logger {
                     let mut logged_headers = headers.clone();
                     if request_method == "GET"
@@ -1304,7 +1316,7 @@ impl FileSystem for HttpFileSystem {
         if write {
             return Err(Error::not_implemented("Writing to HTTP files not supported"));
         }
-        HttpFile::open(path).map(|file| Arc::new(file) as Arc<dyn FileHandle>)
+        HttpFile::open(path).map(|file| logging::logged_file(Arc::new(file), "HTTPFileSystem", path))
     }
     fn glob(&self, path: &[u8]) -> Result<Vec<ByteString>> {
         let allow = roastedduck_function::file_system::opener()
@@ -1313,14 +1325,16 @@ impl FileSystem for HttpFileSystem {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         if path.contains(&b'*') && !allow {
-            return Err(io_error("Globs (wildcards) in HTTP paths are not supported"));
+            return Err(Error::invalid_input(
+                "Globs (`*`) for generic HTTP file is are not supported.\nConsider `SET allow_asterisks_in_http_paths = true;` to allow this behaviour",
+            ));
         }
         Ok(vec![path.into()])
     }
     fn is_file(&self, path: &[u8]) -> Result<bool> {
         // HTTPFileSystem::FileExists catches failed probes. In particular a
         // presigned database URL does not authorize its optional WAL sidecar.
-        Ok(HttpFile::open(path).is_ok())
+        Ok(self.open(path, false).is_ok())
     }
     fn is_dir(&self, _: &[u8]) -> Result<bool> {
         Ok(false)

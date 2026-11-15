@@ -42,7 +42,7 @@ def main():
     data_hashes = {}
     with tarfile.open(archive) as tar:
         for member in tar:
-            if member.isfile() and '/data/' in member.name:
+            if member.isfile() and ('/data/' in member.name or member.name.split('/', 1)[1] == 'README.md'):
                 relative = member.name.split('/', 1)[1]
                 content = tar.extractfile(member).read()
                 assert content == (source / relative).read_bytes()
@@ -66,6 +66,8 @@ def main():
             reference = directory / 'reference'
             reference.mkdir()
             shutil.copytree(source / 'data', reference / 'data')
+            # The invalid-CA original intentionally uses this existing non-PEM file.
+            shutil.copyfile(source / 'README.md', reference / 'README.md')
             (reference / 'duckdb').symlink_to(args.core.resolve(), target_is_directory=True)
             (reference / 'extension').symlink_to(args.core.resolve() / 'extension', target_is_directory=True)
             for name in ['secrets', 'extensions', 'home']:
