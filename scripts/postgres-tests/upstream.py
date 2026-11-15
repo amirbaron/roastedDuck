@@ -117,8 +117,18 @@ def main():
                          '--out',str(result),'--log-dir',str(target/'logs'),name]
                 if engine=='cpp':
                     command+=['--shim',str(args.shim.resolve())]
-                with (target/f'{index}.log').open('w') as log:
-                    subprocess.run(command,env=engine_env,stdout=log,stderr=subprocess.STDOUT)
+                # This original deliberately exercises server-side COPY of its own
+                # generated file. Grant the required role only while that file runs
+                # in our disposable cluster; every other file keeps the normal role.
+                server_file = name == 'test/sql/misc/postgres_binary.test'
+                if server_file:
+                    cluster.sql('GRANT pg_read_server_files TO postgres;', admin=True)
+                try:
+                    with (target/f'{index}.log').open('w') as log:
+                        subprocess.run(command,env=engine_env,stdout=log,stderr=subprocess.STDOUT)
+                finally:
+                    if server_file:
+                        cluster.sql('REVOKE pg_read_server_files FROM postgres;', admin=True)
                 rows.extend(json.loads(line) for line in result.read_text().splitlines())
                 (target/'progress.json').write_text(json.dumps(rows,indent=2)+'\n')
             report[engine]=dict(rows=rows,counts=dict(Counter(row['status'] for row in rows)))

@@ -35,6 +35,7 @@ pub(crate) struct PgCatalog {
     schemas: Vec<String>,
     default_schema: ByteString,
     cache: Mutex<HashMap<CacheKey, Arc<CatalogEntry>>>,
+    listings: Mutex<HashMap<(CatalogType, String), Vec<String>>>,
 }
 impl PgCatalog {
     fn mark_write(&self, transaction: &Transaction) -> Result<()> {
@@ -67,6 +68,7 @@ impl PgCatalog {
             schemas,
             default_schema,
             cache: Mutex::default(),
+            listings: Mutex::default(),
         }))
     }
     fn native(&self) -> Result<Arc<Catalog>> {
@@ -107,6 +109,10 @@ impl PgCatalog {
     }
     pub fn clear_cache(&self) {
         self.cache.lock().unwrap_or_else(PoisonError::into_inner).clear();
+        self.listings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
     }
 
     fn schema(
@@ -127,10 +133,12 @@ impl PgCatalog {
         let native = self.native()?;
         let catalog_name =
             CatalogName::with_oid_allocator(ByteString::from(native.name().as_ref()), native.oid_allocator());
-        Ok(Some(Arc::new(native.new_entry(
+        let mut entry = native.new_entry(
             name.as_str(),
             EntryKind::Schema(SchemaEntry::new(&catalog_name, &name)),
-        ))))
+        );
+        entry.internal = name == "information_schema" || name.starts_with("pg_");
+        Ok(Some(Arc::new(entry)))
     }
 
     fn table(
@@ -175,11 +183,18 @@ impl PgCatalog {
             })
             .collect::<Result<Vec<_>>>()?;
         let names = columns.iter().map(|c| c.name.clone()).collect::<Vec<_>>();
+        // SQL identifiers are case-insensitive in DuckDB. Keep the original
+        // PostgreSQL names for wire queries and expose its deduplicated names.
+        let mut exposed_names = names
+            .iter()
+            .map(|s| ByteString::from(s.as_str()))
+            .collect::<Vec<_>>();
+        roastedduck_planner::deduplicate_columns(&mut exposed_names);
         let mut table = TableEntry::default();
-        for (index, ((column, attribute), codec)) in columns.iter().zip(&attributes).zip(&codecs).enumerate()
+        for (index, ((_column, attribute), codec)) in columns.iter().zip(&attributes).zip(&codecs).enumerate()
         {
             table.columns.push(TableColumn {
-                name: column.name.as_str().into(),
+                name: exposed_names[index].clone(),
                 logical_type: codec.logical_type.clone(),
                 default_value: None,
                 generated: None,
@@ -232,12 +247,13 @@ impl PgCatalog {
         options: Options,
     ) -> Result<Option<Arc<CatalogEntry>>> {
         let pg = self.transaction(client, transaction)?;
-        let rows = pg.metadata("SELECT t.typname::text FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname=$1::text AND t.typname=$2::text AND t.typtype IN ('e','c')", &[text_parameter(schema), text_parameter(name)])?;
-        if rows.is_empty() {
+        let rows = pg.metadata("SELECT t.typname::text FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname=$1::text AND lower(t.typname::text)=lower($2::text) AND t.typtype IN ('e','c') ORDER BY t.typname::text=$2::text DESC,t.typname", &[text_parameter(schema), text_parameter(name)])?;
+        let Some(row) = rows.first() else {
             return Ok(None);
-        }
+        };
+        let name = row[0].to_varchar()?;
         let columns = pg.describe(
-            &format!("SELECT NULL::{}.{}", identifier(schema), identifier(name)),
+            &format!("SELECT NULL::{}.{}", identifier(schema), identifier(&name)),
             true,
         )?;
         let column = columns
@@ -245,14 +261,58 @@ impl PgCatalog {
             .ok_or_else(|| Error::internal("Postgres type without a column"))?;
         let codec = Codec::new(&column.data_type, -1, 0, options)?;
         Ok(Some(Arc::new(self.native()?.new_entry(
-            name,
+            name.as_str(),
             EntryKind::Type(TypeEntry {
-                user_type: codec.logical_type.with_alias(name),
+                user_type: codec.logical_type.with_alias(name.as_str()),
             }),
         ))))
     }
 }
 impl CatalogBackend for PgCatalog {
+    fn scan(
+        &self,
+        client: &Arc<FunctionClient>,
+        transaction: &Transaction,
+        kind: CatalogType,
+        schema: &[u8],
+    ) -> Result<Vec<Arc<CatalogEntry>>> {
+        let schema = std::str::from_utf8(schema)
+            .map_err(|_| Error::invalid_input("Invalid UTF-8 in Postgres schema"))?;
+        let key = (kind, schema.to_owned());
+        let cached = self
+            .listings
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&key)
+            .cloned();
+        let names = if let Some(names) = cached {
+            names
+        } else {
+            let pg = self.transaction(client, transaction)?;
+            let rows = match kind {
+                CatalogType::Schema => pg.metadata("SELECT nspname::text FROM pg_catalog.pg_namespace ORDER BY oid", &[])?,
+                CatalogType::Table | CatalogType::View => pg.metadata("SELECT c.relname::text FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1::text AND c.relkind IN ('r','v','m','f','p') ORDER BY c.oid", &[text_parameter(schema)])?,
+                CatalogType::Type => pg.metadata("SELECT t.typname::text FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid=t.typnamespace WHERE n.nspname=$1::text AND t.typtype IN ('e','c') ORDER BY t.oid", &[text_parameter(schema)])?,
+                _ => return Ok(Vec::new()),
+            };
+            let names = rows
+                .iter()
+                .map(|r| r[0].to_varchar())
+                .collect::<Result<Vec<_>>>()?;
+            self.listings
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(key, names.clone());
+            names
+        };
+        let mut entries = Vec::with_capacity(names.len());
+        for name in names {
+            if let Some(entry) = self.lookup(client, transaction, kind, schema.as_bytes(), name.as_bytes())? {
+                entries.push(entry);
+            }
+        }
+        Ok(entries)
+    }
     fn alter(
         &self,
         client: &Arc<FunctionClient>,
@@ -453,7 +513,32 @@ impl CatalogBackend for PgCatalog {
         } else {
             info.schema.as_bytes()
         };
-        self.lookup(client, transaction, kind, schema, &name)
+        let entry = self.lookup(client, transaction, kind, schema, &name)?;
+        // Upstream retains the CREATE definition in its catalog entry. Loading
+        // an existing PostgreSQL table does not reconstruct default expressions.
+        if let (K::Table(created), Some(entry)) = (&info.kind, &entry) {
+            let mut updated = entry
+                .try_copy()
+                .ok_or_else(|| Error::internal("Postgres table entry cannot be copied"))?;
+            if let EntryKind::Table(table) = &mut updated.kind {
+                for (column, definition) in table.columns.iter_mut().zip(&created.columns.columns) {
+                    column.default_value = definition.expression.as_deref().cloned();
+                }
+            }
+            let updated = Arc::new(updated);
+            for cached in self
+                .cache
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .values_mut()
+            {
+                if Arc::ptr_eq(cached, entry) {
+                    *cached = updated.clone();
+                }
+            }
+            return Ok(Some(updated));
+        }
+        Ok(entry)
     }
     fn catalog_type(&self) -> &'static str {
         "postgres"

@@ -1,3 +1,30 @@
+PostgreSQL full-inventory discovery and metadata checkpoint, November 15, 2026:
+The frozen first all-152 run completed: C++ 144 PASS / 7 SKIP / 1 FAIL;
+Rust 95 PASS / 7 SKIP / 48 FAIL / 2 CRASH. The C++ failure is the original binary
+COPY test needing server-file permissions; the owned fixture now grants that role
+only for this original and revokes it in finally. The unchanged C++ rerun passes
+(postgres-binary-fixture-oracle-1), and its server stopped. Four skips
+require mysql_scanner in the original PG files; OAuth, RDS and PostGIS prerequisites
+are also absent. Source mode-skip directives remain untouched, so file PASS does
+not qualify skipped suffixes. Receipt: postgres-upstream-all-1, including crash reports.
+
+Working source adds fallible internal catalog enumeration for remote schemas,
+tables and types, correct database type/internal schema metadata, deduplicated
+column names, case-insensitive type lookup and CREATE-time default expressions.
+The optimizer now gates extracted-field scan capability on native storage: remote
+table identity had incorrectly enabled it and caused both composite-field crashes.
+All seven paired metadata controls and all nine selected unchanged originals pass
+on both engines, including both formerly crashing files. Receipts:
+postgres-metadata-control-1 and postgres-upstream-metadata-1. Owned servers stopped.
+All 26 signed runtime library tests and strict catalog/optimizer/runtime all-target
+Clippy pass (postgres-metadata-unit.{log,json}, postgres-metadata-clippy-1.log).
+Fresh full core conformance is the next running gate.
+
+This is not full PostgreSQL acceptance: index/view creation and metadata, cache
+staleness/rebinding, pooling, secrets/RDS/authentication/options, binary files,
+hstore, scan pushdown and the remaining original failures still need work. Remaining
+five-extension/platform/package/publication gates stay open; no new release.
+
 PostgreSQL mutation checkpoint, November 15, 2026:
 working source now implements UPDATE, DELETE, MERGE and ON CONFLICT through remote
 mutation state. MERGE materializes input before interleaved action sinks; delete

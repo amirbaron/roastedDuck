@@ -13,6 +13,16 @@ use crate::{CatalogEntry, CatalogType, Transaction};
 pub trait CatalogBackend: std::fmt::Debug + Send + Sync {
     fn catalog_type(&self) -> &str;
     fn default_schema(&self) -> &[u8];
+    /// Enumerate provider metadata without populating native catalog sets.
+    fn scan(
+        &self,
+        _client: &Arc<FunctionClient>,
+        _transaction: &Transaction,
+        _kind: CatalogType,
+        _schema: &[u8],
+    ) -> Result<Vec<Arc<CatalogEntry>>> {
+        Ok(Vec::new())
+    }
     fn lookup(
         &self,
         client: &Arc<FunctionClient>,

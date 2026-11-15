@@ -26,6 +26,32 @@ No new C/C++ dependencies, binary adapters, default-off gates or public plugin A
 
 Contract recorded; not a claim that new functionality passes acceptance.
 
+## Metadata and full-inventory discovery (November 15)
+
+The first frozen full-152 run produced C++ 144 PASS / 7 SKIP / 1 FAIL and Rust
+95 PASS / 7 SKIP / 48 FAIL / 2 CRASH. The C++ failure is a fixture permission for
+server-side COPY; seven skips retain their original missing prerequisites.
+Original mode-skip directives remain in place. This is discovery, not acceptance.
+Raw verdicts and the two crash reports are in `postgres-upstream-all-1`.
+
+Internal catalog enumeration now routes schema/table/type listing through the
+provider, preserving errors and owned entry lifetimes. System table functions use
+those entries without creating native storage. PostgreSQL metadata also supplies
+its catalog type and internal schema flags. Column names are deduplicated for SQL
+binding while wire queries retain PostgreSQL names. Type lookup is case-insensitive;
+newly created table entries retain default expressions until cache invalidation.
+Index enumeration and complete cache behavior remain incomplete.
+
+The two composite-field crashes came from incorrectly treating remote table
+identity as native extracted-field scan capability. That optimization is now
+restricted to native storage. All seven paired metadata controls and nine original
+files pass, including both previously crashing originals, comments, DESCRIBE,
+case-sensitive columns and enums. Receipts: `postgres-metadata-control-1` and
+`postgres-upstream-metadata-1`. All 26 signed runtime library tests and strict
+catalog/optimizer/runtime all-target Clippy pass. The original C++ binary COPY
+file passes with a test-scoped server-file role, revoked in finally; receipt
+`postgres-binary-fixture-oracle-1`. Full current-source conformance remains pending.
+
 ## Mutation and ALTER checkpoint (November 15)
 
 Remote UPDATE, DELETE and MERGE now execute through internal mutation state.

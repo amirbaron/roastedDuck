@@ -166,6 +166,29 @@ impl Catalog {
             .map_or(DEFAULT_SCHEMA.as_bytes(), |b| b.default_schema())
     }
 
+    /// Enumerates visible native or provider entries, preserving provider errors.
+    pub fn scan_entries(
+        &self,
+        client: &Arc<roastedduck_function::FunctionClient>,
+        transaction: &Transaction,
+        kind: CatalogType,
+        schema: &[u8],
+    ) -> Result<Vec<Arc<CatalogEntry>>> {
+        if let Some(backend) = self.backend.get() {
+            return backend.scan(client, transaction, kind, schema);
+        }
+        if kind == CatalogType::Schema {
+            return Ok(self.schemas.scan(transaction));
+        }
+        let Some(entry) = self.schema(transaction, schema) else {
+            return Ok(Vec::new());
+        };
+        let Some(schema) = entry.as_schema() else {
+            return Ok(Vec::new());
+        };
+        Ok(Self::set_for(schema, kind).scan(transaction))
+    }
+
     /// Fallible lookup used by the binder; native catalog lookup remains in-memory.
     pub fn lookup_entry(
         &self,

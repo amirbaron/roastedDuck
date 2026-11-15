@@ -18,6 +18,20 @@ impl CatalogBackend for Metadata {
     fn default_schema(&self) -> &[u8] {
         b"public"
     }
+    fn scan(
+        &self,
+        _: &Arc<FunctionClient>,
+        _: &Transaction,
+        kind: CatalogType,
+        schema: &[u8],
+    ) -> Result<Vec<Arc<CatalogEntry>>> {
+        Ok(match kind {
+            CatalogType::Schema => vec![self.schema.clone()],
+            CatalogType::Table if schema == b"public" => vec![self.table.clone()],
+            CatalogType::Sequence => return Err(Error::new(ErrorKind::Io, "provider enumeration failed")),
+            _ => vec![],
+        })
+    }
     fn lookup(
         &self,
         _: &Arc<FunctionClient>,
@@ -42,22 +56,33 @@ impl CatalogBackend for Metadata {
 struct Rows;
 impl TableBackend for Rows {
     fn scan(&self, _: &Arc<FunctionClient>, _: &Transaction) -> Result<BackendScan> {
-        let function = TableFunction::new("remote_test_scan", vec![]).with_scan(|_, _, state, chunk| {
-            let mut id = Vector::flat(LogicalType::INTEGER, 2);
-            let mut label = Vector::flat(LogicalType::VARCHAR, 2);
-            let count = if state.position == 0 {
-                id.set_value(0, &Value::integer(1))?;
-                id.set_value(1, &Value::integer(2))?;
-                label.set_value(0, &Value::varchar("one"))?;
-                label.set_value(1, &Value::varchar("two"))?;
-                state.position = 2;
-                2
-            } else {
-                0
-            };
-            *chunk = DataChunk::new(vec![id, label], count);
-            Ok(false)
-        });
+        let mut function =
+            TableFunction::new("remote_test_scan", vec![]).with_scan(|_, ids, state, chunk| {
+                let mut id = Vector::flat(LogicalType::INTEGER, 2);
+                let mut label = Vector::flat(LogicalType::VARCHAR, 2);
+                let ty = LogicalType::struct_type(vec![("score".into(), LogicalType::INTEGER)]);
+                let mut details = Vector::flat(ty.clone(), 2);
+                let count = if state.position == 0 {
+                    id.set_value(0, &Value::integer(1))?;
+                    id.set_value(1, &Value::integer(2))?;
+                    label.set_value(0, &Value::varchar("one"))?;
+                    label.set_value(1, &Value::varchar("two"))?;
+                    details.set_value(0, &Value::from_children(ty.clone(), vec![Value::integer(10)]))?;
+                    details.set_value(1, &Value::from_children(ty, vec![Value::integer(20)]))?;
+                    state.position = 2;
+                    2
+                } else {
+                    0
+                };
+                let columns = [id, label, details];
+                *chunk = DataChunk::new(
+                    ids.iter().map(|id| columns[*id as usize].clone()).collect(),
+                    count,
+                );
+                Ok(false)
+            });
+        function.projection_pushdown = true;
+        function.projected_output = true;
         Ok(BackendScan {
             function,
             bind_data: None,
@@ -70,7 +95,7 @@ impl TableBackend for Rows {
 fn remote_table_keeps_identity_without_native_storage_or_capabilities() -> Result<()> {
     let database = crate::Database::open_in_memory()?;
     let mut connection = database.connect()?;
-    connection.query("ATTACH ':memory:' AS remote; CREATE SCHEMA remote.public; CREATE TABLE remote.public.template(id INTEGER,label VARCHAR)")?;
+    connection.query("ATTACH ':memory:' AS remote; CREATE SCHEMA remote.public; CREATE TABLE remote.public.template(id INTEGER,label VARCHAR,details STRUCT(score INTEGER))")?;
     let attached = database.instance().databases.get("remote").unwrap();
     let catalog = &attached.catalog;
     let native = catalog
@@ -88,6 +113,27 @@ fn remote_table_keeps_identity_without_native_storage_or_capabilities() -> Resul
         table: entry.clone(),
     }))?;
     assert_eq!(catalog.catalog_type(), "test_remote");
+    assert_eq!(
+        connection
+            .query("SELECT table_name FROM duckdb_tables() WHERE database_name='remote'")?
+            .value(0, 0),
+        Value::varchar("items")
+    );
+    assert_eq!(
+        connection
+            .query("SELECT count(*) FROM duckdb_columns() WHERE database_name='remote'")?
+            .value(0, 0),
+        Value::bigint(3)
+    );
+    assert_eq!(
+        connection
+            .query("SELECT details.score FROM remote.items WHERE id=2")?
+            .value(0, 0),
+        Value::integer(20)
+    );
+    let error = connection.query("SELECT * FROM duckdb_sequences()").unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::Io);
+    assert!(error.to_string().contains("provider enumeration failed"));
     assert!(Arc::ptr_eq(
         &entry,
         &catalog

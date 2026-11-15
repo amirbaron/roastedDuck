@@ -1138,6 +1138,11 @@ fn prune_cte_refs(
 /// `TableSupportsPushdownExtract`, for STRUCT and VARIANT columns that are not
 /// generated).
 fn supports_pushdown_extract(get: &LogicalGet, column: u64) -> bool {
+    // A remote table retains catalog identity, but its scan supplies whole
+    // columns. Only the native scan implements extracted-field column indexes.
+    if !get.is_native_table() {
+        return false;
+    }
     let Some(entry) = &get.table else {
         return false;
     };
