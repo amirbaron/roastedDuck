@@ -34,6 +34,13 @@ fn unquote_etag(value: &str) -> &str {
         .unwrap_or(value)
 }
 
+/// `RangeRequestNotSupportedException::MESSAGE`.
+const RANGE_NOT_SUPPORTED: &str = "Content-Length from server mismatches requested range, server may not support range requests. You can try to resolve this by enabling `SET force_download=true`";
+
+fn header_number<B>(response: &ureq::http::Response<B>, name: &str) -> Option<u64> {
+    response.headers().get(name)?.to_str().ok()?.parse().ok()
+}
+
 fn finish_range(reader: &mut impl Read) -> Result<()> {
     // Completing the decoder returns its TCP connection to ureq's idle pool.
     // Dropping an exact-length read before EOF would close that connection.
@@ -1007,43 +1014,49 @@ impl HttpFile {
             }
             return Ok(());
         }
+        // `HTTPFileHandle::LoadFileInfo`: only a HEAD that does not return 200 is
+        // retried as a two-byte range read, and never after 404 or 301. A 200
+        // without a usable length leaves the size 0, which downloads the file.
         let mut response = self.request("HEAD", None)?;
-        let mut method = "HEAD";
-        let mut length = response
-            .headers()
-            .get("content-length")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<u64>().ok());
-        if !response.status().is_success() || length.is_none() {
-            method = "GET";
-            response = self.request("GET", Some((0, 1)))?;
-            length = response
-                .headers()
-                .get("content-range")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.rsplit_once('/')?.1.parse::<u64>().ok());
-            if length.is_none() && response.status().as_u16() == 200 {
-                length = response
-                    .headers()
-                    .get("content-length")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.parse().ok());
-                if length.is_none() {
-                    length = Some(
-                        io::copy(&mut response.body_mut().as_reader(), &mut io::sink()).map_err(io_error)?,
-                    );
-                }
+        if response.status().as_u16() != 200 {
+            if !matches!(response.status().as_u16(), 301 | 404) {
+                response = self.request("GET", Some((0, 1)))?;
             }
+            let status = response.status().as_u16();
+            if !matches!(status, 200 | 202 | 206) {
+                return Err(response_error(
+                    status_error("GET", &self.display_url, status),
+                    &response,
+                    b"",
+                    self.parameters.httplib,
+                ));
+            }
+            if header_number(&response, "content-length").is_some_and(|length| length != 2) {
+                // Upstream rejects the response before reading its body and keeps
+                // none of its headers, so the error it reports has no status.
+                if !self.parameters.fallback {
+                    return Err(Error::new(
+                        ErrorKind::Http,
+                        format!(
+                            "HTTP GET error on '{}' (HTTP 0 Internal Server Error)",
+                            self.display_url
+                        ),
+                    )
+                    .with_http_response(0, b"", std::iter::empty::<(&str, &[u8])>(), ""));
+                }
+                drop(response);
+                self.size = self.full_download()?.size;
+                return Ok(());
+            }
+            io::copy(&mut response.body_mut().as_reader(), &mut io::sink()).map_err(io_error)?;
         }
-        if !response.status().is_success() {
-            return Err(response_error(
-                status_error(method, &self.display_url, response.status().as_u16()),
-                &response,
-                b"",
-                self.parameters.httplib,
-            ));
-        }
-        self.size = length.ok_or_else(|| io_error("HTTP server did not provide a file size"))?;
+        self.size = response
+            .headers()
+            .get("content-range")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split_once('/')?.1.parse::<u64>().ok())
+            .or_else(|| header_number(&response, "content-length"))
+            .unwrap_or(0);
         if let Some(signing) = &self.signing {
             // Pin from initial metadata (HEAD or its GET fallback), as C++ does.
             // Later data-range responses must not establish or change the pin.
@@ -1164,10 +1177,7 @@ impl HttpFile {
             .and_then(|v| v.parse::<u64>().ok());
         if length.is_some_and(|length| length != expected_length) || status == 200 && offset != 0 {
             if !self.parameters.fallback {
-                return Err(Error::new(
-                    ErrorKind::Http,
-                    "Content-Length from server mismatches requested range, server may not support range requests. You can try to resolve this by enabling `SET force_download=true`",
-                ));
+                return Err(Error::new(ErrorKind::Http, RANGE_NOT_SUPPORTED));
             }
             if let Some(logger) = &self.logger {
                 logger.fallback(&self.display_url)?;

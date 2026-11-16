@@ -10,6 +10,9 @@ import urllib.parse
 
 from s3_version_control import API, quote
 
+RANGE_PATHS = ['/range.parquet', '/no-length-range.parquet', '/head-denied-range.parquet']
+CHUNKED_PATHS = ['/no-length.bin', '/head-denied-chunked.parquet']
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -42,28 +45,42 @@ def main():
 
         def respond(self):
             path = urllib.parse.urlsplit(self.path).path
+            head = self.command == 'HEAD'
             body = b'' if path == '/empty' else payload
-            length = len(body) + (1 if path == '/wrong-head.parquet' and self.command == 'HEAD' else 0)
-            status = 403 if path == '/head-denied.parquet' and self.command == 'HEAD' else 200
+            length = len(body) + (1 if path == '/wrong-head.parquet' and head else 0)
+            status = 403 if path.startswith('/head-denied') and head else 200
+            if path == '/missing.parquet':
+                status = 404
             requested = self.headers.get('Range')
             start, end = 0, len(body) - 1
-            if requested and path == '/range.parquet':
+            if requested and status == 200 and path in RANGE_PATHS:
                 start, end = map(int, requested.removeprefix('bytes=').split('-'))
                 end = min(end, len(body) - 1)
                 body = body[start:end + 1]
                 length, status = len(body), 206
+            # A HEAD without a length, and bodies whose length only the chunks give.
+            no_length = status == 200 and (path.startswith('/no-length') and head or path in CHUNKED_PATHS and not head)
             with lock:
                 receipts.append(dict(method=self.command, path=path, range=requested,
                                      status=status, user_agent=self.headers.get('User-Agent')))
             self.send_response(status)
-            self.send_header('Content-Length', str(length if status != 403 else 0))
+            if no_length and not head:
+                self.send_header('Transfer-Encoding', 'chunked')
+            elif not no_length:
+                self.send_header('Content-Length', str(length if status < 400 else 0))
             self.send_header('ETag', '"fixture-version"')
             if status == 206:
                 self.send_header('Content-Range', f'bytes {start}-{end}/{len(payload)}')
             self.end_headers()
-            if self.command == 'GET' and status != 403:
+            if self.command == 'GET' and status < 400:
                 try:
-                    self.wfile.write(body)
+                    if no_length:
+                        for offset in range(0, len(body), 16384):
+                            chunk = body[offset:offset + 16384]
+                            self.wfile.write(f'{len(chunk):x}\r\n'.encode() + chunk + b'\r\n')
+                        self.wfile.write(b'0\r\n\r\n')
+                    else:
+                        self.wfile.write(body)
                 except (BrokenPipeError, ConnectionResetError):
                     self.close_connection = True
 
@@ -89,13 +106,23 @@ def main():
             ('wrong-head', '/wrong-head.parquet', False, 0, True, True),
             ('forced-head-denied', '/head-denied.parquet', True, 0, True, False),
             ('forced-empty', '/empty', True, 0, True, False),
+            # File-info boundaries: a HEAD without a length, and the two-byte
+            # range read that follows only a HEAD refused with another status.
+            ('head-no-length', '/no-length.bin', False, 0, True, False),
+            ('head-no-length-fallback-disabled', '/no-length.bin', False, 0, False, False),
+            ('head-no-length-range', '/no-length-range.parquet', False, 0, True, False),
+            ('head-denied', '/head-denied.parquet', False, 0, True, False),
+            ('head-denied-fallback-disabled', '/head-denied.parquet', False, 0, False, True),
+            ('head-denied-range', '/head-denied-range.parquet', False, 0, True, False),
+            ('head-denied-chunked', '/head-denied-chunked.parquet', False, 0, True, False),
+            ('missing', '/missing.parquet', False, 0, True, True),
         ]
         for label, path, forced, threshold, fallback, error in scenarios:
             config = api.query(f"SET force_download={str(forced).lower()}; SET force_download_threshold={threshold}; SET auto_fallback_to_full_download={str(fallback).lower()}; CALL truncate_duckdb_logs()")
             assert config['status'] == 0, config
             with lock:
                 receipts.clear()
-            sql = f"SELECT count(*) FROM read_parquet('{base}{path}')" if path != '/empty' else f"SELECT octet_length(content) FROM read_blob('{base}{path}')"
+            sql = f"SELECT count(*) FROM read_parquet('{base}{path}')" if path.endswith('.parquet') else f"SELECT octet_length(content) FROM read_blob('{base}{path}')"
             result = api.query(sql)
             assert bool(result['status']) == error, result
             warnings = api.query("SELECT message FROM duckdb_logs WHERE log_level='WARNING'")
