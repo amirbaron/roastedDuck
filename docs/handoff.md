@@ -1,3 +1,43 @@
+Query-verification and HTTP file-info checkpoint, November 16, 2026:
+`PRAGMA enable_verification` now runs the regular SELECT verifiers of DuckDB
+1.5.6's `ClientContext::VerifyQuery` (commit c294d34f): original, copied,
+deserialized, unoptimized, no-operator-caching, re-parsed, prepared and EXPLAIN,
+with upstream's comparison and mismatch text. The prepared verifier replaces
+constants exactly where `ParsedExpressionIterator` enumerates them. A template
+type bound to an unresolved parameter raises the parameter-not-resolved error
+instead of crashing prepared `switch()` calls. Still not implemented:
+`verify_external`, `verify_fetch_row`, `verify_serializer` and
+`verify_parallelism` remain accepted no-ops, and non-SELECT statements are not
+re-parsed from their rendered text. See `conformance/divergences.md`.
+
+HTTP file info follows `HTTPFileHandle::LoadFileInfo` (commit 1d3417cb): the
+`bytes=0-1` probe only follows a HEAD that is not 200 (never 404/301), and a 200
+without a length downloads the file. This repaired the core original
+`test/extension/install_extension_httpfs.test`, which reads `https://duckdb.org/`
+(no Content-Length, Range ignored) and had regressed when completed range
+responses started being checked for surplus data.
+
+Evidence, all under `.context/artifacts/popular-extensions/`:
+- `query-verification-conformance-3/`: full core corpus on this source, 4897
+  files: 4845 pass, 33 skip, 19 fail, 0 crash, zero ratchet regressions. The source
+  fixture is the conformance-2 one, re-checked against every manifest and overlay
+  hash (`fixture-check.json`). `conformance/passing.txt` is unchanged; 21 newly
+  passing files are still unrecorded and wait for the final freeze.
+- `qv-fable-1/verify-{cpp,rust}-2`: 78 paired C API verifier records, equal.
+- `qv-fable-1/diagnostics-rust-1` equals `httpfs-diagnostics-cpp-2` (45 records),
+  so the verified cold disabled-filesystem bind now matches too.
+- `qv-fable-1/download-{cpp,rust}-1`: 18 download/file-info records with request
+  receipts, equal. `qv-fable-1/native-verification`: 2 native tests.
+  `qv-fable-1/clippy-2.log`: strict Clippy for roastedduck, httpfs and planner.
+The earlier conformance-2 run is retained with its four status changes; two were
+real (prepared `switch()` crash, SUMMARIZE names), one was the HTTP regression
+above and one was a `require disk_space 40gb` skip while the SSD was nearly full.
+
+Next: the HTTP handle read buffer and single-open `read_blob`, which the two
+failing public slow HTTPFS originals need; then the remaining HTTPFS originals,
+final inventories for all five extensions, and the final core/platform/package
+gates. Working notes: `.context/query-verification-next.md`.
+
 HTTPFS connection-pool checkpoint, November 16, 2026:
 Real database-local HTTP client pooling is implemented. Clients are acquired on
 first I/O, shared by file/stream clones and returned on last lease close. Idle

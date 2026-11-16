@@ -312,24 +312,29 @@ from installing independently distributed DuckDB extension binaries. Other names
 and explicit file paths retain their existing behavior. See the
 [developer workflow](../extensions/README.md) and [loading guide](../website/docs/extensions.md).
 
-## Query verification pragmas: observed HTTPFS acceptance gap
+## Query verification pragmas: remaining debug verifiers
 
-`PRAGMA enable_verification` and related debug verification pragmas remain in
-roastedDuck's no-op pragma list. This is a known implementation gap, not a waiver
-of extension acceptance. The unchanged HTTPFS original
-`test/sql/settings/test_disabled_file_system_httpfs.test` exposes it: C++'s
-verification attempts a cold HTTP bind before the normal execution. Local secret
-storage initialization first fails with a permission error, then its retained
-memory-storage registration produces an invalid-configuration error on retry.
-Rust's ordinary execution currently reports the first permission error.
+`PRAGMA enable_verification` runs DuckDB's regular SELECT verifiers: the original
+statement, its copied, deserialized, unoptimized and no-operator-caching variants,
+the statement re-parsed from its rendered text, the prepared form with constants
+replaced by parameters, and EXPLAIN. Results are compared as upstream compares
+them. The unchanged HTTPFS original
+`test/sql/settings/test_disabled_file_system_httpfs.test`, which depends on the
+verifier's extra cold bind, passes on both engines, and all 45 diagnostic/state
+records match.
 
-The permission boundary is preserved. Direct API controls match the cold failure,
-subsequent duplicate-registration error, warmed storage, disabled persistence, and
-prepared secret enumeration. Of 45 diagnostic/state records, 44 match; the one
-verification-enabled cold bind remains different. The original's raw failure is
-retained and excluded from exercised passing coverage. Do not change the test or
-globally rewrite permission errors to conceal this difference.
+What remains different:
 
-Evidence: `.context/artifacts/popular-extensions/httpfs-diagnostics-{cpp,rust}-2/`
-and `httpfs-upstream-diagnostics-1/`. Full query verification and the corresponding
-acceptance gate remain open.
+- `verify_external`, `verify_fetch_row`, `verify_serializer` and
+  `verify_parallelism` (and their `disable_` forms) are accepted and do nothing.
+  Upstream's external and fetch-row verifiers re-execute the query once more each;
+  the other two change how plans are serialized and parallelized in debug runs.
+- Under verification upstream executes a non-SELECT statement re-parsed from its
+  rendered text. roastedDuck executes the statement as parsed.
+
+Neither changes the result of a correct query. Both are debug facilities; they
+are listed so that a test relying on their side effects is not misread.
+
+Evidence: `.context/artifacts/popular-extensions/qv-fable-1/verify-{cpp,rust}-2/`
+(78 paired records), `qv-fable-1/diagnostics-rust-1/` against
+`httpfs-diagnostics-cpp-2/`, and `query-verification-conformance-3/`.

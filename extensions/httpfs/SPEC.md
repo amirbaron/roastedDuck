@@ -165,3 +165,25 @@ frozen full sweep. The query-verification gap, external-service failures, remain
 fixtures, final core/platform/package gates and publication remain open. Evidence:
 `.context/artifacts/popular-extensions/httpfs-pool-verification.json` and
 `httpfs-originals-audit-3.json`.
+
+## Query verification and file-info checkpoint (November 16)
+
+The query-verification gap named above is closed for the regular SELECT
+verifiers: `PRAGMA enable_verification` executes and compares them, and the
+disabled-filesystem original that depends on the verifier's cold bind passes on
+both engines. The remaining debug pragmas are listed in
+`conformance/divergences.md`.
+
+Opening an HTTP file follows upstream's file-info sequence. A two-byte range read
+happens only after a HEAD that is not 200, and never after 404 or 301. A HEAD
+without a usable length downloads the file, as does a range probe answered with
+another Content-Length; with the fallback disabled that probe fails with
+upstream's error. Eighteen download and file-info controls match C++ including
+every request receipt. The core original `test/extension/install_extension_httpfs.test`
+passes again on a full core run of this source (4845 pass, 33 skip, 19 fail, no
+ratchet regressions).
+
+Still open: the handle's read buffer and cached `read_blob` reads (two public slow
+originals fail on request counts), the remaining unresolved originals, the frozen
+final sweep, platform and package gates, and publication.
+
