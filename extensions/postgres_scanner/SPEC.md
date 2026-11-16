@@ -622,3 +622,33 @@ postgres-backend-clippy-final-2.log, and postgres-dataset-oracle-1.
 Still required: SQL/catalog/transaction/writes, full codec/options/pool behavior,
 OAuth/CRL and remaining authentication parity,152 originals and supplemental
 controls, full integration conformance and package/platform/publication gates.
+
+## SASL mechanism selection checkpoint (November 16)
+
+When a server offered only `SCRAM-SHA-256-PLUS` over TLS and the client had
+`channel_binding=disable`, the client answered with `SCRAM-SHA-256`, a mechanism
+the server had not offered. It now follows libpq's `pg_SASL_init`: the PLUS
+mechanism cannot be selected with channel binding disabled, plain SCRAM only when
+offered, and otherwise the attempt fails with "none of the server's SASL
+authentication mechanisms are supported". With `channel_binding=require` and no
+PLUS mechanism offered the reason is libpq's "channel binding is required, but
+server did not offer an authentication method that supports channel binding".
+
+`scripts/postgres-tests/sasl_control.py` checks this against an owned protocol
+fixture, because a real server always offers both mechanisms over TLS. Eleven
+mechanism-list and `channel_binding` combinations produce the same selected
+mechanism, GS2 header and failure reason on both engines.
+
+The control also records two differences it does not gate on, and they apply to
+every failed connection, not only to SASL:
+
+- Wording. The reference reports `Unable to connect to Postgres at "<dsn>":
+  connection to server at "<host>", port <n> failed: <reason>`, libpq's text.
+  roastedDuck reports its own client's text, for example `error connecting to
+  server: Connection refused (os error 61)` or `FATAL: <server message>`,
+  without the connection string. Matching libpq's connection messages is open.
+- Attempts. The reference opens two connections for a failed `ATTACH`;
+  roastedDuck opens one.
+
+Neither changes which connections succeed.
+

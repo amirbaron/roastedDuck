@@ -104,3 +104,12 @@ certificates and v2 CRLs. It compares extension-free and profile-compliant lists
 revocation, expiration, future dates, signature/issuer/critical-extension failures,
 missing/invalid-PEM files, certificate-only stores and verify-ca/full hostname
 policy. No real credentials, user certificate store or external service is changed.
+
+`sasl_control.py --cli ... --oracle ... --extension ... --out ...` checks SASL
+mechanism selection against an owned protocol fixture that offers a chosen
+mechanism list over TLS and records the client's first SASL message. It passes
+when both engines select the same mechanism and GS2 header and fail for the same
+reason. Full error text and the number of connection attempts are recorded too;
+they differ today and are reported, not required equal. The fixture is not a
+PostgreSQL server and never checks a password.
+

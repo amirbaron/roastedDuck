@@ -1,3 +1,23 @@
+PostgreSQL SASL selection checkpoint, November 16, 2026:
+The vendored PostgreSQL client no longer answers a `SCRAM-SHA-256-PLUS`-only
+offer with plain `SCRAM-SHA-256` when `channel_binding=disable`; it fails as libpq
+does. `scripts/postgres-tests/sasl_control.py` (owned protocol fixture, 11
+scenarios) shows the same selected mechanism, GS2 header and failure reason on
+both engines (`qv-fable-1/pg-sasl-2`, `qv-fable-1/pg-gates-1/sasl`). The same
+gate run repeats the OAuth, CRL, debug, RDS, pool, secret, unified-scan, version
+and attach controls and all 152 originals on both engines: 145 pass, the same 7
+skips (`qv-fable-1/pg-gates-1`). Native tests and strict Clippy pass
+(`qv-fable-1/f-native`, `f-clippy-1.log`). `sasl-conformance-6/`: full core
+corpus on this source, 4845 pass, 33 skip, 19 fail, no status change. This is the
+last engine change of the session; the five-extension sweep below ran one commit
+earlier, and only the PostgreSQL client changed since.
+
+Open, found by that control and recorded in `extensions/postgres_scanner/SPEC.md`:
+failed connections are worded by roastedDuck's client, not as libpq words them
+(no `Unable to connect to Postgres at "<dsn>": connection to server at ...`
+prefix), and a failed ATTACH makes one connection attempt where the reference
+makes two.
+
 HTTPFS original-inventory checkpoint, November 16, 2026:
 All 132 pinned HTTPFS originals have a retained verdict on both engines
 (`httpfs-originals-audit-5.json`): 116 exercised and passing on both, 5 disabled
