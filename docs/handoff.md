@@ -40,10 +40,26 @@ Receipts: `qv-fable-1/sweep-1/` (ICU, AWS, Azure), `qv-fable-1/sweep-1b/`
 and `.context/check-read-buffer.py`. The inventories ran while the core corpus
 was running; nothing flaked.
 
-Not done in this session: the workspace-wide native test run, the Linux, Apple
-and Python package gates, and publication. The branch has not been pushed since
-f135c6f8. Publishing to PyPI or Homebrew and pushing need the owner's explicit
-go-ahead.
+Local package checks on the same source (commit 900cf598 adds only the smoke
+script):
+- Native tests of every changed crate (`qv-fable-1/final-native`): 74 test
+  binaries, 445 passed, 4 ignored. One persistence test compares timestamps in
+  UTC and fails in the local zone; the same binary passes with `TZ=UTC`, which
+  the project's controllers set (`tz-note.json`).
+- A wheel built locally with maturin 1.16.0 for CPython 3.13 on macOS arm64
+  (`qv-fable-1/wheel/dist`, not a release artifact) installs into a fresh
+  environment and passes `scripts/release/smoke_python.py`, which now also loads
+  icu, httpfs, aws, azure and postgres_scanner and checks each offline.
+- `qv-fable-1/wheel/journey-3`: the installed wheel writes and reads Parquet, CSV
+  and partitioned data on owned MinIO, attaches an owned PostgreSQL 17 over
+  verified TLS, moves rows between the two in both directions, and sorts with an
+  ICU collation. Controller: `.context/installed-python-journey.py`.
+
+Not done in this session: the Linux and Apple builds, the full wheel matrix and
+the other client packages, which the release workflows produce from a pushed
+commit, and publication. The branch has not been pushed since f135c6f8.
+Pushing, dispatching the release workflows and publishing to PyPI or Homebrew
+need the owner's explicit go-ahead.
 
 HTTPFS read-buffer checkpoint, November 16, 2026 (commit 6b24448a):
 HTTP, S3 and HuggingFace handles opened without direct I/O have the pinned
