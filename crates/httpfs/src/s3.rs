@@ -141,6 +141,9 @@ pub(crate) struct RequestSigning {
     pub(crate) bucket_request: bool,
     pub(crate) pin_version: bool,
     pub(crate) allow_region_redirect: bool,
+    /// What a region redirect is logged as having done, such as `Read S3 file "…"`.
+    /// Upstream warns for file opens and globs only.
+    pub(crate) region_notice: Option<String>,
     state: Arc<Mutex<RequestState>>,
     pub(crate) original_path: String,
 }
@@ -157,6 +160,8 @@ struct RequestState {
 pub(crate) struct RequestInfo {
     pub region: String,
     pub redirected: bool,
+    /// The URL the request was made to (`S3RequestData::http_url`).
+    pub url: String,
 }
 
 impl std::fmt::Debug for RequestSigning {
@@ -613,38 +618,107 @@ fn error_details(body: &str) -> String {
     extra
 }
 
-fn listing_error(signing: &RequestSigning, status: u16, body: &str, url: &str) -> Error {
+/// `S3FileSystem::GetS3Error`.
+fn s3_error(signing: &RequestSigning, region: &str, status: u16, body: &str, url: &str) -> Error {
     let mut extra = error_details(body);
     if status == 400 {
         extra.push_str("\n\nBad Request - this can be caused by the S3 region being set incorrectly.");
-        if signing.region.is_empty() {
+        if region.is_empty() {
             extra.push_str("\n* No region is provided.");
         } else {
-            let _ = write!(extra, "\n* Provided region is: \"{}\"", signing.region);
+            let _ = write!(extra, "\n* Provided region is: \"{region}\"");
         }
     }
     if status == 403 {
-        extra.push_str(
-            "\n\nAuthentication Failure - this is usually caused by invalid or missing credentials.",
-        );
-        extra.push_str(if signing.key_id.is_empty() && signing.secret.is_empty() {
+        extra.push_str(&signing.s3_auth_hint());
+    }
+    Error::new(
+        ErrorKind::Http,
+        format!(
+            "HTTP GET error reading '{url}' in region '{region}' (HTTP {status} {}){extra}",
+            status_reason(status)
+        ),
+    )
+}
+
+fn status_reason(status: u16) -> &'static str {
+    ureq::http::StatusCode::from_u16(status)
+        .ok()
+        .and_then(|s| s.canonical_reason())
+        .unwrap_or_default()
+}
+
+fn listing_error(signing: &RequestSigning, status: u16, body: &str, url: &str) -> Error {
+    s3_error(signing, &signing.region, status, body, url)
+}
+
+impl RequestSigning {
+    /// `IsGCSRequest` of the path the handle was opened with.
+    fn is_gcs(&self) -> bool {
+        self.original_path.starts_with("gcs://") || self.original_path.starts_with("gs://")
+    }
+
+    /// `S3FileSystem::GetS3AuthError`.
+    fn s3_auth_hint(&self) -> String {
+        let mut text =
+            String::from("\n\nAuthentication Failure - this is usually caused by invalid or missing credentials.");
+        text.push_str(if self.key_id.is_empty() && self.secret.is_empty() {
             "\n* No credentials are provided."
         } else {
             "\n* Credentials are provided, but they did not work."
         });
-        extra.push_str("\n* See https://duckdb.org/docs/stable/extensions/httpfs/s3api.html");
+        text.push_str("\n* See https://duckdb.org/docs/stable/extensions/httpfs/s3api.html");
+        text
     }
-    let reason = ureq::http::StatusCode::from_u16(status)
-        .ok()
-        .and_then(|s| s.canonical_reason())
-        .unwrap_or_default();
-    Error::new(
-        ErrorKind::Http,
-        format!(
-            "HTTP GET error reading '{url}' in region '{}' (HTTP {status} {reason}){extra}",
-            signing.region
-        ),
-    )
+
+    /// `S3FileSystem::GetGCSAuthError`.
+    fn gcs_auth_hint(&self) -> String {
+        let mut text = String::from("\n\nAuthentication Failure - GCS authentication failed.");
+        text.push_str(
+            if self.bearer.is_empty() && self.secret.is_empty() && self.key_id.is_empty() {
+                "\n* No credentials provided.\n* For OAuth2: CREATE SECRET (TYPE GCS, bearer_token 'your-token')\n* For HMAC: CREATE SECRET (TYPE GCS, key_id 'key', secret 'secret')"
+            } else if !self.bearer.is_empty() {
+                "\n* Bearer token was provided but authentication failed.\n* Ensure your OAuth2 token is valid and not expired."
+            } else {
+                "\n* HMAC credentials were provided but authentication failed.\n* Ensure your HMAC key_id and secret are correct."
+            },
+        );
+        text
+    }
+
+    /// The error of a response the handle rejects: `GetS3RequestError` when `url` is
+    /// the request's own URL, `S3FileSystem::GetHTTPError` when it is the handle's path.
+    pub(crate) fn response_error(&self, region: &str, status: u16, body: &[u8], url: &str) -> Error {
+        if self.is_gcs() && status == 403 {
+            return Error::new(
+                ErrorKind::Http,
+                format!(
+                    "HTTP error on '{url}' (HTTP {status} {}){}",
+                    status_reason(status),
+                    self.gcs_auth_hint()
+                ),
+            );
+        }
+        s3_error(self, region, status, &String::from_utf8_lossy(body), url)
+    }
+
+    /// `S3FileHandle::Initialize` rethrows a 403 with the credential hint appended,
+    /// after the request error already carries it.
+    pub(crate) fn open_error(&self, error: Error) -> Error {
+        let forbidden = error
+            .extra_info()
+            .iter()
+            .any(|(key, value)| *key == "status_code" && *value == b"403");
+        if !forbidden {
+            return error;
+        }
+        let hint = if self.is_gcs() {
+            self.gcs_auth_hint()
+        } else {
+            self.s3_auth_hint()
+        };
+        error.with_message_suffix(&hint)
+    }
 }
 
 impl S3Request {
@@ -677,6 +751,7 @@ impl S3Request {
             encode(&signing.path, false),
             signing.query
         );
+        signing.region_notice = Some(format!("Ran S3 glob \"{}{prefix}\"", self.bucket_url));
         let request = HttpFile::new_request(url, self.parameters.clone(), Some(signing.clone()));
         let mut response = request.request("GET", None)?;
         let status = response.status();
@@ -1030,7 +1105,10 @@ impl S3FileSystem {
         request.signing.pin_version = setting("s3_version_id_pinning")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+        request.signing.region_notice = Some(format!("Read S3 file \"{}\"", request.signing.original_path));
+        let signing = request.signing.clone();
         HttpFile::open_with(request.url, request.parameters, Some(request.signing))
+            .map_err(|error| signing.open_error(error))
     }
 }
 
@@ -1151,3 +1229,77 @@ mod refresh_tests {
         assert!(signing.refreshed_transport().is_none());
     }
 }
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    const DENIED: &[u8] =
+        b"<?xml version=\"1.0\"?><Error><Code>AccessDenied</Code><Message>Access Denied.</Message></Error>";
+    const HINT: &str = "\n\nAuthentication Failure - this is usually caused by invalid or missing credentials.\n* Credentials are provided, but they did not work.\n* See https://duckdb.org/docs/stable/extensions/httpfs/s3api.html";
+
+    fn signing(path: &str) -> RequestSigning {
+        RequestSigning {
+            original_path: path.into(),
+            key_id: "key".into(),
+            secret: "secret".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn s3_errors_name_the_region_the_service_code_and_the_credentials() {
+        let signing = signing("s3://bucket/file.parquet");
+        let missing = signing.response_error("eu-west-1", 404, b"", "s3://bucket/file.parquet");
+        assert_eq!(
+            missing.raw_message(),
+            "HTTP GET error reading 's3://bucket/file.parquet' in region 'eu-west-1' (HTTP 404 Not Found)"
+        );
+        let url = "http://127.0.0.1:9000/bucket/file.parquet";
+        let denied = signing.response_error("eu-west-1", 403, DENIED, url);
+        assert_eq!(
+            denied.raw_message(),
+            format!("HTTP GET error reading '{url}' in region 'eu-west-1' (HTTP 403 Forbidden)\n\nAccessDenied: Access Denied.{HINT}")
+        );
+        let bad = signing.response_error("", 400, b"", url);
+        assert!(bad.raw_message().ends_with(
+            "\n\nBad Request - this can be caused by the S3 region being set incorrectly.\n* No region is provided."
+        ));
+    }
+
+    #[test]
+    fn a_forbidden_open_repeats_the_credential_hint() {
+        let signing = signing("s3://bucket/file.parquet");
+        let headers = std::iter::empty::<(&str, &[u8])>();
+        let denied = signing
+            .response_error("eu-west-1", 403, DENIED, "http://host/bucket/file.parquet")
+            .with_http_response(403, DENIED, headers, "Forbidden");
+        let message = signing.open_error(denied).raw_message().into_owned();
+        assert!(message.ends_with(&format!("{HINT}{HINT}")), "{message}");
+        let headers = std::iter::empty::<(&str, &[u8])>();
+        let missing = signing
+            .response_error("eu-west-1", 404, b"", "s3://bucket/file.parquet")
+            .with_http_response(404, b"", headers, "Not Found");
+        assert!(!signing.open_error(missing).raw_message().contains("Authentication"));
+    }
+
+    #[test]
+    fn gcs_reports_its_own_authentication_hints() {
+        let mut signing = signing("gcs://bucket/file.parquet");
+        let message = signing
+            .response_error("", 403, b"", "https://storage.googleapis.com/bucket/file.parquet")
+            .raw_message()
+            .into_owned();
+        assert_eq!(
+            message,
+            "HTTP error on 'https://storage.googleapis.com/bucket/file.parquet' (HTTP 403 Forbidden)\n\nAuthentication Failure - GCS authentication failed.\n* HMAC credentials were provided but authentication failed.\n* Ensure your HMAC key_id and secret are correct."
+        );
+        signing.bearer = "token".into();
+        assert!(signing.gcs_auth_hint().contains("Bearer token was provided"));
+        signing.bearer.clear();
+        signing.key_id.clear();
+        signing.secret.clear();
+        assert!(signing.gcs_auth_hint().contains("No credentials provided."));
+    }
+}
+

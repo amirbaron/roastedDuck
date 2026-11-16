@@ -680,7 +680,17 @@ pub fn current_setting_functions() -> ScalarFunctionSet {
             .client
             .settings()
             .ok_or_else(|| Error::internal("current_setting without connection settings"))?;
-        let value = settings.current_setting(&name.to_lowercase())?;
+        let name = name.to_lowercase();
+        let value = match settings.current_setting(&name) {
+            // The setting of an extension that is not loaded yet: autoload it.
+            Err(error) => {
+                if !roastedduck_function::file_system::autoload_extension_by_setting(input.client, &name)? {
+                    return Err(error);
+                }
+                settings.current_setting(&name)?
+            }
+            value => value?,
+        };
         function.return_type = value.logical_type().clone();
         Ok(Some(Arc::new(SettingValue(value)) as Arc<dyn FunctionData>))
     });

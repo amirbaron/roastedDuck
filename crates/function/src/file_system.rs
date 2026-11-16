@@ -21,6 +21,30 @@ pub const EXTENSION_LOADER_KEY: &str = "roastedduck.filesystem_extension_loader"
 #[derive(Debug)]
 pub struct ExtensionLoader(pub Arc<dyn FileSystemExtensionLoader>);
 
+/// `Catalog::AutoloadExtensionByConfigName` without its error: loads the bundled
+/// extension that owns the setting `name` when known extensions may be autoloaded.
+/// Returns whether an extension was loaded.
+pub fn autoload_extension_by_setting(client: &FunctionClient, name: &str) -> roastedduck_common::Result<bool> {
+    use crate::extension_entries::{EXTENSION_SETTINGS, can_autoload_extension, find_extension};
+    let autoload = client
+        .settings()
+        .and_then(|settings| settings.current_setting("autoload_known_extensions").ok())
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let Some(extension) = find_extension(name, EXTENSION_SETTINGS)
+        .filter(|extension| autoload && can_autoload_extension(extension))
+    else {
+        return Ok(false);
+    };
+    match client
+        .object_cache()
+        .and_then(|cache| cache.get::<ExtensionLoader>(EXTENSION_LOADER_KEY))
+    {
+        Some(loader) => loader.0.load(extension),
+        None => Ok(false),
+    }
+}
+
 thread_local! {
     /// The function state of the connection whose statement this thread runs.
     static OPENER: RefCell<Option<Arc<FunctionClient>>> = const { RefCell::new(None) };

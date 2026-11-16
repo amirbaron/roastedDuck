@@ -4605,6 +4605,41 @@ impl Connection {
     /// The statements a statement was rewritten into (DuckDB's `UnpackMultiStatement`):
     /// outside a transaction, several statements without a SELECT run in one transaction
     /// that a failure rolls back. The result is the last statement's.
+    /// `Catalog::AutoloadExtensionByConfigName` for `SET` and `RESET`: the setting of a
+    /// bundled extension that is not loaded yet loads it, when known extensions may be
+    /// autoloaded. Other names keep their unrecognized-setting error.
+    fn autoload_setting_extension(&self, name: &[u8]) -> Result<()> {
+        use roastedduck_function::extension_entries::{
+            EXTENSION_SETTINGS, can_autoload_extension, find_extension,
+        };
+        if crate::settings::canonical_option(name).is_some()
+            || self.database.instance().extension_option(name).is_some()
+        {
+            return Ok(());
+        }
+        let Some(extension) = find_extension(name, EXTENSION_SETTINGS)
+            .filter(|extension| can_autoload_extension(extension))
+            .and_then(StaticExtension::from_name)
+        else {
+            return Ok(());
+        };
+        let autoload = self
+            .current_setting("autoload_known_extensions")
+            .ok()
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        if !autoload {
+            return Ok(());
+        }
+        self.database.instance().load_static_extension(extension)?;
+        if self.database.instance().extension_option(name).is_none() {
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
+                "Extension parameter {name} was not found after autoloading"
+            )));
+        }
+        Ok(())
+    }
+
     fn run_multi_statement(&mut self, statements: Vec<SqlStatement>) -> Result<MaterializedResult> {
         let has_select = statements
             .iter()
@@ -4739,6 +4774,12 @@ impl Connection {
     ) -> Result<StatementRun> {
         let nothing =
             || MaterializedResult::new(vec!["Success".into()], vec![LogicalType::BOOLEAN], Vec::new());
+        if let LogicalKind::Set { name, scope, .. } | LogicalKind::Reset { name, scope } = &plan.kind
+            && *scope != SetScope::Variable
+        {
+            self.settings.check_lock(name)?;
+            self.autoload_setting_extension(name.as_bytes())?;
+        }
         // `PhysicalSet` / `PhysicalReset`: `DBConfig::CheckLock`, then the checks of options
         // that cannot change while the database runs.
         match &plan.kind {

@@ -1004,6 +1004,15 @@ impl HttpFile {
                                 && !region.is_empty()
                                 && region != signing.request_region()
                             {
+                                if let Some(subject) =
+                                    self.signing.as_ref().and_then(|s| s.region_notice.as_deref())
+                                    && let Some(logger) = &self.logger
+                                {
+                                    logger.warning(&format!(
+                                        "{subject} from incorrect region \"{}\" - retrying with updated region \"{region}\".\nConsider setting the S3 region to this explicitly to avoid extra round-trips.",
+                                        signing.request_region()
+                                    ))?;
+                                }
                                 signing.redirect(region);
                                 redirected = true;
                                 location_url = None;
@@ -1016,6 +1025,7 @@ impl HttpFile {
                             response.extensions_mut().insert(s3::RequestInfo {
                                 region: signing.request_region().into(),
                                 redirected,
+                                url: initial_url.clone(),
                             });
                         }
                         // Upstream treats a range length mismatch as a request
@@ -1133,17 +1143,14 @@ impl HttpFile {
         // without a usable length leaves the size 0, which downloads the file.
         let mut response = self.request("HEAD", None)?;
         if response.status().as_u16() != 200 {
-            if !matches!(response.status().as_u16(), 301 | 404) {
+            let probed = !matches!(response.status().as_u16(), 301 | 404);
+            if probed {
                 response = self.request("GET", Some((0, 1)))?;
             }
             let status = response.status().as_u16();
             if !matches!(status, 200 | 202 | 206) {
-                return Err(response_error(
-                    status_error("GET", &self.display_url, status),
-                    &response,
-                    b"",
-                    self.parameters.httplib,
-                ));
+                // The request layer rejects a failed probe; the handle rejects the rest.
+                return Err(self.get_error(&mut response, probed && status >= 400));
             }
             if header_number(&response, "content-length").is_some_and(|length| length != 2) {
                 // Upstream rejects the response before reading its body and keeps
@@ -1212,6 +1219,42 @@ impl HttpFile {
         }
         Ok(())
     }
+    /// The error of a GET or HEAD response the handle does not accept
+    /// (`GetHTTPError`). A signed S3 handle reports `S3FileSystem`'s text: about the
+    /// request's own URL when the request layer raised it (`request`), about the
+    /// handle's path otherwise. The body is consumed, which keeps the connection.
+    fn get_error(&self, response: &mut ureq::http::Response<body::Body>, request: bool) -> Error {
+        let status = response.status().as_u16();
+        let Some(signing) = &self.signing else {
+            let _ = io::copy(&mut response.body_mut().as_reader(), &mut io::sink());
+            return response_error(
+                status_error("GET", &self.display_url, status),
+                response,
+                b"",
+                self.parameters.httplib,
+            );
+        };
+        // The service's error document names the failure; a HEAD has none.
+        let mut body = Vec::new();
+        if response.body_mut().as_reader().read_to_end(&mut body).is_err() {
+            body.clear();
+        }
+        let info = response.extensions().get::<s3::RequestInfo>().cloned();
+        let region = info
+            .as_ref()
+            .map_or_else(|| signing.effective("GET").request_region().to_owned(), |info| info.region.clone());
+        let url = match &info {
+            Some(info) if request => info.url.as_str(),
+            _ => self.display_url.as_str(),
+        };
+        response_error(
+            signing.response_error(&region, status, &body, url),
+            response,
+            &body,
+            self.parameters.httplib,
+        )
+    }
+
     fn full_download(&self) -> Result<Arc<download::Downloaded>> {
         let mut state = self
             .download
@@ -1223,12 +1266,8 @@ impl HttpFile {
         }
         let mut response = self.request("GET", None)?;
         if response.status().as_u16() != 200 {
-            return Err(response_error(
-                status_error("GET", &self.display_url, response.status().as_u16()),
-                &response,
-                b"",
-                self.parameters.httplib,
-            ));
+            let failed = response.status().as_u16() >= 400;
+            return Err(self.get_error(&mut response, failed));
         }
         let manager = self
             .client
@@ -1249,13 +1288,7 @@ impl HttpFile {
         let mut response = self.request("GET", Some((offset, end)))?;
         let status = response.status().as_u16();
         if status != 200 && status != 206 {
-            io::copy(&mut response.body_mut().as_reader(), &mut io::sink()).map_err(io_error)?;
-            return Err(response_error(
-                status_error("GET", &self.display_url, status),
-                &response,
-                b"",
-                self.parameters.httplib,
-            ));
+            return Err(self.get_error(&mut response, status >= 400));
         }
         let etag = response
             .headers()

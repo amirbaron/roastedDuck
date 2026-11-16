@@ -21,6 +21,41 @@ static int allowed(const char *host) {
       !strcmp(host,"portal.sso.eu-west-1.amazonaws.com") ||
       !strcmp(host,"oidc.eu-west-1.amazonaws.com") || !strcmp(host,"oidc.us-east-2.amazonaws.com"));
 }
+// Reviewed public hosts (ROASTEDDUCK_FIXTURE_PUBLIC_HOSTS, comma separated) for originals
+// that read a public file beside the owned fixture. Only the IPv4 addresses those names
+// resolve to may be reached; every other non-loopback connection stays denied.
+#define PUBLIC_ADDRESSES 128
+static struct in_addr public_addresses[PUBLIC_ADDRESSES];
+static int public_count;
+static pthread_mutex_t public_lock=PTHREAD_MUTEX_INITIALIZER;
+static int public_host(const char *host) {
+    const char *list=getenv("ROASTEDDUCK_FIXTURE_PUBLIC_HOSTS");
+    if(!list || !host)return 0;
+    size_t n=strlen(host);
+    while(*list) {
+        const char *end=strchr(list,',');size_t m=end?(size_t)(end-list):strlen(list);
+        if(m==n && !strncasecmp(list,host,n))return 1;
+        list+=m;if(*list==',')list++;
+    }
+    return 0;
+}
+static int public_address(struct in_addr address) {
+    int found=0;
+    pthread_mutex_lock(&public_lock);
+    for(int i=0;i<public_count;i++)if(public_addresses[i].s_addr==address.s_addr)found=1;
+    pthread_mutex_unlock(&public_lock);
+    return found;
+}
+static void remember_public(const struct addrinfo *list) {
+    for(;list;list=list->ai_next) {
+        if(list->ai_family!=AF_INET)continue;
+        struct in_addr address=((const struct sockaddr_in*)list->ai_addr)->sin_addr;
+        if(public_address(address))continue;
+        pthread_mutex_lock(&public_lock);
+        if(public_count<PUBLIC_ADDRESSES)public_addresses[public_count++]=address;
+        pthread_mutex_unlock(&public_lock);
+    }
+}
 static const char *s3_port(const char *host) {
     const char *port=getenv("ROASTEDDUCK_FIXTURE_S3_PORT");
     if(!port || atoi(port)<=0 || atoi(port)>65535 || !host)return NULL;
@@ -59,6 +94,15 @@ static int fixture_getaddrinfo(const char *node,const char *service,const struct
     if(node && metadata_port(node))return getaddrinfo(node,service,hints,out);
     if (!node || !strcmp(node,"localhost") || !strcmp(node,"127.0.0.1") || !strcmp(node,"::1"))
         return getaddrinfo(node,service,hints,out);
+    if (public_host(node)) {
+        struct addrinfo ipv4;
+        if(hints)ipv4=*hints;else memset(&ipv4,0,sizeof(ipv4));
+        ipv4.ai_family=AF_INET;
+        int status=getaddrinfo(node,service,&ipv4,out);
+        if(!status)remember_public(*out);
+        fprintf(stderr,"fixture public DNS: %s\n",node);
+        return status;
+    }
     fprintf(stderr,"fixture denied DNS: %s\n",node);return EAI_NONAME;
 }
 static int fixture_connect(int fd,const struct sockaddr *address,socklen_t length) {
@@ -68,6 +112,7 @@ static int fixture_connect(int fd,const struct sockaddr *address,socklen_t lengt
     if(address->sa_family==AF_INET) {
         struct sockaddr_in *a=(struct sockaddr_in*)&copy;
         fprintf(stderr,"fixture connect: %s:%u\n",inet_ntoa(a->sin_addr),ntohs(a->sin_port));
+        if(public_address(a->sin_addr))return connect(fd,address,length);
         route_metadata(a);
         if(ntohl(a->sin_addr.s_addr)==INADDR_LOOPBACK && ntohs(a->sin_port)==9000 && s3_port("duckdb-minio.com"))a->sin_port=htons((unsigned short)atoi(s3_port("duckdb-minio.com")));
         if(ntohl(a->sin_addr.s_addr)!=INADDR_LOOPBACK) {errno=EACCES;return -1;}
@@ -85,6 +130,7 @@ static int fixture_connectx(int fd,const sa_endpoints_t *endpoints,sae_associd_t
     if(destination.ss_family==AF_INET) {
         struct sockaddr_in *a=(struct sockaddr_in*)&destination;
         fprintf(stderr,"fixture connectx: %s:%u\n",inet_ntoa(a->sin_addr),ntohs(a->sin_port));
+        if(public_address(a->sin_addr))return connectx(fd,endpoints,association,flags,iov,count,bytes,connection);
         route_metadata(a);
         if(ntohl(a->sin_addr.s_addr)==INADDR_LOOPBACK && ntohs(a->sin_port)==9000 && s3_port("duckdb-minio.com"))a->sin_port=htons((unsigned short)atoi(s3_port("duckdb-minio.com")));
         if(ntohl(a->sin_addr.s_addr)!=INADDR_LOOPBACK){errno=EACCES;return -1;}

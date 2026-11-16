@@ -106,12 +106,17 @@ pub(super) struct HttpLogger {
 
 impl HttpLogger {
     pub(super) fn fallback(&self, url: &str) -> roastedduck_common::Result<()> {
+        self.warning(&format!("Falling back to full file download for file '{url}': the server does not support HTTP range requests. Performance and memory usage are potentially degraded."))
+    }
+
+    /// `DUCKDB_LOG_WARNING` on the handle's logger.
+    pub(super) fn warning(&self, message: &str) -> roastedduck_common::Result<()> {
         if self
             .client
             .should_log(LogScope::Connection, "", LogLevel::Warning)
         {
-            self.client.write_log(LogScope::Connection, "", LogLevel::Warning,
-                &format!("Falling back to full file download for file '{url}': the server does not support HTTP range requests. Performance and memory usage are potentially degraded."))?;
+            self.client
+                .write_log(LogScope::Connection, "", LogLevel::Warning, message)?;
         }
         Ok(())
     }

@@ -6,13 +6,14 @@ from contextlib import ExitStack
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
 import tarfile
 
 from minio_fixture import Minio
-from http_fixture import HttpServer
+from http_fixture import ForwardProxy, HttpServer
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -26,6 +27,10 @@ def main():
     parser.add_argument('--timeout', type=int, default=180)
     parser.add_argument('--seeds', type=Path, help='Verified output from generate_s3_seeds.py')
     parser.add_argument('--public-network', action='store_true', help='Run public-service originals without child-local transport mapping')
+    parser.add_argument('--repository-extensions', type=Path,
+                        help='Authenticated oracle packages to stage as LOCAL_EXTENSION_REPO for autoloading originals')
+    parser.add_argument('--public-host', action='append', default=[],
+                        help='A reviewed public host the owned-fixture child may also reach; may be repeated')
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=False)
@@ -51,7 +56,9 @@ def main():
         assert hashlib.sha256((source / name).read_bytes()).hexdigest() == manifest['sql_tests'][name]
         if args.public_network:
             assert 'require-env S3_TEST_SERVER_AVAILABLE' not in (source / name).read_text()
+    assert not (args.public_network and args.public_host)
     report = {'scope': 'Unchanged original SQL against public endpoints' if args.public_network else 'Unchanged original SQL with owned MinIO; no live AWS claim',
+              'public_hosts': args.public_host,
               'data_hashes': data_hashes,
               'original_sql': {name: manifest['sql_tests'][name] for name in args.file},
               'seed_manifest': seed_manifest,
@@ -59,6 +66,19 @@ def main():
                                  for name in ['minio', 'mc']},
               'sha256': {name: hashlib.sha256(getattr(args, name).read_bytes()).hexdigest()
                          for name in ['slt', 'shim', 'transport']}}
+    repository = None
+    if args.repository_extensions:
+        # DuckDB's repository layout: <version>/<platform>/<name>.duckdb_extension[.gz].
+        repository = out / 'repository'
+        for extension in sorted(args.repository_extensions.resolve().glob('*.duckdb_extension')):
+            with extension.open('rb') as blob:
+                blob.seek(-320, 2)
+                platform = blob.read(32).split(b'\0', 1)[0].decode()
+            destination = repository / 'v1.5.6' / platform
+            destination.mkdir(parents=True, exist_ok=True)
+            for staged in [extension, extension.with_name(extension.name + '.gz')]:
+                if staged.exists():
+                    (destination / staged.name).symlink_to(staged)
     with Minio(args.tools, out / 'minio') as service:
         for engine in ['cpp', 'rust'] if args.engine == 'both' else [args.engine]:
             directory = out / engine
@@ -90,6 +110,8 @@ def main():
                        SLT_FIXTURE_EXTENSION_DIRECTORY=str(directory / 'extensions'))
             if args.public_network:
                 env.pop('DYLD_INSERT_LIBRARIES')
+            if args.public_host:
+                env['ROASTEDDUCK_FIXTURE_PUBLIC_HOSTS'] = ','.join(args.public_host)
             rows = []
             for index, name in enumerate(args.file):
                 service.reset()
@@ -123,6 +145,17 @@ def main():
                 destination = reference / name
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes((source / name).read_bytes())
+                # Upstream runs these files from a DuckDB checkout: local data the
+                # extension source lacks comes from the pinned core data, hash-checked.
+                for relative in sorted(set(re.findall(r"'(data/[^'*?\[\]{}]+)'", sql))):
+                    if (reference / relative).exists() or not (args.core.resolve() / relative).is_file():
+                        continue
+                    core_manifest = json.loads(args.core.with_name(args.core.name + '-manifest.json').read_text())
+                    content = (args.core.resolve() / relative).read_bytes()
+                    assert hashlib.sha256(content).hexdigest() == core_manifest[relative], relative
+                    (reference / relative).parent.mkdir(parents=True, exist_ok=True)
+                    (reference / relative).write_bytes(content)
+                    report.setdefault('core_data', {})[relative] = core_manifest[relative]
                 case = directory / f'{index:03}'
                 case.mkdir()
                 command = [str(args.slt.resolve()), 'run', '--engine', engine, '--root', str(reference),
@@ -131,11 +164,25 @@ def main():
                 if engine == 'cpp':
                     command += ['--shim', str(args.shim.resolve())]
                 with ExitStack() as stack:
+                    # Per-file services stay out of the environment of later files.
+                    case_env = dict(env)
+                    if 'require-env LOCAL_EXTENSION_REPO' in sql:
+                        assert repository, 'Stage --repository-extensions before running this original'
+                        case_env['LOCAL_EXTENSION_REPO'] = str(repository)
                     if 'require-env PYTHON_HTTP_SERVER_URL' in sql:
                         http = stack.enter_context(HttpServer(case / 'http'))
-                        env.update(PYTHON_HTTP_SERVER_URL=http.url, PYTHON_HTTP_SERVER_DIR=str(http.directory))
+                        case_env.update(PYTHON_HTTP_SERVER_URL=http.url, PYTHON_HTTP_SERVER_DIR=str(http.directory))
+                    if 'require-env HTTP_PROXY_PUBLIC' in sql:
+                        # Upstream runs two squid instances; these owned proxies forward only
+                        # to the owned MinIO. The second requires its fake Basic credentials.
+                        origins = {'duckdb-minio.com': service.port}
+                        public = stack.enter_context(ForwardProxy(case / 'proxy-public', origins))
+                        private = stack.enter_context(ForwardProxy(case / 'proxy-private', origins, ('john', 'doe')))
+                        case_env.update(HTTP_PROXY_PUBLIC=public.address, HTTP_PROXY=public.address,
+                                   HTTP_PROXY_PRIVATE=private.address, HTTP_PROXY_PRIVATE_USERNAME='john',
+                                   HTTP_PROXY_PRIVATE_PASSWORD='doe')
                     log = stack.enter_context((case / 'run.log').open('w'))
-                    run = subprocess.run(command, env=env, stdout=log, stderr=subprocess.STDOUT,
+                    run = subprocess.run(command, env=case_env, stdout=log, stderr=subprocess.STDOUT,
                                          timeout=args.timeout + 60)
                 results = [json.loads(line) for line in (case / 'results.jsonl').read_text().splitlines()]
                 assert len(results) == 1
