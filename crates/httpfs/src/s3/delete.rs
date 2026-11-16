@@ -137,7 +137,7 @@ pub(super) fn remove_files(paths: &[ByteString]) -> Result<()> {
                 signing.host,
                 encode(&signing.path, false)
             );
-            let file = HttpFile::new_request(url, batch.request.parameters.clone(), Some(signing))?;
+            let file = HttpFile::new_request(url, batch.request.parameters.clone(), Some(signing));
             let mut response = file.request_payload("POST", None, body.as_bytes(), true)?;
             let status = response.status();
             let mut result = String::new();

@@ -25,6 +25,7 @@ mod appender;
 mod prepared_statement;
 mod registration;
 mod statement_preprocessor;
+mod verification;
 
 pub use active_query::{
     ClientHandle, PendingExecutionResult, PendingQuery, QueryId, QueryProgress, QueryResult,
@@ -160,6 +161,12 @@ impl roastedduck_planner::DatabaseState for InstanceState {
     }
 }
 
+impl roastedduck_function::file_system::FileSystemExtensionLoader for InstanceState {
+    fn load(&self, extension: &str) -> Result<bool> {
+        <Self as roastedduck_planner::DatabaseState>::autoload_extension(self, extension)
+    }
+}
+
 /// The instance state of the database a call is bound in.
 pub(crate) fn instance_state(context: &ClientContext) -> Result<&InstanceState> {
     context
@@ -268,6 +275,10 @@ pub(crate) fn static_extension_loaded(cache: &roastedduck_function::ObjectCache,
 /// An extension linked into the engine whose functions are registered on load.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StaticExtension {
+    Postgres,
+    Azure,
+    Aws,
+    Httpfs,
     Fts,
     Vss,
     Parquet,
@@ -292,6 +303,10 @@ impl StaticExtension {
 
     fn from_name(name: &str) -> Option<Self> {
         match name {
+            "postgres_scanner" | "postgres" => Some(Self::Postgres),
+            "azure" => Some(Self::Azure),
+            "aws" => Some(Self::Aws),
+            "httpfs" => Some(Self::Httpfs),
             "fts" => Some(Self::Fts),
             crate::vss::EXTENSION_NAME => Some(Self::Vss),
             "parquet" => Some(Self::Parquet),
@@ -320,7 +335,9 @@ impl StaticExtension {
             }
             Self::Tpch => PragmaFunction::call("tpch", vec![LogicalType::BIGINT]).with_query(),
             Self::Tpcds => PragmaFunction::call("tpcds", vec![LogicalType::BIGINT]).with_query(),
-            Self::Autocomplete | Self::Icu => return Vec::new(),
+            Self::Postgres | Self::Azure | Self::Aws | Self::Httpfs | Self::Autocomplete | Self::Icu => {
+                return Vec::new();
+            }
         };
         vec![PragmaFunctionSet::single(function)]
     }
@@ -331,7 +348,16 @@ impl StaticExtension {
         match self {
             Self::Tpch => name.eq_ignore_ascii_case(b"tpch"),
             Self::Tpcds => name.eq_ignore_ascii_case(b"tpcds"),
-            Self::Fts | Self::Vss | Self::Parquet | Self::Json | Self::Autocomplete | Self::Icu => false,
+            Self::Postgres
+            | Self::Azure
+            | Self::Aws
+            | Self::Httpfs
+            | Self::Fts
+            | Self::Vss
+            | Self::Parquet
+            | Self::Json
+            | Self::Autocomplete
+            | Self::Icu => false,
         }
     }
 
@@ -341,9 +367,18 @@ impl StaticExtension {
         match self {
             Self::Tpch => roastedduck_tpch::pragma_tpch_query(parameters),
             Self::Tpcds => roastedduck_tpcds::pragma_tpcds_query(parameters),
-            Self::Fts | Self::Vss | Self::Parquet | Self::Json | Self::Autocomplete | Self::Icu => Err(
-                Error::internal(roastedduck_common::byte_format!("no pragma {name}")),
-            ),
+            Self::Postgres
+            | Self::Azure
+            | Self::Aws
+            | Self::Httpfs
+            | Self::Fts
+            | Self::Vss
+            | Self::Parquet
+            | Self::Json
+            | Self::Autocomplete
+            | Self::Icu => Err(Error::internal(roastedduck_common::byte_format!(
+                "no pragma {name}"
+            ))),
         }
     }
 
@@ -354,6 +389,25 @@ impl StaticExtension {
             system.register_pragma_functions(set)?;
         }
         match self {
+            Self::Postgres => {
+                system.register_table_functions(crate::postgres::pool::function())?;
+                system.register_copy_function(crate::postgres::binary_file::copy_function())?;
+                system.register_table_functions(crate::postgres::binary_file::table_function())?;
+                for set in crate::postgres::hstore::functions() {
+                    system.register_scalar_functions(set)?;
+                }
+                system.register_table_functions(crate::postgres::attach_function())?;
+                for set in crate::postgres::query_functions() {
+                    system.register_table_functions(set)?;
+                }
+                for set in crate::postgres::scan_functions() {
+                    system.register_table_functions(set)?;
+                }
+            }
+            Self::Aws => {
+                system.register_table_functions(crate::aws::legacy_function())?;
+            }
+            Self::Httpfs | Self::Azure => {}
             Self::Fts => {
                 system.register_scalar_functions(crate::fts::stem_function())?;
             }
@@ -756,6 +810,34 @@ impl DatabaseInstance {
             .unwrap_or_else(PoisonError::into_inner);
         if !loaded.contains(&extension) {
             extension.register(&self.system_catalog, &self.loaded_extensions)?;
+            if extension == StaticExtension::Azure {
+                roastedduck_function::registered_files::Registry::initialize(&self.object_cache)
+                    .register(Arc::new(roastedduck_httpfs::azure::AzureBlobFileSystem))?;
+                roastedduck_function::registered_files::Registry::initialize(&self.object_cache)
+                    .register(Arc::new(roastedduck_httpfs::azure::AzureDfsFileSystem))?;
+                self.secrets.register_azure_type();
+                self.object_cache.put(
+                    roastedduck_httpfs::azure::SECRET_RESOLVER_KEY,
+                    Arc::new(roastedduck_httpfs::azure::SecretResolver(Arc::new(
+                        crate::secrets::AzureSecretLookup(self.secrets.clone()),
+                    ))),
+                );
+                for option in roastedduck_httpfs::azure::options() {
+                    self.add_extension_option(option);
+                }
+            }
+            if extension == StaticExtension::Postgres {
+                self.secrets.register_postgres_type();
+                for option in crate::postgres::options() {
+                    self.add_extension_option(option);
+                }
+            }
+            if extension == StaticExtension::Aws {
+                self.secrets.register_aws_provider();
+            }
+            if extension == StaticExtension::Httpfs {
+                self.register_http_file_system()?;
+            }
             if extension == StaticExtension::Icu {
                 self.load_icu_config();
             }
@@ -766,6 +848,12 @@ impl DatabaseInstance {
                     roastedduck_function::file_system::ZSTD_FILE_SYSTEM_KEY.to_owned(),
                     Arc::new(()),
                 );
+            }
+            if extension == StaticExtension::Postgres {
+                self.log_manager
+                    .register_type(crate::postgres::logging::log_type());
+                self.optimizer_rules
+                    .register(Arc::new(crate::postgres::catalog::scan::Rule))?;
             }
             if extension == StaticExtension::Vss {
                 self.index_types
@@ -778,6 +866,68 @@ impl DatabaseInstance {
                 }
             }
             loaded.push(extension);
+        }
+        Ok(())
+    }
+
+    fn register_http_file_system(&self) -> Result<()> {
+        self.log_manager
+            .register_type(roastedduck_httpfs::client_cache::log_type());
+        roastedduck_function::registered_files::Registry::initialize(&self.object_cache)
+            .register(Arc::new(roastedduck_httpfs::HttpFileSystem))?;
+        roastedduck_function::registered_files::Registry::initialize(&self.object_cache)
+            .register(Arc::new(roastedduck_httpfs::huggingface::HuggingFaceFileSystem))?;
+        roastedduck_function::registered_files::Registry::initialize(&self.object_cache).register(
+            Arc::new(roastedduck_httpfs::s3::S3FileSystem::new(
+                self.env.buffer_manager.clone(),
+            )),
+        )?;
+        self.secrets.register_s3_types();
+        self.object_cache.put(
+            roastedduck_httpfs::HTTP_SECRET_RESOLVER_KEY,
+            Arc::new(roastedduck_httpfs::HttpSecretResolver(Arc::new(
+                crate::secrets::HttpSecretLookup(Arc::clone(&self.secrets)),
+            ))),
+        );
+        self.object_cache.put(
+            roastedduck_httpfs::s3::SECRET_RESOLVER_KEY,
+            Arc::new(roastedduck_httpfs::s3::SecretResolver(Arc::new(
+                crate::secrets::S3SecretLookup(Arc::clone(&self.secrets)),
+            ))),
+        );
+        self.object_cache.put(
+            roastedduck_httpfs::huggingface::SECRET_RESOLVER_KEY,
+            Arc::new(roastedduck_httpfs::huggingface::SecretResolver(Arc::new(
+                crate::secrets::HuggingFaceSecretLookup(Arc::clone(&self.secrets)),
+            ))),
+        );
+        for option in roastedduck_httpfs::options()
+            .into_iter()
+            .chain(roastedduck_httpfs::s3::options())
+        {
+            if self.extension_option(&option.name).is_none() {
+                self.add_extension_option(option);
+            }
+        }
+        // The pinned extension snapshots these environment settings at LOAD.
+        // These are global values; keep the reported option defaults intact.
+        for (name, variable) in [
+            ("s3_region", "AWS_DEFAULT_REGION"),
+            ("s3_region", "AWS_REGION"),
+            ("s3_access_key_id", "AWS_ACCESS_KEY_ID"),
+            ("s3_secret_access_key", "AWS_SECRET_ACCESS_KEY"),
+            ("s3_session_token", "AWS_SESSION_TOKEN"),
+            ("s3_endpoint", "DUCKDB_S3_ENDPOINT"),
+            ("s3_use_ssl", "DUCKDB_S3_USE_SSL"),
+            ("s3_kms_key_id", "DUCKDB_S3_KMS_KEY_ID"),
+            ("s3_requester_pays", "DUCKDB_S3_REQUESTER_PAYS"),
+        ] {
+            if let Ok(text) = std::env::var(variable)
+                && let Some(option) = self.extension_option(name)
+            {
+                let value = Value::varchar(text).default_cast_as(&option.input_type)?;
+                self.set_extension_global(&option, Some(value));
+            }
         }
         Ok(())
     }
@@ -1555,6 +1705,7 @@ impl DatabaseInstance {
             return Ok(());
         };
         let storage = match &database.storage {
+            crate::attached::DatabaseStorage::Postgres(_) => return Ok(()),
             crate::attached::DatabaseStorage::File(storage) => storage,
             crate::attached::DatabaseStorage::InMemory(storage) => {
                 storage.add_wal_size(estimated_size);
@@ -1904,6 +2055,15 @@ impl Database {
         let database = Self {
             instance: Arc::new(instance),
         };
+        database.instance.object_cache.put(
+            roastedduck_function::file_system::EXTENSION_LOADER_KEY,
+            Arc::new(roastedduck_function::file_system::ExtensionLoader(Arc::new(
+                InstanceState {
+                    secrets: Arc::clone(&database.instance.secrets),
+                    instance: Arc::downgrade(&database.instance),
+                },
+            ))),
+        );
         database
             .instance
             .optimizer_rules
@@ -2373,10 +2533,14 @@ impl Database {
             extension_session: CaseInsensitiveMap::default(),
             bound_casts: Mutex::default(),
             explicit_commit: None,
+            verification_running: false,
             active_query: None,
             next_query_id: 0,
             client: Arc::default(),
         };
+        connection
+            .function_client
+            .set_interrupt_flag(connection.client.interrupt_flag());
         connection.sync_global_settings();
         Ok(connection)
     }
@@ -2392,64 +2556,24 @@ impl Database {
         true
     }
 
-    /// Register native HTTP(S) and S3 transports. Full HTTPFS support, including
-    /// credential refresh and `HuggingFace`, remains separate work.
-    pub fn register_http_file_system(&self) -> Result<()> {
-        roastedduck_function::registered_files::Registry::initialize(&self.instance.object_cache)
-            .register(Arc::new(roastedduck_httpfs::HttpFileSystem))?;
-        roastedduck_function::registered_files::Registry::initialize(&self.instance.object_cache)
-            .register(Arc::new(roastedduck_httpfs::huggingface::HuggingFaceFileSystem))?;
-        roastedduck_function::registered_files::Registry::initialize(&self.instance.object_cache).register(
-            Arc::new(roastedduck_httpfs::s3::S3FileSystem::new(
-                self.instance.env.buffer_manager.clone(),
-            )),
-        )?;
-        self.instance.secrets.register_s3_types();
-        self.instance.object_cache.put(
-            roastedduck_httpfs::HTTP_SECRET_RESOLVER_KEY,
-            Arc::new(roastedduck_httpfs::HttpSecretResolver(Arc::new(
-                crate::secrets::HttpSecretLookup(Arc::clone(&self.instance.secrets)),
-            ))),
-        );
-        self.instance.object_cache.put(
-            roastedduck_httpfs::s3::SECRET_RESOLVER_KEY,
-            Arc::new(roastedduck_httpfs::s3::SecretResolver(Arc::new(
-                crate::secrets::S3SecretLookup(Arc::clone(&self.instance.secrets)),
-            ))),
-        );
-        self.instance.object_cache.put(
-            roastedduck_httpfs::huggingface::SECRET_RESOLVER_KEY,
-            Arc::new(roastedduck_httpfs::huggingface::SecretResolver(Arc::new(
-                crate::secrets::HuggingFaceSecretLookup(Arc::clone(&self.instance.secrets)),
-            ))),
-        );
-        for option in roastedduck_httpfs::options()
-            .into_iter()
-            .chain(roastedduck_httpfs::s3::options())
-        {
-            self.add_extension_option(option);
-        }
-        // The pinned extension snapshots these environment settings at LOAD.
-        // These are global values; keep the reported option defaults intact.
-        for (name, variable) in [
-            ("s3_region", "AWS_DEFAULT_REGION"),
-            ("s3_region", "AWS_REGION"),
-            ("s3_access_key_id", "AWS_ACCESS_KEY_ID"),
-            ("s3_secret_access_key", "AWS_SECRET_ACCESS_KEY"),
-            ("s3_session_token", "AWS_SESSION_TOKEN"),
-            ("s3_endpoint", "DUCKDB_S3_ENDPOINT"),
-            ("s3_use_ssl", "DUCKDB_S3_USE_SSL"),
-            ("s3_kms_key_id", "DUCKDB_S3_KMS_KEY_ID"),
-            ("s3_requester_pays", "DUCKDB_S3_REQUESTER_PAYS"),
-        ] {
-            if let Ok(text) = std::env::var(variable)
-                && let Some(option) = self.instance.extension_option(name)
-            {
-                let value = Value::varchar(text).default_cast_as(&option.input_type)?;
-                self.instance.set_extension_global(&option, Some(value));
-            }
-        }
+    pub(crate) fn set_extension_global_value(&self, name: &str, value: &Value) -> Result<()> {
+        let option = self
+            .instance
+            .extension_option(name)
+            .ok_or_else(|| Error::internal(format!("Missing extension option {name}")))?;
+        let value = value.default_cast_as(&option.input_type)?;
+        self.instance.set_extension_global(&option, Some(value));
         Ok(())
+    }
+
+    pub(crate) fn httpfs_loaded(&self) -> bool {
+        static_extension_loaded(&self.instance.object_cache, "httpfs")
+            || self.external_extensions().contains(b"httpfs")
+    }
+
+    /// Register roastedDuck's compatible HTTPFS transports and secret providers.
+    pub fn register_http_file_system(&self) -> Result<()> {
+        self.instance.register_http_file_system()
     }
 
     /// Runs queued tasks of the database's queries on the calling thread (DuckDB's
@@ -2609,6 +2733,7 @@ impl Database {
 /// concurrency.
 #[derive(Debug)]
 pub struct Connection {
+    verification_running: bool,
     database: Database,
     /// The global options as last applied to `settings`.
     synced_globals: GlobalSettings,
@@ -3112,6 +3237,7 @@ impl Connection {
     ) -> Result<MaterializedResult> {
         let query = query.as_ref();
         self.initial_cleanup();
+        self.verify_statement(&statement)?;
         let statement_type = statement.statement_type();
         self.begin_query(query, &statement)?;
         let outcome = self.in_query_scope(|connection| {
@@ -3359,6 +3485,11 @@ impl Connection {
                 .iter()
                 .any(|database| Arc::ptr_eq(database, &attached));
         let transaction = self.transactions.current();
+        if let crate::attached::DatabaseStorage::Postgres(catalog) = &attached.storage {
+            return catalog
+                .transaction(&self.function_client, &transaction)?
+                .execute("CHECKPOINT", true);
+        }
         // Explicit checkpoints bind the indexes first, so the written indexes hold
         // the changes replayed from the WAL (`SingleFileCheckpointWriter::WriteTable`
         // with a bind connection).
@@ -3488,7 +3619,7 @@ impl Connection {
         scope: SetScope,
     ) -> Result<()> {
         let name = name.as_ref();
-        let instance = self.database.instance();
+        let instance = Arc::clone(&self.database.instance);
         let option = instance.extension_option(name).ok_or_else(|| {
             Error::invalid_input(roastedduck_common::byte_format!(
                 "Extension parameter {name} was not found after autoloading"
@@ -3500,6 +3631,9 @@ impl Connection {
         if let Some(set_function) = &option.set_function {
             set_function(&mut target_value)?;
         }
+        crate::postgres::pool::validate_setting(&self.function_client, name, &target_value, scope)?;
+        self.apply_postgres_pool_limit(name, &target_value);
+        self.apply_postgres_cache_setting(name);
         if scope == SetScope::Global || (scope == SetScope::Automatic && option.global_by_default) {
             instance.set_extension_global(&option, Some(target_value));
         } else {
@@ -3513,7 +3647,7 @@ impl Connection {
     /// option's default scope says).
     fn reset_extension_variable(&mut self, name: impl AsRef<[u8]>, scope: SetScope) -> Result<()> {
         let name = name.as_ref();
-        let instance = self.database.instance();
+        let instance = Arc::clone(&self.database.instance);
         let option = instance.extension_option(name).ok_or_else(|| {
             Error::invalid_input(roastedduck_common::byte_format!(
                 "Extension parameter {name} was not found after autoloading"
@@ -3523,6 +3657,9 @@ impl Connection {
             let mut default_value = option.default_value.clone();
             set_function(&mut default_value)?;
         }
+        crate::postgres::pool::validate_setting(&self.function_client, name, &option.default_value, scope)?;
+        self.apply_postgres_pool_limit(name, &option.default_value);
+        self.apply_postgres_cache_setting(name);
         if scope == SetScope::Global || (scope == SetScope::Automatic && option.global_by_default) {
             instance.set_extension_global(&option, None);
         } else {
@@ -3530,6 +3667,39 @@ impl Connection {
                 .insert(&option.name, option.default_value.clone());
         }
         Ok(())
+    }
+
+    fn apply_postgres_cache_setting(&self, name: &[u8]) {
+        if [
+            b"pg_use_information_schema_introspection".as_slice(),
+            b"pg_staleness_query_enabled",
+            b"pg_staleness_query",
+        ]
+        .iter()
+        .any(|option| name.eq_ignore_ascii_case(option))
+        {
+            for database in self.database.instance.databases.all() {
+                if let crate::attached::DatabaseStorage::Postgres(pg) = &database.storage {
+                    pg.clear_cache();
+                }
+            }
+        }
+    }
+
+    fn apply_postgres_pool_limit(&mut self, name: &[u8], value: &Value) {
+        let Some(value) = crate::postgres::pool::legacy_limit(name, value) else {
+            return;
+        };
+        let instance = Arc::clone(&self.database.instance);
+        for database in instance.databases.all() {
+            if let crate::attached::DatabaseStorage::Postgres(pg) = &database.storage {
+                pg.pool.set_max_connections(value.as_u64().unwrap_or(0));
+            }
+        }
+        if let Some(option) = instance.extension_option(b"pg_connection_limit") {
+            instance.set_extension_global(&option, Some(value.clone()));
+        }
+        self.extension_session.insert("pg_pool_max_connections", value);
     }
 
     /// Records a `SET` / `RESET` (`value` `None`) of option `name` with `scope`: a global
@@ -3795,63 +3965,80 @@ impl Connection {
         // The statements to run; `queries` are SQL texts to run before `statements[i]`.
         let mut statements: Vec<SqlStatement> = Vec::new();
         let mut queries: Vec<(usize, roastedduck_common::ByteString)> = Vec::new();
-        if stmt.copy_type == roastedduck_ast::CopyDatabaseType::CopySchema {
-            for mut info in roastedduck_catalog::checkpoint::export_create_infos(&source.catalog, &snapshot) {
-                info.catalog.clone_from(&target_name);
-                info.on_conflict = if matches!(info.kind, roastedduck_ast::CreateInfoKind::Schema) {
-                    roastedduck_ast::OnCreateConflict::IgnoreOnConflict
-                } else {
-                    roastedduck_ast::OnCreateConflict::ErrorOnConflict
-                };
-                // Schemas and sequences are created from their infos: their SQL names no
-                // catalog, and a sequence's SQL loses its usage.
-                if matches!(
-                    info.kind,
-                    roastedduck_ast::CreateInfoKind::Schema | roastedduck_ast::CreateInfoKind::Sequence(_)
-                ) {
-                    statements.push(SqlStatement::new(roastedduck_ast::SqlStatementKind::Create(
-                        Box::new(info),
-                    )));
-                } else if let Some(sql) = info.to_sql() {
-                    queries.push((statements.len(), sql));
-                }
-            }
-        } else {
-            let mut tables = Vec::new();
-            for schema in source.catalog.schemas().scan(&snapshot) {
-                let Some(contents) = schema.as_schema() else {
-                    continue;
-                };
-                for entry in contents.tables.scan(&snapshot) {
-                    if matches!(entry.kind, roastedduck_catalog::EntryKind::Table(_)) && !entry.internal {
-                        tables.push((schema.name().to_owned(), entry));
+        let prepared = (|| -> Result<()> {
+            if stmt.copy_type == roastedduck_ast::CopyDatabaseType::CopySchema {
+                for mut info in roastedduck_catalog::checkpoint::export_create_infos(
+                    &source.catalog,
+                    &snapshot,
+                    &self.function_client,
+                )? {
+                    info.catalog.clone_from(&target_name);
+                    info.on_conflict = if matches!(info.kind, roastedduck_ast::CreateInfoKind::Schema) {
+                        roastedduck_ast::OnCreateConflict::IgnoreOnConflict
+                    } else {
+                        roastedduck_ast::OnCreateConflict::ErrorOnConflict
+                    };
+                    // Keep schemas, sequence usage and fully resolved type definitions
+                    // in their infos instead of round-tripping them through SQL.
+                    if matches!(
+                        info.kind,
+                        roastedduck_ast::CreateInfoKind::Schema
+                            | roastedduck_ast::CreateInfoKind::Sequence(_)
+                            | roastedduck_ast::CreateInfoKind::Type(_)
+                    ) {
+                        statements.push(SqlStatement::new(roastedduck_ast::SqlStatementKind::Create(
+                            Box::new(info),
+                        )));
+                    } else if let Some(sql) = info.to_sql() {
+                        queries.push((statements.len(), sql));
                     }
                 }
+            } else {
+                let mut tables = Vec::new();
+                for schema in source.catalog.scan_entries(
+                    &self.function_client,
+                    &snapshot,
+                    roastedduck_catalog::CatalogType::Schema,
+                    b"",
+                )? {
+                    for entry in source.catalog.scan_entries(
+                        &self.function_client,
+                        &snapshot,
+                        roastedduck_catalog::CatalogType::Table,
+                        schema.name(),
+                    )? {
+                        if matches!(entry.kind, roastedduck_catalog::EntryKind::Table(_)) && !entry.internal {
+                            tables.push((schema.name().to_owned(), entry));
+                        }
+                    }
+                }
+                for (schema, entry) in roastedduck_catalog::checkpoint::reorder_table_entries(tables) {
+                    let roastedduck_catalog::EntryKind::Table(table) = &entry.kind else {
+                        continue;
+                    };
+                    let columns: Vec<roastedduck_common::ByteString> = table
+                        .physical_columns()
+                        .map(|(_, _, column)| {
+                            roastedduck_ast::keyword::write_optionally_quoted_bytes(&column.name)
+                        })
+                        .collect();
+                    let columns = roastedduck_common::ByteString::join(&columns, b", ");
+                    queries.push((
+                        statements.len(),
+                        roastedduck_common::byte_format!(
+                            "INSERT INTO {} ({columns}) SELECT {columns} FROM {}",
+                            roastedduck_ast::qualifier_to_string(&target_name, &schema, entry.name()),
+                            roastedduck_ast::qualifier_to_string(source.name(), &schema, entry.name()),
+                        ),
+                    ));
+                }
             }
-            for (schema, entry) in roastedduck_catalog::checkpoint::reorder_table_entries(tables) {
-                let roastedduck_catalog::EntryKind::Table(table) = &entry.kind else {
-                    continue;
-                };
-                let columns: Vec<roastedduck_common::ByteString> = table
-                    .physical_columns()
-                    .map(|(_, _, column)| {
-                        roastedduck_ast::keyword::write_optionally_quoted_bytes(&column.name)
-                    })
-                    .collect();
-                let columns = roastedduck_common::ByteString::join(&columns, b", ");
-                queries.push((
-                    statements.len(),
-                    roastedduck_common::byte_format!(
-                        "INSERT INTO {} ({columns}) SELECT {columns} FROM {}",
-                        roastedduck_ast::qualifier_to_string(&target_name, &schema, entry.name()),
-                        roastedduck_ast::qualifier_to_string(source.name(), &schema, entry.name()),
-                    ),
-                ));
-            }
-        }
+            Ok(())
+        })();
         if temporary {
             instance.transactions.rollback(&snapshot);
         }
+        prepared?;
         let mut queries = queries.into_iter().peekable();
         for (index, statement) in statements
             .into_iter()
@@ -4199,9 +4386,11 @@ impl Connection {
                 }
                 // A database name alone means its default schema.
                 if let Some(database) = instance.databases.get(&schema)
-                    && let Some(main) = database
-                        .catalog
-                        .schema(&transaction, roastedduck_catalog::DEFAULT_SCHEMA)
+                    && let Some(main) = database.catalog.lookup_schema(
+                        &self.function_client,
+                        &transaction,
+                        database.catalog.default_schema(),
+                    )?
                 {
                     resolved.push(((&*database.name()).into(), main.name().to_owned()));
                     set_paths.push((schema.clone(), main.name().to_owned()));
@@ -4209,7 +4398,11 @@ impl Connection {
                 }
                 let default = self.default_catalog();
                 let database = instance.databases.get(&default).ok_or_else(not_found)?;
-                if let Some(found) = database.catalog.schema(&transaction, &schema) {
+                if let Some(found) =
+                    database
+                        .catalog
+                        .lookup_schema(&self.function_client, &transaction, &schema)?
+                {
                     resolved.push(((&*database.name()).into(), found.name().to_owned()));
                 } else {
                     // `Catalog::GetSchema` without a catalog also finds the system schemas.
@@ -4225,7 +4418,7 @@ impl Connection {
             let database = instance.databases.get(&catalog).ok_or_else(not_found)?;
             let found = database
                 .catalog
-                .schema(&transaction, &schema)
+                .lookup_schema(&self.function_client, &transaction, &schema)?
                 .ok_or_else(not_found)?;
             resolved.push(((&*database.name()).into(), found.name().to_owned()));
             set_paths.push((catalog, schema));
@@ -4412,6 +4605,41 @@ impl Connection {
     /// The statements a statement was rewritten into (DuckDB's `UnpackMultiStatement`):
     /// outside a transaction, several statements without a SELECT run in one transaction
     /// that a failure rolls back. The result is the last statement's.
+    /// `Catalog::AutoloadExtensionByConfigName` for `SET` and `RESET`: the setting of a
+    /// bundled extension that is not loaded yet loads it, when known extensions may be
+    /// autoloaded. Other names keep their unrecognized-setting error.
+    fn autoload_setting_extension(&self, name: &[u8]) -> Result<()> {
+        use roastedduck_function::extension_entries::{
+            EXTENSION_SETTINGS, can_autoload_extension, find_extension,
+        };
+        if crate::settings::canonical_option(name).is_some()
+            || self.database.instance().extension_option(name).is_some()
+        {
+            return Ok(());
+        }
+        let Some(extension) = find_extension(name, EXTENSION_SETTINGS)
+            .filter(|extension| can_autoload_extension(extension))
+            .and_then(StaticExtension::from_name)
+        else {
+            return Ok(());
+        };
+        let autoload = self
+            .current_setting("autoload_known_extensions")
+            .ok()
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        if !autoload {
+            return Ok(());
+        }
+        self.database.instance().load_static_extension(extension)?;
+        if self.database.instance().extension_option(name).is_none() {
+            return Err(Error::invalid_input(roastedduck_common::byte_format!(
+                "Extension parameter {name} was not found after autoloading"
+            )));
+        }
+        Ok(())
+    }
+
     fn run_multi_statement(&mut self, statements: Vec<SqlStatement>) -> Result<MaterializedResult> {
         let has_select = statements
             .iter()
@@ -4546,6 +4774,12 @@ impl Connection {
     ) -> Result<StatementRun> {
         let nothing =
             || MaterializedResult::new(vec!["Success".into()], vec![LogicalType::BOOLEAN], Vec::new());
+        if let LogicalKind::Set { name, scope, .. } | LogicalKind::Reset { name, scope } = &plan.kind
+            && *scope != SetScope::Variable
+        {
+            self.settings.check_lock(name)?;
+            self.autoload_setting_extension(name.as_bytes())?;
+        }
         // `PhysicalSet` / `PhysicalReset`: `DBConfig::CheckLock`, then the checks of options
         // that cannot change while the database runs.
         match &plan.kind {
@@ -4669,6 +4903,56 @@ impl Connection {
                 let duckdb_type = db_type.as_deref() == Some(b"duckdb".as_slice());
                 if let Some(db_type) = db_type.filter(|db_type| db_type != "duckdb") {
                     self.load_storage_extension(&db_type)?;
+                    if db_type.eq_ignore_ascii_case(b"postgres")
+                        || db_type.eq_ignore_ascii_case(b"postgres_scanner")
+                    {
+                        if self.current_setting("enable_external_access")?.as_bool() == Some(false) {
+                            return Err(Error::new(
+                                ErrorKind::Permission,
+                                "Attaching Postgres databases is disabled through configuration",
+                            ));
+                        }
+                        let mut config = crate::postgres::AttachConfig::parse(info)?;
+                        config.pool = crate::postgres::pool::from_client(&self.function_client)?;
+                        let instance = &self.database.instance;
+                        let name = if config.secret.is_empty() {
+                            "__default_postgres"
+                        } else {
+                            &config.secret
+                        };
+                        let mut secret =
+                            instance
+                                .secrets
+                                .get_secret_by_name(name, None, &self.transactions.current())?;
+                        if secret.is_none() {
+                            secret = instance.secrets.get_secret_by_name(
+                                name,
+                                Some("local_file"),
+                                &self.transactions.current(),
+                            )?;
+                        }
+                        if secret.is_none() && !config.secret.is_empty() {
+                            return Err(Error::binder(format!(
+                                "Secret with name \"{}\" not found",
+                                config.secret
+                            )));
+                        }
+                        config.secret_entry = secret.map(|s| s.secret);
+                        let attached = instance.databases.attach_postgres(
+                            info,
+                            path,
+                            &options,
+                            config,
+                            instance,
+                            &self.function_client,
+                        )?;
+                        if let Some(attached) = attached
+                            && !self.transactions.is_auto_commit()
+                        {
+                            self.transaction_attaches.push(attached);
+                        }
+                        return Ok(StatementRun::Done(nothing()));
+                    }
                     return Err(Error::binder(roastedduck_common::byte_format!(
                         "Unrecognized storage type \"{db_type}\""
                     )));
@@ -4927,6 +5211,19 @@ impl Connection {
                 return Ok(StatementRun::Done(nothing()));
             }
             LogicalKind::CreateSecret(input) => {
+                let autoload = self
+                    .function_client
+                    .settings()
+                    .and_then(|settings| settings.current_setting("autoload_known_extensions").ok())
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(false);
+                if autoload {
+                    for extension in crate::secrets::autoload_extensions(input).into_iter().flatten() {
+                        if roastedduck_function::extension_entries::can_autoload_extension(extension) {
+                            self.database.load_extension(extension)?;
+                        }
+                    }
+                }
                 // `PhysicalCreateSecret`: one row with `true`.
                 self.database
                     .instance()
@@ -4999,6 +5296,10 @@ impl Connection {
                 }
                 if lower == "enable_optimizer" || lower == "disable_optimizer" {
                     self.settings.optimizer_disabled = lower == "disable_optimizer";
+                }
+                if lower == "enable_verification" || lower == "disable_verification" {
+                    self.settings.query_verification = lower == "enable_verification";
+                    return Ok(StatementRun::Done(nothing()));
                 }
                 match lower.as_bytes() {
                     b"enable_profiling" | b"enable_profile" => self.settings.profiler.enable(),
@@ -5454,8 +5755,6 @@ fn needs_vacuum_lock(plan: &LogicalOperator) -> bool {
 
 /// Pragmas without a result that only tune testing or profiling behaviour.
 const NO_OP_PRAGMAS: &[&str] = &[
-    "enable_verification",
-    "disable_verification",
     "verify_external",
     "disable_verify_external",
     "verify_serializer",

@@ -1,3 +1,1171 @@
+PostgreSQL SASL selection checkpoint, November 16, 2026:
+The vendored PostgreSQL client no longer answers a `SCRAM-SHA-256-PLUS`-only
+offer with plain `SCRAM-SHA-256` when `channel_binding=disable`; it fails as libpq
+does. `scripts/postgres-tests/sasl_control.py` (owned protocol fixture, 11
+scenarios) shows the same selected mechanism, GS2 header and failure reason on
+both engines (`qv-fable-1/pg-sasl-2`, `qv-fable-1/pg-gates-1/sasl`). The same
+gate run repeats the OAuth, CRL, debug, RDS, pool, secret, unified-scan, version
+and attach controls and all 152 originals on both engines: 145 pass, the same 7
+skips (`qv-fable-1/pg-gates-1`). Native tests and strict Clippy pass
+(`qv-fable-1/f-native`, `f-clippy-1.log`). `sasl-conformance-6/`: full core
+corpus on this source, 4845 pass, 33 skip, 19 fail, no status change. This is the
+last engine change of the session; the five-extension sweep below ran one commit
+earlier, and only the PostgreSQL client changed since.
+
+Open, found by that control and recorded in `extensions/postgres_scanner/SPEC.md`:
+failed connections are worded by roastedDuck's client, not as libpq words them
+(no `Unable to connect to Postgres at "<dsn>": connection to server at ...`
+prefix), and a failed ATTACH makes one connection attempt where the reference
+makes two.
+
+HTTPFS original-inventory checkpoint, November 16, 2026:
+All 132 pinned HTTPFS originals have a retained verdict on both engines
+(`httpfs-originals-audit-5.json`): 116 exercised and passing on both, 5 disabled
+upstream, 3 setup-only, 3 with the same non-pass on both engines
+(`test_csv_httpfs.test` public HTTP 500, `autoloading_filesystems.test` DNS error
+text, `http_proxy.test` stale last expectation), 1 failing only on the C++ oracle
+(`upload_large_file.test_slow`, out of memory) and 4 autoloading originals that
+fail on roastedDuck by design (bundled extensions autoload without an install;
+see `conformance/divergences.md`).
+
+Engine changes in this checkpoint: S3 open/read errors use upstream's S3 text
+(19 paired MinIO cases equal, `qv-fable-1/s3-error-{cpp-1,rust-2}`); a region
+redirect logs upstream's warning; `SET`, `RESET` and `current_setting()` on a
+bundled extension's setting autoload it. Test fixtures: `upstream_s3.py`
+`--public-host` and `--repository-extensions`, owned forward proxies, core data
+copies, and `s3_error_control.py`. The transport adapter with public-host support
+is `httpfs-services/s3_transport-2.dylib`; the earlier dylib is untouched.
+
+Evidence: `.context/artifacts/popular-extensions/qv-fable-1/d-regression-1/`
+(`results.json` lists every step: nine paired controls equal to C++, and the
+original cohorts), `qv-fable-1/d-native`, `d-native-2`, `d-native-3`
+(httpfs 22 tests, extension autoload 11), `qv-fable-1/d-clippy-2.log`, and
+`inventory-conformance-5/`: full core corpus on commit e949beea, 4845 pass,
+33 skip, 19 fail, no status change.
+
+All five inventories on that one build (signed debug binaries of e949beea),
+C++ oracle and roastedDuck side by side:
+
+| Extension | Originals | Both pass | Other verdicts (identical on both engines unless noted) |
+| --- | ---: | ---: | --- |
+| ICU | 63 | 63 | none |
+| Azure | 27 | 27 | none |
+| AWS | 21 | 20 | `aws_secret_refresh.test` fails on both; `aws_secret_aws.test` passes with the httplib client and skips on an HTTP error text with curl |
+| PostgreSQL | 152 | 145 | 7 skips for missing prerequisites (three concurrent, OAuth token, PostGIS, RDS IAM, detach prepared) |
+| HTTPFS | 132 | 116 | 5 disabled upstream, 3 setup-only, 3 shared non-passes, 1 C++-only out-of-memory, 4 by-design autoloading failures on roastedDuck |
+
+Receipts: `qv-fable-1/sweep-1/` (ICU, AWS, Azure), `qv-fable-1/sweep-1b/`
+(AWS httplib, PostgreSQL) and `qv-fable-1/d-regression-1/` with
+`httpfs-originals-audit-5.json` (HTTPFS). Controllers: `.context/final-sweep.py`
+and `.context/check-read-buffer.py`. The inventories ran while the core corpus
+was running; nothing flaked.
+
+Local package checks on the same source (commit 900cf598 adds only the smoke
+script):
+- Native tests of every changed crate (`qv-fable-1/final-native`): 74 test
+  binaries, 445 passed, 4 ignored. One persistence test compares timestamps in
+  UTC and fails in the local zone; the same binary passes with `TZ=UTC`, which
+  the project's controllers set (`tz-note.json`).
+- A wheel built locally with maturin 1.16.0 for CPython 3.13 on macOS arm64
+  (`qv-fable-1/wheel/dist`, not a release artifact) installs into a fresh
+  environment and passes `scripts/release/smoke_python.py`, which now also loads
+  icu, httpfs, aws, azure and postgres_scanner and checks each offline.
+- `qv-fable-1/wheel/journey-3`: the installed wheel writes and reads Parquet, CSV
+  and partitioned data on owned MinIO, attaches an owned PostgreSQL 17 over
+  verified TLS, moves rows between the two in both directions, and sorts with an
+  ICU collation. Controller: `.context/installed-python-journey.py`.
+
+Not done in this session: the Linux and Apple builds, the full wheel matrix and
+the other client packages, which the release workflows produce from a pushed
+commit, and publication. The branch has not been pushed since f135c6f8.
+Pushing, dispatching the release workflows and publishing to PyPI or Homebrew
+need the owner's explicit go-ahead.
+
+HTTPFS read-buffer checkpoint, November 16, 2026 (commit 6b24448a):
+HTTP, S3 and HuggingFace handles opened without direct I/O have the pinned
+`HTTPFileHandle` read buffer (1 MiB doubling to 32 MiB while reads stay
+sequential; larger reads go direct). `read_text`/`read_blob` open a file once and
+read remote content with direct I/O through the external file cache. Remote JSON
+uses upstream's read sizes (whole requests uncompressed; a ten-byte header then
+32 KiB blocks under gzip). Remote CSV keeps its handle across `Reset`. The
+separate HTTP stream reader is gone.
+
+Evidence under `.context/artifacts/popular-extensions/`:
+- `qv-fable-1/read-buffer-{cpp-2,rust-3}` and `qv-fable-1/c-regression-1/read-buffer`:
+  15 paired cases equal, including every request and the cached ranges.
+- `qv-fable-1/c-regression-1/`: download (18), connection pool (19 + sockets),
+  logging (42 + requests), diagnostics (45), cache boundary (23), verifier (78)
+  and error controls all equal to their C++ receipts; originals: metadata 24,
+  S3 basic 26, large S3 8, pool 2 and public slow 13 pass. The two former
+  request-count failures (`internal_issue_6807`, `external_file_cache_read_blob`)
+  pass on both engines.
+- `qv-fable-1/c-native`: native tests for httpfs (19, four new for the buffer),
+  json and csv; `qv-fable-1/c-clippy-1.log`: strict Clippy.
+- `read-buffer-conformance-4/`: full core corpus, 4845 pass, 33 skip, 19 fail,
+  no status change against conformance-3.
+- `httpfs-originals-audit-4.json`: 107 exercised originals pass both engines,
+  5 upstream-disabled, 3 setup-only, 17 unresolved at this commit.
+
+Known shared results, unchanged by this work: `test_csv_httpfs.test` skips on
+both engines (csvbase.com answers HTTP 500); `test_load_other_extensions.test`
+needs the public extension repository and passes on both there.
+
+Query-verification and HTTP file-info checkpoint, November 16, 2026:
+`PRAGMA enable_verification` now runs the regular SELECT verifiers of DuckDB
+1.5.6's `ClientContext::VerifyQuery` (commit c294d34f): original, copied,
+deserialized, unoptimized, no-operator-caching, re-parsed, prepared and EXPLAIN,
+with upstream's comparison and mismatch text. The prepared verifier replaces
+constants exactly where `ParsedExpressionIterator` enumerates them. A template
+type bound to an unresolved parameter raises the parameter-not-resolved error
+instead of crashing prepared `switch()` calls. Still not implemented:
+`verify_external`, `verify_fetch_row`, `verify_serializer` and
+`verify_parallelism` remain accepted no-ops, and non-SELECT statements are not
+re-parsed from their rendered text. See `conformance/divergences.md`.
+
+HTTP file info follows `HTTPFileHandle::LoadFileInfo` (commit 1d3417cb): the
+`bytes=0-1` probe only follows a HEAD that is not 200 (never 404/301), and a 200
+without a length downloads the file. This repaired the core original
+`test/extension/install_extension_httpfs.test`, which reads `https://duckdb.org/`
+(no Content-Length, Range ignored) and had regressed when completed range
+responses started being checked for surplus data.
+
+Evidence, all under `.context/artifacts/popular-extensions/`:
+- `query-verification-conformance-3/`: full core corpus on this source, 4897
+  files: 4845 pass, 33 skip, 19 fail, 0 crash, zero ratchet regressions. The source
+  fixture is the conformance-2 one, re-checked against every manifest and overlay
+  hash (`fixture-check.json`). `conformance/passing.txt` is unchanged; 21 newly
+  passing files are still unrecorded and wait for the final freeze.
+- `qv-fable-1/verify-{cpp,rust}-2`: 78 paired C API verifier records, equal.
+- `qv-fable-1/diagnostics-rust-1` equals `httpfs-diagnostics-cpp-2` (45 records),
+  so the verified cold disabled-filesystem bind now matches too.
+- `qv-fable-1/download-{cpp,rust}-1`: 18 download/file-info records with request
+  receipts, equal. `qv-fable-1/native-verification`: 2 native tests.
+  `qv-fable-1/clippy-2.log`: strict Clippy for roastedduck, httpfs and planner.
+The earlier conformance-2 run is retained with its four status changes; two were
+real (prepared `switch()` crash, SUMMARIZE names), one was the HTTP regression
+above and one was a `require disk_space 40gb` skip while the SSD was nearly full.
+
+Next: the HTTP handle read buffer and single-open `read_blob`, which the two
+failing public slow HTTPFS originals need; then the remaining HTTPFS originals,
+final inventories for all five extensions, and the final core/platform/package
+gates. Working notes: `.context/query-verification-next.md`.
+
+HTTPFS connection-pool checkpoint, November 16, 2026:
+Real database-local HTTP client pooling is implemented. Clients are acquired on
+first I/O, shared by file/stream clones and returned on last lease close. Idle
+entries are bounded at256; backend resets reject returning old-generation leases.
+Transport configurations remain isolated; timeouts apply per request. HTTPFSInfo
+hit/miss events reflect actual acquisitions. Default/NULL setting metadata matches
+C++. Azure's separate transport does not enter this HTTPFS pool.
+
+All19 owned scenarios match C++ SQL outcomes, settings, cache events and independent
+wire receipts, including exactly10 accepted TCP connections each. Controls cover
+shared DB connections, credential replacement/removal, timeouts, proxies, disabling/
+re-enabling and backend resets. Both unchanged HTTP and S3 cache originals pass.
+The first Rust control exposed a real issue despite matching cache logs: exact
+range reads dropped bodies before EOF and closed sockets. Finalizing their decoders
+now returns the sockets to ureq's idle pool; streaming ranges finalize likewise.
+Failed exploratory receipts remain; no log-only fake acceptance.
+
+All26 S3 and24 metadata raw-status regressions pass Rust;8 paired diagnostics,
+10 paired download scenarios and42 logging records/request sequences match.
+All15 native HTTPFS tests and strict Clippy2 pass. Final signed pool-build5 is
+qualified by pool-rust-5 and upstream-pool-2. No new dependencies or default-off
+build gate. Receipt: .context/artifacts/popular-extensions/httpfs-pool-verification.json.
+
+Retained aggregate is now97 active originals passing both engines,5 upstream
+mode-disabled files and30 active unresolved: httpfs-originals-audit-3.json. It is
+not a frozen full sweep. Query verification remains a genuine engine gap, not an
+accepted waiver; shared csvbase HTTP500 and C++ large-upload OOM remain explicit.
+Next: query verification and remaining fixtures, then frozen core/platform/package
+qualification and PyPI/Homebrew/Core publication. All owned jobs/services stopped.
+No new publication. packaging/ untouched. See .context/httpfs-acceptance-next.md.
+
+HTTPFS diagnostics/logging checkpoint, November 16, 2026:
+Four more unchanged active originals pass both engines: ca_cert_file, globbing,
+file_system_logging and http_logging. The retained audit is now95 active passing
+both,5 upstream-disabled and32 active unresolved; not a frozen full sweep.
+Receipt: .context/artifacts/popular-extensions/httpfs-observability-verification.json
+and httpfs-originals-audit-2.json. All owned jobs/services stopped. No publication.
+
+HTTP response logs preserve actual wire header spelling through a bounded128KiB
+observer after TLS decoding. It observes names only; ureq still validates/parses
+HTTP. Interim/redirect responses and duplicate names are covered. Generic HTTP
+file handles now emit OPEN/READ/CLOSE events through the existing filesystem logger.
+Invalid CA-file errors distinguish curl/httplib; glob errors match pinned text.
+The deprecated HTTP logging setting now applies its manager side effects and an
+independent per-client flag; Azure logging retains its separate controls.
+
+Secret initialization retains upstream's partially registered memory storage on
+failure. duckdb_secrets enumeration now occurs during execution, matching errors
+and prepared-query visibility without weakening filesystem permission checks.
+The45-record diagnostic control matches44 records. The sole mismatch is verified
+cold HTTP binding: C++ query verification triggers a second bind after an initial
+permission failure, exposing duplicate memory-storage registration. Rust still
+reports the first permission failure because enable_verification is a no-op.
+The unchanged disabled-filesystem original remains FAIL, explicitly documented in
+conformance/divergences.md. Do not fake an error-kind rewrite or call this accepted.
+
+All42 logging records AND independent request receipts match;13 native HTTPFS
+checks and strict all-target Clippy pass. All24 metadata originals pass both;
+26 S3 regressions pass Rust;24 transaction cases/412 C API records match;4 targeted
+core filesystem/secret originals pass both. Source/expected SQL stays unchanged.
+Final signed observability-build5 and logging-{cpp,rust}-2 include the final flag
+interaction check (re-enable global manager while client HTTP logging stays false).
+Most earlier receipts use build4; the last changes remove a redundant no-op arm
+and honor that client flag. Final frozen qualification still remains pending.
+
+NEXT: real HTTP connection pooling plus HTTPFSInfo events (the remaining public
+cohort feature gap), then query verification and remaining original fixtures.
+See .context/httpfs-acceptance-next.md. Keep AWS/Azure/ICU/PostgreSQL, final core,
+platform/package/PyPI/Homebrew/Core acceptance in scope. packaging/ untouched.
+
+HTTPFS download/attachment/public checkpoint, November 15, 2026:
+Owned large S3 originals now pass8/8 on Rust; C++ passes7 across receipts. Its
+unchanged upload_large_file.test_slow exceeds the test's2.5GB memory limit with
+this Mac's14 default threads. Preserve the raw failure; no SQL, memory limit or
+thread default was weakened. The oracle shim now permits authenticated TPCDS
+loading, closing its former prerequisite skip. All17 selected attachment/local
+HTTP/encryption originals pass both engines across receipts; the nonexistent
+extension-install test needs its public endpoint's real404, not denied DNS.
+
+HTTP force_download/force_download_threshold now use statement-scoped downloads
+in accounted, spillable Rust buffers. Range mismatches exhaust retries before
+fallback; warnings, disabled fallback and mismatched HEAD lengths match controls.
+HTTP/S3 FileExists follows upstream's catch-failure-as-absent behavior, allowing
+presigned DB attachments without authorization to read their optional WAL URL.
+Actual reads retain failures. Native tests prove bounded-memory spill reads and
+cleanup after a partial download disconnect; all11 HTTPFS tests pass. Ten paired
+HTTP controls match results, warnings, errors and request sequences after only
+owned-port/build-source-ID normalization. Strict Clippy passes. The original50
+raw-status cohort passes again on Rust after these changes.
+
+A fresh29-file public cohort gives C++28pass/1skip and Rust22pass/4fail/3skip.
+Rust's unresolved cases: connection-caching option/implementation; FileSystem
+logs; response header case and enable_http_logging; CA-file error context;
+glob error kind/text; LocalFileSystem-disabled path. The shared CSV skip is an
+actual HTTP500 from csvbase.com. Its raw ignored errors are retained in logs.
+The CA fixture should also copy the pinned README.md before asserting its failure.
+
+Coverage audit correction: five source originals disable all SQL with mode skip.
+Their SLT PASS verdicts remain raw but do not qualify exercised coverage. One
+(secret_types_function) was included in the earlier50 count. Current aggregate:
+91 active originals pass both engines;5 upstream-disabled;36 active unresolved.
+Raw latest: Rust96pass/4fail/3skip/29not-run; C++101pass/1fail/1skip/29not-run.
+This is retained per-file evidence across candidates, not a frozen full sweep.
+See httpfs-originals-audit-1.json and httpfs-download-verification.json under
+.context/artifacts/popular-extensions. No publication or full-goal completion.
+
+Final signed build4 differs from the extensively tested build3 only in the exact
+upstream force_download_threshold description; the two setting rows were checked
+against C++ afterwards. All owned jobs/services stopped at this checkpoint.
+Next: close the six public-cohort Rust gaps, then remaining public slow/S3/proxy/HF
+and local-repository originals. Keep core/platform/package/PyPI/Homebrew/Core
+acceptance in scope. Notes: .context/httpfs-acceptance-next.md. packaging/ untouched.
+
+HTTPFS owned S3 checkpoint, November 15, 2026:
+All26 selected unchanged S3 originals pass on both engines against owned MinIO.
+The fixture uses pinned source-built/signed MinIO and mc, per-run config/data,
+real signature/version checks, and child-local hostname/port mapping. No Docker,
+system DNS/routes, user service or cloud resource changes. All services stopped.
+
+Rust now retains HTTP metadata per statement or in the opt-in database cache,
+including S3 version and region. Writes invalidate the selected scope; ETag
+mismatch evicts stale metadata. Listing hints avoid redundant HEAD requests.
+HTTP logging uses unique case-insensitive headers and the engine user agent;
+literal URL spaces are encoded while preserving existing escapes. The generic
+FunctionClient query cache resets at the start of each statement.
+
+All23 two-connection cache records match C++; the prior24 metadata/secret originals
+pass again on Rust. All9 native HTTPFS tests and strict all-target Clippy pass.
+Receipts are under
+.context/artifacts/popular-extensions/httpfs-s3-verification.json. Failed exploratory
+runs remain, including the control corrected after C++ demonstrated the cache
+setting is database-wide. No original SQL/assertions changed.
+
+HTTPFS's retained original inventory is now50/132, leaving82. Next run the large
+MinIO cohort and supply authentic generated DB/presigned fixtures, then HTTP,
+proxy/public/HF originals. See .context/httpfs-acceptance-next.md and
+.context/httpfs-remaining-originals.json. Final core/platform/package qualification
+and PyPI/Homebrew/Core delivery remain open; whole goal remains active. No new
+publication or live-provider acceptance. Preexisting packaging/ remains untouched.
+
+ICU and HTTPFS acceptance checkpoint, November 15, 2026:
+Fresh ICU acceptance passes all63 unchanged original files on both engines, with
+no failures/skips. The inventory was regenerated from the pinned source and has
+no omitted extension-local SQL files. LOCAL_EXTENSION_REPO is scoped only to its
+requiring original; setting it globally changes runner mode and was an invalid
+fixture configuration (the failed run is retained). Signed ICU/JSON packages now
+supply the local-repository prerequisite. Original SQL and assertions are intact.
+
+Exact Unicode differential output matches72,473 sort keys over137 locale/tag forms
+and528 strings plus NULL. All82 public C API collation records match, including
+values, metadata and errors; all6 ICU native tests pass. The embedded ICU66 data
+SHA256 remains9b5516e7609c98b7e25b6ed27ae60ae2ae49ebe1386fa8ef3bccb37b9df3d5ac.
+Receipt: .context/artifacts/popular-extensions/icu-verification.json. This refresh
+is bounded; it does not claim a rerun of the earlier62-million-key stress set.
+
+The first HTTPFS cohort now passes all24 unchanged metadata/secret originals on
+both engines, including6 authentic historical secret files verified from the
+source archive with private file permissions. Fixes preserve method/URL context
+and curl/httplib reasons for DNS/timeouts, remove a redundant secret-cast wrapper,
+and fold local storage identifiers for DROP SECRET. The HuggingFace cache uses an
+owned token rather than an explicitly missing file. All8 paired diagnostics match,
+all24 transaction cases/412 public C API records match (only owned paths/ports
+normalized), all9 HTTPFS native tests and strict Clippy4 pass. Receipt:
+.context/artifacts/popular-extensions/httpfs-metadata-verification.json.
+
+HTTPFS still has108 original files outside this first cohort. The upstream MinIO/
+mc native downloads return410; pinned source archives and an authenticated Go1.24.2
+toolchain are on the SSD under popular-extensions/httpfs-services. Both source-built
+tools now compile, are signed and execute --version; build-verification.json records
+source pins and binary hashes. Their build label is DEVELOPMENT.GOGET, not an
+unmodified official binary. No active job remains. No Docker daemon, system DNS/
+routes or global toolchain setting changed. See .context/httpfs-acceptance-next.md.
+
+The whole five-extension goal remains active. Fresh combined service inventories,
+remaining prerequisites/transport scope, final core/platform/package checks and
+PyPI/Homebrew/Core publication are still required. Preexisting packaging/ remains
+untouched. No new public release is claimed.
+
+AWS assume-role/web-identity checkpoint, November 15, 2026:
+STS client region is now separate from the generated secret's region. The client
+uses the pinned SDK default-region precedence and default base credentials;
+profile/config roles and external IDs follow the extension's selection. AssumeRole
+requests use900-second sessions and the pinned generated session-name shape.
+Returned credentials omit expiry like the C++ provider; empty keys are rejected.
+
+Web identity resolves each role/token override through the source's environment
+and profile rules. Explicit providers use CRT's AWS_PROFILE selection and generated
+uppercase UUID session names unless SQL supplies one; SQL PROFILE is not forwarded.
+The default chain uses the C++ constructor's AWS_DEFAULT_PROFILE precedence and
+can use environment/profile session names. Its region precedence is distinct from
+the explicit provider. Missing region does not become valid merely because the
+secret specifies REGION. No process environment is mutated to implement this.
+
+All15 paired signed-STS scenarios (30 records),21 paired web-identity scenarios
+(42 records) and8 bad-CA/wrong-host rejection records pass. Both engines use real
+TLS to owned endpoints; every STS signature is independently checked. The original
+identity files still pass unchanged on both engines. SQL31, network4/17 SigV4
+requests, 5 native checks/2 signed targets (13 isolated provider cases) and
+Clippy2 pass. Receipt: .context/artifacts/popular-extensions/aws-role-verification.json.
+The final code cleanup only replaces the equivalent duration expression; a final
+signed control verifies900 seconds. Individual receipts retain image hashes.
+No locked package/version or C/C++ product dependency was added. All owned jobs/
+services stopped. Failed exploratory receipts remain; no live IAM claim is made.
+
+The original AWS count remains20/21 across retained runs, including one shared
+refresh failure. Next consolidate acceptance across all five extensions: ICU's
+63-file fresh inventory and HTTPFS's132 originals have not been closed by the
+recent provider work. Azure27 and PostgreSQL145/7 retain their stated scopes.
+Then finish remaining prerequisite/transport gaps, frozen core, platform/package
+checks and PyPI/Homebrew/Core delivery. Goal remains active; no new publication.
+See .context/popular-final-acceptance-next.md and .context/aws-next-control.md.
+
+AWS metadata-provider checkpoint, November 15, 2026:
+ECS/container credentials now match optional session-token and invalid/missing
+expiry behavior. Expired ECS credentials can create a secret but do not expose
+usable key fields, as upstream. Empty access keys are rejected. Relative URI
+precedence, invalid relative paths and empty relative/token-file variables are
+handled without mutating process environment; the exceptional direct path applies
+HTTP URI/address and header validation. The normal path retains SDK validation
+and token-file handling, with the pinned one-retry policy and metadata timeout.
+Malformed credential responses do not consume additional retries.
+
+IMDS credentials use the existing Rust connector for v2 tokens, first-role lookup,
+v1 fallback,400-token rejection and the pinned disabled/explicit-instance behavior.
+An explicit instance chain resolves even when the default-chain metadata flag is
+off. Instance-profile credentials omit response expiry like the C++ loader and
+reject InternalServiceException. Default-chain ECS failure does not fall through
+to IMDS. No new HTTP stack, locked package/version or C/C++ product dependency
+was added.
+
+All38 paired scenarios/76 records pass on final signed images. SQL outcomes,
+credential exposure, auth headers, retry counts and timeouts are checked. Relative
+URI tests use process-local mapping of fixed metadata IPs to an owned service;
+no system routes/DNS changed. The original web-identity/RDS files pass unchanged
+on both engines. Offline SQL31, network4 with17 verified SigV4 requests, 5 native
+tests/2 signed targets (13 isolated provider cases), and strict Clippy3 pass.
+Receipt: .context/artifacts/popular-extensions/aws-metadata-verification.json.
+All owned jobs/services stopped; failed exploratory receipts remain.
+
+The raw helper source suggested empty-token fallback for unreadable token files,
+but the actual pinned oracle rejects those before HTTP; the implementation and
+controls preserve that observed behavior. All metadata controls set an explicit
+region. Legacy automatic-region, broader IPv6/profile flags and further failure/
+cancellation variations remain outside this checkpoint. CREATE SECRET's region
+selection ends at explicit/settings/env/profile sources; do not add an inferred
+IMDS region to that path merely because the C++ client probes it internally.
+
+Next: assume-role and web-identity profile fallback, remaining provider/PG
+variations, then frozen full inventories/core, platform/packages and publication.
+The original AWS headline stays20/21 across retained receipts, with one shared
+unchanged-credential refresh failure. The goal remains active; no new release
+or Homebrew Core acceptance. Notes: .context/aws-next-control.md.
+
+AWS session SSO checkpoint, November 15, 2026:
+Session SSO now follows the pinned SDK1.11.702 cache and refresh behavior in Rust.
+It reads SHA1(session-name) under the configured credentials directory, refreshes
+within600 seconds of token expiry, uses the cached OIDC region, and sends the
+source's request fields. Registration expiry is retained but does not gate refresh,
+as upstream. Failed/empty refreshes can keep a still-valid token and still rewrite
+known cache fields. New tokens become active only after successful writeback;
+read-only files keep the previous in-memory token. Unknown cache fields are dropped
+on rewrite, dates use the pinned second-resolution representation, and rotated
+refresh tokens are persisted/reused. Legacy caches remain non-refreshing.
+
+Explicit CHAIN 'sso' without PROFILE no longer selects the default profile; the
+default chain still does. AWS_DEFAULT_PROFILE takes precedence over AWS_PROFILE
+in the owned profile lookup. Equal inline/session fields are accepted; conflicting
+or missing session links retain the pinned legacy fallback behavior.
+
+All25 paired scenarios (50 records) pass on final signed images. They include
+refresh-window boundaries, expired tokens/registrations, rejected/empty refresh,
+expired responses, write failure with valid/expired previous tokens, cache reuse,
+profile precedence and legacy fallback. The original web-identity/RDS files pass
+unchanged on both engines. Offline SQL31, network4 with17 independently verified
+SigV4 requests, 5 native tests/2 signed targets (13 isolated provider cases), and
+strict Clippy2 pass. Receipt: .context/artifacts/popular-extensions/aws-sso-session-verification.json.
+No locked package/version or C/C++ product dependency was added.
+
+All services/jobs stopped. The first experimental CLI fixture was rejected by
+macOS hardening; the final fixture uses the established signed SLT oracle harness,
+with the official binary unchanged. Failed exploratory receipts remain. This
+is owned-service qualification, not live SSO acceptance. The retained AWS original
+inventory stays20 passes plus the shared unchanged-credential refresh failure;
+a final frozen full inventory is still required.
+
+Next: ECS/container and IMDS controls, then assume-role/provider failures and the
+remaining PG transport/prerequisite, core, platform/package, PyPI/Homebrew/Core
+acceptance gates. Source pointers: .context/aws-next-control.md. Goal remains
+active; no new public release.
+
+AWS identity checkpoint, November 15, 2026:
+Both previously unqualified AWS originals (web identity and RDS) now pass unchanged
+on C++ DuckDB1.5.6 and Rust. Original hashes are checked. Owned STS/SSO services
+validate the operation, role/token and account/role/bearer fields. RDS's original
+only creates credentials; PostgreSQL signing/consumer fixtures remain separate.
+Together with the earlier18, this brings the retained original inventory to20/21
+passing. The remaining unchanged-credential refresh original keeps its shared
+C++/Rust failure and unchanged SQL; it is not relabeled as a pass. This is not a
+fresh full21-file run or live-AWS qualification.
+
+Rust legacy SSO now reads its SHA1(startURL) token cache beside the configured
+credentials file, matching the pinned C++ SDK1.11.702 instead of the Rust SDK's
+home-directory assumption. Token presence, JSON/expiry validation, SSO region,
+role response and credential expiry use the real provider path. Session-based
+SSO still uses the SDK path and needs separate cache/refresh qualification.
+
+The C++ oracle uses a test-only macOS transport adapter for fixed service hosts.
+DNS/socket routing and CA injection are confined to that child; no system DNS or
+keychain is modified. Bad-CA and wrong-hostname controls prove rejection before
+an AWS request is sent. The helper is not linked into the product. Rust uses a
+loopback HTTP endpoint override; this does not qualify its AWS TLS behavior.
+
+All7 paired SSO cache controls pass, including missing, expired, malformed, empty,
+invalid-expiry and rejected tokens. Offline SQL31, network4 with
+17 independently checked SigV4 requests, 5 native tests/2 signed targets
+(including13 isolated provider cases), and strict Clippy1 pass. No locked package
+or version was added. Receipt: .context/artifacts/popular-extensions/aws-identity-verification.json.
+All owned fixtures stopped. Failed exploratory fixture receipts are retained.
+
+Next: advanced provider matrix (modern SSO cache/refresh, explicit/no-profile
+selection, assume-role, ECS/IMDS), then remaining transport/prerequisite and final
+core/platform/package/publication gates. Notes: .context/aws-next-control.md.
+The all-five goal remains active; no new public release or Core acceptance.
+
+PostgreSQL version/snapshot and CRL checkpoint, November 15, 2026:
+Version detection now uses the pinned SELECT version()/RDS-settings probe for
+both ATTACH and standalone scans, including UNKNOWN fallback on probe failure.
+Numeric component parsing, Aurora/Redshift precedence and pre-8.3 enum visibility
+follow upstream. Redshift forces text reads. Snapshot-export errors disable
+sharing without resetting an aborted server transaction, so the later scan reports
+the server's transaction failure as upstream does. The old-version recovery query
+is retained for the pinned version-dependent snapshot branch.
+
+File-based v2 CRLs now use Rustls chain, signature, issuer, revocation and expiry
+verification; thisUpdate is checked separately because webpki omits it. verify-ca
+omits only hostname checking, while verify-full retains it. Existing root files
+also enable chain verification in prefer mode, following the pinned source.
+Missing/unreadable/invalid-PEM CRL files do not activate revocation checking;
+loaded malformed or unsupported DER fails explicitly. A certificate-only CRL file
+requires a CRL and fails. This is not a claim of every OpenSSL CRL format/option:
+v1/delta CRLs, CRL directories and system-root option behavior remain unqualified.
+
+The rustls-webpki 0.103.17 patch permits the optional extensions field to be absent
+in a v2 CRL, as libpq accepts. Signed bytes and verification algorithms are
+unchanged. Registry archive/license audit: only src/crl/types.rs differs among
+33 audited source/manifest/license files. The new direct x509-cert dependency was
+already locked; no package version or C/C++ dependency was added.
+
+All 9 paired version/snapshot controls and 16 paired CRL controls pass, including
+failed probes, Redshift text mode, revoked/expired/future/bad-signature/wrong-issuer
+and critical-extension rejection. Parallel12, cache13, unified-scan21, OAuth48
+records (including the unchanged original on both engines) and debug8 pass.
+The full original PG inventory remains 145 PASS / 7 SKIP / 0 FAIL; its separately
+qualified OAuth prerequisite remains explicit. These are owned fixtures on PG17,
+not live Redshift/Aurora or old-server acceptance.
+
+Receipt: .context/artifacts/popular-extensions/postgres-transport-verification.json.
+All 284 native/planner/AWS tests across 47 signed targets pass with TZ=UTC;
+strict Clippy2 passes. All owned fixtures stopped; no heavy job remains active.
+Next prioritize remaining AWS originals/providers using .context/aws-next-control.md,
+then final core/platform/package/PyPI/Homebrew qualification. Remaining transport
+notes are in .context/postgres-auth-settings-next.md. The full all-five goal stays
+active; no new public release or Homebrew Core acceptance is claimed.
+
+PostgreSQL OAuth/debug checkpoint, November 15, 2026:
+All 26 pinned extension settings now have runtime registrations, including
+pg_oauth_token and pg_debug_show_queries. This does not claim complete libpq-option
+or provider compatibility. OAuth uses the source's session-token/PGOAUTHTOKEN
+precedence and acquisition-scoped clearing. The Rust transport implements supplied-
+token OAUTHBEARER, validated issuer discovery, same-endpoint reconnect, rejection,
+require_auth policy and channel-binding refusal. It does not load libpq OAuth
+plugins or implement their interactive device flows. Token handlers are redacted;
+the captured token uses zeroizing storage.
+
+Query debugging writes the source's double-newline records to stderr (despite the
+upstream setting description saying stdout). It is process-global even for a
+session SET. Simple/extended queries, COPY and internal type lookups are observed;
+pool maintenance is suppressed. The per-client observer is inactive for unrelated
+driver clients, and retained statement SQL is omitted from Debug.
+
+The unchanged attach_oauth_token.test passes on C++ and Rust against the owned
+loopback OAuth fixture; all 23 paired supplemental scenarios pass, including no
+credential transmission on policy/issuer failures. Debug (8 records), RDS (11), pool (16), secret (30)
+and unified-scan (21) controls pass. The complete original PostgreSQL
+inventory remains 145 PASS / 7 SKIP / 0 FAIL (postgres-upstream-auth-all-1); the
+separate OAuth original supplies one of those prerequisites without rewriting SQL.
+The other six original skips remain explicit. This is local protocol/disposable-
+server evidence, not live OAuth/AWS acceptance.
+
+Receipt: .context/artifacts/popular-extensions/postgres-auth-verification.json.
+All 279 native tests across 45 signed targets pass with TZ=UTC; strict
+Clippy2 passes. All owned fixtures stopped. The driver audit checks the registry archive hash, ten changed files, one added
+Rust OAuth module and unchanged MIT/Apache licenses. Earlier failed exploratory
+receipts remain. Final-source full core, vendor/version/snapshot behavior,
+remaining authentication/provider/platform/package checks and PyPI/Homebrew
+publication remain open. Next source notes: .context/postgres-auth-settings-next.md.
+The all-five goal remains active; no new public release.
+
+PostgreSQL unified-scan checkpoint, November 15, 2026:
+Standalone postgres_scan/postgres_scan_pushdown and postgres_query now use the same
+scan data and executor as attached tables. Standalone binding reads catalog type
+OIDs/page metadata (or the SQL-standard metadata path) and retains independent
+read-only repeatable-read sessions. It never resolves ATTACH's default secret.
+COPY, CTID tasks, snapshot sharing, worker timeouts, LIMIT/OFFSET pushdown, physical
+DML preparation and mixed-scan optimizer grouping are shared. postgres_query keeps
+its parameter rules, use_transaction=false behavior, no CTID splitting, and the
+upstream lack of filter pushdown/cardinality/explain callbacks. Legacy pushdown is
+controlled by the function name, independently of the attached-table setting.
+
+Standalone sessions close directly on early termination rather than draining COPY
+while issuing ROLLBACK. Partial page chunks are combined to the standard vector
+size; ordinary full/query/materialized chunks use the direct path. View mutations
+now request CTIDs and report the server's missing-column error like upstream,
+instead of failing later on an artificial NULL rowid. Query trailing whitespace/
+semicolon handling follows StringUtil::RTrim's platform C-char behavior.
+
+Receipt: .context/artifacts/popular-extensions/postgres-unified-verification.json.
+The complete 152-file original PG inventory remains 145 PASS / 7 SKIP / 0 FAIL
+(postgres-upstream-unified-all-1), with original SQL unchanged. All 21 new paired
+controls pass (postgres-unified-control-2), including executed COPY/filter/limit/
+snapshot evidence, tight-pool mixed joins, query parameters, optimizer-off execution,
+prepared reexecution, timeouts and view diagnostics. Early-close controls pass on
+both engines against a deliberately slow tail (postgres-unified-early-2).
+Final legacy 26, attachment 27, mutation 22, DDL 16, parallel 12, pool 16, codec 39,
+cache 13, secret 30 and interruption 6 cohorts pass (*-final-1). All 279 native/
+planner tests across 45 signed targets pass with TZ=UTC; strict Clippy 2 passes.
+All owned fixtures stopped; no heavy job remains active. Failed exploratory view
+fixtures remain in views-1/2; final controls assert the server diagnostic specifically.
+
+Next: of 26 pinned settings, pg_debug_show_queries and pg_oauth_token remain
+unimplemented. Source notes are in .context/postgres-auth-settings-next.md. Complete
+those actual behaviors, vendor/version/snapshot/error-path audit, remaining auth
+and skipped-prerequisite supplements, then provider/platform/package qualification
+and PyPI/Homebrew delivery. Keep the original four mysql-scanner guards and other
+skips explicit. The last full core run is frozen 66389563; its ART regression was
+fixed by e6504e3a and the targeted original passes, but final-source full core is
+still required. The all-five goal remains active/incomplete; no new public release.
+
+PostgreSQL secrets/storage checkpoint, November 15, 2026:
+Latest full original PG inventory: 145 PASS / 7 SKIP / 0 FAIL on Rust
+(postgres-upstream-secrets-all-3), matching the C++ eligible-file count. The two
+formerly failing secret files now pass unchanged on both engines. Four skips are
+original mysql_scanner requirements; the other three require PGOAUTHTOKEN,
+HAS_POSTGIS and AWS_RDS_DATABASE_AVAILABLE. Do not call the skips coverage.
+
+The config provider accepts the pinned libpq option names/aliases, ordered alias
+precedence, string conversion, redaction and ignored SCOPE behavior. ATTACH resolves
+explicit/default secrets with ambiguity checks, preserves the original displayed
+path, handles URI conflicts and applies attach-path overrides. Empty provider paths
+are empty VARCHARs rather than NULL in duckdb_databases().
+
+PostgreSQL secret storage probes before publishing ATTACH, creates a table only
+when explicitly requested, preserves quoted/schema-qualified names, and reuses
+registrations across detach/reattach. CRUD participates in the caller's transaction;
+lookup uses scope/tie-break ordering and type-filtered SQL. The global manager lock
+is released before remote I/O. Serialized-secret error text is redacted. Existing
+DuckDB key/value serialization is reused; C++ writes/Rust reads and Rust writes/C++
+reads both pass, including a write-back in the opposite engine.
+
+RDS templates validate configuration without fetching credentials. Token generation
+uses a separate connection/temporary secret/rollback lifecycle, existing Rust SigV4
+signing, and the source's 840-second cache-age comparison. The signed token is used
+as the PostgreSQL password on new pool connections. No-credential validation=none
+returns the pinned unsigned URL. RDS name/password trimming follows the platform
+C-char rule (including the observed non-ASCII suffix behavior), not Unicode trim.
+
+Receipt: .context/artifacts/popular-extensions/postgres-secrets-verification.json.
+All 30 paired secret controls pass (postgres-secret-control-3), including alias
+collisions with 1..25 padding options, transactional rollback, storage conflicts,
+scope/tie priority and URI handling. Both storage interop directions pass
+(postgres-secret-interop-3). RDS controls validate SigV4 passwords and token reuse
+across three connections per engine plus paired error diagnostics (postgres-rds-
+control-3); this is an owned loopback protocol fixture, not live AWS validation.
+The no-credential/provider SQL cohort passes both engines (postgres-rds-sql-control-3).
+All 13 cache, 27 attachment, 22 mutation, 16 DDL, 12 parallel, 16 pool, 39 codec and
+6 interruption regressions pass (postgres-secrets-*-1). All 284 native/planner/AWS
+tests across 47 signed targets pass with TZ=UTC; strict Clippy 4 passes. Earlier
+failed receipts remain. All owned fixtures stopped; no heavy job remains active.
+
+PG fixtures now set SLT_FIXTURE_EXTENSION_DIRECTORY before either backend opens a
+database. Pinned oracle artifacts are staged on the SSD, so original INSTALL
+statements do not write extension binaries into the user's home. Ordinary corpus
+defaults and original SQL remain unchanged.
+
+Next: unify standalone postgres_scan[_pushdown] and postgres_query with attached
+COPY/parallel/filter/limit/optimizer behavior (notes: .context/postgres-unified-scan-next.md).
+Qualify remaining authentication/settings and skipped prerequisites, including the
+AWS aws_secret_rds.test using an owned SSO fixture; its SQL only creates templates/
+tokens, so no real RDS account is needed. Keep original wrong-require/mode-skip
+files intact and use explicit supplements where appropriate. Finish remaining
+provider/platform/package gates and PyPI/Homebrew delivery. The full core run of
+66389563 had one ART export regression corrected in e6504e3a; targeted core secrets
+and ART checks pass, but a full final-source core run is still required.
+The all-five goal remains active/incomplete; no new release has been published.
+
+Core refresh / legacy ART export correction, November 15, 2026:
+The frozen 66389563 full run finished: 4,843 PASS / 33 SKIP / 21 FAIL. Its only
+status change from the preceding full run was test_art_duckdb_versions.test.
+Exporting the 0.9.1 fixture emitted `USING (` because the old checkpoint omitted
+index_type_name. Pinned CheckpointReader::ReadIndex assigns ART before constructing
+the index entry; the Rust reader now does the same. The unchanged original passes
+(postgres-core-art-fixed-1.jsonl). CPP/Rust export reproduction is retained in
+postgres-core-art-export-1; the full failed snapshot remains in
+postgres-cache-conformance-1. The dashboard reflects latest per-file verdicts,
+including the targeted correction; it is not a full run of the current working tree.
+The passing baseline remains unchanged. Receipt: postgres-core-art-verification.json.
+No heavy core job remains active. PostgreSQL secrets changes are uncommitted and
+under test; inspect current live tools/processes before launching more heavy work.
+
+PostgreSQL catalog/cache checkpoint, November 15, 2026:
+The PostgreSQL full original suite now reports 143 PASS / 2 FAIL / 7 SKIP on Rust
+(postgres-upstream-cache-all-2), versus 145 PASS / 7 SKIP on the C++ oracle. Nine
+prior failures moved to PASS, with no other status changes. The remaining failures
+are attach_secret.test and attach_secret_storage.test. No original SQL was edited.
+
+Schema lookup retains the implicit main schema even when USE selects public.
+CREATE-time composite/enum columns lose their outer alias while preserving JSON,
+matching PostgresTableEntry. The first postgres_execute query sends BEGIN and SQL
+in one Simple Query message. Disallowed use_transaction=false and query failures
+use the upstream Invalid Error classification and statement context.
+
+The information_schema mode now uses SQL-standard discovery queries, maps the
+pinned data_type names, returns no discovered enums/composites/indexes, and preserves
+CREATE-time layouts until cache reload. Seeded zero-column tables are omitted like
+upstream. pg_staleness_query_enabled is registered FALSE by the pinned source,
+despite its description; explicit NULL selects the inverse of information_schema
+mode. The paired default-setting control verifies that behavior.
+
+Table signatures contain identity/name/revision with the source separators, sampled
+through a separate pooled Simple Query connection. Custom placeholders, NULLs,
+column-count validation, ignored extra columns and multi-statement last-result
+semantics are implemented. Signatures are staged per transaction and promoted only
+on commit; a generation guard prevents promotion into a cleared/replaced cache.
+Settings changes clear attached caches. Table/view invalidation preserves other sets.
+
+A supplementary lock test found normal catalog discovery was preparing SELECT *
+over the user table and blocking external DDL in an open transaction. Discovery
+now resolves catalog OIDs/types directly. The previously failing case passes on
+both engines. The Rust driver patch still changes only client.rs/query.rs across
+33 source files from tokio-postgres 0.7.18; both licenses are unchanged.
+
+Receipt: .context/artifacts/popular-extensions/postgres-cache-verification.json.
+All 13 paired catalog controls pass (postgres-cache-control-2), including executed
+SQL evidence for the standard metadata path, type reloads, custom signatures and
+rollback/cache-clear behavior. Final 27 attachment, 22 mutation, 16 DDL, 12 parallel,
+16 pool, 39 codec and 6 interruption regressions pass (*-2 directories). All 279
+native/planner tests across 45 signed targets pass with TZ=UTC; strict Clippy 5
+passes. Initial failing receipts remain. All owned PostgreSQL fixtures stopped.
+
+Next: postgres/RDS secrets and PostgreSQL secret storage; unified legacy/query scans,
+remaining authentication/settings and skipped-prerequisite supplements; final
+provider/platform/package gates and PyPI/Homebrew delivery. A fresh full core run
+will be launched from this checkpoint under postgres-cache-conformance-1; inspect
+its controller log/receipt and live process before starting another heavy job.
+Until that run completes, the last qualified full core remains frozen 83d8da21.
+The all-five goal remains active/incomplete; no new release has been published.
+
+PostgreSQL attached-scan checkpoint, November 15, 2026:
+Attached tables now execute bounded COPY OUT scans with CTID page tasks, pooled
+parallel workers and shared PostgreSQL snapshots for repeatable-read/serializable
+transactions. READ COMMITTED omits snapshot sharing. Version <14, text mode and
+nonpositive relpages disable splitting. Multiple scans reserve/materialize the main
+connection according to the pinned optimizer rules; auxiliary leases return on
+completion/drop. Worker statement/idle timeouts use real server settings.
+
+LIMIT/OFFSET pushdown disables splitting. Supported comparison/IN/NULL/struct
+filters are translated to PostgreSQL SQL, with upstream string collation and blob
+literals. Optional join hints cannot become mandatory predicates. Ordinary rowid
+reads yield NULL; a physical-planning callback enables CTIDs/materialization for
+provider DML even with the optimizer disabled. Provider scans now retain their
+cardinality callback rather than falling back to the native-table path. Query logs
+register the structured PostgresQueryLog type and capture actual executed queries.
+
+Receipt: .context/artifacts/popular-extensions/postgres-parallel-verification.json.
+Latest Rust full 152: 134 PASS/11 FAIL/7 SKIP (postgres-upstream-parallel-all-2).
+C++ reference: 145 PASS/7 SKIP (postgres-upstream-parallel-all-1). All originals stay
+unchanged. The first scan discovery was 132/13/7; the final build fixes partitioned
+EXPLAIN cardinality and filter pushdown with no other status changes. All 9 selected
+scan/pool originals pass in the final Rust full run; C++ passed that cohort in
+postgres-upstream-parallel-4. All 12 paired scan controls pass, including actual
+worker/snapshot/timeout/filter log assertions, tight-pool joins and optimizer-off
+mutations. All 27 attachment, 22 mutation and 6 API cancellation regressions pass.
+All 272 native tests across 41 signed targets pass with TZ=UTC; strict Clippy run 2 passes.
+CLI SHA starts f6f97a144265; SLT starts fb4484d7ed46. All owned fixtures stopped.
+
+Initial control 1 used CLI shell log storage instead of memory and exposed an
+unsupported optional join-filter hint. Control 2 corrected both; control 3 verifies
+the final planner build. Failed receipts are retained. No new dependencies or gates.
+
+Next: 11 original failures remain: main-schema resolution; created composite-type
+field binding; postgres secrets and secret storage; four staleness/cache tests;
+information_schema introspection; two transaction error-compatibility tests. Legacy
+postgres_scan/postgres_scan_pushdown and postgres_query still need unified scan/
+optimizer/logging/settings integration. Remaining authentication/prerequisites and
+all provider/platform/package gates stay open. Full core is still frozen 83d8da21
+and predates later PG work; final current-source core qualification is required.
+No new PyPI/Homebrew release; the all-five goal remains active and incomplete.
+
+PostgreSQL pool checkpoint, November 15, 2026:
+Primary transaction connections now use a real per-catalog Rust pool. Leases return
+at transaction completion, health-check sessions, clear prepared type-info caches,
+roll back open/failed transactions and DISCARD ALL before reuse. Force/wait/try,
+limits, timeout/interruption, lifetime/idle expiry, thread-local caching, thread-exit
+return and background reaping are implemented. postgres_configure_pool exposes live
+configuration and counters; pg_pool_* settings initialize future pools, while the
+deprecated connection limit/cache callbacks update attached pools as upstream does.
+
+The first lifecycle probe caught ROLLBACK and DISCARD ALL sharing a query message;
+Postgres rejects that. They are separate now, with ReadyForQuery status tracking
+and Sync when needed, so idle sessions are not sent spurious ROLLBACKs. The driver
+patch still changes only client.rs/query.rs from tokio-postgres0.7.18; licenses and
+dependency versions stay unchanged (postgres-pool-driver-audit.json). Pinned pool
+source0a8505f775dae7bb30edd37f848d5975bf72884e and verified Git blob hashes are in
+postgres-pool-source. No C/C++ product code or default-off feature gates were added.
+
+Final receipt: .context/artifacts/popular-extensions/postgres-pool-verification.json.
+28 real-server backend checks pass (postgres-pool-backend-4), including PID reuse,
+DISCARD cleanup, prepared-type cache reset, contention/timeout/cancellation,
+expiry/reaper/TLS cache and failed transaction recovery; zero spurious rollback
+warnings. All16 paired SQL controls pass (postgres-pool-control-3). Five unchanged
+originals pass both engines (postgres-upstream-pool-4): pool options/configure,
+autoload, multi_join and concurrent_queries. The source slow-pool/early-release
+files still need the missing parallel scan/settings implementation; they are not
+claimed from these results. Earlier27 attachment/22 mutation/16 DDL/39 codec SQL
+cohorts pass (postgres-pool-*-regression-2), plus all6 API cancellation modes
+(postgres-pool-interrupt-2). All272 native/runner tests across41 signed targets and
+strict Clippy5 pass. CLI SHA startsadb1811df77e; SLT startsfdcf0e446b84. All owned
+fixtures stopped and no jobs remain active. Initial failed receipts are retained.
+
+SLT_FIXTURE_SECRET_DIRECTORY now sets an owned existing absolute credential
+storage directory in either backend's startup configuration. The original SQL stays
+unchanged. PG upstream/CLI/codec/interruption harnesses isolate secret storage before
+authentication, preserving ordinary corpus defaults when the override is absent.
+
+Next: implement pg_pages_per_task/CTID/parallel scan integration and pushdowns,
+remaining settings/logging, full cache staleness/rebinding, secrets/RDS/authentication
+and missing prerequisites. Verify platform-specific hardware-derived pool defaults
+in the platform qualification. The full152 discovery remains postgres-upstream-all-1,
+not current acceptance. The last full core run is frozen83d8da21 and predates later
+milestones. Complete final core, remaining extension/provider/platform/package gates,
+then PyPI/Homebrew delivery. The all-five goal remains active/incomplete; no release.
+
+PostgreSQL binary-file checkpoint, November 15, 2026:
+Normal builds now provide COPY TO/FROM (FORMAT postgres_binary) and
+read_postgres_binary(path, columns=..., buffer_size=...). The Rust implementation
+uses the pinned 19-byte header/row/footer framing, bounded refill behavior,
+caller-supplied types, decimal scale digits, array/composite OIDs, NULL replacement,
+GEOMETRY/EWKB and scalar/temporal encodings. It routes file I/O through existing
+filesystem hooks, handles file URLs/home paths, and enforces external-access rules.
+Prepared scans get fresh cursors; EOF is fused. Bounds/column-count checks fail
+before decoding malformed layouts.
+
+The original binary-to-real-PostgreSQL round trip exposed the old checked timestamp
+epoch conversion; the pinned reader uses wrapping arithmetic. Decoder/writer epoch
+handling now matches it, and date writes enforce the pinned range/message. The
+pg_null_byte_replacement setter now returns the oracle's Binder error for NUL in
+the replacement. No new dependencies, C/C++ product code or feature gates.
+
+Final receipt: .context/artifacts/popular-extensions/postgres-binary-verification.json.
+All7 unchanged binary originals plus attach_types_date/timestamp pass on both
+engines (postgres-upstream-binary-3). All60 controls pass (postgres-binary-control-4):
+11 raw-byte writer comparisons, both read directions, nested values/geometry,
+header/buffer/EOF boundaries, malformed-file diagnostics, prepared scans, NULL and
+numeric-NaN settings. All4 I/O controls pass (postgres-binary-io-1), including actual
+GETs from an owned HTTP server, home paths and disabled reads/writes with no output.
+The HTTP fixture isolates secret storage/proxy configuration and is stopped.
+All27 attachment,22 mutation,16 DDL/export and39 codec SQL regression cases pass
+(postgres-binary-*-regression-1). All219 native tests across39 signed targets pass
+with TZ=UTC (postgres-binary-unit-results.json), and strict Clippy5 passes. CLI SHA
+starts b21c4235070b; SLT starts d5117bd92e79. All owned fixtures stopped; no jobs live.
+Initial failed receipts remain, including invalid control SQL/CRS/URL setup and the
+real timestamp, file-URL and setter-error mismatches corrected by later runs.
+
+Next PG work: connection pooling/session reuse; remaining settings/filter/limit/
+parallel scans; staleness/rebinding; secrets/RDS/logging/authentication; remaining
+original files and prerequisites. Isolate DuckDB persistent-secret directories in
+the upstream PG fixture before default-secret authentication is enabled. The full152
+inventory discovery is postgres-upstream-all-1, not a current full-suite pass.
+The last full core run is frozen83d8da21 (4,844 PASS/33 SKIP/same20 FAIL, no regression);
+it predates the DDL and binary milestones. Final current-source conformance, remaining
+extension/provider/platform/package gates and PyPI/Homebrew delivery remain open.
+The all-five goal is active and incomplete; no new release has been made.
+
+PostgreSQL DDL/export/hstore checkpoint, November 15, 2026:
+The working implementation now creates and lists server-owned indexes, handles
+CREATE INDEX IF NOT EXISTS, creates/replaces/drops views, and sends CHECKPOINT on
+the active PG transaction connection. Remote DDL quotes identifiers as the pinned
+source does. Catalog lookup distinguishes exact-case objects; CREATE/DROP preserve
+unrelated cached definitions. Schema table/type/index name sets are captured
+together. Created tables retain aliases/defaults without changing decoder layouts,
+including JSON and arrays while pg_array_as_varchar=true. Full staleness handling
+and pooling remain pending.
+
+COPY FROM DATABASE and EXPORT enumerate providers, propagate I/O errors and clean
+up temporary metadata transactions on failure. COPY keeps resolved type infos
+instead of converting them to self-referencing SQL aliases. EXPORT preserves the
+pinned existing-composite-type import limitation; a schema-filtered round trip of
+newly created tables/views passes. Mixed-case index-expression failure is also
+preserved from C++. Hstore get/to_json use the pinned byte parser, NULL and duplicate
+key behavior, JSON escaping and error positions. No new dependencies or gates.
+
+Final evidence in .context/artifacts/popular-extensions/postgres-ddl-verification.json:
+16 paired DDL/export controls (postgres-ddl-control-8); hstore 200 inputs x17 keys
+plus NULL/control bytes and9 malformed-input cases (postgres-hstore-control-3);
+9 unchanged originals pass both (postgres-upstream-ddl-3); all earlier27 attachment,
+22 mutation,7 metadata and39 codec SQL controls pass (postgres-ddl-*-regression-2).
+All40 targeted native copy/export/index/catalog files pass (postgres-ddl-core-targeted-2).
+All216 native tests across39 signed targets pass with TZ=UTC (postgres-ddl-unit-results-2.json),
+and strict all-target Clippy6 passes. All owned servers stopped. CLI SHA starts
+3cd99b40f72c; SLT starts b31ade7ecd6b. Failed discovery/control receipts remain.
+No active jobs remain at this checkpoint. Staged source copies in postgres-ddl-stage
+are obsolete; do not reapply them.
+
+The full core run at frozen83d8da21 completed with 4,844 PASS /33 SKIP /same20 FAIL,
+zero status changes/regressions and unchanged passing baseline. Its verification
+is postgres-metadata-conformance-verification.json; release SLT SHA starts9d162655.
+That full run predates this DDL milestone; final current-source conformance and
+platform/package gates still remain. No release was made.
+
+Next PG work: binary file COPY/read functions, connection pooling/session reuse,
+remaining settings/filter/limit/parallel scans, staleness/rebinding, secrets/RDS,
+logging/authentication and remaining originals. The full152 discovery is recorded
+in postgres-upstream-all-1; do not turn passing subsets or skipped prerequisites
+into full acceptance. Finish remaining AWS/HTTPFS/ICU/provider/platform gates,
+then PyPI/Homebrew delivery. The all-five goal remains active and incomplete.
+
+PostgreSQL full-inventory discovery and metadata checkpoint, November 15, 2026:
+The frozen first all-152 run completed: C++ 144 PASS / 7 SKIP / 1 FAIL;
+Rust 95 PASS / 7 SKIP / 48 FAIL / 2 CRASH. The C++ failure is the original binary
+COPY test needing server-file permissions; the owned fixture now grants that role
+only for this original and revokes it in finally. The unchanged C++ rerun passes
+(postgres-binary-fixture-oracle-1), and its server stopped. Four skips
+require mysql_scanner in the original PG files; OAuth, RDS and PostGIS prerequisites
+are also absent. Source mode-skip directives remain untouched, so file PASS does
+not qualify skipped suffixes. Receipt: postgres-upstream-all-1, including crash reports.
+
+Working source adds fallible internal catalog enumeration for remote schemas,
+tables and types, correct database type/internal schema metadata, deduplicated
+column names, case-insensitive type lookup and CREATE-time default expressions.
+The optimizer now gates extracted-field scan capability on native storage: remote
+table identity had incorrectly enabled it and caused both composite-field crashes.
+All seven paired metadata controls and all nine selected unchanged originals pass
+on both engines, including both formerly crashing files. Receipts:
+postgres-metadata-control-1 and postgres-upstream-metadata-1. Owned servers stopped.
+All 26 signed runtime library tests and strict catalog/optimizer/runtime all-target
+Clippy pass (postgres-metadata-unit.{log,json}, postgres-metadata-clippy-1.log).
+Fresh full core conformance is the next running gate.
+
+This is not full PostgreSQL acceptance: index/view creation and metadata, cache
+staleness/rebinding, pooling, secrets/RDS/authentication/options, binary files,
+hstore, scan pushdown and the remaining original failures still need work. Remaining
+five-extension/platform/package/publication gates stay open; no new release.
+
+PostgreSQL mutation checkpoint, November 15, 2026:
+working source now implements UPDATE, DELETE, MERGE and ON CONFLICT through remote
+mutation state. MERGE materializes input before interleaved action sinks; delete
+CTID batches and temporary-table updates follow the pinned algorithms. PK/UNIQUE
+metadata maps actual PostgreSQL attnums, including dropped-column gaps. The four
+supported remote ALTER operations now dispatch directly; ADD COLUMN resolves its
+type first, and missing DROP IF EXISTS resolves the catalog default schema.
+
+All 22 paired mutation/ALTER controls pass (postgres-mutation-control-4). Nine
+unchanged upstream files pass on both engines, including the million-row deletion
+(postgres-upstream-mutation-2). The later mode-skip in attach_delete stays intact:
+its passing result covers the executed prefix, not the skipped suffix. Combined
+with the prior cohort, 24 original files have passing Rust/C++ receipts. All six
+API cancellation modes pass and leave rows/transaction state unchanged as expected
+(postgres-mutation-interrupt-1). Strict final Clippy 9 passes, as do all 216 native tests across 39 signed targets
+with TZ=UTC (postgres-mutation-unit-results.json). All owned servers stopped.
+
+The all-five goal is still incomplete: catalog listings/staleness/rebinding,
+pooling/session retention, secrets/RDS, remaining settings/authentication/DDL and
+the complete 152-file PG suite remain, followed by remaining extension, full core,
+platform/package and publication gates. No release made.
+
+PostgreSQL real-attachment checkpoint, November 15, 2026:
+working source now uses a real remote catalog and transaction-owned sessions for
+ATTACH, reads, query/execute, CREATE/DROP and INSERT/CTAS via COPY. It buffers through
+the existing spillable column storage, including materializing a replacing CTAS
+before dropping its source. This is partial implementation: UPDATE/DELETE/MERGE,
+remaining DDL/metadata/cache/pool/settings/secrets/auth and the full suite remain.
+
+All 27 paired attachment controls pass (postgres-attach-control-5), all 39 value/type
+cases now pass through actual Rust SQL (postgres-codec-runtime-2), and 15 unchanged
+originals pass on both engines (postgres-upstream-attach-2). Three API cancellation
+modes pass, including COPY rollback and no lingering remote transaction
+(postgres-interrupt-control-2). Strict Clippy10 passes. All 216 unit/integration tests across 39 signed targets
+pass with TZ=UTC (postgres-attach-unit-utc-results.json). One existing persistence
+test assumes UTC rendering; its local-timezone failure is retained in the first run. Receipts are under `.context/artifacts/popular-extensions/`.
+
+A small Rust-only tokio-postgres 0.7.18 patch provides raw text-format rows; only two
+upstream source files differ and licenses remain. SQL parameters now use the pinned
+mixed-format/width rules, separately from COPY. No package version changes. Direct
+native-transaction handles replace weak planner-context reliance in PG execution.
+Projection and CTAS ordering failures were corrected; raw failed receipts remain.
+
+The frozen d8f61a2f core run finished: 4,844 PASS / 33 SKIP / same 20 documented FAIL,
+zero regressions or status changes, passing baseline unchanged. Evidence is
+postgres-hooks-conformance-verification.json; release SLT SHA starts 5c5b59f55bbe.
+This full run predates the new attachment changes. Fresh final integration,
+platform/package gates and PyPI/Homebrew publication remain. Goal active, incomplete.
+
+Remote-catalog engine hooks checkpoint, November 15, 2026:
+internal Rust CatalogBackend/TableBackend traits now provide fallible metadata
+lookup, catalog-specific default schemas and provider scans on real table entries.
+The optimizer and executor distinguish native storage capabilities from table
+identity. USE/search-path lookup honors the backend default while preserving native
+main-schema fallback. Transaction-owned participants are reused per catalog,
+finished outside the native manager lock, and cleaned up on failure or drop.
+
+All 26 signed runtime unit tests and strict storage/catalog/planner/optimizer/
+execution/runtime Clippy pass. This includes synthetic provider scans through the
+real binder/optimizer/executor, provider-error propagation, native search-path
+fallback, participant reuse/order and failed-commit/drop cleanup. Receipts:
+postgres-catalog-hooks-tests-2.{log,json} and postgres-catalog-hooks-clippy-6.log
+under `.context/artifacts/popular-extensions/`. The first hook test caught USE still
+selecting main and is retained in postgres-catalog-hooks-tests-1.log; corrected
+source passes. Full scripts/conformance.sh qualification is the next gate.
+
+These are engine hooks, not completed PostgreSQL ATTACH support. The actual remote
+catalog/storage owner, PG session leases, DDL/DML sinks, query/execute, pooling,
+remaining settings/authentication and full original suite remain required. The
+all-five goal and publication gates remain active and incomplete.
+
+PostgreSQL codec and legacy SQL checkpoint, November 15, 2026:
+normal builds now register bundled LOAD postgres, postgres_scan,
+postgres_scan_pushdown and postgres_attach. The legacy attach creates views,
+matching upstream; SQL ATTACH's remote catalog/transactions/writes remain pending,
+as do actual filter pushdown, pooling, remaining authentication/options and the
+full 152-file suite. Fresh integration conformance and package/platform gates
+remain. No new public release; the all-five goal remains active.
+
+Seven unchanged scanner originals pass on both engines, including the exhaustive
+slow decimal test (postgres-upstream-scanner-1). Thirty-nine value/type comparisons
+pass: 13 actual SQL scans and 26 backend table/query-mapping cases
+(postgres-codec-control-4). Twenty-five paired SQL controls and the Rust API/server
+cancellation control pass (postgres-scan-control-2). Four malformed-codec tests,
+the updated TLS/SCRAM/wire/COPY probe and strict backend/runtime Clippy pass
+(postgres-codec-unit-tests.log, postgres-wire-control-3, postgres-scan-clippy-4.log).
+All 23 signed runtime library unit tests also pass (postgres-runtime-unit-tests.log).
+Owned PostgreSQL servers are stopped. Receipts are under
+`.context/artifacts/popular-extensions/`; the extension spec records exact scope.
+
+Pinned legacy quirks are preserved: direct scan/attach does not inspect
+`enable_external_access`, and legacy scans keep numeric NaN-as-NULL even after
+`pg_numeric_nan_as_null=false`. SQL ATTACH has separate access checks to implement.
+The backend now preserves EOF on repeated row/COPY reads and sends real PostgreSQL
+cancellation requests while blocked. No locked package version changed.
+
+Core conformance and PostgreSQL backend checkpoint, November 15, 2026:
+`scripts/conformance.sh` completed on code9b1627fe: 4,897 files, 4,844 PASS,
+33 SKIP and the same20 documented FAIL files; zero ratchet regressions. All43
+status changes from the prior full run are SKIP→PASS. The passing baseline is
+unchanged. Evidence: azure-full-conformance-1.log and
+azure-full-conformance-verification.json under `.context/artifacts/popular-extensions/`.
+
+A new Rust PostgreSQL wire backend now provides streaming binary rows/COPY,
+parameter bytes and type modifiers, owned Tokio runtimes, cancellation and TLS.
+The signed wire probe passes actual TLS/non-superuser checks, binary round trips,
+rollback, cancellation, nested-runtime use/teardown, SSL-mode checks, wrong-host
+and wrong-password controls against PostgreSQL17.11. Reference TLS control passes;
+servers stop cleanly. Strict backend Clippy passes. Dependency audit adds41 Rust
+packages and preserves every previously locked version; no new native library
+package is added. See postgres-wire-control-2, postgres-dependency-audit.json and
+postgres-backend-clippy-final-2.log.
+
+The restored-database fixture passes4 unchanged original files on C++ in
+postgres-upstream-fixture-2. This is oracle fixture qualification only. PostgreSQL
+SQL registration, catalog/transaction/mutation integration and the152-file Rust
+cohort are still pending; LOAD postgres is not yet implemented. OAuth/CRL and other
+libpq option parity remain. The all-five goal also still includes remaining AWS
+web identity/RDS, other extension/platform/package gates and publication. No new
+public release was made. Older checkpoints below retain their original scope.
+
+Azure original-SQL milestone, November 15, 2026: all27 unchanged original files
+now PASS on both C++1.5.6 and Rust, with zero skips, fixture errors or invalid
+authorizations. Receipts: `.context/artifacts/popular-extensions/azure-upstream-all-2/`.
+This includes identity, both large/concurrent-write suites, all4 proxy tests and real
+persistent-secret data integrity. Fourteen transfer controls per engine also pass
+on the final development image (azure-transfer-control-final). Signed core unit
+checks pass37 function and31 Parquet tests, with2 existing ignored Snappy tools;
+strict function/HTTPFS/Parquet/runtime/SLT Clippy passes (azure-core-tests-final,
+azure-core-clippy-final.log).
+
+Core corrections enable nonlocal Parquet prefetch and separately validate scan
+handles, with an internal direct-read hook to avoid duplicate provider read-ahead.
+Azure follows upstream's Last-Modified cache validation; ETags guard download chunks.
+Configured read buffers/chunks/concurrency and ADLS Blob-vs-DFS routing are honored.
+No cache budget or local-file default changed. The earlier profiling failure was
+resolved, not accepted as a divergence; fresh Azurite objects fall within the pinned
+ten-second timestamp cache guard, while the final fixture uses source-file times.
+The fixture implements100-continue and concurrent TLS handshakes, validates auth,
+and keeps test SQL/data unchanged. See extensions/azure/SPEC.md for exact history.
+
+The all-five goal is still incomplete. Full core conformance/release qualification
+is the next gate, followed by remaining AWS web identity/RDS, PostgreSQL, other
+extension/provider/platform gates and publication. No new public release made.
+
+Azure identity checkpoint, November 15, 2026: Rust now acquires environment,
+workload, CLI, managed-identity and service-principal/certificate tokens. Twenty-five
+paired identity controls pass on the final signed development image, with matching
+provider request traces and CLI arguments/environment. Certificates are independently
+verified (RSA signatures and claims), and all client/object/resource selectors are
+covered. The pinned Unix CLI PATH-only environment, valid token JSON on nonzero exit,
+13-second timeout, legacy timestamp rules and direct-managed transport behavior are
+preserved. Native CLI and Rust API interruption checks stop helper descendants; the
+API returns ErrorKind::Interrupt. Nine unchanged Blob/VFS originals and 12 ADLS
+protocol controls per engine remain passing. Strict HTTPFS/runtime/SLT Clippy passes.
+Receipts: azure-identity-control-4, azure-interrupt-{api,cli}-final,
+azure-identity-blob-regression-1, azure-identity-dfs-regression-1 and
+azure-identity-clippy-final-2.log under `.context/artifacts/popular-extensions/`.
+The full goal remains incomplete: unchanged cloud originals, advanced option/
+refresh/challenge/network-cancellation behavior, platform qualification, AWS web
+identity/RDS, PostgreSQL, full conformance and publication remain. Azure Arc's macOS
+rejection matches; Linux/Windows Arc success is unverified. No public release made.
+
+Azure ADLS checkpoint, November 15, 2026: Azure now registers both Blob and
+ADLS (`abfss://` and `abfs://`) Rust filesystems. SharedKey-authenticated protocol
+fixtures pass 12 SQL controls per engine, including directory traversal, paginated
+listing, append/flush, close=true, and partitioned Parquet. The fixture's independent
+C++ qualification also passes. Nine unchanged Blob/VFS originals pass on both
+engines; strict function/HTTPFS/runtime/SLT Clippy passes. Receipts under
+`.context/artifacts/popular-extensions/`: azure-dfs-control-1,
+azure-dfs-oracle-2, azure-dfs-blob-regression-1, azure-dfs-clippy-final.log.
+This adds protocol-fixture acceptance, not live Azure or full extension acceptance.
+Identity providers, remaining originals/options/cancellation, AWS web identity/RDS,
+PostgreSQL, full conformance and publication remain. The all-five goal is active.
+
+Azure Blob checkpoint, November 15, 2026: the all-five goal remains active and
+incomplete. Normal builds now register bundled Azure loading, all secret-provider
+metadata and a Rust Blob filesystem with SharedKey/SAS auth, range reads, listing,
+block uploads, commits and logging/redaction. Eight unchanged Azure originals pass
+on both engines, including the large/concurrent write test. Twelve paired auth/name/
+metadata controls pass. The original azure.test profile expectation fails on both
+engines with different actual request counts; raw results are retained unchanged.
+The signed final development image also passes the existing AWS signed-network/
+process-refresh control (4 cases, 17 requests, 0 invalid signatures). Strict
+all-target function/HTTPFS/runtime/SLT Clippy passes. Receipts live under
+`.context/artifacts/popular-extensions/azure-upstream-blob-3/`,
+`azure-blob-control-2/`, `aws-after-azure-control-1/`, and `azure-clippy-final.log`.
+See extensions/azure/SPEC.md and scripts/azure-tests/README.md for exact scope.
+Azure token acquisition, ADLS, full option/cancellation semantics, remaining Azure
+and AWS originals, PostgreSQL, full conformance and package/publication gates are
+still required. Identity SDK1.13.2 source references are saved with hashes in
+`azure-sdk-reference/`. No new native dependencies, no C++ bridge and no release.
+
+AWS local-original checkpoint, November 15, 2026: 18/21 unchanged originals now
+pass on both engines: eleven metadata/profile, three signed S3, two environment,
+and two proxy files. The independent loopback fixtures validate S3 signatures,
+malformed-region/invalid-key rejection and authenticated proxy traffic. Fresh
+storage is used for each engine. The refresh original retains an identical raw
+failure on both engines: unchanged credentials produce no refresh log in pinned
+HTTPFS; the separate rotating-process control passes actual refresh and logging.
+Final environment fixture records identical local 403 HEAD/GET traffic. RDS and
+web-identity originals remain, along with Azure, PostgreSQL, full conformance and
+package/release gates. The all-five goal is active and incomplete. Receipts:
+`.context/artifacts/popular-extensions/aws-upstream-data-1/`,
+`aws-upstream-proxy-1/`, `aws-upstream-env-4/`; see extensions/aws/SPEC.md.
+Runner strict Clippy and Python syntax checks pass. No release made.
+
+AWS integration checkpoint, November 15, 2026: the active all-five goal remains
+incomplete. AWS now has normal LOAD/INSTALL, credential_chain secret binding,
+legacy load_aws_credentials, type/provider autoload and query cancellation. Current
+paired controls pass 31/31 against official C++1.5.6. Independent S3 signature and
+credential-rotation controls pass on both engines (17 requests, no invalid signatures).
+The public Rust API interruption probe returns ErrorKind::Interrupt and both CLI/API
+checks stop helper descendants. The RDS backend signer matches a captured C++ token
+byte-for-byte at its recorded timestamp; RDS SQL integration is still pending.
+Eleven unchanged AWS metadata/profile originals pass on both engines with httplib
+explicitly selected; default-client runs retain the original HTTP-message skip.
+No test SQL or expected result was edited. See extensions/aws/SPEC.md and
+`.context/artifacts/popular-extensions/` (aws-sql-current-31, aws-network-control-final,
+aws-interrupt-api-1, aws-interrupt-cli-2, aws-rds-tests-*, and
+aws-upstream-metadata-httplib-3). These are development checks, not release-image
+qualification. Full AWS data-plane/IRSA/RDS/proxy originals, Azure, PostgreSQL,
+full conformance and package/publication gates remain mandatory. No release made.
+
+Local service fixtures, November 14, 2026: the owner authorized emulated AWS/Azure
+and disposable local PostgreSQL integration instead of supplying cloud accounts.
+`scripts/local-services/README.md` documents the repeatable setup and runner.
+Moto 5.2.5, Azurite 3.37.0 and PostgreSQL 17.11 pass eight grouped checks, including
+Rust HTTPFS S3 read/COPY and C++1.5.6 S3/Blob/PostgreSQL controls. All services were
+stopped after verification. Tools, data and receipts are on the external SSD at
+`.context/artifacts/local-services/`; final evidence is `check-final/verification.json`.
+AWS credential-chain, Azure and PostgreSQL Rust implementations remain pending.
+Azurite does not emulate ADLS Gen2: add separate ADLS protocol fixtures. IAM/Entra,
+real cloud policies and cloud-only behavior remain unverified, not blockers for
+independent implementation/local integration. Do not ask again for cloud accounts
+as a prerequisite to this work. These test tools are not engine dependencies.
+
+Active five-extension work, November 14, 2026: the user authorized HTTPFS, AWS,
+Azure, ICU and PostgreSQL compatible implementations against DuckDB 1.5.6. This
+work is **incomplete**. Docs-first commit `6793bbd8` pins the source contracts;
+`extensions/*/upstream.json` inventories 395 original SQL files across the five.
+HTTPFS now has bundled offline INSTALL/LOAD, aliases and an internal filesystem
+autoload bridge that preserves explicit settings and access restrictions. The
+signed final CLI passes 10 transport/developer cases (8 Rust, 2 C++ controls).
+Strict all-target Clippy passes for function/runtime/capi. A canonical 67-file
+ICU/extension run via scripts/conformance.sh passes its unchanged ratchet:
+Rust 65 PASS / 2 prerequisite SKIP; C++ 63 PASS / 4 prerequisite SKIP. Both skip
+two LOCAL_EXTENSION_REPO cases; the C++ shim additionally lacks TPCH for two
+mixed-feature tests. This is a targeted run, not a new full-corpus qualification.
+The first runtime-unit checkpoint passed 23 tests before the autoload bridge;
+the bridge is covered by the final transport/cohort tests. Receipts are under
+`.context/artifacts/popular-extensions/`, especially `bundled-final/`,
+`conformance-final/`, and `httpfs-clippy.log`. Earlier failing smoke/path-layout
+runs are retained. No baseline or original tests were weakened.
+AWS, Azure and PostgreSQL remain **unimplemented**; do not count inventories as
+support or end the requested work at HTTPFS. PostgreSQL's disposable local-server
+oracle control passes five checks against C++1.5.6/PG17.11 and stops its server;
+Rust was not tested. AWS SDK ordering and Azure's additional managed_identity/
+abfs surfaces are recorded in the specs. Next: implement credential providers,
+Azure filesystem and PostgreSQL remote catalog/transaction integration, then run
+all pinned suites and actual service/package acceptance. No new public release
+was made. The published post3 below predates these HTTPFS loading changes.
+
 Current publication, November 14, 2026: roastedDuck `1.5.6.post3` is public on
 GitHub and PyPI, with a Homebrew tap and verified native bottles. The release tag
 points to `afe4e2bb2baf79addf027b35b1ede98c2e05ad4f`; main contains the merged source,

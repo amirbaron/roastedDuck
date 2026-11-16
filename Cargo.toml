@@ -1,5 +1,6 @@
 [workspace]
 resolver = "3"
+exclude = ["third_party/tokio-postgres", "third_party/rustls-webpki"]
 members = ["crates/*", "tools/bench", "tools/bindcheck", "tools/codegen", "tools/corpus", "tools/slt"]
 
 [workspace.package]
@@ -57,3 +58,6 @@ opt-level = 2
 miniz_oxide = { path = "third_party/miniz_oxide" }
 
 ureq-proto = { path = "third_party/ureq-proto" }
+
+tokio-postgres = { path = "third_party/tokio-postgres" }
+rustls-webpki = { path = "third_party/rustls-webpki" }

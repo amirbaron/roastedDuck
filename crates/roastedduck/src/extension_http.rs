@@ -191,7 +191,7 @@ pub(crate) fn get(
     db: &crate::Database,
     etag: Option<&[u8]>,
 ) -> std::result::Result<Response, String> {
-    if db.external_extensions().contains(b"httpfs") {
+    if db.httpfs_loaded() {
         let url = std::str::from_utf8(url).map_err(|_| "Invalid extension URL".to_owned())?;
         let response = roastedduck_httpfs::extension_get(url, etag)?;
         let failed = Arc::new(AtomicBool::new(false));

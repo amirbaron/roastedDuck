@@ -1,0 +1,43 @@
+{
+  "repository": "https://github.com/duckdb/duckdb-aws",
+  "commit": "28c853c084a6e3acd36d7b8018c42438bb8c5a33",
+  "archive_sha256": "9c16f599dab3a55f1f43d9c45ac45c6c71d49199fade64d1ad3b47aa73fe34df",
+  "duckdb_version": "1.5.6",
+  "status": "implementation_in_progress",
+  "sql_tests": {
+    "test/sql/aws_errors.test": "847ded5ad1c16c3d105d9de2d9042c426759dff9f754a10639a09435e0ade279",
+    "test/sql/aws_minio.test": "4806ff9911e390c8848079af12f806fe607147fb52a8b198b3019959819a259e",
+    "test/sql/aws_minio_secret.test": "b8df0210f818f51c095583da4e8d90be065f09b47d0cd37131858eb48e22e2e5",
+    "test/sql/aws_secret.test": "595484a86efd3eadb13e7d21f79aefa541348aa88dd8bc60bd71d0dace2691f6",
+    "test/sql/aws_secret_aws.test": "7b07a8571f619c407eb0924f478b17ffdf9d5bead05360816b34c25e5f4fb662",
+    "test/sql/aws_secret_chains.test": "5a731bf6dd625517bb8e20b9abaa2278c9cf9325948f37bd0f5e19081a5bb9b9",
+    "test/sql/aws_secret_chains_minio.test": "0d03311e638daeb7c5784348972d245e2c160d19406b3fe945daf29625a3d3fa",
+    "test/sql/aws_secret_external_id.test": "1670beed1427c8b4326b1d2db2c7aea7ceb7dcee119c88dbc760d090f870c684",
+    "test/sql/aws_secret_gcs.test": "66c6f7f76fedf636e4ef454f1f24fd6c9f0704a81a0cd6540394d6366575dbca",
+    "test/sql/aws_secret_r2.test": "79a26a38bdba96c89f775e914ad27579f569f21c55c07bab6eb35775cfb11fb1",
+    "test/sql/aws_secret_rds.test": "2172823c86ac7e9ab8e1bcff9556b8a3981c9918b1c93d7ae588a42ade7f6225",
+    "test/sql/aws_secret_redaction.test": "71a1d945ddf5abf068581d6a846d0f7d974581b1775e04cd90be5b32797f2727",
+    "test/sql/aws_secret_region_warning.test": "6fc891e9da2dc0daf1b44fa5a281649ca23de00d374982ee23f98ca557c39fe3",
+    "test/sql/aws_secret_sts_provider.test": "9c617e7335ea626d6132711bc6d63ade95abee743d95349b9b4875317b1baabd",
+    "test/sql/aws_secret_validation.test": "2781ac2357198d4e901cd4908243396b775ab04871607b82c7891696af2cec3a",
+    "test/sql/env/aws_env_var.test": "1a69d62415196fd11bd70f3d392981effa83b54fdb93669bafef78a55400cbdf",
+    "test/sql/env/aws_secret_chains_env.test": "7180397ca82141bc7a7e69e05db28734f592caff0af3cd1e6e05816e49dcb83c",
+    "test/sql/env/aws_secret_refresh.test": "b100c04f0ddc1462033eb102f882925e92a7767ddd5308a719cc10ca257b906a",
+    "test/sql/env/aws_secret_web_identity_env.test": "32e1df92a4f372f1151f651069f7e75988ed1454cbeb75609d8a6670485d16de",
+    "test/sql/env/proxy/aws_secret_http_proxy.test": "cd4e613cea9a7a0af12500e858ec33cdc77094c8f6b8cb0299018ad2bc417b0e",
+    "test/sql/env/proxy/aws_secret_http_proxy_with_auth.test": "7c4a7be63a7ba0b485f5f79a108b7c4872331c0abe80643a2614e5aa463e2aa9"
+  },
+  "source_files": {
+    "src/aws_extension.cpp": "273630ef757f31a6ebba5ae71c68f63f64e6f3bba3b1338d3a36c80871a3f427",
+    "src/aws_secret.cpp": "0ea127ee415958a8d6fbade19f7ad9dae4accec8c068126ccaa61abfead102f9",
+    "src/include/aws_extension.hpp": "c1d941e09d3376092951f98c93aef0b14f0fdd81c1caa681b3e84a0aeb81ca89",
+    "src/include/aws_secret.hpp": "13b14f6a546e8a5d213984394e1613fa0b0f95119dee5e426ff332faa511ac7d"
+  },
+  "reference_dependencies": {
+    "aws-sdk-cpp": {
+      "version": "1.11.702",
+      "vcpkg_commit": "84bab45d415d22042bd0b9081aea57f362da3f35",
+      "purpose": "Oracle behavior reference only; not a product dependency"
+    }
+  }
+}

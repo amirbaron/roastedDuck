@@ -70,8 +70,12 @@ const DEFAULT_EXTENSIONS: [(&str, &str); 30] = [
 ];
 
 /// The extensions the reference build links (loading them is a no-op).
-const LINKED_EXTENSIONS: [&str; 9] = [
+const LINKED_EXTENSIONS: [&str; 13] = [
     "core_functions",
+    "postgres_scanner",
+    "azure",
+    "aws",
+    "httpfs",
     "fts",
     "vss",
     "icu",
@@ -309,7 +313,7 @@ fn install_extension_options(
     // must not download an unrelated C++ binary or require a writable cache.
     if !is_full_path(&info.filename) {
         let name = apply_extension_alias(&info.filename);
-        if matches!(name.as_bytes(), b"fts" | b"vss") {
+        if matches!(name.as_bytes(), b"fts" | b"vss" | b"httpfs" | b"aws" | b"azure") {
             if !info.repository.is_empty() || !info.version.is_empty() {
                 return Err(Error::invalid_input(byte_format!(
                     "Extension '{name}' is bundled with roastedDuck and cannot be installed from another repository or version. Use LOAD {name}; upgrade roastedDuck to update its compatible implementation."
@@ -381,7 +385,7 @@ fn install_extension_options(
     let mut url = byte_format!("{}{versioned}", repository.path);
     // InstallFromRepository promotes HTTP once the HTTPFS HTTPUtil is loaded.
     // The recorded repository origin itself remains unchanged.
-    if database.external_extensions().contains(b"httpfs")
+    if database.httpfs_loaded()
         && let Some(rest) = url.strip_prefix(b"http://")
     {
         url = byte_format!("https://{rest}");
@@ -1168,6 +1172,34 @@ pub(crate) fn extension_rows(
 mod install_tests {
     use super::*;
     use crate::Value;
+    #[test]
+    fn bundled_httpfs_install_aliases_and_load_lifecycle() -> Result<()> {
+        let db = crate::Database::open_in_memory()?;
+        let mut connection = db.connect()?;
+        connection.query("SET extension_directory='/dev/null/httpfs-extensions'")?;
+        connection.query("SET custom_extension_repository='http://127.0.0.1:1'")?;
+        for name in ["httpfs", "http", "https", "s3"] {
+            connection.query(format!("INSTALL {name}"))?;
+            connection.query(format!("FORCE INSTALL {name}"))?;
+        }
+        let state = connection.query(
+            "SELECT installed AND NOT loaded FROM duckdb_extensions() WHERE extension_name='httpfs'",
+        )?;
+        assert_eq!(state.value(0, 0), Value::boolean(true));
+        connection.query("LOAD httpfs; SET s3_region='test-region'; LOAD s3; LOAD https")?;
+        assert_eq!(
+            connection
+                .query("SELECT current_setting('s3_region')")?
+                .value(0, 0),
+            Value::varchar("test-region")
+        );
+        connection.query("CREATE SECRET bundled_s3 (TYPE s3, KEY_ID 'test-key', SECRET 'test-secret')")?;
+        assert!(db.httpfs_loaded());
+        let other = crate::Database::open_in_memory()?;
+        assert!(!other.httpfs_loaded());
+        Ok(())
+    }
+
     #[test]
     fn bundled_search_install_is_offline_and_does_not_load() -> Result<()> {
         let db = crate::Database::open_in_memory()?;

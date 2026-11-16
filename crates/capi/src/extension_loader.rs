@@ -337,7 +337,7 @@ pub(crate) fn load(database: &Database, filename: &[u8], requested: &[u8], direc
         if !direct {
             roastedduck::external_extensions::validate_installed_metadata(filename, name, &meta.version)?;
         }
-        database.register_http_file_system()?;
+        database.load_extension("httpfs")?;
         state.finish_load(roastedduck::external_extensions::ExternalExtensionRecord {
             name: name.into(),
             version: meta.version,

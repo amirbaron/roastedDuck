@@ -14,10 +14,10 @@ use ureq::unversioned::transport::{
 #[derive(Debug, Default)]
 pub(crate) struct ProxyConnector;
 
-/// Retain the resolution stage so installer diagnostics distinguish a proxy DNS
+/// Retain the resolution stage so HTTP diagnostics distinguish a proxy DNS
 /// failure from connection refusal, timeout and origin failures.
 #[derive(Debug, Default)]
-pub(super) struct InstallerResolver;
+pub(super) struct RequestResolver;
 
 #[derive(Debug)]
 pub(super) struct ProxyNameResolutionError(Error);
@@ -30,7 +30,16 @@ impl fmt::Display for ProxyNameResolutionError {
 
 impl std::error::Error for ProxyNameResolutionError {}
 
-impl ureq::unversioned::resolver::Resolver for InstallerResolver {
+#[derive(Debug)]
+pub(super) struct HostNameResolutionError(Error);
+impl fmt::Display for HostNameResolutionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "Could not resolve hostname: {}", self.0)
+    }
+}
+impl std::error::Error for HostNameResolutionError {}
+
+impl ureq::unversioned::resolver::Resolver for RequestResolver {
     fn resolve(
         &self,
         uri: &ureq::http::Uri,
@@ -46,6 +55,8 @@ impl ureq::unversioned::resolver::Resolver for InstallerResolver {
                     && matches!(error, Error::HostNotFound | Error::Io(_))
                 {
                     Error::Other(Box::new(ProxyNameResolutionError(error)))
+                } else if matches!(error, Error::HostNotFound | Error::Io(_)) {
+                    Error::Other(Box::new(HostNameResolutionError(error)))
                 } else {
                     error
                 }

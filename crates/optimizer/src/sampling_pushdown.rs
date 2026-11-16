@@ -12,7 +12,7 @@ pub fn push_down_sampling(op: &mut LogicalOperator) {
             sample_options.method == SampleMethod::SystemSample
                 && sample_options.is_percentage
                 // Only table scans sample (`sampling_pushdown`).
-                && matches!(&child.kind, LogicalKind::Get(get) if get.table.is_some())
+                && matches!(&child.kind, LogicalKind::Get(get) if get.is_native_table())
                 && child.children.is_empty()
         }
         _ => false,

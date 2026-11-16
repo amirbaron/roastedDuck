@@ -163,14 +163,19 @@ fn visible_catalogs(context: &ClientContext) -> Vec<&Arc<Catalog>> {
 }
 
 /// Every `(catalog, schema entry, schema)` visible to the transaction.
-fn schemas(context: &ClientContext) -> Vec<(&Arc<Catalog>, Arc<CatalogEntry>)> {
+fn schemas(context: &ClientContext) -> Result<Vec<(&Arc<Catalog>, Arc<CatalogEntry>)>> {
     let mut result = Vec::new();
     for catalog in visible_catalogs(context) {
-        for schema in catalog.schemas().scan(&context.transaction) {
+        for schema in catalog.scan_entries(
+            &context.function_client,
+            &context.transaction,
+            roastedduck_catalog::CatalogType::Schema,
+            b"",
+        )? {
             result.push((catalog, schema));
         }
     }
-    result
+    Ok(result)
 }
 
 fn schema_contents(schema: &CatalogEntry) -> Option<&SchemaEntry> {
@@ -201,7 +206,7 @@ fn database_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
         let info = catalog.attach_info();
         let internal = info.is_none();
         let path = info
-            .filter(|info| !info.path.is_empty())
+            .filter(|info| !info.path.is_empty() || catalog.backend().is_some())
             .map_or_else(|| Ok(null_text()), |info| text(info.path.clone()))?;
         rows.push((
             catalog.name().to_ascii_lowercase().into(),
@@ -212,7 +217,7 @@ fn database_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
                 null_text(),
                 info.map_or_else(|| Ok(empty_map()), |info| text_map(&info.tags))?,
                 Value::boolean(internal),
-                text("duckdb")?,
+                text(catalog.catalog_type())?,
                 Value::boolean(info.is_some_and(|info| info.read_only)),
                 Value::boolean(info.is_some_and(|info| info.cipher.is_some())),
                 info.and_then(|info| info.cipher.as_ref())
@@ -263,7 +268,7 @@ fn schema_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
             ));
             Ok(())
         };
-    for (catalog, schema) in schemas(context) {
+    for (catalog, schema) in schemas(context)? {
         push(
             &catalog.name(),
             catalog.oid(),
@@ -360,11 +365,13 @@ const TABLE_COLUMNS: Columns = &[
 /// `duckdb_tables()`.
 fn table_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     let mut rows = Vec::new();
-    for (catalog, schema) in schemas(context) {
-        let Some(contents) = schema_contents(&schema) else {
-            continue;
-        };
-        for entry in contents.tables.scan(&context.transaction) {
+    for (catalog, schema) in schemas(context)? {
+        for entry in catalog.scan_entries(
+            &context.function_client,
+            &context.transaction,
+            roastedduck_catalog::CatalogType::Table,
+            schema.name(),
+        )? {
             let EntryKind::Table(table) = &entry.kind else {
                 continue;
             };
@@ -423,11 +430,13 @@ const VIEW_COLUMNS: Columns = &[
 /// `duckdb_views()`.
 fn view_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     let mut rows = Vec::new();
-    for (catalog, schema) in schemas(context) {
-        let Some(contents) = schema_contents(&schema) else {
-            continue;
-        };
-        for entry in contents.tables.scan(&context.transaction) {
+    for (catalog, schema) in schemas(context)? {
+        for entry in catalog.scan_entries(
+            &context.function_client,
+            &context.transaction,
+            roastedduck_catalog::CatalogType::Table,
+            schema.name(),
+        )? {
             let EntryKind::View(view) = &entry.kind else {
                 continue;
             };
@@ -484,17 +493,24 @@ const INDEX_COLUMNS: Columns = &[
 /// `duckdb_indexes()`.
 fn index_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     let mut rows = Vec::new();
-    for (catalog, schema) in schemas(context) {
-        let Some(contents) = schema_contents(&schema) else {
-            continue;
-        };
-        for entry in contents.indexes.scan(&context.transaction) {
+    for (catalog, schema) in schemas(context)? {
+        for entry in catalog.scan_entries(
+            &context.function_client,
+            &context.transaction,
+            roastedduck_catalog::CatalogType::Index,
+            schema.name(),
+        )? {
             let EntryKind::Index(index) = &entry.kind else {
                 continue;
             };
-            let table_oid = contents
-                .tables
-                .get(&context.transaction, &index.info.table)
+            let table_oid = catalog
+                .lookup_entry(
+                    &context.function_client,
+                    &context.transaction,
+                    roastedduck_catalog::CatalogType::Table,
+                    schema.name(),
+                    &index.info.table,
+                )?
                 .map_or_else(|| Value::null(LogicalType::BIGINT), |table| oid(table.oid));
             let constraint = index.info.constraint_type;
             let expressions = roastedduck_ast::index_expressions_to_sql(&index.info);
@@ -561,11 +577,13 @@ const SEQUENCE_COLUMNS: Columns = &[
 /// `duckdb_sequences()`.
 fn sequence_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     let mut rows = Vec::new();
-    for (catalog, schema) in schemas(context) {
-        let Some(contents) = schema_contents(&schema) else {
-            continue;
-        };
-        for entry in contents.sequences.scan(&context.transaction) {
+    for (catalog, schema) in schemas(context)? {
+        for entry in catalog.scan_entries(
+            &context.function_client,
+            &context.transaction,
+            roastedduck_catalog::CatalogType::Sequence,
+            schema.name(),
+        )? {
             let EntryKind::Sequence(sequence) = &entry.kind else {
                 continue;
             };
@@ -693,11 +711,13 @@ fn column_row(
 /// `duckdb_columns()`: the columns of every table and view.
 fn column_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     let mut rows = Vec::new();
-    for (catalog, schema) in schemas(context) {
-        let Some(contents) = schema_contents(&schema) else {
-            continue;
-        };
-        for entry in contents.tables.scan(&context.transaction) {
+    for (catalog, schema) in schemas(context)? {
+        for entry in catalog.scan_entries(
+            &context.function_client,
+            &context.transaction,
+            roastedduck_catalog::CatalogType::Table,
+            schema.name(),
+        )? {
             match &entry.kind {
                 EntryKind::Table(table) => {
                     for (index, column) in table.columns.iter().enumerate() {
@@ -990,7 +1010,7 @@ struct CoordinateSystemOids(Vec<u64>);
 fn coordinate_system_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     use roastedduck_types::geometry::DEFAULT_COORDINATE_SYSTEMS;
     const KEY: &str = "duckdb_coordinate_systems_oids";
-    let Some((system, main)) = schemas(context).into_iter().find(|(catalog, schema)| {
+    let Some((system, main)) = schemas(context)?.into_iter().find(|(catalog, schema)| {
         catalog.name().eq_ignore_ascii_case(b"system") && schema.name() == roastedduck_catalog::DEFAULT_SCHEMA
     }) else {
         return Ok(Vec::new());
@@ -1299,7 +1319,11 @@ fn scan_rows(
     let data = bind_data
         .and_then(|data| data.as_any().downcast_ref::<Rows>())
         .ok_or_else(|| Error::internal("catalog function without rows"))?;
-    let start = usize::try_from(state.position)
+    scan_row_values(data, &mut state.position, chunk)
+}
+
+fn scan_row_values(data: &Rows, position: &mut u64, chunk: &mut DataChunk) -> Result<bool> {
+    let start = usize::try_from(*position)
         .unwrap_or(usize::MAX)
         .min(data.rows.len());
     let end = (start + STANDARD_VECTOR_SIZE).min(data.rows.len());
@@ -1314,7 +1338,7 @@ fn scan_rows(
         }
     }
     *chunk = DataChunk::new(columns, end - start);
-    state.position = end as u64;
+    *position = end as u64;
     Ok(end < data.rows.len())
 }
 
@@ -2369,7 +2393,7 @@ fn function_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
         ]);
         Ok(())
     };
-    for (catalog, schema) in schemas(context) {
+    for (catalog, schema) in schemas(context)? {
         let Some(contents) = schema_contents(&schema) else {
             continue;
         };
@@ -2500,12 +2524,14 @@ fn type_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     }
     let mut rows = Vec::new();
     let mut seen_oids = std::collections::HashSet::new();
-    for (catalog, schema) in schemas(context) {
-        let Some(contents) = schema_contents(&schema) else {
-            continue;
-        };
+    for (catalog, schema) in schemas(context)? {
         let mut types: Vec<TypeRow> = Vec::new();
-        for entry in contents.types.scan(&context.transaction) {
+        for entry in catalog.scan_entries(
+            &context.function_client,
+            &context.transaction,
+            roastedduck_catalog::CatalogType::Type,
+            schema.name(),
+        )? {
             if let EntryKind::Type(ty) = &entry.kind {
                 types.push(TypeRow {
                     name: entry.name().to_owned(),
@@ -2580,6 +2606,18 @@ const SECRET_COLUMNS: Columns = &[
     ("secret_string", varchar),
 ];
 
+#[derive(Debug)]
+struct SecretsData {
+    manager: Arc<crate::secrets::SecretManager>,
+    client: Arc<roastedduck_function::FunctionClient>,
+    redact: bool,
+}
+impl FunctionData for SecretsData {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 /// `duckdb_secrets(redact := true)` (`DuckDBSecretsFunction`).
 fn secrets_function() -> TableFunctionSet {
     let mut function = TableFunction::new("duckdb_secrets", Vec::new()).with_bind(|input| {
@@ -2597,31 +2635,55 @@ fn secrets_function() -> TableFunctionSet {
         if !redact && !allow_unredacted {
             return Err(Error::invalid_input("Displaying unredacted secrets is disabled"));
         }
-        let mut rows = Vec::new();
-        for entry in secret_manager(context)?.all_secrets_in(Some(&context.transaction))? {
-            let secret = &entry.secret;
-            rows.push(vec![
-                text(&secret.name)?,
-                text(&secret.secret_type)?,
-                text(&secret.provider)?,
-                Value::boolean(entry.persistent),
-                text(&entry.storage)?,
-                Value::list(
-                    LogicalType::VARCHAR,
-                    secret.scope.iter().map(text).collect::<Result<_>>()?,
-                ),
-                text(secret.to_display_string(redact)?)?,
-            ]);
-        }
         let types: Vec<LogicalType> = SECRET_COLUMNS.iter().map(|(_, ty)| ty()).collect();
         Ok(TableFunctionBindOutput {
             return_types: types.clone(),
             names: SECRET_COLUMNS.iter().map(|(name, _)| (*name).into()).collect(),
-            bind_data: Some(Arc::new(Rows { types, rows })),
+            bind_data: Some(Arc::new(SecretsData {
+                manager: Arc::clone(&crate::database::instance_state(context)?.secrets),
+                client: Arc::clone(&context.function_client),
+                redact,
+            })),
         })
     });
     function.named_parameters = vec![("redact".to_owned(), LogicalType::BOOLEAN)];
-    let function = function.with_scan(|bind_data, _, state, chunk| scan_rows(bind_data, state, chunk));
+    let function = function.with_scan(|bind_data, _, state, chunk| {
+        let data = bind_data
+            .and_then(|data| data.as_any().downcast_ref::<SecretsData>())
+            .ok_or_else(|| Error::internal("secret scan without bind data"))?;
+        if state.local.is_none() {
+            let transaction = data
+                .client
+                .active_transaction()
+                .and_then(|transaction| transaction.downcast::<roastedduck_storage::Transaction>().ok());
+            let mut rows = Vec::new();
+            for entry in data.manager.all_secrets_in(transaction.as_deref())? {
+                let secret = &entry.secret;
+                rows.push(vec![
+                    text(&secret.name)?,
+                    text(&secret.secret_type)?,
+                    text(&secret.provider)?,
+                    Value::boolean(entry.persistent),
+                    text(&entry.storage)?,
+                    Value::list(
+                        LogicalType::VARCHAR,
+                        secret.scope.iter().map(text).collect::<Result<_>>()?,
+                    ),
+                    text(secret.to_display_string(data.redact)?)?,
+                ]);
+            }
+            state.local = Some(Box::new(Rows {
+                types: SECRET_COLUMNS.iter().map(|(_, ty)| ty()).collect(),
+                rows,
+            }));
+        }
+        let rows = state
+            .local
+            .as_ref()
+            .and_then(|data| data.downcast_ref::<Rows>())
+            .ok_or_else(|| Error::internal("secret scan without rows"))?;
+        scan_row_values(rows, &mut state.position, chunk)
+    });
     let mut set = TableFunctionSet::new("duckdb_secrets");
     set.add(function);
     set
@@ -2706,13 +2768,14 @@ fn constraint_rows(context: &ClientContext) -> Result<Vec<Vec<Value>>> {
     let mut rows = Vec::new();
     let mut constraint_index = 0i64;
     let list = |ty: LogicalType, values: Vec<Value>| Value::list(ty, values);
-    for (catalog, schema) in schemas(context) {
-        let Some(contents) = schema_contents(&schema) else {
-            continue;
-        };
-        let mut tables: Vec<_> = contents
-            .tables
-            .scan(&context.transaction)
+    for (catalog, schema) in schemas(context)? {
+        let mut tables: Vec<_> = catalog
+            .scan_entries(
+                &context.function_client,
+                &context.transaction,
+                roastedduck_catalog::CatalogType::Table,
+                schema.name(),
+            )?
             .into_iter()
             .filter(|entry| matches!(entry.kind, EntryKind::Table(_)))
             .collect();

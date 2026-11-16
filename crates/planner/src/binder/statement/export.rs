@@ -109,11 +109,18 @@ pub fn bind_export(scope: &mut BindScope<'_>, stmt: &mut ExportStatement) -> Res
     })?;
     let transaction = Arc::clone(&scope.context.transaction);
     let mut tables = Vec::new();
-    for schema in catalog.schemas().scan(&transaction) {
-        let Some(schema_entry) = schema.as_schema() else {
-            continue;
-        };
-        for entry in schema_entry.tables.scan(&transaction) {
+    for schema in catalog.scan_entries(
+        &scope.context.function_client,
+        &transaction,
+        roastedduck_catalog::CatalogType::Schema,
+        b"",
+    )? {
+        for entry in catalog.scan_entries(
+            &scope.context.function_client,
+            &transaction,
+            roastedduck_catalog::CatalogType::Table,
+            schema.name(),
+        )? {
             if matches!(entry.kind, EntryKind::Table(_)) {
                 tables.push((schema.name().to_owned(), entry));
             }

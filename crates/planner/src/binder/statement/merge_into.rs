@@ -593,6 +593,27 @@ fn do_update_set_qualify(
 
 /// The physical columns of each unique index of `table`, in index order.
 fn unique_index_columns(table: &TableEntry) -> Vec<HashSet<usize>> {
+    if table.backend.is_some() {
+        return table
+            .constraints
+            .iter()
+            .filter_map(|constraint| {
+                let roastedduck_ast::Constraint::Unique(unique) = constraint else {
+                    return None;
+                };
+                if unique.index.0 != u64::MAX {
+                    return table
+                        .logical_to_physical(unique.index.0 as usize)
+                        .map(|c| HashSet::from([c]));
+                }
+                unique
+                    .columns
+                    .iter()
+                    .map(|name| table.column(name).and_then(|(i, _)| table.logical_to_physical(i)))
+                    .collect::<Option<HashSet<_>>>()
+            })
+            .collect();
+    }
     table.storage.as_ref().map_or_else(Vec::new, |storage| {
         storage
             .indexes()

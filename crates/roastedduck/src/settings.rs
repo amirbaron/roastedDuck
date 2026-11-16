@@ -319,6 +319,8 @@ pub(crate) struct Settings {
     pub(crate) extension_collations: Vec<(roastedduck_common::ByteString, bool)>,
     /// `PRAGMA disable_optimizer` (DuckDB's `ClientConfig::enable_optimizer`, negated).
     pub optimizer_disabled: bool,
+    /// `PRAGMA enable_verification`: execute and compare the SELECT verifiers.
+    pub query_verification: bool,
     /// The profiling options (`enable_profiling`, `profiling_output`, `profiling_mode`,
     /// `profiling_coverage`, `custom_profiling_settings`).
     pub profiler: ProfilerConfig,

@@ -1,0 +1,38 @@
+require-env ROASTEDDUCK_RDS_FIXTURE_EMPTY_ENV 1
+
+require httpfs
+
+require postgres_scanner
+
+require aws
+
+statement ok
+CREATE SECRET template(TYPE rds, CHAIN 'env',RDS_USER 'fixture',RDS_HOST 'fixture.rds.test',RDS_PORT '5432',REGION 'us-east-1');
+
+query I
+SELECT count(*) FROM duckdb_secrets() WHERE name='template'
+----
+1
+
+statement ok
+CREATE SECRET token(TYPE rds,CHAIN 'env',RDS_USER 'fixture',RDS_HOST 'fixture.rds.test',RDS_PORT '5432',REGION 'us-east-1',VALIDATION 'none',RDS_TEMPLATE_SECRET_NAME 'template');
+
+query I
+SELECT secret_string FROM duckdb_secrets(redact=false) WHERE name='token'
+----
+name=token;type=rds;provider=credential_chain;serializable=true;scope;session_token=fixture.rds.test:5432/?Action=connect&DBUser=fixture
+
+statement error
+CREATE SECRET bad(TYPE rds,REGION 'us-east-1')
+----
+'CHAIN' option must be specified
+
+statement error
+CREATE SECRET bad(TYPE rds,CHAIN 'env',REGION 'us-east-1')
+----
+'RDS_USER', 'RDS_HOST', 'RDS_PORT' and 'REGION' options must be specified
+
+statement error
+CREATE SECRET bad(TYPE rds,UNRECOGNIZED true)
+----
+with default provider 'credential_chain'

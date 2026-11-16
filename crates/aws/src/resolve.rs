@@ -1,0 +1,558 @@
+use std::borrow::Cow;
+use std::fmt;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::time::Duration;
+
+use aws_config::provider_config::ProviderConfig;
+use aws_credential_types::provider::{ProvideCredentials, SharedCredentialsProvider};
+use aws_runtime::env_config::file::EnvConfigFiles;
+use aws_runtime::env_config::section::EnvConfigSections;
+use aws_types::os_shim_internal::{Env, Fs};
+use aws_types::region::Region;
+
+use crate::{Credentials, Provider};
+
+/// SQL's explicit credential selection. Region includes the engine setting
+/// override; environment/profile fallbacks are resolved below.
+#[derive(Clone, Debug)]
+pub struct Request {
+    pub profile: Option<String>,
+    pub chain: String,
+    pub assume_role: String,
+    pub external_id: String,
+    pub web_identity_token_file: String,
+    pub session_name: String,
+    pub region: String,
+    pub require_credentials: bool,
+    /// The legacy table function uses the SDK lookup without secret validation/fallback.
+    pub legacy: bool,
+    pub interrupted: Option<Arc<AtomicBool>>,
+}
+
+impl Default for Request {
+    fn default() -> Self {
+        Self {
+            profile: None,
+            chain: String::new(),
+            assume_role: String::new(),
+            external_id: String::new(),
+            web_identity_token_file: String::new(),
+            session_name: String::new(),
+            region: String::new(),
+            require_credentials: true,
+            legacy: false,
+            interrupted: None,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct Resolution {
+    pub credentials: Option<Credentials>,
+    pub region: String,
+    pub effective_chain: String,
+}
+
+#[derive(Debug)]
+pub enum ResolveError {
+    InvalidInput(String),
+    Configuration(String),
+    Runtime(String),
+    Interrupted,
+}
+
+impl fmt::Display for ResolveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Interrupted => f.write_str("Interrupted!"),
+            Self::InvalidInput(message) | Self::Configuration(message) | Self::Runtime(message) => {
+                f.write_str(message)
+            }
+        }
+    }
+}
+
+impl std::error::Error for ResolveError {}
+
+struct Context {
+    providers: ProviderConfig,
+    sdk: aws_types::SdkConfig,
+    profiles: EnvConfigSections,
+    config_profiles: EnvConfigSections,
+    profile: String,
+    default_profile: String,
+}
+
+type Material = Option<aws_credential_types::Credentials>;
+
+/// Fetch credentials without exposing SDK errors that may contain secret material.
+/// The SQL adapter supplies the pinned extension's validation diagnostic on None.
+pub fn resolve(request: &Request) -> Result<Resolution, ResolveError> {
+    resolve_mode(request, true)
+}
+/// Resolve the region and validate provider construction without fetching credentials.
+/// RDS template creation defers credential I/O until a token is generated.
+pub fn resolve_configuration(request: &Request) -> Result<Resolution, ResolveError> {
+    resolve_mode(request, false)
+}
+fn resolve_mode(request: &Request, fetch_credentials: bool) -> Result<Resolution, ResolveError> {
+    // Synchronous SQL may be called from a Tokio-based application. Drive our
+    // credential futures on a separate thread rather than nesting runtimes.
+    if tokio::runtime::Handle::try_current().is_ok() {
+        return std::thread::scope(|scope| scope.spawn(|| resolve_mode(request, fetch_credentials)).join())
+            .map_err(|_| ResolveError::Runtime("AWS credential worker panicked".into()))?;
+    }
+    if !request.assume_role.is_empty() && request.chain.is_empty() {
+        return Err(ResolveError::Configuration(
+            "Must pass CHAIN value when passing ASSUME_ROLE_ARN".into(),
+        ));
+    }
+    let chain = if request.chain.is_empty() {
+        Vec::new()
+    } else {
+        request.chain.split(';').collect::<Vec<_>>()
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|_| ResolveError::Runtime("Unable to start AWS credential runtime".into()))?;
+    runtime.block_on(async {
+        if let Some(interrupted) = &request.interrupted {
+            tokio::select! {
+                result = resolve_async(request, &chain, fetch_credentials) => result,
+                () = async {
+                    while !interrupted.load(Ordering::Acquire) {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                } => Err(ResolveError::Interrupted),
+            }
+        } else {
+            resolve_async(request, &chain, fetch_credentials).await
+        }
+    })
+}
+
+async fn read_profiles(files: &EnvConfigFiles, profile: Option<&str>) -> EnvConfigSections {
+    aws_config::profile::load(
+        &Fs::real(),
+        &Env::real(),
+        files,
+        profile
+            .filter(|name| !name.is_empty())
+            .map(|name| Cow::Owned(name.to_owned())),
+    )
+    .await
+    .unwrap_or_default()
+}
+
+async fn resolve_async(
+    request: &Request,
+    chain: &[&str],
+    fetch_credentials: bool,
+) -> Result<Resolution, ResolveError> {
+    let default_profile = ["AWS_DEFAULT_PROFILE", "AWS_PROFILE"]
+        .into_iter()
+        .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
+        .unwrap_or_else(|| "default".into());
+    let selected_profile = request
+        .profile
+        .as_deref()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(&default_profile);
+    let profiles = read_profiles(&EnvConfigFiles::default(), Some(selected_profile)).await;
+    let config_profiles = read_profiles(
+        &EnvConfigFiles::builder()
+            .include_default_config_file(true)
+            .build(),
+        Some(selected_profile),
+    )
+    .await;
+    let profile = profiles.selected_profile().to_owned();
+    let region = if request.legacy {
+        // ClientConfiguration(profile): SDK environment priority differs from
+        // CREATE SECRET, and a named profile's region overrides that SDK result.
+        let mut region = std::env::var("AWS_DEFAULT_REGION")
+            .ok()
+            .filter(|v| !v.is_empty())
+            .or_else(|| std::env::var("AWS_REGION").ok().filter(|v| !v.is_empty()))
+            .or_else(|| {
+                config_profiles
+                    .get_profile(&default_profile)
+                    .and_then(|p| nonempty(p.get("region")))
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| "us-east-1".into());
+        if let Some(name) = request.profile.as_deref()
+            && let Some(value) = config_profiles
+                .get_profile(name)
+                .and_then(|p| nonempty(p.get("region")))
+        {
+            value.clone_into(&mut region);
+        }
+        region
+    } else {
+        let mut region = request.region.clone();
+        if region.is_empty() {
+            region = std::env::var("AWS_REGION")
+                .or_else(|_| std::env::var("AWS_DEFAULT_REGION"))
+                .unwrap_or_default();
+        }
+        if region.is_empty() {
+            let name = request
+                .profile
+                .as_deref()
+                .filter(|name| !name.is_empty())
+                .unwrap_or("default");
+            region = config_profiles
+                .get_profile(name)
+                .and_then(|p| p.get("region"))
+                .unwrap_or_default()
+                .into();
+        }
+        region
+    };
+    let http = aws_smithy_http_client::Builder::new()
+        .tls_provider(aws_smithy_http_client::tls::Provider::Rustls(
+            aws_smithy_http_client::tls::rustls_provider::CryptoMode::Ring,
+        ))
+        .build_https();
+    // Service clients use ClientConfiguration's default region, independently
+    // of the region stored in the generated S3 secret.
+    let client_region = std::env::var("AWS_DEFAULT_REGION")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(|| std::env::var("AWS_REGION").ok().filter(|v| !v.is_empty()))
+        .or_else(|| {
+            config_profiles
+                .get_profile(&default_profile)
+                .and_then(|p| nonempty(p.get("region")))
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "us-east-1".into());
+    let sdk_region = Region::new(client_region);
+    let providers = ProviderConfig::without_region()
+        .with_http_client(http.clone())
+        .with_region(Some(sdk_region.clone()));
+    let sdk = aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .region(sdk_region)
+        .http_client(http)
+        .no_credentials()
+        .load()
+        .await;
+    let context = Context {
+        providers,
+        sdk,
+        profiles,
+        config_profiles,
+        profile,
+        default_profile,
+    };
+    // Construct/validate each component in order before fetching credentials.
+    // For example, a missing config profile before an unknown provider reports
+    // the profile error, even if an earlier environment provider would succeed.
+    let mut providers = Vec::new();
+    for name in chain {
+        let provider = Provider::parse(name).map_err(ResolveError::InvalidInput)?;
+        if provider == Provider::Config {
+            context.config_role(request)?;
+        } else if provider == Provider::Sts && request.assume_role.is_empty() {
+            return Err(ResolveError::Configuration(
+                "Chain value 'STS' is only supported with an ASSUME_ROLE_ARN value. If the selected profile uses STS, add \"CHAIN 'config'\"".into(),
+            ));
+        }
+        providers.push(provider);
+    }
+    if !fetch_credentials {
+        return Ok(Resolution {
+            credentials: None,
+            region,
+            effective_chain: request.chain.clone(),
+        });
+    }
+    let mut effective_chain = request.chain.clone();
+    let credentials = if chain.is_empty() {
+        let result = if request
+            .profile
+            .as_ref()
+            .is_some_and(|p| !request.legacy || !p.is_empty())
+        {
+            context.static_profile(&context.profile)
+        } else {
+            context.default_chain().await
+        };
+        // The pinned extension retries the config chain whenever the default
+        // or explicitly named static profile returned no credentials. This also
+        // changes the chain name in validation errors, even without a role.
+        if result.is_none() && !request.legacy {
+            effective_chain = "config".into();
+            context.config(request).await?
+        } else {
+            result
+        }
+    } else {
+        let mut result = None;
+        for provider in &providers {
+            result = match provider {
+                Provider::Config => context.config(request).await?,
+                Provider::Sso => context.sso(request.profile.as_deref().unwrap_or_default()).await,
+                Provider::Sts => {
+                    context
+                        .assume_role(&request.assume_role, &request.external_id)
+                        .await
+                }
+                _ => context.leaf(*provider, request, &context.profile).await,
+            };
+            if result.is_some() {
+                break;
+            }
+        }
+        result
+    };
+    Ok(Resolution {
+        credentials: credentials.map(Into::into),
+        region,
+        effective_chain,
+    })
+}
+
+fn nonempty(value: Option<&str>) -> Option<&str> {
+    value.filter(|value| !value.is_empty())
+}
+
+impl Context {
+    fn static_profile(&self, name: &str) -> Material {
+        let profile = self.profiles.get_profile(name)?;
+        Some(aws_credential_types::Credentials::new(
+            nonempty(profile.get("aws_access_key_id"))?,
+            nonempty(profile.get("aws_secret_access_key"))?,
+            nonempty(profile.get("aws_session_token")).map(str::to_owned),
+            None,
+            "roastedDuck-profile",
+        ))
+    }
+
+    async fn default_chain(&self) -> Material {
+        let request = Request::default();
+        for provider in [
+            Provider::Environment,
+            Provider::Config,
+            Provider::Process,
+            Provider::WebIdentity,
+            Provider::Sso,
+        ] {
+            let result = if provider == Provider::Config {
+                self.static_profile(&self.default_profile)
+            } else {
+                self.leaf(provider, &request, &self.default_profile).await
+            };
+            if result.is_some() {
+                return result;
+            }
+        }
+        if std::env::var("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI").is_ok_and(|value| !value.is_empty())
+            || std::env::var("AWS_CONTAINER_CREDENTIALS_FULL_URI").is_ok_and(|value| !value.is_empty())
+        {
+            crate::metadata::ecs(&self.providers, &self.sdk).await
+        } else if !std::env::var("AWS_EC2_METADATA_DISABLED")
+            .is_ok_and(|value| value.eq_ignore_ascii_case("true"))
+        {
+            self.leaf(Provider::Instance, &request, &self.default_profile)
+                .await
+        } else {
+            None
+        }
+    }
+
+    async fn leaf(&self, provider: Provider, request: &Request, profile: &str) -> Material {
+        match provider {
+            Provider::Environment => {
+                aws_config::environment::credentials::EnvironmentVariableCredentialsProvider::new()
+                    .provide_credentials()
+                    .await
+                    .ok()
+            }
+            Provider::Process => {
+                let command = nonempty(self.profiles.get_profile(profile)?.get("credential_process"))?;
+                crate::process::credentials(command).await
+            }
+            Provider::Instance => crate::metadata::instance().await,
+            Provider::WebIdentity => self.web_identity(request).await,
+            Provider::Sso => self.sso(profile).await,
+            // Role-aware config and STS are handled by the outer dispatcher.
+            Provider::Config | Provider::Sts => None,
+        }
+    }
+
+    async fn web_identity(&self, request: &Request) -> Material {
+        let explicit = !request.chain.is_empty();
+        // The C++ default constructor supplies values from its selected profile;
+        // the explicit provider leaves resolution to CRT, which uses AWS_PROFILE.
+        // SQL PROFILE is not passed to this provider by the pinned extension.
+        let crt_name = std::env::var("AWS_PROFILE")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "default".into());
+        let crt = self.config_profiles.get_profile(&crt_name);
+        let primary = if explicit {
+            crt
+        } else {
+            self.config_profiles.get_profile(&self.default_profile)
+        };
+        let field = |profile: Option<&aws_runtime::env_config::section::Profile>, key| {
+            profile.and_then(|p| nonempty(p.get(key))).map(str::to_owned)
+        };
+        let env = |key| std::env::var(key).ok().filter(|s| !s.is_empty());
+        let role = nonempty(Some(&request.assume_role))
+            .map(str::to_owned)
+            .or_else(|| env("AWS_ROLE_ARN"))
+            .or_else(|| field(primary, "role_arn"))
+            .or_else(|| field(crt, "role_arn"))?;
+        let token = nonempty(Some(&request.web_identity_token_file))
+            .map(str::to_owned)
+            .or_else(|| env("AWS_WEB_IDENTITY_TOKEN_FILE"))
+            .or_else(|| field(primary, "web_identity_token_file"))
+            .or_else(|| field(crt, "web_identity_token_file"))?;
+        let name = nonempty(Some(&request.session_name))
+            .map(str::to_owned)
+            .or_else(|| {
+                if explicit {
+                    None
+                } else {
+                    env("AWS_ROLE_SESSION_NAME").or_else(|| field(primary, "role_session_name"))
+                }
+            })
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string().to_ascii_uppercase());
+        let region = if explicit {
+            None
+        } else {
+            env("AWS_DEFAULT_REGION").or_else(|| field(primary, "region"))
+        }
+        .or_else(|| env("AWS_REGION"))
+        .or_else(|| env("AWS_DEFAULT_REGION"))
+        .or_else(|| field(crt, "region"))?;
+        let providers = self.providers.clone().with_region(Some(Region::new(region)));
+        aws_config::web_identity_token::WebIdentityTokenCredentialsProvider::builder()
+            .configure(&providers)
+            .static_configuration(aws_config::web_identity_token::StaticConfiguration {
+                role_arn: role,
+                web_identity_token_file: token.into(),
+                session_name: name,
+            })
+            .build()
+            .provide_credentials()
+            .await
+            .ok()
+    }
+
+    fn config_role(&self, request: &Request) -> Result<Option<(String, String)>, ResolveError> {
+        let Some(name) = request.profile.as_deref().filter(|name| !name.is_empty()) else {
+            return Ok(None);
+        };
+        let profile = self.config_profiles.get_profile(name);
+        if profile.is_none() && request.require_credentials {
+            let path = std::env::var("AWS_CONFIG_FILE")
+                .unwrap_or_else(|_| format!("{}/.aws/config", std::env::var("HOME").unwrap_or_default()));
+            return Err(ResolveError::Configuration(format!(
+                "Secret Validation Failure: no profile '{name}' found in config file {path}"
+            )));
+        }
+        let field = |key| profile.and_then(|profile| profile.get(key)).unwrap_or_default();
+        let profile_role = field("role_arn");
+        let profile_external = field("external_id");
+        if !profile_role.is_empty() && !request.assume_role.is_empty() {
+            return Err(ResolveError::InvalidInput(format!(
+                "Ambiguous role arn. Role_arn '{profile_role}' defined in profile '{name}'. Role_arn '{}' defined in secret statement",
+                request.assume_role
+            )));
+        }
+        if !profile_external.is_empty() && !request.external_id.is_empty() {
+            return Err(ResolveError::InvalidInput(format!(
+                "Ambiguous external id. external_id '{profile_external}' defined in profile '{name}'. external_id '{}' defined in secret statement",
+                request.external_id
+            )));
+        }
+        let role = if profile_role.is_empty() {
+            &request.assume_role
+        } else {
+            profile_role
+        };
+        let external = if profile_external.is_empty() {
+            &request.external_id
+        } else {
+            profile_external
+        };
+        Ok((!role.is_empty()).then(|| (role.to_owned(), external.to_owned())))
+    }
+
+    async fn config(&self, request: &Request) -> Result<Material, ResolveError> {
+        Ok(match self.config_role(request)? {
+            Some((role, external)) => self.assume_role(&role, &external).await,
+            None => self.static_profile(
+                request
+                    .profile
+                    .as_deref()
+                    .filter(|p| !p.is_empty())
+                    .unwrap_or(&self.profile),
+            ),
+        })
+    }
+
+    async fn assume_role(&self, role: &str, external: &str) -> Material {
+        let credentials = self.default_chain().await?;
+        let sdk = self
+            .sdk
+            .clone()
+            .into_builder()
+            .credentials_provider(SharedCredentialsProvider::new(credentials))
+            .build();
+        let millis = aws_smithy_types::DateTime::from(std::time::SystemTime::now())
+            .to_millis()
+            .ok()?;
+        let mut builder = aws_config::sts::AssumeRoleProvider::builder(role)
+            .configure(&sdk)
+            .session_length(Duration::from_mins(15))
+            .session_name(format!("aws-sdk-cpp-{millis}"));
+        if !external.is_empty() {
+            builder = builder.external_id(external);
+        }
+        let credentials = builder.build().await.provide_credentials().await.ok()?;
+        if credentials.access_key_id().is_empty() || credentials.secret_access_key().is_empty() {
+            return None;
+        }
+        // The pinned provider keeps expiry for its own refresh bookkeeping but
+        // constructs returned AWSCredentials without an expiry field.
+        Some(aws_credential_types::Credentials::new(
+            credentials.access_key_id(),
+            credentials.secret_access_key(),
+            credentials.session_token().map(str::to_owned),
+            None,
+            "roastedDuck-sts",
+        ))
+    }
+
+    async fn sso(&self, profile: &str) -> Material {
+        let profile = self.profiles.get_profile(profile)?;
+        if let Some(name) = profile.get("sso_session").filter(|s| !s.is_empty())
+            && let Some(session) = self.profiles.sso_session(name)
+        {
+            let conflict = ["sso_region", "sso_start_url"].iter().any(|key| {
+                let a = profile.get(key).unwrap_or_default();
+                let b = session.get(key).unwrap_or_default();
+                !a.is_empty() && !b.is_empty() && a != b
+            });
+            if !conflict {
+                return crate::sso::session(
+                    profile,
+                    name,
+                    session.get("sso_region").unwrap_or_default(),
+                    &self.sdk,
+                )
+                .await;
+            }
+        }
+        crate::sso::legacy(profile, &self.sdk).await
+    }
+}

@@ -115,6 +115,24 @@ impl<'a, E: Engine> Runner<'a, E> {
     /// The runner constructor: the test configuration plus the runner's own settings.
     pub fn new(engine: &'a E, environment: &'a TestEnvironment) -> TestResult<Self> {
         let mut config = engine.test_config().map_err(Failure::new)?;
+        // Service fixtures isolate persistent credentials before either backend
+        // opens a database. Original SQL and ordinary corpus defaults stay intact.
+        for (variable, setting) in [
+            ("SLT_FIXTURE_SECRET_DIRECTORY", "secret_directory"),
+            ("SLT_FIXTURE_EXTENSION_DIRECTORY", "extension_directory"),
+        ] {
+            if let Ok(directory) = std::env::var(variable) {
+                let path = std::path::Path::new(&directory);
+                if !path.is_absolute() || !path.is_dir() {
+                    return Err(Failure::new(format!(
+                        "{variable} must be an existing absolute directory"
+                    )));
+                }
+                engine
+                    .set_option(&mut config, setting, &directory)
+                    .map_err(Failure::new)?;
+            }
+        }
         // Native corpus runs can use the same default memory budget as a bounded
         // VM. This applies to both backends; tests may still set their own limit.
         if let Ok(limit) = std::env::var("SLT_MEMORY_LIMIT") {
@@ -291,7 +309,9 @@ impl<'a, E: Engine> Runner<'a, E> {
         if self.original_sqlite_test {
             self.engine.query(&mut connection, "SET integer_division=true");
         }
-        let secret_directory = self.environment.test_path("test_secret_dir");
+        let secret_directory = std::env::var("SLT_SECRET_DIRECTORY")
+            .unwrap_or_else(|_| self.environment.test_path("test_secret_dir"))
+            .replace('\'', "''");
         self.engine.query(
             &mut connection,
             &format!("SET secret_directory='{secret_directory}'"),
@@ -856,6 +876,72 @@ impl<'a, E: Engine> Runner<'a, E> {
 
     /// `SQLLogicTestRunner::LoadExtension` in the default (non-autoloading) test mode.
     fn load_extension(&mut self, name: &str) -> Result<ExtensionLoad, String> {
+        let loaded = self.load_extension_inner(name)?;
+        if loaded == ExtensionLoad::Loaded
+            && name == "azure"
+            && let Ok(transport) = std::env::var("SLT_AZURE_TRANSPORT")
+        {
+            if !matches!(transport.as_str(), "default" | "curl") {
+                return Err("Invalid SLT_AZURE_TRANSPORT".into());
+            }
+            let connection = self.con.as_mut().ok_or("no open connection")?;
+            let result = self.engine.query(connection,
+                &format!("SET GLOBAL azure_transport_option_type='{transport}'; SET SESSION azure_transport_option_type='{transport}'"));
+            if let Some(error) = crate::backend::QueryResult::error(&result) {
+                return Err(error.to_owned());
+            }
+        }
+        if loaded == ExtensionLoad::Loaded
+            && name == "httpfs"
+            && let Ok(client) = std::env::var("SLT_HTTPFS_CLIENT_IMPLEMENTATION")
+        {
+            if !matches!(client.as_str(), "default" | "curl" | "httplib") {
+                return Err("Invalid SLT_HTTPFS_CLIENT_IMPLEMENTATION".to_owned());
+            }
+            // Fixture configuration, applied equally to both engines. The
+            // original SQL remains unchanged and may override it afterward.
+            let connection = self.con.as_mut().ok_or("no open connection")?;
+            let result = self.engine.query(
+                connection,
+                &format!("SET GLOBAL httpfs_client_implementation='{client}'; SET SESSION httpfs_client_implementation='{client}'"),
+            );
+            if let Some(error) = crate::backend::QueryResult::error(&result) {
+                return Err(error.to_owned());
+            }
+        }
+        if loaded == ExtensionLoad::Loaded
+            && name == "httpfs"
+            && let Ok(style) = std::env::var("SLT_S3_URL_STYLE")
+        {
+            if !matches!(style.as_str(), "path" | "vhost") {
+                return Err("Invalid SLT_S3_URL_STYLE".to_owned());
+            }
+            let connection = self.con.as_mut().ok_or("no open connection")?;
+            let result = self.engine.query(
+                connection,
+                &format!("SET GLOBAL s3_url_style='{style}'; SET SESSION s3_url_style='{style}'"),
+            );
+            if let Some(error) = crate::backend::QueryResult::error(&result) {
+                return Err(error.to_owned());
+            }
+        }
+        if loaded == ExtensionLoad::Loaded
+            && name == "httpfs"
+            && let Ok(proxy) = std::env::var("SLT_HTTP_PROXY")
+        {
+            let proxy = proxy.replace('\'', "''");
+            let connection = self.con.as_mut().ok_or("no open connection")?;
+            let result = self
+                .engine
+                .query(connection, &format!("SET GLOBAL http_proxy='{proxy}'"));
+            if let Some(error) = crate::backend::QueryResult::error(&result) {
+                return Err(error.to_owned());
+            }
+        }
+        Ok(loaded)
+    }
+
+    fn load_extension_inner(&mut self, name: &str) -> Result<ExtensionLoad, String> {
         let database = self.db.as_ref().ok_or("no open database")?;
         let loaded = self.engine.load_extension(database, name)?;
         if loaded != ExtensionLoad::NotLoaded {

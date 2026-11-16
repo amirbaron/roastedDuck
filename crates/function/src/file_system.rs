@@ -11,6 +11,40 @@ use std::sync::Arc;
 
 use crate::client::FunctionClient;
 
+/// Engine-internal bridge for loading a filesystem's compiled-in provider.
+pub trait FileSystemExtensionLoader: std::fmt::Debug + Send + Sync {
+    fn load(&self, extension: &str) -> roastedduck_common::Result<bool>;
+}
+
+pub const EXTENSION_LOADER_KEY: &str = "roastedduck.filesystem_extension_loader";
+
+#[derive(Debug)]
+pub struct ExtensionLoader(pub Arc<dyn FileSystemExtensionLoader>);
+
+/// `Catalog::AutoloadExtensionByConfigName` without its error: loads the bundled
+/// extension that owns the setting `name` when known extensions may be autoloaded.
+/// Returns whether an extension was loaded.
+pub fn autoload_extension_by_setting(client: &FunctionClient, name: &str) -> roastedduck_common::Result<bool> {
+    use crate::extension_entries::{EXTENSION_SETTINGS, can_autoload_extension, find_extension};
+    let autoload = client
+        .settings()
+        .and_then(|settings| settings.current_setting("autoload_known_extensions").ok())
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let Some(extension) = find_extension(name, EXTENSION_SETTINGS)
+        .filter(|extension| autoload && can_autoload_extension(extension))
+    else {
+        return Ok(false);
+    };
+    match client
+        .object_cache()
+        .and_then(|cache| cache.get::<ExtensionLoader>(EXTENSION_LOADER_KEY))
+    {
+        Some(loader) => loader.0.load(extension),
+        None => Ok(false),
+    }
+}
+
 thread_local! {
     /// The function state of the connection whose statement this thread runs.
     static OPENER: RefCell<Option<Arc<FunctionClient>>> = const { RefCell::new(None) };
@@ -226,9 +260,9 @@ fn can_access_bytes(settings: &dyn crate::client::SettingsSource, path: &[u8], d
 }
 
 /// Path prefixes of files other file systems serve (`EXTENSION_FILE_PREFIXES`).
-const REMOTE_PREFIXES: [&str; 12] = [
+const REMOTE_PREFIXES: [&str; 13] = [
     "http://", "https://", "s3://", "s3a://", "s3n://", "gcs://", "gs://", "r2://", "azure://", "az://",
-    "abfss://", "hf://",
+    "abfss://", "abfs://", "hf://",
 ];
 
 /// `FileSystem::IsRemoteFile`.
@@ -399,7 +433,7 @@ fn verify_can_access(path: &[u8], directory: bool) -> roastedduck_common::Result
 
 /// Path prefixes of the file systems extensions register, with the extension
 /// (`EXTENSION_FILE_PREFIXES`).
-const EXTENSION_FILE_PREFIXES: [(&str, &str); 12] = [
+const EXTENSION_FILE_PREFIXES: [(&str, &str); 13] = [
     ("http://", "httpfs"),
     ("https://", "httpfs"),
     ("s3://", "httpfs"),
@@ -411,11 +445,13 @@ const EXTENSION_FILE_PREFIXES: [(&str, &str); 12] = [
     ("azure://", "azure"),
     ("az://", "azure"),
     ("abfss://", "azure"),
+    ("abfs://", "azure"),
     ("hf://", "httpfs"),
 ];
 
 /// `VirtualFileSystem::FindFileSystem`: a path of a file system an extension registers
-/// needs that extension, and roastedduck loads none of them.
+/// needs that extension. Compiled-in providers can be loaded through the engine
+/// bridge when the connection enables autoloading.
 fn verify_file_system_loaded(client: &crate::FunctionClient, path: &[u8]) -> roastedduck_common::Result<()> {
     let Some((_, extension)) = EXTENSION_FILE_PREFIXES
         .iter()
@@ -423,6 +459,22 @@ fn verify_file_system_loaded(client: &crate::FunctionClient, path: &[u8]) -> roa
     else {
         return Ok(());
     };
+    let autoload = client
+        .settings()
+        .and_then(|settings| settings.current_setting("autoload_known_extensions").ok())
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    if autoload
+        && crate::extension_entries::can_autoload_extension(extension)
+        && let Some(loader) = client
+            .object_cache()
+            .and_then(|cache| cache.get::<ExtensionLoader>(EXTENSION_LOADER_KEY))
+        && loader.0.load(extension)?
+        && crate::registered_files::lookup(path).is_some()
+    {
+        // Repeat the access/disabled-filesystem checks using the actual provider.
+        return verify_can_access(path, false);
+    }
     let message = crate::extension_entries::add_client_install_hint_bytes(
         client,
         &roastedduck_common::byte_format!("File {path} requires the extension {extension} to be loaded"),

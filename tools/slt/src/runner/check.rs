@@ -26,6 +26,7 @@ impl<E: Engine> Runner<'_, E> {
         else {
             return false;
         };
+        eprintln!("Ignored error retained for audit: {message}");
         self.skip_test(format!("skip on error_message matching '{ignored}'"));
         true
     }

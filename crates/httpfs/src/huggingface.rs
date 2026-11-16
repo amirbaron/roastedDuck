@@ -207,7 +207,20 @@ impl FileSystem for HuggingFaceFileSystem {
         let original = std::str::from_utf8(path).map_err(io_error)?;
         let parsed = Parsed::parse(original)?;
         HttpFile::open_with_display(parsed.file_url(), original.into(), parameters(original)?)
+            .map(|file| Arc::new(file.buffered()) as Arc<dyn FileHandle>)
+    }
+    fn open_read_direct(&self, path: &[u8]) -> Result<Arc<dyn FileHandle>> {
+        let original = std::str::from_utf8(path).map_err(io_error)?;
+        let parsed = Parsed::parse(original)?;
+        HttpFile::open_with_display(parsed.file_url(), original.into(), parameters(original)?)
             .map(|file| Arc::new(file) as Arc<dyn FileHandle>)
+    }
+    fn open_with_flags(
+        &self,
+        path: &[u8],
+        flags: roastedduck_function::registered_files::OpenFlags,
+    ) -> Result<Arc<dyn FileHandle>> {
+        super::open_with_flags(self, path, flags)
     }
     fn glob(&self, path: &[u8]) -> Result<Vec<ByteString>> {
         let original = std::str::from_utf8(path).map_err(io_error)?;
@@ -238,7 +251,7 @@ impl FileSystem for HuggingFaceFileSystem {
                 "{ENDPOINT}{}{fragment}",
                 if fragment.starts_with('/') { "" } else { "/" }
             );
-            let request = HttpFile::new_request(url, params.clone(), None)?;
+            let request = HttpFile::new_request(url, params.clone(), None);
             let mut response = request.request("GET", None)?;
             let status = response.status().as_u16();
             if status >= 400 {

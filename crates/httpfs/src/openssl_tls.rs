@@ -33,6 +33,15 @@ impl fmt::Display for CertificateError {
 }
 impl std::error::Error for CertificateError {}
 
+#[derive(Debug)]
+pub(super) struct CertificateFileError;
+impl fmt::Display for CertificateFileError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SSL certificate loading failed")
+    }
+}
+impl std::error::Error for CertificateFileError {}
+
 struct Context {
     connector: SslConnector,
     #[cfg(target_vendor = "apple")]
@@ -75,7 +84,9 @@ impl TlsConnector {
         builder.set_cert_store(store);
         if self.verify {
             if !self.ca.is_empty() {
-                builder.set_ca_file(&self.ca).map_err(error)?;
+                builder
+                    .set_ca_file(&self.ca)
+                    .map_err(|_| error(CertificateFileError))?;
             } else if let Some(path) = CA_FILES.iter().find(|path| std::path::Path::new(path).exists()) {
                 builder.set_ca_file(path).map_err(error)?;
             }

@@ -211,7 +211,7 @@ impl StatisticsPropagator<'_> {
         let LogicalKind::Get(get) = &child.kind else {
             return;
         };
-        if get.table.is_none() {
+        if !get.is_native_table() {
             let get = get.clone();
             Self::try_execute_function_aggregates(
                 node,

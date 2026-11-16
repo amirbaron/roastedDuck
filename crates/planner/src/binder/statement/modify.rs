@@ -489,7 +489,11 @@ pub fn bind_update(scope: &mut BindScope<'_>, stmt: &mut UpdateStatement) -> Res
             base.catalog_name.clone()
         };
         let schema = if base.schema_name.is_empty() {
-            roastedduck_common::ByteString::from("main")
+            if table.backend.is_some() {
+                scope.context.default_schema_for(&catalog)
+            } else {
+                roastedduck_common::ByteString::from("main")
+            }
         } else {
             base.schema_name.clone()
         };
@@ -566,6 +570,11 @@ pub(super) fn bind_update_constraints(
     return_chunk: bool,
     set: &mut UpdateSet,
 ) -> Result<bool> {
+    // External tables enforce their own constraints and do not use native
+    // delete-plus-insert rewrites for nested or indexed columns.
+    if table.backend.is_some() {
+        return Ok(false);
+    }
     for constraint in bound_constraints {
         if let BoundConstraint::Check { bound_columns, .. } = constraint {
             bind_extra_columns(table, get, set, bound_columns)?;

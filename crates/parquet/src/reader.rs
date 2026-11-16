@@ -36,16 +36,18 @@ pub struct ParquetReader {
 impl ParquetReader {
     /// Opens `path` and parses its footer and schema (`ParquetReader::ParquetReader`);
     /// with a metadata cache, a cached footer of the unchanged file is reused.
-    pub fn open(path: &[u8], options: ParquetOptions) -> Result<Self> {
+    pub fn open(path: &[u8], mut options: ParquetOptions) -> Result<Self> {
         // Remote footer reads use the same bounded 16–256 KiB estimate as C++.
         // Row-group buffering remains controlled independently by `prefetch`.
-        let prefetch_footer = options.prefetch
-            || (!options.disable_prefetch && roastedduck_function::file_system::is_remote_file(path));
         let file = Arc::new(ParquetFile::open(
             path,
             options.file_cache.clone(),
             options.cache_validation,
         )?);
+        options.prefetch = !options.disable_prefetch
+            && (options.prefetch || !file.handle().on_disk_file()?)
+            && file.handle().can_seek()?;
+        let prefetch_footer = options.prefetch;
         if let Some(key) = &options.encryption {
             let loaded = load_metadata(&file, Some(key), prefetch_footer)?;
             let decryption = loaded.decryption.map(Arc::new);
@@ -239,6 +241,25 @@ impl ParquetReader {
         columns: &[ScanColumn],
         filters: Vec<(usize, TableFilter)>,
     ) -> Result<ReaderScanState> {
+        // Remote scan handles revalidate the file separately from binding, as
+        // InitializeScan does upstream. Prefetch uses the buffer-managed cache,
+        // so the provider's own read-ahead buffer is bypassed for that handle.
+        let mut context = self.context.clone();
+        if !context.file.handle().on_disk_file()? {
+            context.file = Arc::new(if self.options.prefetch {
+                ParquetFile::open_direct(
+                    self.file_name(),
+                    self.options.file_cache.clone(),
+                    self.options.cache_validation,
+                )?
+            } else {
+                ParquetFile::open(
+                    self.file_name(),
+                    self.options.file_cache.clone(),
+                    self.options.cache_validation,
+                )?
+            });
+        }
         let file_columns = self.root_schema.children.len();
         let mut children: Vec<Option<ColumnReader>> = Vec::new();
         // One more slot for the `file_row_number` reader.
@@ -256,12 +277,12 @@ impl ParquetReader {
                 .get(index)
                 .ok_or_else(|| Error::internal("scanned column index out of range"))?;
             if children[index].is_none() {
-                children[index] = Some(ColumnReader::create(&self.context, schema, &column.children)?);
+                children[index] = Some(ColumnReader::create(&context, schema, &column.children)?);
             }
             column_ids.push(index);
         }
         Ok(ReaderScanState {
-            context: self.context.clone(),
+            context,
             group_indexes: row_groups,
             current_group: None,
             offset_in_group: 0,

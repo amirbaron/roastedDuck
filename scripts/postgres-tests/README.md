@@ -1,0 +1,115 @@
+# Disposable PostgreSQL tests
+
+`oracle_control.py` is the small existing read/write/rollback/join control.
+`upstream.py` prepares the pinned PostgreSQL extension's original fixtures and
+runs original SQL files without editing their contents or expected results.
+
+Use the local-services Python environment (cryptography is needed for the owned
+TLS certificate), with PostgreSQL 17 `initdb`, `pg_ctl` and `psql` on PATH. Put
+`--out` on the external artifact volume. Each invocation owns its cluster and
+stops it on exit. It never uses the user's configured PostgreSQL service.
+
+The runner creates a non-superuser database-owner role for tests and uses a
+separate administrator only for fixture provisioning/reset. Schema/data initialization
+uses the original SQL and client-side COPY; no server-file role is granted.
+The `postgresscanner` database is restored from the seeded template before every
+original file, so one test cannot supply leftover state to another.
+
+Required inputs are `--slt`, `--shim`, `--oracle`, `--source`, `--extension`,
+`--dataset-extensions` and `--out`. The dataset-extension directory must contain
+the signed, version-matched oracle TPCH and TPCDS extensions. They are explicitly
+loaded with automatic download/loading disabled. The pinned source archive is
+checked with `--archive` or its default path beside the extracted source.
+
+Default execution is an oracle-only four-file cohort. Use repeated `--file` to
+select originals, `--all` for the complete inventory, and `--engine both` only
+when verifying a Rust implementation. The runner exits nonzero on nonpasses and
+retains raw results, source/data-extension hashes and server-stop evidence.
+Upstream `mode skip` directives remain unchanged and visible; they do not become
+passing coverage merely because their prerequisites are supplied.
+
+The initial four-file oracle cohort passes against PostgreSQL17.11. This qualifies
+the fixture, not Rust SQL support. `wire_control.py` separately exercises the signed
+Rust backend probe against an owned CA/server certificate chain and non-superuser
+role. It checks the reference TLS connection, backend protocol controls and server
+cleanup. ATTACH catalog/transaction/mutation behavior and the shared attached/
+standalone scan executor are covered by the additional controls below.
+
+`codec_control.py --probe ... --cli ... --oracle ... --extension ... --out ...`
+compares 39 value and logical-type cases. Use `--runtime-all` to execute every
+mapping through the SQL runtime; the default retains the earlier mixed runtime/
+backend-probe cohort. The probe also round-trips seven parameter types through PostgreSQL.
+`scan_control.py --cli ... --oracle ... --extension ... --out ...` checks 25 paired
+SQL cases; `--interrupt-probe .../postgres_interrupt_probe` adds an API cancellation
+check that observes the server's `PgSleep` state before and after interruption.
+Both drivers require the owned TLS/SCRAM cluster and retain raw results and hashes.
+
+Use `upstream.py --slow` to supply POSTGRES_TEST_SLOW for selected original files,
+such as `test/sql/scanner/decimals.test`; `--all` also supplies it. Original SQL
+and reference expectations remain unchanged.
+
+`codec_control.py --runtime-all` moves all 39 mappings onto the Rust SQL runtime.
+`attach_control.py` tests real attachments, queries, DDL/COPY, transaction behavior,
+permissions, self-insert and replacement CTAS. It restores a separate owned database
+for each engine/case. `--case NAME` selects a diagnostic subset.
+`interrupt_control.py --probe .../postgres_interrupt_probe --out ...` verifies
+legacy reads, attached reads and COPY inserts through the public Rust API. It
+observes real server sleep/cancellation, rolled-back rows and transaction cleanup.
+These do not replace the full 152-file inventory or package/platform gates.
+
+For native persistence tests, use `TZ=UTC`: an existing timestamp-rendering
+expectation is explicitly UTC. The local-zone failed receipt remains in the
+checkpoint artifacts; SQL expected results were not rewritten.
+
+`mutation_control.py` adds paired UPDATE/DELETE/MERGE/upsert and ALTER cases using
+the same restored-database harness. Interruption now covers six modes: legacy and
+attached reads, INSERT, UPDATE, DELETE and MERGE. The fixture observes real server
+sleep and checks that mutation cancellation preserves stored data.
+
+When selecting TPCH/TPCDS originals (including --all), supply --duckdb-source
+pointing at the pinned DuckDB1.5.6 source. The harness links its unchanged expected
+answer files into the reference layout and records their hashes.
+
+The unchanged secret/URI original uses `localhost:5432` and the standard fixture
+password. When selected, the harness first requires both IPv4/IPv6 loopback ports
+to be free, starts its own server on both, and verifies listener ownership before
+running SQL. It never stops or connects those tests to an existing local server.
+The CHECKPOINT original grants only the `pg_checkpoint` role inside the owned
+cluster; the application role remains non-superuser. Both originals pass the C++
+fixture qualification in `postgres-full-fixture-oracle-1`.
+
+`oauth_control.py --cli ... --oracle ... --extension ... --out ...` runs an
+owned loopback OAUTHBEARER server with disposable fixture tokens. It tests session
+and environment precedence, token clearing/reacquisition, discovery reconnect,
+issuer validation, malformed challenges, rejection, require_auth policies and
+channel-binding refusal. Add `--slt ... --shim ... --source ...` to run the
+unchanged original attach_oauth_token.test on both engines; its manifest hash is
+checked. It never contacts an OAuth issuer or requests real credentials. Optional
+libpq OAuth plugins/device flows are outside this supplied-token control.
+
+`debug_control.py --cli ... --oracle ... --extension ... --slt ... --shim ...
+--out ...` verifies stderr formatting, COPY and type-lookup queries, RESET and
+process-global behavior across two SQL connections. `rds_control.py` checks SigV4
+passwords and token reuse on an owned protocol endpoint. These fixtures establish
+local protocol compatibility, not live OAuth or AWS acceptance.
+
+`version_control.py --cli ... --oracle ... --extension ... --out ...` uses owned
+schema functions to control the version/RDS probe and snapshot-export response.
+It checks attached, standalone and query scans, enum visibility, Redshift text
+reads and subsequent transaction failure after an unsuccessful snapshot export.
+The server is PostgreSQL17; this is not live Redshift/Aurora or old-server evidence.
+
+`crl_control.py` accepts the same arguments and generates disposable CA/server
+certificates and v2 CRLs. It compares extension-free and profile-compliant lists,
+revocation, expiration, future dates, signature/issuer/critical-extension failures,
+missing/invalid-PEM files, certificate-only stores and verify-ca/full hostname
+policy. No real credentials, user certificate store or external service is changed.
+
+`sasl_control.py --cli ... --oracle ... --extension ... --out ...` checks SASL
+mechanism selection against an owned protocol fixture that offers a chosen
+mechanism list over TLS and records the client's first SASL message. It passes
+when both engines select the same mechanism and GS2 header and fail for the same
+reason. Full error text and the number of connection attempts are recorded too;
+they differ today and are reported, not required equal. The fixture is not a
+PostgreSQL server and never checks a password.
+

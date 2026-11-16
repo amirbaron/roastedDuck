@@ -59,6 +59,11 @@ pub trait FileSystem: std::fmt::Debug + Send + Sync {
     }
     fn handles(&self, path: &[u8]) -> bool;
     fn open(&self, path: &[u8], write: bool) -> Result<Arc<dyn FileHandle>>;
+    /// Positional reads through the engine's external-file cache. Providers may
+    /// bypass their own read-ahead buffer to avoid buffering the same range twice.
+    fn open_read_direct(&self, path: &[u8]) -> Result<Arc<dyn FileHandle>> {
+        self.open(path, false)
+    }
     fn open_with_flags(&self, path: &[u8], flags: OpenFlags) -> Result<Arc<dyn FileHandle>> {
         if !flags.write || flags.create && flags.truncate && !flags.read {
             self.open(path, flags.write)

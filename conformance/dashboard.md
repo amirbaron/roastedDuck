@@ -1,6 +1,6 @@
 # roastedduck conformance dashboard
 
-Rust passing: **4875 / 4897 files** (4780 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
+Rust passing: **4876 / 4897 files** (4781 pass on both engines). "Passing" means the Rust run passed, or both engines skipped the file for the same reason.
 
 | group | files | C++ pass | C++ skip | C++ fail | Rust passing | both pass | Rust fail | Rust crash/timeout | Rust skip (C++ pass) | Rust % |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -99,7 +99,7 @@ Rust passing: **4875 / 4897 files** (4780 pass on both engines). "Passing" means
 | test/sql/timezone | 5 | 5 | 0 | 0 | 5 | 5 | 0 | 0 | 0 | 100.0% |
 | test/sql/topn | 21 | 21 | 0 | 0 | 21 | 21 | 0 | 0 | 0 | 100.0% |
 | test/sql/tpcds | 11 | 11 | 0 | 0 | 11 | 11 | 0 | 0 | 0 | 100.0% |
-| test/sql/tpch | 24 | 24 | 0 | 0 | 23 | 23 | 1 | 0 | 0 | 95.8% |
+| test/sql/tpch | 24 | 24 | 0 | 0 | 24 | 24 | 0 | 0 | 0 | 100.0% |
 | test/sql/transactions | 70 | 70 | 0 | 0 | 70 | 70 | 0 | 0 | 0 | 100.0% |
 | test/sql/types | 433 | 432 | 1 | 0 | 433 | 432 | 0 | 0 | 0 | 100.0% |
 | test/sql/update | 35 | 35 | 0 | 0 | 35 | 35 | 0 | 0 | 0 | 100.0% |
@@ -111,4 +111,4 @@ Rust passing: **4875 / 4897 files** (4780 pass on both engines). "Passing" means
 | test/sqlite | 4 | 4 | 0 | 0 | 4 | 4 | 0 | 0 | 0 | 100.0% |
 | test/sqlite/tags | 4 | 0 | 4 | 0 | 4 | 0 | 0 | 0 | 0 | 100.0% |
 | test/sqlserver | 2 | 2 | 0 | 0 | 2 | 2 | 0 | 0 | 0 | 100.0% |
-| **total** | 4897 | 4795 | 74 | 28 | 4875 | 4780 | 20 | 0 | 0 | 99.6% |
+| **total** | 4897 | 4795 | 74 | 28 | 4876 | 4781 | 19 | 0 | 0 | 99.6% |

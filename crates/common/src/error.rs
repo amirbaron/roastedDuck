@@ -294,6 +294,14 @@ impl Error {
         }
     }
 
+    /// The same error with `suffix` appended to its message and its extra info kept
+    /// (`Exception(extra_info, type, RawMessage() + suffix)`).
+    #[must_use]
+    pub fn with_message_suffix(mut self, suffix: &str) -> Self {
+        self.message.to_mut().extend_from_slice(suffix.as_bytes());
+        self
+    }
+
     /// Tags the error with DuckDB's `error_subtype` extra info (such as `"SYNTAX_ERROR"`).
     #[must_use]
     pub fn with_subtype(self, subtype: &'static str) -> Self {

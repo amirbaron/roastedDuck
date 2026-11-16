@@ -5,18 +5,23 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use roastedduck_common::{ByteString, Error, ErrorKind, Result};
 use roastedduck_function::ExtensionOption;
-use roastedduck_function::registered_files::{FileHandle, FileSystem};
+use roastedduck_function::registered_files::{FileHandle, FileSystem, OpenFlags};
 use roastedduck_types::{LogicalType, Value};
 use ureq::unversioned::transport::{Connector as _, TcpConnector};
 
+pub mod azure;
 mod body;
+pub mod client_cache;
+mod download;
 pub mod huggingface;
 pub use body::BodyReader;
 mod logging;
+mod metadata_cache;
 mod openssl_tls;
 mod proxy;
 mod redirect;
 pub mod s3;
+mod wire_headers;
 
 fn io_error(error: impl std::fmt::Display) -> Error {
     Error::new(ErrorKind::Io, error.to_string())
@@ -29,8 +34,28 @@ fn unquote_etag(value: &str) -> &str {
         .unwrap_or(value)
 }
 
+/// `RangeRequestNotSupportedException::MESSAGE`.
+const RANGE_NOT_SUPPORTED: &str = "Content-Length from server mismatches requested range, server may not support range requests. You can try to resolve this by enabling `SET force_download=true`";
+
+fn header_number<B>(response: &ureq::http::Response<B>, name: &str) -> Option<u64> {
+    response.headers().get(name)?.to_str().ok()?.parse().ok()
+}
+
+fn finish_range(reader: &mut impl Read) -> Result<()> {
+    // Completing the decoder returns its TCP connection to ureq's idle pool.
+    // Dropping an exact-length read before EOF would close that connection.
+    if reader.read(&mut [0_u8; 1]).map_err(io_error)? != 0 {
+        return Err(Error::new(
+            ErrorKind::Http,
+            "Server sent back more data than expected, `SET force_download=true` might help in this case",
+        ));
+    }
+    Ok(())
+}
+
 /// Database-provided HTTP secret selection, shared with the core secret manager.
 pub trait ResolveHttpSecret: std::fmt::Debug + Send + Sync {
+    fn user_agent(&self) -> String;
     fn resolve(&self, url: &str) -> Result<Option<HttpSecret>>;
 }
 
@@ -61,6 +86,12 @@ impl std::fmt::Debug for HttpSecret {
 /// separate: this provider handles only HTTP and HTTPS paths.
 pub fn options() -> Vec<ExtensionOption> {
     let entries = [
+        (
+            "httpfs_connection_caching",
+            "Enable connection caching for HTTP requests",
+            LogicalType::BOOLEAN,
+            Value::boolean(false),
+        ),
         (
             "http_timeout",
             "HTTP timeout read/write/connection/retry (in seconds)",
@@ -122,6 +153,18 @@ pub fn options() -> Vec<ExtensionOption> {
             Value::varchar("default"),
         ),
         (
+            "force_download",
+            "Forces upfront download of file",
+            LogicalType::BOOLEAN,
+            Value::boolean(false),
+        ),
+        (
+            "force_download_threshold",
+            "Forces upfront download of files smaller than the given size in bytes",
+            LogicalType::UBIGINT,
+            Value::ubigint(0),
+        ),
+        (
             "auto_fallback_to_full_download",
             "Allows automatically falling back to full file downloads when possible.",
             LogicalType::BOOLEAN,
@@ -146,6 +189,11 @@ pub fn options() -> Vec<ExtensionOption> {
                 if !matches!(value.to_varchar()?.as_str(), "default" | "curl" | "httplib") {
                     return Err(Error::invalid_input("Unsupported option for httpfs_client_implementation, only `curl`, `httplib` and `default` are currently supported"));
                 }
+                client_cache::reset(value.to_varchar()? == "httplib");
+                Ok(())
+            })),
+            "httpfs_connection_caching" => Some(Arc::new(|value| {
+                client_cache::set_enabled(value.as_bool().unwrap_or(false));
                 Ok(())
             })),
             "ca_cert_file" => Some(Arc::new(|value| {
@@ -176,6 +224,8 @@ struct Parameters {
     keep_alive: bool,
     redirects: u32,
     fallback: bool,
+    force_download: bool,
+    download_threshold: u64,
     check_etag: bool,
     proxy: String,
     proxy_user: String,
@@ -237,16 +287,24 @@ impl Parameters {
             keep_alive: boolean("http_keep_alive", true),
             redirects: 10,
             fallback: boolean("auto_fallback_to_full_download", true),
+            force_download: boolean("force_download", false),
+            download_threshold: number("force_download_threshold", 0),
             check_etag: !boolean("unsafe_disable_etag_checks", false),
             proxy: text("http_proxy", ""),
             proxy_user: text("http_proxy_username", ""),
             proxy_password: text("http_proxy_password", ""),
             headers: Vec::new(),
         };
+        let resolver = roastedduck_function::file_system::opener()
+            .and_then(|c| c.object_cache())
+            .and_then(|cache| cache.get::<HttpSecretResolver>(HTTP_SECRET_RESOLVER_KEY));
+        if let Some(resolver) = &resolver {
+            parameters
+                .headers
+                .push(("User-Agent".into(), resolver.0.user_agent()));
+        }
         if enable_http_secret
-            && let Some(resolver) = roastedduck_function::file_system::opener()
-                .and_then(|c| c.object_cache())
-                .and_then(|cache| cache.get::<HttpSecretResolver>(HTTP_SECRET_RESOLVER_KEY))
+            && let Some(resolver) = resolver
             && let Some(secret) = resolver.0.resolve(url)?
         {
             if enable_bearer && let Some(token) = secret.bearer_token {
@@ -277,7 +335,16 @@ impl Parameters {
     }
 
     fn agent(&self) -> Result<ureq::Agent> {
-        self.agent_with_resolver(ureq::unversioned::resolver::DefaultResolver::default())
+        self.agent_with_resolver(proxy::RequestResolver)
+    }
+
+    fn configure_request<B>(&self, request: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
+        request
+            .config()
+            .timeout_connect(Some(Duration::from_secs(self.timeout)))
+            .timeout_per_read(Some(Duration::from_secs(self.timeout)))
+            .timeout_per_write(Some(Duration::from_secs(self.timeout)))
+            .build()
     }
 
     fn agent_with_resolver(
@@ -308,14 +375,15 @@ impl Parameters {
             }
             config = config.proxy(Some(builder.build().map_err(io_error)?));
         }
-        let connector =
-            ().chain(proxy::ProxyConnector)
-                .chain(TcpConnector::default())
-                .chain(openssl_tls::TlsConnector::new(
-                    self.ca.clone(),
-                    self.verify,
-                    !self.httplib || self.ca.is_empty(),
-                ));
+        let connector = ()
+            .chain(proxy::ProxyConnector)
+            .chain(TcpConnector::default())
+            .chain(openssl_tls::TlsConnector::new(
+                self.ca.clone(),
+                self.verify,
+                !self.httplib || self.ca.is_empty(),
+            ))
+            .chain(wire_headers::HeaderConnector);
         Ok(ureq::Agent::with_parts(config.build(), connector, resolver))
     }
 }
@@ -327,11 +395,120 @@ struct HttpFile {
     size: u64,
     modified: i64,
     etag: String,
+    download: Arc<download::State>,
     parameters: Parameters,
-    agent: ureq::Agent,
+    agent: Arc<client_cache::Client>,
     signing: Option<s3::RequestSigning>,
     logger: Option<logging::HttpLogger>,
+    // Azure's opt-in stats count Content-Length even on HEAD; HTTPFS counts streamed bytes.
+    azure_stats: Option<bool>,
     client: Option<std::sync::Weak<roastedduck_function::FunctionClient>>,
+    /// The read buffer of a handle opened without direct I/O; `None` reads exact ranges.
+    buffer: Option<Arc<std::sync::Mutex<ReadBuffer>>>,
+}
+
+/// `HTTPFileHandle::read_buffer` and the positions around it: reads smaller than the
+/// buffer are served from one range request of its size, which doubles from
+/// `INITIAL_READ_BUFFER_LEN` to `MAXIMUM_READ_BUFFER_LEN` while reads stay sequential.
+struct ReadBuffer {
+    /// The buffered bytes (`buffer_start..buffer_end`).
+    data: Vec<u8>,
+    start: u64,
+    /// `read_buffer.GetSize()`.
+    capacity: u64,
+    /// The offset and length of the last range request (`range_request_statistics`).
+    last_request: Option<(u64, u64)>,
+}
+
+impl ReadBuffer {
+    const INITIAL_LEN: u64 = 1 << 20;
+    const MAXIMUM_LEN: u64 = 32 << 20;
+
+    /// `AdaptReadBufferSize`, before the buffer is refilled at `next_offset`.
+    fn adapt(&mut self, next_offset: u64) {
+        if self
+            .last_request
+            .is_some_and(|(offset, length)| offset + length == next_offset)
+            && self.capacity < Self::MAXIMUM_LEN
+        {
+            self.capacity *= 2;
+        }
+    }
+}
+
+impl ReadBuffer {
+    /// The buffered part of `HTTPFileSystem::ReadInternal` for a file of `size` bytes:
+    /// fills `out` from `offset`, which must lie inside the file. `fetch` is one range
+    /// request (`TryRangeRequest`); when it returns `false` the read is abandoned.
+    fn read(
+        &mut self,
+        size: u64,
+        offset: u64,
+        out: &mut [u8],
+        mut fetch: impl FnMut(u64, &mut [u8]) -> Result<bool>,
+    ) -> Result<bool> {
+        let buffer_end = self.start + self.data.len() as u64;
+        let (mut index, mut available) = if offset >= self.start && offset < buffer_end {
+            ((offset - self.start) as usize, (buffer_end - offset) as usize)
+        } else {
+            (0, 0)
+        };
+        let mut done = 0;
+        loop {
+            let copied = available.min(out.len() - done);
+            out[done..done + copied].copy_from_slice(&self.data[index..index + copied]);
+            done += copied;
+            if done == out.len() {
+                return Ok(true);
+            }
+            let position = offset + done as u64;
+            let remaining = (out.len() - done) as u64;
+            if remaining > self.capacity.min(size - position) {
+                // More than the buffer holds: read the rest directly.
+                if !fetch(position, &mut out[done..])? {
+                    return Ok(false);
+                }
+                self.last_request = Some((position, remaining));
+                return Ok(true);
+            }
+            self.adapt(position);
+            let length = self.capacity.min(size - position);
+            self.data.clear();
+            self.data.resize(length as usize, 0);
+            self.start = position;
+            let filled = fetch(position, &mut self.data);
+            if !matches!(filled, Ok(true)) {
+                // Nothing of a failed or abandoned request stays buffered.
+                self.data.clear();
+                return filled;
+            }
+            self.last_request = Some((position, length));
+            index = 0;
+            available = length as usize;
+        }
+    }
+}
+
+impl Default for ReadBuffer {
+    fn default() -> Self {
+        Self {
+            data: Vec::new(),
+            start: 0,
+            capacity: Self::INITIAL_LEN,
+            last_request: None,
+        }
+    }
+}
+
+impl std::fmt::Debug for ReadBuffer {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ReadBuffer")
+            .field("start", &self.start)
+            .field("len", &self.data.len())
+            .field("capacity", &self.capacity)
+            .finish_non_exhaustive()
+    }
 }
 
 fn status_error(method: &str, url: &str, status: u16) -> Error {
@@ -445,7 +622,79 @@ fn request_error(error: &ureq::Error, method: &str, url: &str, httplib: bool) ->
         };
         return io_error(format!("{reason} error for HTTP {method} to '{url}'"));
     }
-    io_error(error)
+    if let ureq::Error::Other(error) = error {
+        let reason = if error.is::<openssl_tls::CertificateFileError>() {
+            Some(if httplib {
+                "SSL certificate loading failed"
+            } else {
+                "Problem with the SSL CA cert (path? access rights?)"
+            })
+        } else if error.is::<proxy::HostNameResolutionError>() {
+            Some(if httplib {
+                "Could not establish connection"
+            } else {
+                "Could not resolve hostname"
+            })
+        } else if error.is::<proxy::ProxyNameResolutionError>() {
+            Some(if httplib {
+                "Could not establish connection"
+            } else {
+                "Could not resolve proxy name"
+            })
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            return io_error(format!("{reason} error for HTTP {method} to '{url}'"));
+        }
+    }
+    let connection_reason = if httplib {
+        "Could not establish connection"
+    } else {
+        "Could not connect to server"
+    };
+    let uri_reason = if httplib {
+        if url.starts_with("https://") {
+            "SSL connection failed"
+        } else {
+            connection_reason
+        }
+    } else {
+        "URL using bad/illegal format or missing URL"
+    };
+    let reason = match error {
+        ureq::Error::Timeout(_) if !httplib => Some("Timeout was reached"),
+        ureq::Error::Timeout(ureq::Timeout::Connect) => Some("Connection timed out"),
+        ureq::Error::Timeout(ureq::Timeout::Resolve) | ureq::Error::ConnectionFailed => {
+            Some(connection_reason)
+        }
+        ureq::Error::Timeout(
+            ureq::Timeout::PerRead | ureq::Timeout::RecvResponse | ureq::Timeout::RecvBody,
+        ) => Some("Failed to read connection"),
+        ureq::Error::Timeout(
+            ureq::Timeout::PerWrite | ureq::Timeout::SendRequest | ureq::Timeout::SendBody,
+        ) => Some("Failed to write connection"),
+        ureq::Error::HostNotFound if httplib => Some(connection_reason),
+        ureq::Error::BadUri(_) => Some(uri_reason),
+        ureq::Error::Io(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::ConnectionRefused
+                    | io::ErrorKind::NotConnected
+                    | io::ErrorKind::AddrNotAvailable
+                    | io::ErrorKind::NetworkUnreachable
+                    | io::ErrorKind::HostUnreachable
+            ) =>
+        {
+            Some(connection_reason)
+        }
+        ureq::Error::Http(error) if error.to_string().contains("uri") => Some(uri_reason),
+        _ => None,
+    };
+    if let Some(reason) = reason {
+        return io_error(format!("{reason} error for HTTP {method} to '{url}'"));
+    }
+    io_error(format!("{error} error for HTTP {method} to '{url}'"))
 }
 
 /// The installer's streaming GET result. Installer retries and publication stay
@@ -474,7 +723,7 @@ pub fn extension_get(url: &str, etag: Option<&[u8]>) -> std::result::Result<Exte
     parameters.redirects = 0;
     parameters.keep_alive = false;
     let agent = parameters
-        .agent_with_resolver(proxy::InstallerResolver)
+        .agent_with_resolver(proxy::RequestResolver)
         .map_err(|error| error.raw_message().into_owned())?;
     let mut request = agent.get(url);
     for (name, value) in &parameters.headers {
@@ -554,6 +803,7 @@ impl HttpFile {
                 template.push('?');
                 template.push_str(query);
             }
+            let agent = agent.get(parameters, &template, self.azure_stats.is_none())?;
             for attempt in 0..=self.parameters.retries {
                 if attempt >= 2 {
                     let delay =
@@ -566,7 +816,10 @@ impl HttpFile {
                 let initial_url = signing
                     .as_ref()
                     .map_or_else(|| template.clone(), |s| s.request_url(&template, method));
-                let url = location_url.as_ref().unwrap_or(&initial_url);
+                // DuckDB accepts literal spaces in HTTP paths. Preserve existing
+                // escapes (including signed S3 query parameters) byte-for-byte.
+                let encoded_url = location_url.as_ref().unwrap_or(&initial_url).replace(' ', "%20");
+                let url = &encoded_url;
                 let mut headers = Vec::new();
                 if let Some(signing) = &signing {
                     headers.extend(signing.headers(method, payload)?);
@@ -582,31 +835,40 @@ impl HttpFile {
                 let start = std::time::Instant::now();
                 let client = roastedduck_function::file_system::opener()
                     .or_else(|| self.client.as_ref().and_then(std::sync::Weak::upgrade));
-                if let Some(client) = &client {
-                    client.record_http_request(request_method, request_payload.len() as u64);
+                if let Some(client) = &client
+                    && self.azure_stats.unwrap_or(true)
+                {
+                    if self.azure_stats.is_some() {
+                        client.record_azure_http_request(request_method, request_payload.len() as u64);
+                    } else {
+                        client.record_http_request(request_method, request_payload.len() as u64);
+                    }
                 }
-                let result = if request_method == "HEAD" {
+                let observed_headers = wire_headers::Scope::enter();
+                let mut result = if request_method == "HEAD" {
                     let mut request = agent.head(url);
                     for (name, value) in &headers {
                         request = request.header(name.as_str(), value.as_str());
                     }
-                    request.call()
-                } else if request_method == "POST" || request_method == "PUT" {
+                    parameters.configure_request(request).call()
+                } else if matches!(request_method, "POST" | "PUT" | "PATCH") {
                     let mut request = if request_method == "POST" {
                         agent.post(url)
-                    } else {
+                    } else if request_method == "PUT" {
                         agent.put(url)
+                    } else {
+                        agent.patch(url)
                     };
                     for (name, value) in &headers {
                         request = request.header(name.as_str(), value.as_str());
                     }
-                    request.send(request_payload)
+                    parameters.configure_request(request).send(request_payload)
                 } else if request_method == "DELETE" {
                     let mut request = agent.delete(url);
                     for (name, value) in &headers {
                         request = request.header(name.as_str(), value.as_str());
                     }
-                    request.call()
+                    parameters.configure_request(request).call()
                 } else {
                     let mut request = agent.get(url);
                     for (name, value) in &headers {
@@ -615,8 +877,11 @@ impl HttpFile {
                     if let Some((start, end)) = range {
                         request = request.header("Range", format!("bytes={start}-{end}"));
                     }
-                    request.call()
+                    parameters.configure_request(request).call()
                 };
+                if let Ok(response) = &mut result {
+                    response.extensions_mut().insert(observed_headers.names());
+                }
                 if let Some(logger) = &self.logger {
                     let mut logged_headers = headers.clone();
                     if request_method == "GET"
@@ -635,12 +900,23 @@ impl HttpFile {
                     );
                 }
                 let result = result.map(|response| {
+                    if self.azure_stats == Some(true)
+                        && let Some(client) = &client
+                    {
+                        let length = response
+                            .headers()
+                            .get("content-length")
+                            .and_then(|v| v.to_str().ok())
+                            .and_then(|s| s.parse().ok())
+                            .unwrap_or(0);
+                        client.record_azure_http_received(length);
+                    }
                     response.map(|body| {
                         body::Body::new(
                             body,
-                            client
-                                .as_ref()
-                                .filter(|_| matches!(request_method, "GET" | "POST")),
+                            client.as_ref().filter(|_| {
+                                self.azure_stats.is_none() && matches!(request_method, "GET" | "POST")
+                            }),
                         )
                     })
                 });
@@ -728,6 +1004,15 @@ impl HttpFile {
                                 && !region.is_empty()
                                 && region != signing.request_region()
                             {
+                                if let Some(subject) =
+                                    self.signing.as_ref().and_then(|s| s.region_notice.as_deref())
+                                    && let Some(logger) = &self.logger
+                                {
+                                    logger.warning(&format!(
+                                        "{subject} from incorrect region \"{}\" - retrying with updated region \"{region}\".\nConsider setting the S3 region to this explicitly to avoid extra round-trips.",
+                                        signing.request_region()
+                                    ))?;
+                                }
                                 signing.redirect(region);
                                 redirected = true;
                                 location_url = None;
@@ -740,7 +1025,24 @@ impl HttpFile {
                             response.extensions_mut().insert(s3::RequestInfo {
                                 region: signing.request_region().into(),
                                 redirected,
+                                url: initial_url.clone(),
                             });
+                        }
+                        // Upstream treats a range length mismatch as a request
+                        // error, exhausting HTTP retries before its full-download
+                        // fallback (or the caller-visible error when disabled).
+                        if request_method == "GET"
+                            && matches!(status, 200 | 206)
+                            && attempt < self.parameters.retries
+                            && let Some((start, end)) = range
+                            && response
+                                .headers()
+                                .get("content-length")
+                                .and_then(|value| value.to_str().ok())
+                                .and_then(|value| value.parse::<u64>().ok())
+                                .is_some_and(|length| length != end - start + 1)
+                        {
+                            continue;
                         }
                         if !matches!(status, 408 | 418 | 429 | 500 | 503 | 504)
                             || return_final_status && attempt == self.parameters.retries
@@ -772,24 +1074,26 @@ impl HttpFile {
     }
 
     fn open_with(url: String, parameters: Parameters, signing: Option<s3::RequestSigning>) -> Result<Self> {
-        let mut file = Self::new_request(url, parameters, signing)?;
+        let mut file = Self::new_request(url, parameters, signing);
         file.initialize_metadata()?;
         Ok(file)
     }
 
     fn open_with_display(url: String, display_url: String, parameters: Parameters) -> Result<Self> {
-        let mut file = Self::new_request(url, parameters, None)?;
+        let mut file = Self::new_request(url, parameters, None);
         file.display_url = display_url;
         file.initialize_metadata()?;
         Ok(file)
     }
 
-    fn new_request(url: String, parameters: Parameters, signing: Option<s3::RequestSigning>) -> Result<Self> {
-        let agent = parameters.agent()?;
-        Ok(Self {
-            display_url: signing
-                .as_ref()
-                .map_or_else(|| url.clone(), |s| s.original_path.clone()),
+    fn new_request(url: String, parameters: Parameters, signing: Option<s3::RequestSigning>) -> Self {
+        let agent = Arc::new(client_cache::Client::default());
+        let display_url = signing
+            .as_ref()
+            .map_or_else(|| url.clone(), |s| s.original_path.clone());
+        Self {
+            download: download::State::current(&display_url),
+            display_url,
             url,
             size: 0,
             modified: 0,
@@ -798,50 +1102,82 @@ impl HttpFile {
             agent,
             signing,
             logger: logging::HttpLogger::current(),
+            azure_stats: None,
             client: roastedduck_function::file_system::opener()
                 .as_ref()
                 .map(Arc::downgrade),
-        })
+            buffer: None,
+        }
+    }
+
+    /// A handle opened without `FILE_FLAGS_DIRECT_IO` or parallel access
+    /// (`!SkipBuffer()`): its reads share the handle's read buffer.
+    fn buffered(mut self) -> Self {
+        self.buffer = Some(Arc::default());
+        self
     }
 
     fn initialize_metadata(&mut self) -> Result<()> {
-        let mut response = self.request("HEAD", None)?;
-        let mut method = "HEAD";
-        let mut length = response
-            .headers()
-            .get("content-length")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<u64>().ok());
-        if !response.status().is_success() || length.is_none() {
-            method = "GET";
-            response = self.request("GET", Some((0, 1)))?;
-            length = response
-                .headers()
-                .get("content-range")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.rsplit_once('/')?.1.parse::<u64>().ok());
-            if length.is_none() && response.status().as_u16() == 200 {
-                length = response
-                    .headers()
-                    .get("content-length")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.parse().ok());
-                if length.is_none() {
-                    length = Some(
-                        io::copy(&mut response.body_mut().as_reader(), &mut io::sink()).map_err(io_error)?,
-                    );
-                }
+        if self.parameters.force_download || self.download.get().is_some() {
+            self.size = self.full_download()?.size;
+            return Ok(());
+        }
+        let cache = metadata_cache::Cache::current();
+        let cached = cache.as_ref().and_then(|c| c.get(&self.display_url));
+        let entry =
+            cached.or_else(|| metadata_cache::Cache::listing().and_then(|c| c.get(&self.display_url)));
+        if let Some(entry) = entry {
+            if let Some(cache) = &cache {
+                cache.put(self.display_url.clone(), entry.clone());
             }
+            self.size = entry.size;
+            self.modified = entry.modified;
+            self.etag = entry.etag;
+            if let Some(signing) = &self.signing {
+                signing.restore_metadata(&entry.version, entry.region);
+            }
+            return Ok(());
         }
-        if !response.status().is_success() {
-            return Err(response_error(
-                status_error(method, &self.display_url, response.status().as_u16()),
-                &response,
-                b"",
-                self.parameters.httplib,
-            ));
+        // `HTTPFileHandle::LoadFileInfo`: only a HEAD that does not return 200 is
+        // retried as a two-byte range read, and never after 404 or 301. A 200
+        // without a usable length leaves the size 0, which downloads the file.
+        let mut response = self.request("HEAD", None)?;
+        if response.status().as_u16() != 200 {
+            let probed = !matches!(response.status().as_u16(), 301 | 404);
+            if probed {
+                response = self.request("GET", Some((0, 1)))?;
+            }
+            let status = response.status().as_u16();
+            if !matches!(status, 200 | 202 | 206) {
+                // The request layer rejects a failed probe; the handle rejects the rest.
+                return Err(self.get_error(&mut response, probed && status >= 400));
+            }
+            if header_number(&response, "content-length").is_some_and(|length| length != 2) {
+                // Upstream rejects the response before reading its body and keeps
+                // none of its headers, so the error it reports has no status.
+                if !self.parameters.fallback {
+                    return Err(Error::new(
+                        ErrorKind::Http,
+                        format!(
+                            "HTTP GET error on '{}' (HTTP 0 Internal Server Error)",
+                            self.display_url
+                        ),
+                    )
+                    .with_http_response(0, b"", std::iter::empty::<(&str, &[u8])>(), ""));
+                }
+                drop(response);
+                self.size = self.full_download()?.size;
+                return Ok(());
+            }
+            io::copy(&mut response.body_mut().as_reader(), &mut io::sink()).map_err(io_error)?;
         }
-        self.size = length.ok_or_else(|| io_error("HTTP server did not provide a file size"))?;
+        self.size = response
+            .headers()
+            .get("content-range")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split_once('/')?.1.parse::<u64>().ok())
+            .or_else(|| header_number(&response, "content-length"))
+            .unwrap_or(0);
         if let Some(signing) = &self.signing {
             // Pin from initial metadata (HEAD or its GET fallback), as C++ does.
             // Later data-range responses must not establish or change the pin.
@@ -860,19 +1196,99 @@ impl HttpFile {
             .and_then(|v| httpdate::parse_http_date(v).ok())
             .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
             .map_or(0, |time| time.as_secs().saturating_mul(1_000_000) as i64);
+        if self.size == 0 || self.size < self.parameters.download_threshold {
+            self.size = self.full_download()?.size;
+            return Ok(());
+        }
+        if let Some(cache) = cache {
+            let (version, region) = self
+                .signing
+                .as_ref()
+                .map(s3::RequestSigning::cached_metadata)
+                .unwrap_or_default();
+            cache.put(
+                self.display_url.clone(),
+                metadata_cache::Entry {
+                    size: self.size,
+                    modified: self.modified,
+                    etag: self.etag.clone(),
+                    version,
+                    region,
+                },
+            );
+        }
         Ok(())
     }
-    fn range_response(&self, offset: u64, end: u64) -> Result<ureq::http::Response<body::Body>> {
+    /// The error of a GET or HEAD response the handle does not accept
+    /// (`GetHTTPError`). A signed S3 handle reports `S3FileSystem`'s text: about the
+    /// request's own URL when the request layer raised it (`request`), about the
+    /// handle's path otherwise. The body is consumed, which keeps the connection.
+    fn get_error(&self, response: &mut ureq::http::Response<body::Body>, request: bool) -> Error {
+        let status = response.status().as_u16();
+        let Some(signing) = &self.signing else {
+            let _ = io::copy(&mut response.body_mut().as_reader(), &mut io::sink());
+            return response_error(
+                status_error("GET", &self.display_url, status),
+                response,
+                b"",
+                self.parameters.httplib,
+            );
+        };
+        // The service's error document names the failure; a HEAD has none.
+        let mut body = Vec::new();
+        if response.body_mut().as_reader().read_to_end(&mut body).is_err() {
+            body.clear();
+        }
+        let info = response.extensions().get::<s3::RequestInfo>().cloned();
+        let region = info
+            .as_ref()
+            .map_or_else(|| signing.effective("GET").request_region().to_owned(), |info| info.region.clone());
+        let url = match &info {
+            Some(info) if request => info.url.as_str(),
+            _ => self.display_url.as_str(),
+        };
+        response_error(
+            signing.response_error(&region, status, &body, url),
+            response,
+            &body,
+            self.parameters.httplib,
+        )
+    }
+
+    fn full_download(&self) -> Result<Arc<download::Downloaded>> {
+        let mut state = self
+            .download
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(file) = &*state {
+            return Ok(Arc::clone(file));
+        }
+        let mut response = self.request("GET", None)?;
+        if response.status().as_u16() != 200 {
+            let failed = response.status().as_u16() >= 400;
+            return Err(self.get_error(&mut response, failed));
+        }
+        let manager = self
+            .client
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade)
+            .and_then(|client| client.external_file_cache())
+            .map(|cache| cache.buffer_manager().clone())
+            .ok_or_else(|| io_error("Full HTTP download requires a database buffer manager"))?;
+        let file = Arc::new(download::Downloaded::read(
+            response.body_mut().as_reader(),
+            manager,
+        )?);
+        *state = Some(Arc::clone(&file));
+        Ok(file)
+    }
+
+    fn range_response(&self, offset: u64, end: u64) -> Result<Option<ureq::http::Response<body::Body>>> {
         let mut response = self.request("GET", Some((offset, end)))?;
         let status = response.status().as_u16();
         if status != 200 && status != 206 {
-            io::copy(&mut response.body_mut().as_reader(), &mut io::sink()).map_err(io_error)?;
-            return Err(response_error(
-                status_error("GET", &self.display_url, status),
-                &response,
-                b"",
-                self.parameters.httplib,
-            ));
+            return Err(self.get_error(&mut response, status >= 400));
         }
         let etag = response
             .headers()
@@ -884,6 +1300,9 @@ impl HttpFile {
             && !etag.is_empty()
             && unquote_etag(&self.etag) != unquote_etag(etag)
         {
+            if let Some(cache) = metadata_cache::Cache::current() {
+                cache.erase(&self.display_url);
+            }
             return Err(response_error(
                 Error::new(
                     ErrorKind::Http,
@@ -897,6 +1316,37 @@ impl HttpFile {
                 self.parameters.httplib,
             ));
         }
+        let expected_length = end - offset + 1;
+        let length = response
+            .headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok());
+        if length.is_some_and(|length| length != expected_length) || status == 200 && offset != 0 {
+            if !self.parameters.fallback {
+                return Err(Error::new(ErrorKind::Http, RANGE_NOT_SUPPORTED));
+            }
+            if let Some(logger) = &self.logger {
+                logger.fallback(&self.display_url)?;
+            }
+            drop(response);
+            let downloaded = self.full_download()?;
+            if downloaded.size != self.size {
+                *self
+                    .download
+                    .0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                return Err(Error::new(
+                    ErrorKind::Http,
+                    format!(
+                        "The size reported by HEAD for '{}' was {} bytes, but the full GET downloaded {} bytes. You can try to resolve this by enabling `SET force_download=true`",
+                        self.display_url, self.size, downloaded.size
+                    ),
+                ));
+            }
+            return Ok(None);
+        }
         if status == 206 {
             let header = response
                 .headers()
@@ -907,23 +1357,19 @@ impl HttpFile {
             if header != expected {
                 return Err(io_error("HTTP server returned an unexpected Content-Range"));
             }
-        } else if !self.parameters.fallback {
-            return Err(io_error("HTTP server does not support range requests"));
         }
-        Ok(response)
+        Ok(Some(response))
     }
 }
 
-impl FileHandle for HttpFile {
-    fn read_at(&self, offset: u64, buffer: &mut [u8]) -> Result<usize> {
-        if offset >= self.size || buffer.is_empty() {
-            return Ok(0);
-        }
-        let count = buffer
-            .len()
-            .min(usize::try_from(self.size - offset).unwrap_or(usize::MAX));
-        let end = offset + count as u64 - 1;
-        let mut response = self.range_response(offset, end)?;
+impl HttpFile {
+    /// One range request filling `out` from `offset` (`TryRangeRequest`); `false` when
+    /// the server does not support ranges and the file was downloaded instead.
+    fn read_range(&self, offset: u64, out: &mut [u8]) -> Result<bool> {
+        let end = offset + out.len() as u64 - 1;
+        let Some(mut response) = self.range_response(offset, end)? else {
+            return Ok(false);
+        };
         let status = response.status().as_u16();
         let mut body = response.body_mut().as_reader();
         if status == 200 && offset != 0 {
@@ -932,17 +1378,36 @@ impl FileHandle for HttpFile {
                 return Err(io_error("HTTP server returned a short file"));
             }
         }
-        body.read_exact(&mut buffer[..count]).map_err(io_error)?;
-        Ok(count)
+        body.read_exact(out).map_err(io_error)?;
+        finish_range(&mut body)?;
+        Ok(true)
     }
-    fn read_stream(&self) -> Result<Option<Box<dyn Read + Send>>> {
-        Ok(Some(Box::new(HttpReadStream {
-            file: self.clone(),
-            position: 0,
-            end: 0,
-            window: 1 << 20,
-            body: None,
-        })))
+}
+
+impl FileHandle for HttpFile {
+    fn read_at(&self, offset: u64, buffer: &mut [u8]) -> Result<usize> {
+        if let Some(file) = self.download.get() {
+            return file.read_at(offset, buffer);
+        }
+        if offset >= self.size || buffer.is_empty() {
+            return Ok(0);
+        }
+        let count = buffer
+            .len()
+            .min(usize::try_from(self.size - offset).unwrap_or(usize::MAX));
+        let read = match &self.buffer {
+            Some(state) => {
+                let mut state = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                state.read(self.size, offset, &mut buffer[..count], |position, bytes| {
+                    self.read_range(position, bytes)
+                })?
+            }
+            None => self.read_range(offset, &mut buffer[..count])?,
+        };
+        if !read {
+            return self.full_download()?.read_at(offset, buffer);
+        }
+        Ok(count)
     }
     fn write_at(&self, _: u64, _: &[u8]) -> Result<usize> {
         Err(Error::not_implemented("Writing to HTTP files not supported"))
@@ -961,70 +1426,21 @@ impl FileHandle for HttpFile {
     }
 }
 
-/// Stream adaptive HTTP range windows without allocating a window-sized cache.
-/// CSV's small input buffer consumes each response incrementally. Random-access
-/// readers retain the existing exact-range `read_at` behavior.
-struct HttpReadStream {
-    file: HttpFile,
-    position: u64,
-    end: u64,
-    window: u64,
-    body: Option<BodyReader<ureq::BodyReader<'static>>>,
-}
-
-impl std::fmt::Debug for HttpReadStream {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("HttpReadStream")
-            .field("position", &self.position)
-            .field("end", &self.end)
-            .field("window", &self.window)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Read for HttpReadStream {
-    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        if buffer.is_empty() || self.position >= self.file.size {
-            return Ok(0);
-        }
-        if self.position == self.end {
-            self.body = None;
-            let end = self.position.saturating_add(self.window).min(self.file.size);
-            let response = self
-                .file
-                .range_response(self.position, end - 1)
-                .map_err(io::Error::other)?;
-            let full_body = response.status().as_u16() == 200;
-            let mut body = response.into_body().into_reader();
-            if full_body && self.position != 0 {
-                let skipped = io::copy(&mut (&mut body).take(self.position), &mut io::sink())?;
-                if skipped != self.position {
-                    return Err(io::Error::other("HTTP server returned a short file"));
-                }
-            }
-            // A server ignoring Range already sent the whole file. Keep reading
-            // that response rather than downloading and skipping its prefix again.
-            self.end = if full_body { self.file.size } else { end };
-            self.window = self.window.saturating_mul(2).min(32 << 20);
-            self.body = Some(body);
-        }
-        let count = buffer
-            .len()
-            .min(usize::try_from(self.end - self.position).unwrap_or(usize::MAX));
-        let body = self
-            .body
-            .as_mut()
-            .ok_or_else(|| io::Error::other("Missing HTTP response body"))?;
-        let read = body.read(&mut buffer[..count])?;
-        if read == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "failed to fill whole buffer",
-            ));
-        }
-        self.position += read as u64;
-        Ok(read)
+/// `open_with_flags` of the HTTP filesystems. Database files are read through it; they
+/// are opened for parallel access, which skips the handle's read buffer.
+pub(crate) fn open_with_flags(
+    filesystem: &dyn FileSystem,
+    path: &[u8],
+    flags: OpenFlags,
+) -> Result<Arc<dyn FileHandle>> {
+    if !flags.write {
+        filesystem.open_read_direct(path)
+    } else if flags.create && flags.truncate && !flags.read {
+        filesystem.open(path, true)
+    } else {
+        Err(Error::not_implemented(
+            "Registered filesystem does not support the requested file open flags",
+        ))
     }
 }
 
@@ -1046,7 +1462,14 @@ impl FileSystem for HttpFileSystem {
         if write {
             return Err(Error::not_implemented("Writing to HTTP files not supported"));
         }
-        HttpFile::open(path).map(|file| Arc::new(file) as Arc<dyn FileHandle>)
+        HttpFile::open(path)
+            .map(|file| logging::logged_file(Arc::new(file.buffered()), "HTTPFileSystem", path))
+    }
+    fn open_read_direct(&self, path: &[u8]) -> Result<Arc<dyn FileHandle>> {
+        HttpFile::open(path).map(|file| logging::logged_file(Arc::new(file), "HTTPFileSystem", path))
+    }
+    fn open_with_flags(&self, path: &[u8], flags: OpenFlags) -> Result<Arc<dyn FileHandle>> {
+        open_with_flags(self, path, flags)
     }
     fn glob(&self, path: &[u8]) -> Result<Vec<ByteString>> {
         let allow = roastedduck_function::file_system::opener()
@@ -1055,18 +1478,16 @@ impl FileSystem for HttpFileSystem {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         if path.contains(&b'*') && !allow {
-            return Err(io_error("Globs (wildcards) in HTTP paths are not supported"));
+            return Err(Error::invalid_input(
+                "Globs (`*`) for generic HTTP file is are not supported.\nConsider `SET allow_asterisks_in_http_paths = true;` to allow this behaviour",
+            ));
         }
         Ok(vec![path.into()])
     }
     fn is_file(&self, path: &[u8]) -> Result<bool> {
-        match HttpFile::open(path) {
-            Ok(_) => Ok(true),
-            Err(error) if error.kind() == ErrorKind::Http && error.raw_message().contains("HTTP 404") => {
-                Ok(false)
-            }
-            Err(error) => Err(error),
-        }
+        // HTTPFileSystem::FileExists catches failed probes. In particular a
+        // presigned database URL does not authorize its optional WAL sidecar.
+        Ok(self.open(path, false).is_ok())
     }
     fn is_dir(&self, _: &[u8]) -> Result<bool> {
         Ok(false)
@@ -1086,3 +1507,97 @@ impl FileSystem for HttpFileSystem {
 mod http_metadata_tests;
 
 mod response_header_order;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MB: u64 = 1 << 20;
+
+    /// Reads `length` bytes at `offset` of a `size`-byte file whose byte `i` is `i % 251`,
+    /// checks them, and returns the ranges requested.
+    fn read(buffer: &mut ReadBuffer, size: u64, offset: u64, length: usize) -> Vec<(u64, u64)> {
+        let mut requests = Vec::new();
+        let mut out = vec![0; length];
+        let read = buffer.read(size, offset, &mut out, |position, bytes| {
+            requests.push((position, bytes.len() as u64));
+            for (index, byte) in bytes.iter_mut().enumerate() {
+                *byte = ((position + index as u64) % 251) as u8;
+            }
+            Ok(true)
+        });
+        assert!(read.unwrap());
+        assert!(
+            out.iter()
+                .enumerate()
+                .all(|(index, byte)| *byte == ((offset + index as u64) % 251) as u8)
+        );
+        requests
+    }
+
+    #[test]
+    fn sequential_reads_double_the_buffer() {
+        let size = 80 * MB;
+        let mut buffer = ReadBuffer::default();
+        let mut requests = Vec::new();
+        let mut offset = 0;
+        while offset < size {
+            requests.extend(read(&mut buffer, size, offset, 32 << 10));
+            offset += 32 << 10;
+        }
+        assert_eq!(
+            requests,
+            [
+                (0, MB),
+                (MB, 2 * MB),
+                (3 * MB, 4 * MB),
+                (7 * MB, 8 * MB),
+                (15 * MB, 16 * MB),
+                (31 * MB, 32 * MB),
+                (63 * MB, 17 * MB),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_rewind_keeps_the_grown_buffer() {
+        let size = 10 * MB;
+        let mut buffer = ReadBuffer::default();
+        let mut offset = 0;
+        while offset < size {
+            read(&mut buffer, size, offset, 64 << 10);
+            offset += 64 << 10;
+        }
+        // 1, 2, 4 MiB and the rest were read; the buffer is now 8 MiB.
+        assert_eq!(read(&mut buffer, size, 0, 64 << 10), [(0, 8 * MB)]);
+        assert_eq!(read(&mut buffer, size, 64 << 10, 64 << 10), []);
+        assert_eq!(read(&mut buffer, size, 8 * MB, 10), [(8 * MB, 2 * MB)]);
+    }
+
+    #[test]
+    fn large_reads_bypass_the_buffer() {
+        let size = 10 * MB;
+        let mut buffer = ReadBuffer::default();
+        assert_eq!(read(&mut buffer, size, 0, 3 * MB as usize), [(0, 3 * MB)]);
+        // The direct read counts as the last request: the next refill is sequential.
+        assert_eq!(read(&mut buffer, size, 3 * MB, 10), [(3 * MB, 2 * MB)]);
+        // A read that starts inside the buffer takes its tail before going direct.
+        assert_eq!(
+            read(&mut buffer, size, 4 * MB, 5 * MB as usize),
+            [(5 * MB, 4 * MB)]
+        );
+        // The end of the file bounds the buffer.
+        assert_eq!(read(&mut buffer, size, 9 * MB, MB as usize), [(9 * MB, MB)]);
+    }
+
+    #[test]
+    fn a_failed_refill_leaves_nothing_buffered() {
+        let mut buffer = ReadBuffer::default();
+        let mut out = [0; 16];
+        let failed = buffer.read(4 * MB, 0, &mut out, |_, _| Err(io_error("refused")));
+        assert!(failed.is_err());
+        let abandoned = buffer.read(4 * MB, 0, &mut out, |_, _| Ok(false));
+        assert!(!abandoned.unwrap());
+        assert_eq!(read(&mut buffer, 4 * MB, 0, 16), [(0, MB)]);
+    }
+}

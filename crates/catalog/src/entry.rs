@@ -161,6 +161,8 @@ pub struct TableEntry {
     pub constraints: Vec<roastedduck_ast::Constraint>,
     /// The table's data (`DuckTableEntry::storage`); `None` for tables of other catalogs.
     pub storage: Option<Arc<roastedduck_storage::DataTable>>,
+    /// Engine-owned remote table implementation; mutually exclusive with storage.
+    pub backend: Option<Arc<dyn crate::backend::TableBackend>>,
 }
 
 impl TableEntry {
@@ -196,6 +198,7 @@ impl TableEntry {
             not_null_columns,
             constraints: info.constraints.clone(),
             storage: None,
+            backend: None,
         }
     }
 

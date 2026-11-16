@@ -10,6 +10,9 @@
 //! ```
 
 mod attached;
+mod aws;
+#[cfg(test)]
+mod catalog_backend_tests;
 mod checkpoint;
 mod config;
 mod database;
@@ -25,6 +28,7 @@ mod function_registration;
 mod log_functions;
 mod logging;
 mod platform;
+mod postgres;
 mod query_profiler;
 mod read_duckdb;
 mod read_file;

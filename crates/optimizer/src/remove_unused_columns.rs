@@ -1020,13 +1020,13 @@ impl<'a> RemoveUnusedColumns<'a> {
 /// Whether a scan can produce only the requested columns (DuckDB's
 /// `TableFunction::projection_pushdown`; base table scans always can).
 pub(crate) fn supports_projection_pushdown(get: &LogicalGet) -> bool {
-    get.table.is_some() || get.function.projection_pushdown
+    get.is_native_table() || get.function.projection_pushdown
 }
 
 /// Whether a scan can drop filter-only columns from its output (DuckDB's
 /// `TableFunction::filter_prune`, set for base table scans).
 pub(crate) fn supports_filter_prune(get: &LogicalGet) -> bool {
-    get.table.is_some() || get.function.filter_prune
+    get.is_native_table() || get.function.filter_prune
 }
 
 /// The column to scan when no column is needed (DuckDB's `LogicalGet::GetAnyColumn`):
@@ -1035,7 +1035,7 @@ pub(crate) fn supports_filter_prune(get: &LogicalGet) -> bool {
 pub(crate) fn any_column(get: &LogicalGet) -> u64 {
     if get.function.empty_column {
         COLUMN_IDENTIFIER_EMPTY
-    } else if get.table.is_some() {
+    } else if get.is_native_table() {
         COLUMN_IDENTIFIER_ROW_ID
     } else {
         0
@@ -1138,6 +1138,11 @@ fn prune_cte_refs(
 /// `TableSupportsPushdownExtract`, for STRUCT and VARIANT columns that are not
 /// generated).
 fn supports_pushdown_extract(get: &LogicalGet, column: u64) -> bool {
+    // A remote table retains catalog identity, but its scan supplies whole
+    // columns. Only the native scan implements extracted-field column indexes.
+    if !get.is_native_table() {
+        return false;
+    }
     let Some(entry) = &get.table else {
         return false;
     };

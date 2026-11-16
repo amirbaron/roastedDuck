@@ -25,6 +25,7 @@ pub struct PhysicalExport {
     export: LogicalExport,
     catalog: Arc<Catalog>,
     transaction: Arc<Transaction>,
+    client: Arc<roastedduck_function::FunctionClient>,
 }
 
 impl PhysicalExport {
@@ -40,20 +41,31 @@ impl PhysicalExport {
             export,
             catalog,
             transaction,
+            client: Arc::default(),
         }
     }
 
+    #[must_use]
+    pub fn with_client(mut self, client: Arc<roastedduck_function::FunctionClient>) -> Self {
+        self.client = client;
+        self
+    }
+
     /// `WriteCatalogEntries`.
-    fn schema_sql(&self) -> ByteString {
+    fn schema_sql(&self) -> Result<ByteString> {
         let mut result = ByteString::new();
-        for info in roastedduck_catalog::checkpoint::export_create_infos(&self.catalog, &self.transaction) {
+        for info in roastedduck_catalog::checkpoint::export_create_infos(
+            &self.catalog,
+            &self.transaction,
+            &self.client,
+        )? {
             if let Some(sql) = info.to_sql() {
                 result.push_bytes(&sql);
                 result.push_bytes(";\n");
             }
         }
         result.push(b'\n');
-        result
+        Ok(result)
     }
 
     /// `WriteCopyStatement` for every exported table.
@@ -206,7 +218,7 @@ impl Source for PhysicalExport {
             let directory = &bytes[..end];
             write_file(
                 &roastedduck_common::byte_format!("{directory}/schema.sql"),
-                &self.schema_sql(),
+                &self.schema_sql()?,
             )?;
             write_file(
                 &roastedduck_common::byte_format!("{directory}/load.sql"),

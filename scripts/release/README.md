@@ -1,6 +1,7 @@
 # Release pipeline
 
-The current release is `1.5.6.post3`, adding bundled FTS/VSS and Homebrew distribution.
+The current release is `1.5.6.post4`, adding bundled httpfs, AWS, Azure, ICU and
+PostgreSQL implementations to the FTS/VSS and Homebrew distribution of post3.
 The compatibility target remains DuckDB 1.5.6. `render_homebrew.py` renders a base
 formula from accepted SDK checksums; the tap workflow packages, tests and pours
 real Homebrew bottles, then public-download checks verify them. Never substitute

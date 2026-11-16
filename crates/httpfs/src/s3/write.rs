@@ -290,7 +290,7 @@ impl S3WriteFile {
             / block_size
             * block_size;
         let source = format!("{}{}{}", request.bucket_url, request.key, request.query_suffix);
-        let transport = HttpFile::new_request(request.url, request.parameters, Some(request.signing))?;
+        let transport = HttpFile::new_request(request.url, request.parameters, Some(request.signing));
         Ok(Self {
             context: Arc::new(WriteContext {
                 transport,

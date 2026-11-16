@@ -11,7 +11,10 @@ use roastedduck_common::{Error, ErrorKind, Result, STANDARD_VECTOR_SIZE};
 use roastedduck_csv::multi_file::{
     FileList, MultiFileBindData, MultiFileOptions, bind_options, hive_parse, local_glob, parse_paths,
 };
+use roastedduck_function::caching_file_system::CachingFileHandle;
 use roastedduck_function::cast::CastFunctionSet;
+use roastedduck_function::external_file_cache::CacheValidationMode;
+use roastedduck_function::registered_files::{FileHandle, FileSystem};
 use roastedduck_function::{
     FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
     TableScanState,
@@ -108,20 +111,60 @@ fn assert_max_file_size(path: &[u8], size: u64) -> Result<()> {
     Ok(())
 }
 
-/// The value of file column `column` of `path` (`DirectFileReader::Scan`).
-fn file_column(data: &ReadFileData, path: &[u8], column: usize) -> Result<Value> {
-    if column == FILE_NAME_COLUMN {
-        return Value::try_varchar(path);
-    }
-    if let Some(filesystem) = roastedduck_function::registered_files::lookup(path) {
+/// A registered file a row reads its columns from. `DirectFileReader::Scan` opens the
+/// file once, before its column loop.
+enum OpenedFile {
+    /// A remote file: direct I/O through the external file cache
+    /// (`FILE_FLAGS_DIRECT_IO` with `CachingMode::CACHE_REMOTE_ONLY`).
+    Remote(CachingFileHandle),
+    Registered(Arc<dyn FileHandle>),
+}
+
+impl OpenedFile {
+    fn open(filesystem: &dyn FileSystem, path: &[u8]) -> Result<Self> {
+        if filesystem.is_remote() {
+            let client = roastedduck_function::file_system::opener();
+            return CachingFileHandle::open_direct(
+                client.as_ref().and_then(|client| client.external_file_cache()),
+                path,
+                CacheValidationMode::of_client(client.as_deref()),
+            )
+            .map(Self::Remote);
+        }
         roastedduck_function::file_system::verify_can_access_file(path)?;
-        let handle = filesystem.open(path, false)?;
-        return match column {
-            FILE_CONTENT_COLUMN => {
-                let size = handle.size()?;
-                assert_max_file_size(path, size)?;
-                let mut bytes = Vec::new();
-                roastedduck_function::registered_files::Cursor::new(handle)
+        filesystem.open(path, false).map(Self::Registered)
+    }
+
+    fn size(&self) -> Result<u64> {
+        match self {
+            Self::Remote(handle) => handle.file_size(),
+            Self::Registered(handle) => handle.size(),
+        }
+    }
+
+    fn modified(&self) -> Result<i64> {
+        match self {
+            Self::Remote(handle) => handle.last_modified(),
+            Self::Registered(handle) => handle.modified(),
+        }
+    }
+
+    /// The `size` bytes of the file.
+    fn content(&self, path: &[u8], size: u64) -> Result<Vec<u8>> {
+        let capacity = usize::try_from(size).map_err(|_| Error::internal("file larger than memory"))?;
+        let mut bytes = Vec::with_capacity(capacity);
+        match self {
+            Self::Remote(handle) => {
+                // Read in batches of 128mb, each a range of the cache.
+                const MAX_READ_SIZE: u64 = 128 << 20;
+                while (bytes.len() as u64) < size {
+                    let position = bytes.len() as u64;
+                    let read = handle.read((size - position).min(MAX_READ_SIZE), position)?;
+                    bytes.extend_from_slice(read.bytes());
+                }
+            }
+            Self::Registered(handle) => {
+                roastedduck_function::registered_files::Cursor::new(Arc::clone(handle))
                     .take(size)
                     .read_to_end(&mut bytes)
                     .map_err(|error| {
@@ -136,10 +179,36 @@ fn file_column(data: &ReadFileData, path: &[u8], column: usize) -> Result<Value>
                         "Could not read file \"{path}\": short read"
                     )));
                 }
-                file_content(data, path, &bytes)
             }
-            FILE_SIZE_COLUMN => Ok(Value::bigint(i64::try_from(handle.size()?).unwrap_or(i64::MAX))),
-            FILE_LAST_MODIFIED_COLUMN => Ok(Value::timestamp_tz(Timestamp(handle.modified()?))),
+        }
+        Ok(bytes)
+    }
+}
+
+/// The value of file column `column` of `path` (`DirectFileReader::Scan`); `opened`
+/// keeps the file open for the row's other columns.
+fn file_column(
+    data: &ReadFileData,
+    path: &[u8],
+    column: usize,
+    opened: &mut Option<OpenedFile>,
+) -> Result<Value> {
+    if column == FILE_NAME_COLUMN {
+        return Value::try_varchar(path);
+    }
+    if let Some(filesystem) = roastedduck_function::registered_files::lookup(path) {
+        let file = match opened {
+            Some(file) => file,
+            None => opened.insert(OpenedFile::open(&*filesystem, path)?),
+        };
+        return match column {
+            FILE_CONTENT_COLUMN => {
+                let size = file.size()?;
+                assert_max_file_size(path, size)?;
+                file_content(data, path, &file.content(path, size)?)
+            }
+            FILE_SIZE_COLUMN => Ok(Value::bigint(i64::try_from(file.size()?).unwrap_or(i64::MAX))),
+            FILE_LAST_MODIFIED_COLUMN => Ok(Value::timestamp_tz(Timestamp(file.modified()?))),
             _ => Ok(Value::null(
                 data.types.get(column).cloned().unwrap_or(LogicalType::SQLNULL),
             )),
@@ -194,7 +263,12 @@ fn file_content(data: &ReadFileData, path: &[u8], bytes: &[u8]) -> Result<Value>
 }
 
 /// The value of column `column` for `path`: a file column or a hive partition value.
-fn column_value(data: &ReadFileData, path: &[u8], column: usize) -> Result<Value> {
+fn column_value(
+    data: &ReadFileData,
+    path: &[u8],
+    column: usize,
+    opened: &mut Option<OpenedFile>,
+) -> Result<Value> {
     if let Some((key, _)) = data
         .reader_bind
         .hive_partitioning_indexes
@@ -207,7 +281,7 @@ fn column_value(data: &ReadFileData, path: &[u8], column: usize) -> Result<Value
             .map_or(b"".as_slice(), roastedduck_common::ByteString::as_bytes);
         return data.file_options.hive_partition_value(value, key, &data.casts);
     }
-    file_column(data, path, column)
+    file_column(data, path, column, opened)
 }
 
 /// `DirectFileReader::Scan`: only the requested columns are read (projection pushdown).
@@ -247,6 +321,7 @@ fn read_file_scan(
         .map(|ty| Vector::constant_null(ty.clone()))
         .collect();
     let mut filled = vec![false; columns.len()];
+    let mut opened: Vec<Option<OpenedFile>> = paths.iter().map(|_| None).collect();
     for &column_id in column_ids {
         let Ok(column) = usize::try_from(column_id) else {
             continue;
@@ -256,7 +331,7 @@ fn read_file_scan(
         }
         let mut vector = Vector::flat(data.types[column].clone(), rows.max(1));
         for (row, path) in paths.iter().enumerate() {
-            let value = column_value(data, path, column)?;
+            let value = column_value(data, path, column, &mut opened[row])?;
             if value.is_null() {
                 vector.set_null(row);
             } else {

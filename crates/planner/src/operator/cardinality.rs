@@ -108,10 +108,11 @@ impl super::LogicalGet {
     /// The estimated row count of the scan (DuckDB's `function.cardinality`): the row
     /// count of a base table (`TableScanCardinality`), or the function's estimate.
     pub fn table_cardinality(&self) -> Option<u64> {
-        let Some(entry) = self.table.as_ref() else {
+        if !self.is_native_table() {
             let cardinality = self.function.cardinality.as_ref()?;
             return cardinality(self.bind_data.as_deref());
-        };
+        }
+        let entry = self.table.as_ref()?;
         match &entry.kind {
             roastedduck_catalog::EntryKind::Table(table) => {
                 table.storage.as_ref().map(|storage| storage.total_rows())

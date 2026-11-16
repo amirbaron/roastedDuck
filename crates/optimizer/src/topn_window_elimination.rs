@@ -1359,7 +1359,7 @@ fn can_use_late_materialization(
     let LogicalKind::Get(get) = &op.kind else {
         return Ok(None);
     };
-    if get.table.is_none() {
+    if !get.is_native_table() {
         return Ok(None);
     }
     // A projection restores the payload order if the scan's differs.

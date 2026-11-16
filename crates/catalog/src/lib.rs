@@ -4,6 +4,7 @@
 //! the newest version it created itself or that was committed before it started, which
 //! gives snapshot isolation for DDL exactly like DuckDB.
 
+pub mod backend;
 mod catalog;
 mod catalog_set;
 pub mod checkpoint;

@@ -2,7 +2,7 @@
 //! `ClientContext` that functions use).
 
 use std::any::Any;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -170,6 +170,17 @@ pub struct HttpStats {
     pub put: u64,
     pub post: u64,
     pub delete: u64,
+    pub azure: Option<AzureHttpStats>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AzureHttpStats {
+    pub received: u64,
+    pub sent: u64,
+    pub head: u64,
+    pub get: u64,
+    pub put: u64,
+    pub post: u64,
 }
 
 impl HttpStats {
@@ -181,17 +192,43 @@ impl HttpStats {
             && self.put == 0
             && self.post == 0
             && self.delete == 0
+            && self.azure.is_none_or(|stats| {
+                stats.received == 0
+                    && stats.sent == 0
+                    && stats.head == 0
+                    && stats.get == 0
+                    && stats.put == 0
+                    && stats.post == 0
+            })
     }
 
     /// `HTTPState::WriteProfilingInformation`, shared by EXPLAIN and query profiles.
     pub fn render(self) -> roastedduck_common::ByteString {
+        let mut out = self.render_named("HTTPFS HTTP Stats", true);
+        if let Some(azure) = self.azure {
+            let stats = Self {
+                active: true,
+                received: azure.received,
+                sent: azure.sent,
+                head: azure.head,
+                get: azure.get,
+                put: azure.put,
+                post: azure.post,
+                ..Self::default()
+            };
+            out.push_bytes(stats.render_named("Azure HTTP Stats", false));
+        }
+        out
+    }
+
+    fn render_named(self, title: &str, include_delete: bool) -> roastedduck_common::ByteString {
         let mut out = roastedduck_common::ByteString::new();
         if !self.active {
             return out;
         }
         out.push_bytes("┌─────────────────────────────────────┐\n│┌───────────────────────────────────┐│\n");
-        for line in [
-            "HTTPFS HTTP Stats".to_owned(),
+        let mut lines = vec![
+            title.to_owned(),
             String::new(),
             format!("in: {}", roastedduck_buffer::format_bytes(self.received)),
             format!("out: {}", roastedduck_buffer::format_bytes(self.sent)),
@@ -199,8 +236,11 @@ impl HttpStats {
             format!("#GET: {}", self.get),
             format!("#PUT: {}", self.put),
             format!("#POST: {}", self.post),
-            format!("#DELETE: {}", self.delete),
-        ] {
+        ];
+        if include_delete {
+            lines.push(format!("#DELETE: {}", self.delete));
+        }
+        for line in lines {
             let padding = 35_usize.saturating_sub(line.chars().count());
             let left = padding / 2 + padding % 2;
             let _ = roastedduck_common::byte_write!(
@@ -219,6 +259,7 @@ impl HttpStats {
 /// Per-connection state shared by the functions a connection runs.
 #[derive(Debug)]
 pub struct FunctionClient {
+    interrupt_flag: Mutex<Option<Arc<AtomicBool>>>,
     random: Mutex<RandomEngine>,
     /// The id of the current transaction and its start time in microseconds since the
     /// epoch (DuckDB's `MetaTransaction::start_timestamp`).
@@ -227,6 +268,8 @@ pub struct FunctionClient {
     query: Mutex<roastedduck_common::ByteString>,
     /// The number of statements run so far (DuckDB's query id).
     query_id: AtomicU64,
+    /// Extension state scoped to the current statement, never shared across connections.
+    query_cache: Mutex<Arc<ObjectCache>>,
     http_stats: Mutex<HttpStats>,
     /// The default database (DuckDB's `DatabaseManager::GetDefaultDatabase`).
     database: Mutex<roastedduck_common::ByteString>,
@@ -251,6 +294,7 @@ pub struct FunctionClient {
     /// C API reaches through `ClientContext` while `HasActiveTransaction()` (catalog
     /// lookups, constant folding).
     transaction_context: Mutex<Option<Weak<dyn Any + Send + Sync>>>,
+    active_transaction: Mutex<Option<Weak<dyn Any + Send + Sync>>>,
 }
 
 /// The connection's temporary catalog, for functions that keep tables of their own
@@ -270,10 +314,12 @@ pub trait TempCatalog: Send + Sync + std::fmt::Debug {
 impl Default for FunctionClient {
     fn default() -> Self {
         Self {
+            interrupt_flag: Mutex::default(),
             random: Mutex::default(),
             transaction: Mutex::default(),
             query: Mutex::default(),
             query_id: AtomicU64::new(0),
+            query_cache: Mutex::default(),
             http_stats: Mutex::default(),
             database: Mutex::new("memory".into()),
             connection_id: NEXT_CONNECTION_ID.fetch_add(1, Ordering::Relaxed),
@@ -285,11 +331,23 @@ impl Default for FunctionClient {
             client_requests: Mutex::default(),
             temp_catalog: Mutex::default(),
             transaction_context: Mutex::default(),
+            active_transaction: Mutex::default(),
         }
     }
 }
 
 impl FunctionClient {
+    /// Query cancellation shared with extension I/O.
+    pub fn set_interrupt_flag(&self, flag: Arc<AtomicBool>) {
+        *self.interrupt_flag.lock().unwrap_or_else(PoisonError::into_inner) = Some(flag);
+    }
+
+    pub fn interrupt_flag(&self) -> Option<Arc<AtomicBool>> {
+        self.interrupt_flag
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
     /// The connection's random engine (DuckDB's `RandomEngine::Get(context)` with its
     /// lock held).
     pub fn random_engine(&self) -> MutexGuard<'_, RandomEngine> {
@@ -317,11 +375,13 @@ impl FunctionClient {
 
     /// Records the text of the statement about to run.
     pub fn set_query(&self, query: impl AsRef<[u8]>) {
+        *self.query_cache.lock().unwrap_or_else(PoisonError::into_inner) = Arc::default();
         {
             let mut stats = self.http_stats.lock().unwrap_or_else(PoisonError::into_inner);
             self.query_id.fetch_add(1, Ordering::Relaxed);
             *stats = HttpStats {
                 active: stats.active,
+                azure: stats.azure.map(|_| AzureHttpStats::default()),
                 ..HttpStats::default()
             };
         }
@@ -336,6 +396,13 @@ impl FunctionClient {
     /// The id of the running query (`current_query_id()`).
     pub fn query_id(&self) -> u64 {
         self.query_id.load(Ordering::Relaxed)
+    }
+
+    pub fn query_cache(&self) -> Arc<ObjectCache> {
+        self.query_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     pub fn record_http_request(&self, method: &str, body_length: u64) {
@@ -357,6 +424,24 @@ impl FunctionClient {
 
     pub fn http_stats(&self) -> HttpStats {
         *self.http_stats.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    pub fn record_azure_http_request(&self, method: &str, body_length: u64) {
+        let mut stats = self.http_stats.lock().unwrap_or_else(PoisonError::into_inner);
+        let stats = stats.azure.get_or_insert_default();
+        stats.sent += body_length;
+        match method {
+            "HEAD" => stats.head += 1,
+            "GET" => stats.get += 1,
+            "PUT" => stats.put += 1,
+            "POST" => stats.post += 1,
+            _ => {}
+        }
+    }
+
+    pub fn record_azure_http_received(&self, bytes: u64) {
+        let mut stats = self.http_stats.lock().unwrap_or_else(PoisonError::into_inner);
+        stats.azure.get_or_insert_default().received += bytes;
     }
 
     pub fn record_http_received(&self, query_id: u64, bytes: u64) {
@@ -409,6 +494,21 @@ impl FunctionClient {
     /// transaction is open and a statement still uses it.
     pub fn transaction_context(&self) -> Option<Arc<dyn Any + Send + Sync>> {
         self.transaction_context
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .and_then(Weak::upgrade)
+    }
+
+    /// The engine transaction, independent of short-lived planner contexts.
+    pub fn set_active_transaction(&self, transaction: Option<Weak<dyn Any + Send + Sync>>) {
+        *self
+            .active_transaction
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = transaction;
+    }
+    pub fn active_transaction(&self) -> Option<Arc<dyn Any + Send + Sync>> {
+        self.active_transaction
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .as_ref()

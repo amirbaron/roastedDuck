@@ -212,6 +212,7 @@ pub fn operator_log_message_bytes(
 pub struct FileSystemLogger {
     logger: std::sync::Arc<dyn ClientLogger>,
     path: ByteString,
+    file_system: &'static str,
 }
 
 impl FileSystemLogger {
@@ -223,9 +224,19 @@ impl FileSystemLogger {
     /// The logger of a file opened now for the connection `client` (which may run the
     /// statement on another thread); logs `OPEN`.
     pub fn open_for(client: Option<&crate::FunctionClient>, path: impl AsRef<[u8]>) -> Option<Self> {
+        Self::open_for_system(client, path, "LocalFileSystem")
+    }
+
+    /// A registered filesystem uses the same events, retaining its own identity.
+    pub fn open_for_system(
+        client: Option<&crate::FunctionClient>,
+        path: impl AsRef<[u8]>,
+        file_system: &'static str,
+    ) -> Option<Self> {
         let logger = Self {
             logger: client?.logger()?,
             path: path.as_ref().into(),
+            file_system,
         };
         logger.log("OPEN", None);
         Some(logger)
@@ -256,11 +267,13 @@ impl FileSystemLogger {
         }
         let message = match bytes {
             Some((bytes, position)) => roastedduck_common::byte_format!(
-                "{{\"fs\":\"LocalFileSystem\",\"path\":\"{}\",\"op\":\"{op}\",\"bytes\":\"{bytes}\",\"pos\":\"{position}\"}}",
+                "{{\"fs\":\"{}\",\"path\":\"{}\",\"op\":\"{op}\",\"bytes\":\"{bytes}\",\"pos\":\"{position}\"}}",
+                self.file_system,
                 self.path
             ),
             None => roastedduck_common::byte_format!(
-                "{{\"fs\":\"LocalFileSystem\",\"path\":\"{}\",\"op\":\"{op}\"}}",
+                "{{\"fs\":\"{}\",\"path\":\"{}\",\"op\":\"{op}\"}}",
+                self.file_system,
                 self.path
             ),
         };

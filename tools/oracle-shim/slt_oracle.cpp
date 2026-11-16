@@ -224,7 +224,7 @@ void slt_db_free(slt_db *db) {
 
 int32_t slt_db_load_extension(slt_db *db, const char *name, size_t name_len, char **error) {
 	try {
-		auto extension = MakeString(name, name_len);
+		auto extension = ExtensionHelper::ApplyExtensionAlias(MakeString(name, name_len));
 		switch (ExtensionHelper::LoadExtension(*db->db, extension)) {
 		case ExtensionLoadResult::LOADED_EXTENSION:
 			return SLT_EXTENSION_LOADED;
@@ -234,11 +234,13 @@ int32_t slt_db_load_extension(slt_db *db, const char *name, size_t name_len, cha
 			break;
 		}
 		// Reference tooling only: official release libraries need not statically link
-		// FTS/VSS. An explicit directory lets unchanged "require" statements load the
+		// the tested extension set. An explicit directory lets unchanged "require" statements load the
 		// pinned oracle artifacts using ordinary signature and version validation.
 		// Other extensions and callers without this opt-in retain their old verdict.
 		auto directory_env = std::getenv("SLT_ORACLE_EXTENSION_DIRECTORY");
-		if (!directory_env || (extension != "fts" && extension != "vss")) {
+		if (!directory_env || (extension != "fts" && extension != "vss" && extension != "httpfs" &&
+		                       extension != "aws" && extension != "azure" && extension != "postgres_scanner" &&
+		                       extension != "tpch" && extension != "tpcds")) {
 			return SLT_EXTENSION_NOT_LOADED;
 		}
 		string directory(directory_env);

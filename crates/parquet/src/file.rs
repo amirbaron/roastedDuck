@@ -33,6 +33,16 @@ impl ParquetFile {
         self.handle.path()
     }
 
+    pub fn open_direct(
+        path: &[u8],
+        cache: Option<Arc<ExternalFileCache>>,
+        validation: CacheValidationMode,
+    ) -> Result<Self> {
+        let handle = CachingFileHandle::open_direct(cache, path, validation)?;
+        let size = handle.file_size()?;
+        Ok(Self { handle, size })
+    }
+
     pub fn size(&self) -> u64 {
         self.size
     }

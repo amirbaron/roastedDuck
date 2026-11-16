@@ -112,17 +112,23 @@ pub fn bind_create_index(scope: &mut BindScope<'_>, info: &mut CreateInfo) -> Re
                 &base.table_name,
                 true,
             )?
-            .map(|lookup| lookup.catalog),
+            .map(|lookup| (lookup.catalog, lookup.schema)),
         _ => None,
     };
     let mut info = info.clone();
     info.schema = schema;
-    if let Some(catalog) = table_catalog {
+    if let Some((catalog, resolved_schema)) = table_catalog {
         info.catalog = catalog;
+        if table.backend.is_some() {
+            info.schema = resolved_schema;
+        }
     } else if info.catalog.is_empty() {
         scope.context.default_catalog().clone_into(&mut info.catalog);
     }
     if let CreateInfoKind::Index(index) = &mut info.kind {
+        if table.backend.is_some() {
+            entry.name().clone_into(&mut index.table);
+        }
         index.column_ids = physical.iter().map(|&p| p as u64).collect();
         index.scan_types = scan_types;
         index.names = names;

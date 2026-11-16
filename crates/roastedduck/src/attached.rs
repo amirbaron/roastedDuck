@@ -38,6 +38,8 @@ impl ValidChecker {
 /// The storage of an attached database (DuckDB's `StorageManager`).
 #[derive(Debug)]
 pub(crate) enum DatabaseStorage {
+    /// A first-party PostgreSQL catalog owns its remote sessions and metadata.
+    Postgres(Arc<crate::postgres::catalog::PgCatalog>),
     /// A database file.
     File(Arc<StorageManager>),
     /// An in-memory database (`StorageManager::InMemory`).
@@ -49,7 +51,7 @@ impl DatabaseStorage {
     pub fn file(&self) -> Option<&Arc<StorageManager>> {
         match self {
             Self::File(storage) => Some(storage),
-            Self::InMemory(_) => None,
+            Self::InMemory(_) | Self::Postgres(_) => None,
         }
     }
 
@@ -58,6 +60,7 @@ impl DatabaseStorage {
         match self {
             Self::File(storage) => storage.set_compression_config(config),
             Self::InMemory(storage) => storage.set_compression_config(config),
+            Self::Postgres(_) => {}
         }
     }
 
@@ -74,6 +77,7 @@ impl DatabaseStorage {
         match self {
             Self::File(storage) => storage.io().set_variant_shredding_config(config),
             Self::InMemory(storage) => storage.io().set_variant_shredding_config(config),
+            Self::Postgres(_) => {}
         }
     }
 
@@ -82,6 +86,7 @@ impl DatabaseStorage {
         match self {
             Self::File(storage) => storage.io().vacuum_rebuild_index_threshold(),
             Self::InMemory(storage) => storage.io().vacuum_rebuild_index_threshold(),
+            Self::Postgres(_) => 0,
         }
     }
 
@@ -99,6 +104,7 @@ impl DatabaseStorage {
             Self::InMemory(storage) => storage
                 .io()
                 .set_vacuum_rebuild_index_threshold(threshold, vacuum_lock),
+            Self::Postgres(_) => {}
         }
     }
 
@@ -107,6 +113,7 @@ impl DatabaseStorage {
         match self {
             Self::File(storage) => storage.set_checkpoint_config(config),
             Self::InMemory(storage) => storage.set_checkpoint_config(config),
+            Self::Postgres(_) => {}
         }
     }
 }
@@ -230,6 +237,9 @@ impl AttachedDatabase {
         }
         let failed = |error: Error| self.checkpoint_failed(&error);
         match &self.storage {
+            DatabaseStorage::Postgres(_) => Err(Error::not_implemented(
+                "CHECKPOINT is not supported for Postgres catalogs",
+            )),
             DatabaseStorage::File(storage) => crate::storage::create_checkpoint(
                 &self.catalog,
                 storage,
@@ -372,6 +382,14 @@ impl AttachOptions {
     /// The options of an `ATTACH` statement (`AttachOptions::AttachOptions` and
     /// `StorageOptions::Initialize`).
     pub fn from_info(info: &AttachInfo, default_access: AccessMode) -> Result<Self> {
+        let postgres = info.options.iter().any(|(name, value)| {
+            name.eq_ignore_ascii_case(b"type")
+                && value.as_str().is_some_and(|v| {
+                    v.eq_ignore_ascii_case("postgres") || v.eq_ignore_ascii_case("postgres_scanner")
+                })
+        }) || extension_prefix(info.path.as_bytes()).is_some_and(|v| {
+            v.eq_ignore_ascii_case(b"postgres") || v.eq_ignore_ascii_case(b"postgres_scanner")
+        });
         let mut options = Self {
             access: default_access,
             ..Self::default()
@@ -485,6 +503,7 @@ impl AttachOptions {
                         roastedduck_crypto::EncryptionVersion::from_name(&value.to_varchar()?)?;
                     options.kept.push((name.to_ascii_lowercase(), value.clone()));
                 }
+                _ if postgres => options.kept.push((name.to_ascii_lowercase(), value.clone())),
                 other => {
                     return Err(Error::binder(byte_format!(
                         "Unrecognized option for attach \"{other}\""
@@ -752,6 +771,126 @@ impl DatabaseManager {
     /// Opens the database at `path` (`""` or `:memory:` for an in-memory one) as `name`
     /// and registers it (`DatabaseManager::AttachDatabase`). Returns `None` when
     /// `IF NOT EXISTS` found the name taken.
+    pub fn attach_postgres(
+        &self,
+        info: &AttachInfo,
+        path: &[u8],
+        options: &AttachOptions,
+        config: crate::postgres::AttachConfig,
+        instance: &Arc<crate::database::DatabaseInstance>,
+        client: &Arc<roastedduck_function::FunctionClient>,
+    ) -> Result<Option<Arc<AttachedDatabase>>> {
+        let buffer_manager = &instance.env.buffer_manager;
+        let instance_validity = &instance.validity;
+        let name = info.name.as_bytes();
+        let on_conflict = info.on_conflict;
+        let _guard = self.attach_lock.lock().unwrap_or_else(PoisonError::into_inner);
+        let name = if name.is_empty() {
+            database_name(path)
+        } else {
+            ByteString::from(name)
+        };
+        if is_reserved_name(&name) {
+            return Err(Error::binder(byte_format!(
+                "Attached database name \"{name}\" cannot be used because it is a reserved name"
+            )));
+        }
+        if let Some(existing) = self.get(&name) {
+            if on_conflict == OnCreateConflict::ErrorOnConflict {
+                return Err(Error::binder(byte_format!(
+                    "Failed to attach database: database with name \"{name}\" already exists"
+                )));
+            }
+            let conflicting = match options.access {
+                AccessMode::ReadOnly => !existing.read_only,
+                AccessMode::ReadWrite => existing.read_only,
+                AccessMode::Automatic => false,
+            };
+            if conflicting {
+                return Err(Error::binder(byte_format!(
+                    "Database \"{name}\" is already attached with a different access mode"
+                )));
+            }
+            if on_conflict == OnCreateConflict::IgnoreOnConflict {
+                return Ok(None);
+            }
+        }
+        let catalog = Arc::new(Catalog::unregistered_remote(&name, self.oid_allocator.clone())?);
+        let dsn = std::str::from_utf8(path)
+            .map_err(|_| Error::invalid_input("Invalid Postgres connection string"))?;
+        let postgres = crate::postgres::auth::with_oauth(client, || {
+            crate::postgres::catalog::PgCatalog::new(
+                &catalog,
+                crate::postgres::auth::factory(
+                    Arc::downgrade(instance),
+                    &String::from_utf8_lossy(name.as_bytes()),
+                    dsn,
+                    config.secret_entry.as_ref(),
+                )?,
+                buffer_manager.clone(),
+                options.read_only(),
+                config.isolation,
+                config.schemas,
+                config.pool,
+                client,
+            )
+        })?;
+        let register_storage = crate::postgres::secret_storage::initialize(
+            &postgres,
+            &config.secret_table,
+            config.explicit_secret_table,
+            &String::from_utf8_lossy(name.as_bytes()),
+        )?;
+        catalog.set_backend(postgres.clone())?;
+        catalog.set_attach_info(roastedduck_catalog::AttachedInfo {
+            path: path.into(),
+            read_only: options.read_only(),
+            hidden: options.hidden,
+            options: options
+                .kept
+                .iter()
+                .map(|(name, value)| Ok((name.clone(), value.to_varchar_bytes()?)))
+                .collect::<Result<_>>()?,
+            ..Default::default()
+        });
+        if let Some((schema, table)) = &options.default_table {
+            catalog.set_default_table(schema, table);
+        }
+        catalog.finalize_registration();
+        let database = Arc::new(AttachedDatabase {
+            path: path.into(),
+            catalog,
+            storage: DatabaseStorage::Postgres(postgres),
+            read_only: options.read_only(),
+            is_initial: std::sync::atomic::AtomicBool::new(false),
+            validity: ValidChecker::default(),
+            instance_validity: instance_validity.clone(),
+            closing: std::sync::atomic::AtomicBool::new(false),
+            closed: std::sync::atomic::AtomicBool::new(false),
+            log_manager: self.log_manager.clone(),
+        });
+        let mut databases = self.write();
+        if let Some(index) = databases
+            .iter()
+            .position(|d| d.name().eq_ignore_ascii_case(&name))
+        {
+            let previous = databases.remove(index);
+            let _ = previous.close(true, CloseAction::TryCheckpoint);
+        }
+        databases.push(database.clone());
+        drop(databases);
+        if register_storage {
+            instance.secrets.register_postgres_storage(
+                crate::postgres::secret_storage::PostgresSecretStorage::new(
+                    Arc::downgrade(instance),
+                    String::from_utf8_lossy(name.as_bytes()).into_owned(),
+                    config.secret_table,
+                ),
+            );
+        }
+        Ok(Some(database))
+    }
+
     pub fn attach(
         &self,
         name: &[u8],

@@ -17,6 +17,7 @@ pub const TEMP_CATALOG: &str = "temp";
 /// One attached database's catalog (DuckDB's `DuckCatalog`).
 #[derive(Debug)]
 pub struct Catalog {
+    backend: OnceLock<Arc<dyn crate::backend::CatalogBackend>>,
     name: CatalogName,
     schemas: Arc<CatalogSet>,
     /// Where the database's tables keep their data.
@@ -85,21 +86,30 @@ impl Catalog {
         name: impl Into<ByteString>,
         allocator: Arc<crate::OidAllocator>,
     ) -> Result<Self> {
-        Self::with_registration(name, allocator, true)
+        Self::with_registration(name, allocator, true, true)
     }
 
     pub fn unregistered(name: impl Into<ByteString>, allocator: Arc<crate::OidAllocator>) -> Result<Self> {
-        Self::with_registration(name, allocator, false)
+        Self::with_registration(name, allocator, false, true)
+    }
+
+    pub fn unregistered_remote(
+        name: impl Into<ByteString>,
+        allocator: Arc<crate::OidAllocator>,
+    ) -> Result<Self> {
+        Self::with_registration(name, allocator, false, false)
     }
 
     fn with_registration(
         name: impl Into<ByteString>,
         allocator: Arc<crate::OidAllocator>,
         registered: bool,
+        native_schema: bool,
     ) -> Result<Self> {
         let name = CatalogName::with_oid_allocator(name.into(), allocator);
         let provisional_oid = if registered { 0 } else { name.next_oid() };
         let catalog = Self {
+            backend: OnceLock::new(),
             schemas: Arc::new(CatalogSet::new(&name, "")),
             name,
             io: OnceLock::new(),
@@ -115,12 +125,14 @@ impl Catalog {
         if registered && !catalog.name().eq_ignore_ascii_case(b"system") {
             catalog.finalize_registration();
         }
-        let mut main = catalog.new_entry(
-            DEFAULT_SCHEMA,
-            EntryKind::Schema(SchemaEntry::new(&catalog.name, DEFAULT_SCHEMA)),
-        );
-        main.internal = true;
-        catalog.schemas.create_committed_chain(main)?;
+        if native_schema {
+            let mut main = catalog.new_entry(
+                DEFAULT_SCHEMA,
+                EntryKind::Schema(SchemaEntry::new(&catalog.name, DEFAULT_SCHEMA)),
+            );
+            main.internal = true;
+            catalog.schemas.create_committed_chain(main)?;
+        }
         Ok(catalog)
     }
 
@@ -131,6 +143,79 @@ impl Catalog {
 
     pub fn oid_allocator(&self) -> Arc<crate::OidAllocator> {
         self.name.oid_allocator()
+    }
+
+    /// Install an engine-owned backend once, before publishing the attachment.
+    pub fn set_backend(&self, backend: Arc<dyn crate::backend::CatalogBackend>) -> Result<()> {
+        self.backend
+            .set(backend)
+            .map_err(|_| Error::internal("Catalog backend already initialized"))
+    }
+
+    pub fn backend(&self) -> Option<&Arc<dyn crate::backend::CatalogBackend>> {
+        self.backend.get()
+    }
+
+    pub fn catalog_type(&self) -> &str {
+        self.backend.get().map_or("duckdb", |b| b.catalog_type())
+    }
+
+    pub fn default_schema(&self) -> &[u8] {
+        self.backend
+            .get()
+            .map_or(DEFAULT_SCHEMA.as_bytes(), |b| b.default_schema())
+    }
+
+    /// Enumerates visible native or provider entries, preserving provider errors.
+    pub fn scan_entries(
+        &self,
+        client: &Arc<roastedduck_function::FunctionClient>,
+        transaction: &Transaction,
+        kind: CatalogType,
+        schema: &[u8],
+    ) -> Result<Vec<Arc<CatalogEntry>>> {
+        if let Some(backend) = self.backend.get() {
+            return backend.scan(client, transaction, kind, schema);
+        }
+        if kind == CatalogType::Schema {
+            return Ok(self.schemas.scan(transaction));
+        }
+        let Some(entry) = self.schema(transaction, schema) else {
+            return Ok(Vec::new());
+        };
+        let Some(schema) = entry.as_schema() else {
+            return Ok(Vec::new());
+        };
+        Ok(Self::set_for(schema, kind).scan(transaction))
+    }
+
+    /// Fallible lookup used by the binder; native catalog lookup remains in-memory.
+    pub fn lookup_entry(
+        &self,
+        client: &Arc<roastedduck_function::FunctionClient>,
+        transaction: &Transaction,
+        kind: CatalogType,
+        schema: &[u8],
+        name: &[u8],
+    ) -> Result<Option<Arc<CatalogEntry>>> {
+        if let Some(backend) = self.backend.get() {
+            backend.lookup(client, transaction, kind, schema, name)
+        } else {
+            Ok(self.get_entry(transaction, kind, schema, name))
+        }
+    }
+
+    pub fn lookup_schema(
+        &self,
+        client: &Arc<roastedduck_function::FunctionClient>,
+        transaction: &Transaction,
+        name: &[u8],
+    ) -> Result<Option<Arc<CatalogEntry>>> {
+        if let Some(backend) = self.backend.get() {
+            backend.lookup(client, transaction, CatalogType::Schema, b"", name)
+        } else {
+            Ok(self.schema(transaction, name))
+        }
     }
 
     /// Defers default entry allocation while keeping definition validation at startup.

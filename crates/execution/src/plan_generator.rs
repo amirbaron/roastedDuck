@@ -482,6 +482,28 @@ impl PlanGenerator {
     /// from the input are computed by a projection (`PhysicalInsert::ResolveDefaults`).
     fn plan_insert(&self, insert: &LogicalInsert, child: PhysicalRef) -> Result<PhysicalRef> {
         let context = self.context()?;
+        if let EntryKind::Table(table) = &insert.table.kind
+            && let Some(backend) = &table.backend
+        {
+            backend.validate_insert(insert.return_chunk)?;
+            let mut columns = vec![0; child.types().len()];
+            if insert.column_index_map.is_empty() {
+                columns = (0..child.types().len()).collect();
+            } else {
+                for (column, input) in insert.column_index_map.iter().enumerate() {
+                    if let Some(input) = input {
+                        columns[*input] = column;
+                    }
+                }
+            }
+            return Ok(Arc::new(crate::operators::PhysicalRemoteModify::new(
+                child,
+                crate::operators::RemoteModifyTarget::Insert(backend.clone()),
+                columns,
+                context.transaction.clone(),
+                context.client.function_client.clone(),
+            )));
+        }
         // `BindIndexes` of the operator's initialization.
         bind_table_indexes(&context.client, &insert.table)?;
         let storage = table_storage(&insert.table)?;
@@ -535,6 +557,22 @@ impl PlanGenerator {
         child: PhysicalRef,
     ) -> Result<PhysicalRef> {
         let context = self.context()?;
+        if let EntryKind::Table(table) = &delete.table.kind
+            && let Some(backend) = &table.backend
+        {
+            backend.validate_delete(delete.return_chunk)?;
+            let row_id = match expressions.first().map(|e| &e.kind) {
+                Some(ExpressionKind::Reference(r)) => r.index as usize,
+                _ => return Err(Error::internal("DELETE without row identity")),
+            };
+            return Ok(Arc::new(crate::operators::PhysicalRemoteModify::new(
+                child,
+                crate::operators::RemoteModifyTarget::Delete(backend.clone(), row_id),
+                vec![],
+                context.transaction.clone(),
+                context.client.function_client.clone(),
+            )));
+        }
         // `BindIndexes` of the operator's initialization.
         bind_table_indexes(&context.client, &delete.table)?;
         let storage = table_storage(&delete.table)?;
@@ -570,6 +608,39 @@ impl PlanGenerator {
         child: PhysicalRef,
     ) -> Result<PhysicalRef> {
         let context = self.context()?;
+        if let EntryKind::Table(table) = &update.table.kind
+            && let Some(backend) = &table.backend
+        {
+            let defaults = expressions
+                .iter()
+                .any(|e| matches!(e.kind, ExpressionKind::Default));
+            backend.validate_update(update.return_chunk, defaults)?;
+            let row_id = child
+                .types()
+                .len()
+                .checked_sub(1)
+                .ok_or_else(|| Error::internal("UPDATE without row identity"))?;
+            let mut projections = expressions
+                .into_iter()
+                .map(|e| {
+                    if matches!(e.kind, ExpressionKind::Default) {
+                        Expression::constant(Value::null(e.return_type))
+                    } else {
+                        e
+                    }
+                })
+                .collect::<Vec<_>>();
+            projections.push(Expression::reference("", LogicalType::BIGINT, row_id as u64));
+            let types = projections.iter().map(|e| e.return_type.clone()).collect();
+            let child: PhysicalRef = Arc::new(PhysicalProjection::new(types, projections, child));
+            return Ok(Arc::new(crate::operators::PhysicalRemoteModify::new(
+                child,
+                crate::operators::RemoteModifyTarget::Update(backend.clone(), defaults),
+                update.columns,
+                context.transaction.clone(),
+                context.client.function_client.clone(),
+            )));
+        }
         // `BindIndexes` of the operator's initialization.
         bind_table_indexes(&context.client, &update.table)?;
         let storage = table_storage(&update.table)?;
@@ -617,6 +688,12 @@ impl PlanGenerator {
     /// operators that append share one append.
     fn plan_merge_into(&self, merge: LogicalMergeInto, child: PhysicalRef) -> Result<PhysicalRef> {
         let context = self.context()?;
+        if let EntryKind::Table(table) = &merge.table.kind
+            && let Some(backend) = &table.backend
+        {
+            let backend = backend.clone();
+            return self.plan_remote_merge(merge, child, &backend);
+        }
         // `BindIndexes` of the operator's initialization.
         bind_table_indexes(&context.client, &merge.table)?;
         let storage = table_storage(&merge.table)?;
@@ -752,6 +829,142 @@ impl PlanGenerator {
             types,
             action,
             Arc::clone(&context.transaction),
+        )))
+    }
+
+    fn plan_remote_merge(
+        &self,
+        merge: LogicalMergeInto,
+        child: PhysicalRef,
+        backend: &Arc<dyn roastedduck_catalog::backend::TableBackend>,
+    ) -> Result<PhysicalRef> {
+        let context = self.context()?;
+        backend.validate_merge(merge.return_chunk)?;
+        let EntryKind::Table(table) = &merge.table.kind else {
+            return Err(Error::internal("MERGE target is not a table"));
+        };
+        let table_types = table
+            .columns
+            .iter()
+            .map(|c| c.logical_type.clone())
+            .collect::<Vec<_>>();
+        let input_types = child.types().to_vec();
+        let row_id = Expression::reference("", LogicalType::BIGINT, merge.row_id_start as u64);
+        let mut actions = Vec::new();
+        for (condition, clauses) in merge.actions {
+            let mut planned = Vec::new();
+            for action in clauses {
+                let mut operator = MergeIntoOperator {
+                    action_type: action.action_type,
+                    condition: action.condition,
+                    op: None,
+                    expressions: Vec::new(),
+                };
+                let mutation = match action.action_type {
+                    MergeActionType::MergeUpdate if action.columns.is_empty() => {
+                        operator.action_type = MergeActionType::MergeDoNothing;
+                        None
+                    }
+                    MergeActionType::MergeUpdate => {
+                        let defaults = action
+                            .expressions
+                            .iter()
+                            .any(|e| matches!(e.kind, ExpressionKind::Default));
+                        backend.validate_update(false, defaults)?;
+                        operator.expressions = action
+                            .expressions
+                            .into_iter()
+                            .map(|e| {
+                                if matches!(e.kind, ExpressionKind::Default) {
+                                    Expression::constant(Value::null(e.return_type))
+                                } else {
+                                    e
+                                }
+                            })
+                            .collect();
+                        operator.expressions.push(row_id.clone());
+                        Some((
+                            crate::operators::RemoteModifyTarget::Update(backend.clone(), defaults),
+                            action.columns,
+                        ))
+                    }
+                    MergeActionType::MergeDelete => {
+                        backend.validate_delete(false)?;
+                        Some((
+                            crate::operators::RemoteModifyTarget::Delete(backend.clone(), merge.row_id_start),
+                            vec![],
+                        ))
+                    }
+                    MergeActionType::MergeInsert => {
+                        backend.validate_insert(false)?;
+                        operator.expressions = if action.column_index_map.is_empty() {
+                            action.expressions
+                        } else {
+                            action
+                                .column_index_map
+                                .iter()
+                                .enumerate()
+                                .map(|(column, input)| match input {
+                                    Some(input) => {
+                                        action.expressions.get(*input).cloned().ok_or_else(|| {
+                                            Error::internal("MERGE insert column out of range")
+                                        })
+                                    }
+                                    None => merge
+                                        .bound_defaults
+                                        .get(column)
+                                        .cloned()
+                                        .ok_or_else(|| Error::internal("MERGE insert missing default")),
+                                })
+                                .collect::<Result<Vec<_>>>()?
+                        };
+                        Some((
+                            crate::operators::RemoteModifyTarget::Insert(backend.clone()),
+                            (0..table_types.len()).collect(),
+                        ))
+                    }
+                    MergeActionType::MergeError => {
+                        operator.expressions = action.expressions;
+                        None
+                    }
+                    MergeActionType::MergeDoNothing => None,
+                };
+                if let Some((target, columns)) = mutation {
+                    let types = if operator.expressions.is_empty() {
+                        input_types.clone()
+                    } else {
+                        operator
+                            .expressions
+                            .iter()
+                            .map(|e| e.return_type.clone())
+                            .collect()
+                    };
+                    let placeholder: PhysicalRef = Arc::new(PhysicalDummyScan::new(types));
+                    operator.op = Some(Arc::new(
+                        crate::operators::PhysicalRemoteModify::new(
+                            placeholder,
+                            target,
+                            columns,
+                            context.transaction.clone(),
+                            context.client.function_client.clone(),
+                        )
+                        .with_streaming(),
+                    ));
+                }
+                planned.push(operator);
+            }
+            actions.push((condition, planned));
+        }
+        let inner: PhysicalRef = Arc::new(PhysicalMergeInto::new(
+            child.clone(),
+            table_types,
+            actions,
+            merge.row_id_start,
+            merge.source_marker,
+            false,
+        ));
+        Ok(Arc::new(crate::operators::PhysicalBufferedModify::new(
+            child, inner,
         )))
     }
 
@@ -985,7 +1198,37 @@ impl PlanGenerator {
         Ok(plan)
     }
 
-    fn plan_operator(&mut self, op: LogicalOperator) -> Result<PhysicalRef> {
+    fn plan_operator(&mut self, mut op: LogicalOperator) -> Result<PhysicalRef> {
+        let target = match &op.kind {
+            LogicalKind::Insert(node) => Some(&node.table),
+            LogicalKind::Delete(node) => Some(&node.table),
+            LogicalKind::Update(node) => Some(&node.table),
+            LogicalKind::MergeInto(node) => Some(&node.table),
+            _ => None,
+        };
+        let provider_modify = target
+            .is_some_and(|entry| matches!(&entry.kind, EntryKind::Table(table) if table.backend.is_some()))
+            || match &op.kind {
+                LogicalKind::CreateTable(info) => self.context()?.catalog(&info.catalog)?.backend().is_some(),
+                _ => false,
+            };
+        if provider_modify {
+            fn prepare(plan: &mut LogicalOperator) -> Result<()> {
+                if let LogicalKind::Get(get) = &mut plan.kind
+                    && let Some(callback) = &get.function.prepare_modify
+                    && let Some(data) = &get.bind_data
+                {
+                    get.bind_data = Some(callback(data.as_ref())?);
+                }
+                for child in &mut plan.children {
+                    prepare(child)?;
+                }
+                Ok(())
+            }
+            for child in &mut op.children {
+                prepare(child)?;
+            }
+        }
         let operator_type = op.operator_type();
         let LogicalOperator {
             kind,
@@ -1171,7 +1414,7 @@ impl PlanGenerator {
             LogicalKind::ChunkGet { collection, .. } => {
                 Arc::new(PhysicalColumnDataScan::new(types, collection))
             }
-            LogicalKind::Get(get) if get.table.is_some() => {
+            LogicalKind::Get(get) if get.is_native_table() => {
                 let entry = get
                     .table
                     .clone()
@@ -1194,38 +1437,82 @@ impl PlanGenerator {
                 let context = self.context()?;
                 let catalog = context.catalog(&export.catalog)?;
                 let child = next_child("export").ok();
-                Arc::new(crate::operators::PhysicalExport::new(
-                    child,
-                    *export,
-                    catalog,
-                    Arc::clone(&context.transaction),
-                ))
+                Arc::new(
+                    crate::operators::PhysicalExport::new(
+                        child,
+                        *export,
+                        catalog,
+                        Arc::clone(&context.transaction),
+                    )
+                    .with_client(context.client.function_client.clone()),
+                )
             }
             LogicalKind::CreateTable(info) => {
                 let context = self.context()?;
                 let info = *info;
                 let catalog = context.catalog(&info.catalog)?;
-                let io = Arc::clone(catalog.io()?);
-                let creator = Arc::new(CatalogTableCreator {
-                    catalog,
-                    schema: info.schema,
-                    info: info.info,
-                    io,
-                });
-                match children.next() {
-                    Some(query) => insert_operator(
-                        context,
-                        query,
-                        InsertTarget::Create(creator),
-                        TableConstraints::default(),
-                        false,
-                        true,
-                    ),
-                    None => Arc::new(PhysicalCreateTable::new(
-                        creator,
-                        Arc::clone(&context.transaction),
-                    )),
+                if catalog.backend().is_some() {
+                    match children.next() {
+                        Some(query) => {
+                            let columns = (0..query.types().len()).collect();
+                            Arc::new(crate::operators::PhysicalRemoteModify::new(
+                                query,
+                                crate::operators::RemoteModifyTarget::Create {
+                                    catalog,
+                                    info: Box::new(info.info),
+                                },
+                                columns,
+                                context.transaction.clone(),
+                                context.client.function_client.clone(),
+                            ))
+                        }
+                        None => self.ddl(
+                            "CREATE_TABLE",
+                            types,
+                            Arc::new(crate::operators::BackendCreateAction {
+                                catalog,
+                                info: info.info,
+                                client: context.client.function_client.clone(),
+                            }),
+                        )?,
+                    }
+                } else {
+                    let io = Arc::clone(catalog.io()?);
+                    let creator = Arc::new(CatalogTableCreator {
+                        catalog,
+                        schema: info.schema,
+                        info: info.info,
+                        io,
+                    });
+                    match children.next() {
+                        Some(query) => insert_operator(
+                            context,
+                            query,
+                            InsertTarget::Create(creator),
+                            TableConstraints::default(),
+                            false,
+                            true,
+                        ),
+                        None => Arc::new(PhysicalCreateTable::new(
+                            creator,
+                            Arc::clone(&context.transaction),
+                        )),
+                    }
                 }
+            }
+            LogicalKind::Create { info, .. }
+                if self.context()?.catalog(&info.catalog)?.backend().is_some() =>
+            {
+                let context = self.context()?;
+                self.ddl(
+                    "CREATE",
+                    types,
+                    Arc::new(crate::operators::BackendCreateAction {
+                        catalog: context.catalog(&info.catalog)?,
+                        client: context.client.function_client.clone(),
+                        info: *info,
+                    }),
+                )?
             }
             LogicalKind::Create { operator_type, info } => {
                 let catalog = self.context()?.catalog(&info.catalog)?;
@@ -1265,6 +1552,20 @@ impl PlanGenerator {
                     other => return Err(not_implemented(other)),
                 }
             }
+            LogicalKind::CreateIndex(create)
+                if self.context()?.catalog(&create.info.catalog)?.backend().is_some() =>
+            {
+                let context = self.context()?;
+                self.ddl(
+                    "CREATE_INDEX",
+                    types,
+                    Arc::new(crate::operators::BackendCreateAction {
+                        catalog: context.catalog(&create.info.catalog)?,
+                        client: context.client.function_client.clone(),
+                        info: create.info,
+                    }),
+                )?
+            }
             LogicalKind::CreateIndex(create) => {
                 let create = *create;
                 let catalog = self.context()?.catalog(&create.info.catalog)?;
@@ -1283,6 +1584,22 @@ impl PlanGenerator {
                     }),
                 )?
             }
+            LogicalKind::Alter(alter)
+                if alter.info.is_some() && self.context()?.catalog(&alter.catalog)?.backend().is_some() =>
+            {
+                let context = self.context()?;
+                self.ddl(
+                    "ALTER",
+                    types,
+                    Arc::new(crate::operators::BackendAlterAction {
+                        catalog: context.catalog(&alter.catalog)?,
+                        client: context.client.function_client.clone(),
+                        info: *alter
+                            .info
+                            .ok_or_else(|| Error::internal("Remote ALTER without info"))?,
+                    }),
+                )?
+            }
             LogicalKind::Alter(alter) => {
                 let alter = *alter;
                 let catalog = self.context()?.catalog(&alter.catalog)?;
@@ -1296,6 +1613,18 @@ impl PlanGenerator {
                         action: alter.action,
                         dependents_allowed: alter.dependents_allowed,
                         info: alter.info,
+                    }),
+                )?
+            }
+            LogicalKind::Drop(info) if self.context()?.catalog(&info.catalog)?.backend().is_some() => {
+                let context = self.context()?;
+                self.ddl(
+                    "DROP",
+                    types,
+                    Arc::new(crate::operators::BackendDropAction {
+                        catalog: context.catalog(&info.catalog)?,
+                        client: context.client.function_client.clone(),
+                        info: *info,
                     }),
                 )?
             }

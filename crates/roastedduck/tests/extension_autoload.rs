@@ -163,3 +163,49 @@ fn registered_functions_are_visible_to_an_already_open_transaction() -> Result<(
     second.query("COMMIT")?;
     Ok(())
 }
+
+#[test]
+fn extension_settings_load_their_provider() -> Result<()> {
+    // `Catalog::AutoloadExtensionByConfigName`: SET, RESET and current_setting.
+    for statement in [
+        "SET s3_region='eu-west-1'",
+        "RESET s3_region",
+        "SELECT current_setting('s3_region')",
+    ] {
+        let mut connection = database(true)?.connect()?;
+        assert_eq!(loaded(&mut connection, "httpfs")?, Value::boolean(false));
+        connection.query(statement)?;
+        assert_eq!(loaded(&mut connection, "httpfs")?, Value::boolean(true));
+    }
+    let mut connection = database(true)?.connect()?;
+    connection.query("SET s3_region='eu-west-1'")?;
+    assert_eq!(
+        connection.query("SELECT current_setting('s3_region')")?.value(0, 0),
+        Value::varchar("eu-west-1")
+    );
+    Ok(())
+}
+
+#[test]
+fn extension_settings_stay_unknown_without_autoload() -> Result<()> {
+    let mut connection = database(false)?.connect()?;
+    for statement in [
+        "SET s3_region='eu-west-1'",
+        "RESET s3_region",
+        "SELECT current_setting('s3_region')",
+    ] {
+        let error = connection.query(statement).expect_err("autoload is off");
+        assert!(
+            error
+                .raw_message()
+                .starts_with("Setting with name \"s3_region\" is not in the catalog, but it exists in the httpfs extension."),
+            "{error}"
+        );
+    }
+    assert_eq!(loaded(&mut connection, "httpfs")?, Value::boolean(false));
+    // A setting no extension owns keeps its own error with autoload on.
+    let mut connection = database(true)?.connect()?;
+    assert!(connection.query("SET owned_unknown_setting=1").is_err());
+    Ok(())
+}
+

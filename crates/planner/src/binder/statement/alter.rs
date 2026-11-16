@@ -61,6 +61,39 @@ pub fn bind_alter(scope: &mut BindScope<'_>, info: &mut AlterInfo) -> Result<Bou
             if found.catalog.eq_ignore_ascii_case("system") {
                 return Err(Error::binder("Can not comment on System Catalog entries"));
             }
+            if scope
+                .context
+                .catalog(&found.catalog)
+                .is_some_and(|catalog| catalog.backend().is_some())
+            {
+                // Remote catalogs bind/execute their own schema change. Do not
+                // rebuild their table entry as a native storage definition.
+                let mut logged = info.clone();
+                logged.catalog.clone_from(&found.catalog);
+                logged.schema.clone_from(&found.schema);
+                logged.name.clone_from(found.entry.name());
+                if let AlterInfoKind::AlterTable(AlterTableInfo::AddColumn(add)) = &mut logged.kind {
+                    add.new_column.logical_type = bind_logical_type_in_schema(
+                        &scope.context,
+                        &add.new_column.logical_type,
+                        &found.catalog,
+                        &found.schema,
+                    )?;
+                }
+                let plan = LogicalAlter {
+                    catalog: found.catalog,
+                    schema: found.schema,
+                    entry: Some(found.entry),
+                    action: AlterAction::Nothing,
+                    dependents_allowed: true,
+                    info: Some(Box::new(logged)),
+                };
+                return Ok(BoundStatement::new(
+                    LogicalOperator::new(LogicalKind::Alter(Box::new(plan))),
+                    vec!["Success".into()],
+                    vec![LogicalType::BOOLEAN],
+                ));
+            }
             let action = match &info.kind {
                 AlterInfoKind::AlterView(AlterViewInfo::RenameView(rename)) => {
                     if !matches!(found.entry.kind, EntryKind::View(_)) {
@@ -145,6 +178,7 @@ fn definition(columns: Vec<TableColumn>, constraints: Vec<Constraint>) -> TableE
         not_null_columns,
         constraints,
         storage: None,
+        backend: None,
     }
 }
 

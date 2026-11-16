@@ -311,3 +311,57 @@ upgrading the engine updates their implementations. This differs intentionally
 from installing independently distributed DuckDB extension binaries. Other names
 and explicit file paths retain their existing behavior. See the
 [developer workflow](../extensions/README.md) and [loading guide](../website/docs/extensions.md).
+
+## Autoloading a bundled extension needs no install
+
+roastedDuck's compatible implementations of httpfs, json and the other bundled
+extensions are part of the engine. With `autoload_known_extensions` on, a
+function, file scheme or setting of such an extension loads it directly. That
+includes `SET`, `RESET` and `current_setting()` on an extension's setting, as in
+DuckDB. No repository is contacted and nothing is written to the extension
+directory.
+
+Four unchanged HTTPFS originals assume the opposite, as their header states:
+the extension is "available in the LOCAL_EXTENSION_REPO and NOT linked into
+duckdb statically". Each first points `autoinstall_extension_repository` at a
+repository that does not exist and expects the autoload to fail with
+`Extension Autoloading Error: An error occurred while trying to automatically
+install the required extension`. In roastedDuck that statement succeeds, so
+`test/extension/autoloading_base.test`, `autoloading_current_setting.test`,
+`autoloading_load_only.test` and `autoloading_reset_setting.test` fail at that
+line. Every statement before it matches. The same tests pass on the C++ oracle
+with a staged local repository. `test/sql/extensions/version_is_valid_httpfs.test`,
+which autoloads through a setting without expecting an install failure, passes
+on both engines.
+
+This is the same intentional difference as the bundled FTS/VSS installation
+above: an install step that has nothing to install cannot fail for want of a
+repository. Evidence:
+`.context/artifacts/popular-extensions/qv-fable-1/d-regression-1/autoload/`.
+
+## Query verification pragmas: remaining debug verifiers
+
+`PRAGMA enable_verification` runs DuckDB's regular SELECT verifiers: the original
+statement, its copied, deserialized, unoptimized and no-operator-caching variants,
+the statement re-parsed from its rendered text, the prepared form with constants
+replaced by parameters, and EXPLAIN. Results are compared as upstream compares
+them. The unchanged HTTPFS original
+`test/sql/settings/test_disabled_file_system_httpfs.test`, which depends on the
+verifier's extra cold bind, passes on both engines, and all 45 diagnostic/state
+records match.
+
+What remains different:
+
+- `verify_external`, `verify_fetch_row`, `verify_serializer` and
+  `verify_parallelism` (and their `disable_` forms) are accepted and do nothing.
+  Upstream's external and fetch-row verifiers re-execute the query once more each;
+  the other two change how plans are serialized and parallelized in debug runs.
+- Under verification upstream executes a non-SELECT statement re-parsed from its
+  rendered text. roastedDuck executes the statement as parsed.
+
+Neither changes the result of a correct query. Both are debug facilities; they
+are listed so that a test relying on their side effects is not misread.
+
+Evidence: `.context/artifacts/popular-extensions/qv-fable-1/verify-{cpp,rust}-2/`
+(78 paired records), `qv-fable-1/diagnostics-rust-1/` against
+`httpfs-diagnostics-cpp-2/`, and `query-verification-conformance-3/`.
