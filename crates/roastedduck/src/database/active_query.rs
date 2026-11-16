@@ -498,6 +498,7 @@ impl Connection {
     ) -> Result<PendingQuery> {
         let query = query.as_ref();
         self.initial_cleanup();
+        self.verify_statement(&statement)?;
         let statement_type = statement.statement_type();
         self.begin_query(query, &statement)?;
         let started = self.in_query_scope(|connection| {

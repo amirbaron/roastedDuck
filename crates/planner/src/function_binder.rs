@@ -1111,26 +1111,26 @@ fn infer_template(
     Ok(())
 }
 
-fn substitute_template(ty: &LogicalType, bindings: &TemplateBindings) -> LogicalType {
+fn substitute_template(ty: &LogicalType, bindings: &TemplateBindings) -> Result<LogicalType> {
     if let Some(name) = template_name(ty) {
-        return bindings.get(name).and_then(|steps| steps.last()).map_or_else(
-            || ty.clone(),
-            |bound| normalize_type(bound).unwrap_or_else(|_| bound.clone()),
-        );
+        return bindings
+            .get(name)
+            .and_then(|steps| steps.last())
+            .map_or_else(|| Ok(ty.clone()), normalize_type);
     }
-    match ty.id() {
-        LogicalTypeId::List => ty.child_type().map_or_else(
-            || ty.clone(),
-            |child| LogicalType::list(substitute_template(child, bindings)),
-        ),
+    Ok(match ty.id() {
+        LogicalTypeId::List => match ty.child_type() {
+            Some(child) => LogicalType::list(substitute_template(child, bindings)?),
+            None => ty.clone(),
+        },
         LogicalTypeId::Array => match ty.array_child() {
-            Some((child, size)) => LogicalType::array(substitute_template(child, bindings), size),
+            Some((child, size)) => LogicalType::array(substitute_template(child, bindings)?, size),
             None => ty.clone(),
         },
         LogicalTypeId::Map => match ty.map_key_value() {
             Some((key, value)) => LogicalType::map(
-                substitute_template(key, bindings),
-                substitute_template(value, bindings),
+                substitute_template(key, bindings)?,
+                substitute_template(value, bindings)?,
             ),
             None => ty.clone(),
         },
@@ -1138,13 +1138,13 @@ fn substitute_template(ty: &LogicalType, bindings: &TemplateBindings) -> Logical
             Some(children) => LogicalType::struct_type(
                 children
                     .iter()
-                    .map(|(name, child)| (name.clone(), substitute_template(child, bindings)))
-                    .collect(),
+                    .map(|(name, child)| Ok((name.clone(), substitute_template(child, bindings)?)))
+                    .collect::<Result<_>>()?,
             ),
             None => ty.clone(),
         },
         _ => ty.clone(),
-    }
+    })
 }
 
 /// DuckDB's `FunctionBinder::ResolveTemplateTypes`.
@@ -1189,12 +1189,12 @@ fn resolve_template_types(
         }
     }
     for argument in arguments.iter_mut() {
-        *argument = substitute_template(argument, &bindings);
+        *argument = substitute_template(argument, &bindings)?;
     }
     if let Some(varargs) = varargs.as_mut() {
-        *varargs = substitute_template(varargs, &bindings);
+        *varargs = substitute_template(varargs, &bindings)?;
     }
-    *return_type = substitute_template(return_type, &bindings);
+    *return_type = substitute_template(return_type, &bindings)?;
     Ok(())
 }
 

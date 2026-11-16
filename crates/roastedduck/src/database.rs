@@ -25,6 +25,7 @@ mod appender;
 mod prepared_statement;
 mod registration;
 mod statement_preprocessor;
+mod verification;
 
 pub use active_query::{
     ClientHandle, PendingExecutionResult, PendingQuery, QueryId, QueryProgress, QueryResult,
@@ -2532,6 +2533,7 @@ impl Database {
             extension_session: CaseInsensitiveMap::default(),
             bound_casts: Mutex::default(),
             explicit_commit: None,
+            verification_running: false,
             active_query: None,
             next_query_id: 0,
             client: Arc::default(),
@@ -2731,6 +2733,7 @@ impl Database {
 /// concurrency.
 #[derive(Debug)]
 pub struct Connection {
+    verification_running: bool,
     database: Database,
     /// The global options as last applied to `settings`.
     synced_globals: GlobalSettings,
@@ -3234,6 +3237,7 @@ impl Connection {
     ) -> Result<MaterializedResult> {
         let query = query.as_ref();
         self.initial_cleanup();
+        self.verify_statement(&statement)?;
         let statement_type = statement.statement_type();
         self.begin_query(query, &statement)?;
         let outcome = self.in_query_scope(|connection| {
@@ -5252,6 +5256,10 @@ impl Connection {
                 if lower == "enable_optimizer" || lower == "disable_optimizer" {
                     self.settings.optimizer_disabled = lower == "disable_optimizer";
                 }
+                if lower == "enable_verification" || lower == "disable_verification" {
+                    self.settings.query_verification = lower == "enable_verification";
+                    return Ok(StatementRun::Done(nothing()));
+                }
                 match lower.as_bytes() {
                     b"enable_profiling" | b"enable_profile" => self.settings.profiler.enable(),
                     b"disable_profiling" | b"disable_profile" => self.settings.profiler.disable(),
@@ -5706,8 +5714,6 @@ fn needs_vacuum_lock(plan: &LogicalOperator) -> bool {
 
 /// Pragmas without a result that only tune testing or profiling behaviour.
 const NO_OP_PRAGMAS: &[&str] = &[
-    "enable_verification",
-    "disable_verification",
     "verify_external",
     "disable_verify_external",
     "verify_serializer",
