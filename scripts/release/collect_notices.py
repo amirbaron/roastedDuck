@@ -10,7 +10,9 @@ import io
 import json
 from pathlib import Path
 import tarfile
+import time
 import tomllib
+import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -19,13 +21,27 @@ ap.add_argument("--out", type=Path, required=True)
 args = ap.parse_args()
 args.out.mkdir(parents=True, exist_ok=True)
 inventory = []
+
+
+def fetch(url, headers=None):
+    """GET with retries: shared CI runners hit transient rate limits and resets."""
+    for attempt in range(6):
+        try:
+            return urllib.request.urlopen(urllib.request.Request(url, headers=headers or {}), timeout=90).read()
+        except (urllib.error.URLError, TimeoutError) as error:
+            if attempt == 5:
+                raise
+            print(f"retrying {url} after {error}", flush=True)
+            time.sleep(10 * 2 ** attempt)
+
+
 for package in tomllib.loads((ROOT / "Cargo.lock").read_text())["package"]:
     if not package.get("source", "").startswith("registry+"):
         continue
     name, version = package["name"], package["version"]
     key = f"{name}-{version}"
     url = f"https://static.crates.io/crates/{name}/{key}.crate"
-    data = urllib.request.urlopen(url, timeout=90).read()
+    data = fetch(url)
     assert hashlib.sha256(data).hexdigest() == package["checksum"], key
     dest = args.out / key
     dest.mkdir(exist_ok=True)
@@ -50,12 +66,11 @@ for package in tomllib.loads((ROOT / "Cargo.lock").read_text())["package"]:
 
 # alloc-stdlib's crate omits the parent project's BSD notice. Retain the exact
 # upstream Git blob shared with alloc-no-stdlib, alongside its own README.
+# The file is fetched from a pinned commit rather than the rate-limited REST API;
+# the Git blob hash below identifies its exact bytes either way.
 blob_id = "cd496ba72eb37e83a44958358d1f89a8a28cbc15"
-request = urllib.request.Request(
-    f"https://api.github.com/repos/dropbox/rust-alloc-no-stdlib/git/blobs/{blob_id}",
-    headers={"Accept": "application/vnd.github.raw+json"},
-)
-data = urllib.request.urlopen(request, timeout=30).read()
+data = fetch("https://raw.githubusercontent.com/dropbox/rust-alloc-no-stdlib/"
+             "0a81fd6928ea3b33c8cd484aa4575d50ffb98012/LICENSE")
 assert hashlib.sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest() == blob_id
 for record in inventory:
     if record["name"] == "alloc-stdlib":
