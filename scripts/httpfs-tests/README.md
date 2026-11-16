@@ -88,3 +88,12 @@ shared-database connections, credentials, timeout changes, proxy requests,
 disable/re-enable and backend resets. Cache-event matches alone are insufficient:
 the server must also observe the expected connection reuse. Only owned endpoint
 ports are normalized in the paired record comparison.
+
+`read_buffer_control.py` serves owned blob, text, CSV, JSON and Parquet files
+and records every request. It compares the handle's read buffer, cached
+`read_blob` reads and the ranges of `duckdb_external_file_cache()` between the
+two libraries. Pass `--parquet` a pinned multi-megabyte Parquet file and
+`--extensions` the directory of authenticated oracle packages; compare the
+`records` of the two `verification.json` files with only the loopback port
+normalized.
+

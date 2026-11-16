@@ -1,3 +1,32 @@
+HTTPFS read-buffer checkpoint, November 16, 2026 (commit after a76cee8b):
+HTTP, S3 and HuggingFace handles opened without direct I/O have the pinned
+`HTTPFileHandle` read buffer (1 MiB doubling to 32 MiB while reads stay
+sequential; larger reads go direct). `read_text`/`read_blob` open a file once and
+read remote content with direct I/O through the external file cache. Remote JSON
+uses upstream's read sizes (whole requests uncompressed; a ten-byte header then
+32 KiB blocks under gzip). Remote CSV keeps its handle across `Reset`. The
+separate HTTP stream reader is gone.
+
+Evidence under `.context/artifacts/popular-extensions/`:
+- `qv-fable-1/read-buffer-{cpp-2,rust-3}` and `qv-fable-1/c-regression-1/read-buffer`:
+  15 paired cases equal, including every request and the cached ranges.
+- `qv-fable-1/c-regression-1/`: download (18), connection pool (19 + sockets),
+  logging (42 + requests), diagnostics (45), cache boundary (23), verifier (78)
+  and error controls all equal to their C++ receipts; originals: metadata 24,
+  S3 basic 26, large S3 8, pool 2 and public slow 13 pass. The two former
+  request-count failures (`internal_issue_6807`, `external_file_cache_read_blob`)
+  pass on both engines.
+- `qv-fable-1/c-native`: native tests for httpfs (19, four new for the buffer),
+  json and csv; `qv-fable-1/c-clippy-1.log`: strict Clippy.
+- `read-buffer-conformance-4/`: full core corpus, 4845 pass, 33 skip, 19 fail,
+  no status change against conformance-3.
+- `httpfs-originals-audit-4.json`: 107 exercised originals pass both engines,
+  5 upstream-disabled, 3 setup-only, 17 unresolved at this commit.
+
+Known shared results, unchanged by this work: `test_csv_httpfs.test` skips on
+both engines (csvbase.com answers HTTP 500); `test_load_other_extensions.test`
+needs the public extension repository and passes on both there.
+
 Query-verification and HTTP file-info checkpoint, November 16, 2026:
 `PRAGMA enable_verification` now runs the regular SELECT verifiers of DuckDB
 1.5.6's `ClientContext::VerifyQuery` (commit c294d34f): original, copied,

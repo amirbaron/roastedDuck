@@ -187,3 +187,27 @@ Still open: the handle's read buffer and cached `read_blob` reads (two public sl
 originals fail on request counts), the remaining unresolved originals, the frozen
 final sweep, platform and package gates, and publication.
 
+## Read buffer and cached reads checkpoint (November 16)
+
+A handle opened without direct I/O buffers its reads as upstream's does: a read
+smaller than the buffer is served from one range request of the buffer's size,
+which starts at 1 MiB and doubles up to 32 MiB while reads stay sequential.
+Larger reads bypass it. Handles opened for direct I/O, which the external file
+cache and attached databases use, read exact ranges as before. S3 and
+HuggingFace handles share the behavior.
+
+`read_text` and `read_blob` open each file once. Remote content is read with
+direct I/O through the external file cache, so the first read is one GET, a
+repeated read needs only its HEAD, and a later Parquet scan of the same file is
+served from the cached range. Remote JSON issues whole requests when
+uncompressed and reads gzip as upstream's gzip stream does, which produces the
+same cached ranges. Remote CSV keeps its handle when the reader rewinds.
+
+Fifteen paired controls match C++ in results, request sequences and cached
+ranges. Both public slow originals that failed on request counts pass, so the
+public slow cohort is 13 of 13 on both engines. The retained audit is now **107
+exercised originals passing both engines**, five upstream-disabled files, three
+setup-only files and 17 unresolved. Evidence:
+`.context/artifacts/popular-extensions/qv-fable-1/c-regression-1/` and
+`httpfs-originals-audit-4.json`. This is not a frozen full sweep.
+
