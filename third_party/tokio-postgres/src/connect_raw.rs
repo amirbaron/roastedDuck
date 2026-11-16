@@ -303,22 +303,23 @@ where
         .filter(|_| config.channel_binding != config::ChannelBinding::Disable)
         .map(sasl::ChannelBinding::tls_server_end_point);
 
-    let (channel_binding, mechanism) = if has_scram_plus {
-        match channel_binding {
-            Some(channel_binding) => (channel_binding, sasl::SCRAM_SHA_256_PLUS),
-            None => (sasl::ChannelBinding::unsupported(), sasl::SCRAM_SHA_256),
+    // libpq's `pg_SASL_init`: with channel binding disabled the PLUS mechanism cannot
+    // be selected, and plain SCRAM only when the server offered it.
+    let (channel_binding, mechanism) = match (has_scram_plus, channel_binding) {
+        (true, Some(channel_binding)) => (channel_binding, sasl::SCRAM_SHA_256_PLUS),
+        (false, Some(_)) if has_scram => (sasl::ChannelBinding::unrequested(), sasl::SCRAM_SHA_256),
+        (_, None) if has_scram => (sasl::ChannelBinding::unsupported(), sasl::SCRAM_SHA_256),
+        _ => {
+            return Err(Error::authentication(
+                "none of the server's SASL authentication mechanisms are supported".into(),
+            ));
         }
-    } else if has_scram {
-        match channel_binding {
-            Some(_) => (sasl::ChannelBinding::unrequested(), sasl::SCRAM_SHA_256),
-            None => (sasl::ChannelBinding::unsupported(), sasl::SCRAM_SHA_256),
-        }
-    } else {
-        return Err(Error::authentication("unsupported SASL mechanism".into()));
     };
 
-    if mechanism != sasl::SCRAM_SHA_256_PLUS {
-        can_skip_channel_binding(config)?;
+    if mechanism != sasl::SCRAM_SHA_256_PLUS && config.channel_binding == config::ChannelBinding::Require {
+        return Err(Error::authentication(
+            "channel binding is required, but server did not offer an authentication method that supports channel binding".into(),
+        ));
     }
 
     let mut scram = ScramSha256::new(password, channel_binding);
