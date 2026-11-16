@@ -211,3 +211,47 @@ setup-only files and 17 unresolved. Evidence:
 `.context/artifacts/popular-extensions/qv-fable-1/c-regression-1/` and
 `httpfs-originals-audit-4.json`. This is not a frozen full sweep.
 
+## Original inventory accounted for (November 16)
+
+Every one of the 132 pinned originals now has a retained verdict on both
+engines. `httpfs-originals-audit-5.json` records, per file, the latest receipt:
+
+| Outcome | Files |
+| --- | ---: |
+| Exercised and passing on both engines | 116 |
+| SQL fully disabled upstream (`mode skip`) | 5 |
+| Only a verification pragma runs before `mode skip` | 3 |
+| Same non-pass on both engines | 3 |
+| Fails on the C++ oracle only | 1 |
+| Fails on roastedDuck only, by design | 4 |
+
+The three shared non-passes are `test/sql/copy/csv/test_csv_httpfs.test` (the
+public csvbase.com service answers HTTP 500), `test/extension/autoloading_filesystems.test`
+(the expected connection error is a curl-on-Linux text; both engines report the
+same DNS failure here and the runner skips), and `test/sql/copy/s3/http_proxy.test`.
+The proxy original passes every statement up to its last, whose expected text
+`HTTP GET error on '…' (HTTP 407)` no longer matches what the pinned C++ source
+produces; both engines report the identical S3 error for the 407.
+`test/sql/copy/s3/upload_large_file.test_slow` runs out of memory on the C++
+oracle under its unchanged limits and passes on roastedDuck. The four
+roastedDuck-only failures are the autoloading originals described in
+`conformance/divergences.md`.
+
+What closed the remaining files:
+
+- S3 open and read failures use upstream's S3 error text: the request URL or
+  the handle's path, the region, the service's error code and message, and the
+  credential or region hints, including the hint repeated on a 403 at open.
+  Nineteen paired cases on owned MinIO match C++.
+- A request retried in the bucket's region logs upstream's warning for file
+  opens and globs.
+- `SET`, `RESET` and `current_setting()` on the setting of a bundled extension
+  autoload it when `autoload_known_extensions` is on.
+- The test runner can let the owned-fixture child reach listed public hosts,
+  stage a local extension repository for the oracle, supply hash-checked core
+  data files, and provide owned forward proxies with and without Basic
+  authentication. These are test fixtures only.
+
+This inventory combines receipts from several builds. The frozen final sweep of
+all five extensions, the platform and package gates, and publication remain open.
+

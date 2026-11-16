@@ -312,6 +312,33 @@ from installing independently distributed DuckDB extension binaries. Other names
 and explicit file paths retain their existing behavior. See the
 [developer workflow](../extensions/README.md) and [loading guide](../website/docs/extensions.md).
 
+## Autoloading a bundled extension needs no install
+
+roastedDuck's compatible implementations of httpfs, json and the other bundled
+extensions are part of the engine. With `autoload_known_extensions` on, a
+function, file scheme or setting of such an extension loads it directly. That
+includes `SET`, `RESET` and `current_setting()` on an extension's setting, as in
+DuckDB. No repository is contacted and nothing is written to the extension
+directory.
+
+Four unchanged HTTPFS originals assume the opposite, as their header states:
+the extension is "available in the LOCAL_EXTENSION_REPO and NOT linked into
+duckdb statically". Each first points `autoinstall_extension_repository` at a
+repository that does not exist and expects the autoload to fail with
+`Extension Autoloading Error: An error occurred while trying to automatically
+install the required extension`. In roastedDuck that statement succeeds, so
+`test/extension/autoloading_base.test`, `autoloading_current_setting.test`,
+`autoloading_load_only.test` and `autoloading_reset_setting.test` fail at that
+line. Every statement before it matches. The same tests pass on the C++ oracle
+with a staged local repository. `test/sql/extensions/version_is_valid_httpfs.test`,
+which autoloads through a setting without expecting an install failure, passes
+on both engines.
+
+This is the same intentional difference as the bundled FTS/VSS installation
+above: an install step that has nothing to install cannot fail for want of a
+repository. Evidence:
+`.context/artifacts/popular-extensions/qv-fable-1/d-regression-1/autoload/`.
+
 ## Query verification pragmas: remaining debug verifiers
 
 `PRAGMA enable_verification` runs DuckDB's regular SELECT verifiers: the original

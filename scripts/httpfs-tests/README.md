@@ -97,3 +97,19 @@ two libraries. Pass `--parquet` a pinned multi-megabyte Parquet file and
 `records` of the two `verification.json` files with only the loopback port
 normalized.
 
+`s3_error_control.py` records the error text of missing objects and buckets,
+rejected credentials, absent credentials and wrong regions for reads, globs and
+writes on owned MinIO. Run it once per library with `--library`, `--package`,
+`--tools` and a fresh `--out`, then compare the `records`.
+
+`upstream_s3.py` has three further fixtures for originals that need more than
+MinIO. `--public-host HOST` (repeatable) lets the child also reach that reviewed
+public host; it needs a transport adapter built from the current
+`scripts/aws-tests/oracle_transport.c`, which admits only the IPv4 addresses the
+listed names resolve to. `--repository-extensions DIR` stages the authenticated
+oracle packages as `LOCAL_EXTENSION_REPO` for the autoloading originals. An
+original that requires `HTTP_PROXY_PUBLIC` gets two owned forward proxies from
+`http_fixture.py`, one of them requiring fake Basic credentials; they forward
+only to the owned MinIO. Local `data/...` files an original names and the
+extension source lacks are copied from the pinned core data after a hash check.
+

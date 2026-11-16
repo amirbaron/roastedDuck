@@ -1,4 +1,51 @@
-HTTPFS read-buffer checkpoint, November 16, 2026 (commit after a76cee8b):
+HTTPFS original-inventory checkpoint, November 16, 2026:
+All 132 pinned HTTPFS originals have a retained verdict on both engines
+(`httpfs-originals-audit-5.json`): 116 exercised and passing on both, 5 disabled
+upstream, 3 setup-only, 3 with the same non-pass on both engines
+(`test_csv_httpfs.test` public HTTP 500, `autoloading_filesystems.test` DNS error
+text, `http_proxy.test` stale last expectation), 1 failing only on the C++ oracle
+(`upload_large_file.test_slow`, out of memory) and 4 autoloading originals that
+fail on roastedDuck by design (bundled extensions autoload without an install;
+see `conformance/divergences.md`).
+
+Engine changes in this checkpoint: S3 open/read errors use upstream's S3 text
+(19 paired MinIO cases equal, `qv-fable-1/s3-error-{cpp-1,rust-2}`); a region
+redirect logs upstream's warning; `SET`, `RESET` and `current_setting()` on a
+bundled extension's setting autoload it. Test fixtures: `upstream_s3.py`
+`--public-host` and `--repository-extensions`, owned forward proxies, core data
+copies, and `s3_error_control.py`. The transport adapter with public-host support
+is `httpfs-services/s3_transport-2.dylib`; the earlier dylib is untouched.
+
+Evidence: `.context/artifacts/popular-extensions/qv-fable-1/d-regression-1/`
+(`results.json` lists every step: nine paired controls equal to C++, and the
+original cohorts), `qv-fable-1/d-native`, `d-native-2`, `d-native-3`
+(httpfs 22 tests, extension autoload 11), `qv-fable-1/d-clippy-2.log`, and
+`inventory-conformance-5/`: full core corpus on commit e949beea, 4845 pass,
+33 skip, 19 fail, no status change.
+
+All five inventories on that one build (signed debug binaries of e949beea),
+C++ oracle and roastedDuck side by side:
+
+| Extension | Originals | Both pass | Other verdicts (identical on both engines unless noted) |
+| --- | ---: | ---: | --- |
+| ICU | 63 | 63 | none |
+| Azure | 27 | 27 | none |
+| AWS | 21 | 20 | `aws_secret_refresh.test` fails on both; `aws_secret_aws.test` passes with the httplib client and skips on an HTTP error text with curl |
+| PostgreSQL | 152 | 145 | 7 skips for missing prerequisites (three concurrent, OAuth token, PostGIS, RDS IAM, detach prepared) |
+| HTTPFS | 132 | 116 | 5 disabled upstream, 3 setup-only, 3 shared non-passes, 1 C++-only out-of-memory, 4 by-design autoloading failures on roastedDuck |
+
+Receipts: `qv-fable-1/sweep-1/` (ICU, AWS, Azure), `qv-fable-1/sweep-1b/`
+(AWS httplib, PostgreSQL) and `qv-fable-1/d-regression-1/` with
+`httpfs-originals-audit-5.json` (HTTPFS). Controllers: `.context/final-sweep.py`
+and `.context/check-read-buffer.py`. The inventories ran while the core corpus
+was running; nothing flaked.
+
+Not done in this session: the workspace-wide native test run, the Linux, Apple
+and Python package gates, and publication. The branch has not been pushed since
+f135c6f8. Publishing to PyPI or Homebrew and pushing need the owner's explicit
+go-ahead.
+
+HTTPFS read-buffer checkpoint, November 16, 2026 (commit 6b24448a):
 HTTP, S3 and HuggingFace handles opened without direct I/O have the pinned
 `HTTPFileHandle` read buffer (1 MiB doubling to 32 MiB while reads stay
 sequential; larger reads go direct). `read_text`/`read_blob` open a file once and
