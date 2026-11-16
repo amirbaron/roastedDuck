@@ -26,6 +26,9 @@ pub(crate) fn is_space(c: u8) -> bool {
 pub(crate) struct JsonFileHandle {
     reader: Box<dyn Read + Send>,
     file_size: u64,
+    /// The read position of an uncompressed remote file. It is read unbuffered, so
+    /// each request reaches the external file cache as one range.
+    plain_remote: Option<u64>,
 }
 
 /// Positional, bounded reads through the database's existing external file cache.
@@ -34,11 +37,78 @@ struct CachedJsonReader {
     handle: roastedduck_function::caching_file_system::CachingFileHandle,
     position: u64,
     size: u64,
+    framing: Framing,
+}
+
+/// How much the next read takes from the file. Each read becomes a range of the
+/// cache, so a gzip file is read as DuckDB's `MiniZStreamWrapper` reads it: the
+/// ten-byte header, the optional fields, then `GZipFileSystem::BUFFER_SIZE` blocks.
+#[derive(Clone, Copy)]
+enum Framing {
+    /// Whatever the caller asks for.
+    Plain,
+    GzipHeader,
+    /// The two-byte length of the extra field; `name` as in [`Framing::GzipExtra`].
+    GzipExtraLength { name: bool },
+    /// The extra field, which upstream seeks over; `name` if a file name follows.
+    GzipExtra { length: u64, name: bool },
+    /// The file name, read a byte at a time up to its terminator.
+    GzipName,
+    GzipBody,
+}
+
+impl Framing {
+    const GZIP_HEADER_MINSIZE: usize = 10;
+    const GZIP_FLAG_EXTRA: u8 = 0x4;
+    const GZIP_FLAG_NAME: u8 = 0x8;
+    const GZIP_BUFFER_SIZE: usize = 1 << 15;
+
+    fn limit(self) -> usize {
+        match self {
+            Self::Plain => usize::MAX,
+            Self::GzipHeader => Self::GZIP_HEADER_MINSIZE,
+            Self::GzipExtraLength { .. } => 2,
+            Self::GzipExtra { length, .. } => usize::try_from(length).unwrap_or(usize::MAX),
+            Self::GzipName => 1,
+            Self::GzipBody => Self::GZIP_BUFFER_SIZE,
+        }
+    }
+
+    /// The framing after `bytes` were read under this one.
+    fn after(self, bytes: &[u8]) -> Self {
+        let after_extra = |name| if name { Self::GzipName } else { Self::GzipBody };
+        match self {
+            Self::GzipHeader if bytes.len() == Self::GZIP_HEADER_MINSIZE => {
+                let name = bytes[3] & Self::GZIP_FLAG_NAME != 0;
+                if bytes[3] & Self::GZIP_FLAG_EXTRA != 0 {
+                    Self::GzipExtraLength { name }
+                } else {
+                    after_extra(name)
+                }
+            }
+            Self::GzipExtraLength { name } if bytes.len() == 2 => {
+                match u64::from(u16::from_le_bytes([bytes[0], bytes[1]])) {
+                    0 => after_extra(name),
+                    length => Self::GzipExtra { length, name },
+                }
+            }
+            Self::GzipExtra { length, name } if (bytes.len() as u64) < length => Self::GzipExtra {
+                length: length - bytes.len() as u64,
+                name,
+            },
+            Self::GzipExtra { name, .. } => after_extra(name),
+            Self::GzipName if bytes.first().is_some_and(|byte| *byte != 0) => Self::GzipName,
+            Self::Plain => Self::Plain,
+            // The payload, and a header cut short by the end of the file.
+            _ => Self::GzipBody,
+        }
+    }
 }
 
 impl Read for CachedJsonReader {
     fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
-        let count = (output.len() as u64).min(self.size.saturating_sub(self.position)) as usize;
+        let count = (output.len().min(self.framing.limit()) as u64)
+            .min(self.size.saturating_sub(self.position)) as usize;
         if count == 0 {
             return Ok(0);
         }
@@ -47,6 +117,7 @@ impl Read for CachedJsonReader {
             .read(count as u64, self.position)
             .map_err(std::io::Error::other)?;
         output[..count].copy_from_slice(data.bytes());
+        self.framing = self.framing.after(&output[..count]);
         self.position += count as u64;
         Ok(count)
     }
@@ -112,10 +183,16 @@ impl JsonFileHandle {
                 _ => raw,
             };
             // `GetFileSize` of a pipe.
-            return Ok(Self { reader, file_size: 0 });
+            return Ok(Self {
+                reader,
+                file_size: 0,
+                plain_remote: None,
+            });
         }
         roastedduck_function::file_system::verify_can_access_file(path)?;
         if let Some(fs) = roastedduck_function::registered_files::lookup(path) {
+            let compression = compression.resolve(path);
+            let gzip_from_start = compression == FileCompressionType::Gzip && start == 0;
             let (cursor, file_size): (Box<dyn Read + Send>, u64) = if fs.is_remote() {
                 use roastedduck_function::caching_file_system::CachingFileHandle;
                 use roastedduck_function::external_file_cache::CacheValidationMode;
@@ -131,6 +208,13 @@ impl JsonFileHandle {
                         handle,
                         position: start,
                         size,
+                        framing: if gzip_from_start {
+                            Framing::GzipHeader
+                        } else if compression == FileCompressionType::Gzip {
+                            Framing::GzipBody
+                        } else {
+                            Framing::Plain
+                        },
                     }),
                     size,
                 )
@@ -143,12 +227,18 @@ impl JsonFileHandle {
                     .map_err(|e| Error::new(ErrorKind::Io, e.to_string()))?;
                 (Box::new(cursor), size)
             };
-            let mut buffered = BufReader::with_capacity(1 << 16, cursor);
-            let compression = compression.resolve(path);
             if compression == FileCompressionType::Zstd {
                 roastedduck_function::file_system::verify_zstd_file_system()?;
             }
-            if compression == FileCompressionType::Gzip && start == 0 {
+            if fs.is_remote() && compression == FileCompressionType::Uncompressed {
+                return Ok(Self {
+                    reader: cursor,
+                    file_size,
+                    plain_remote: Some(start),
+                });
+            }
+            let mut buffered = BufReader::with_capacity(1 << 16, cursor);
+            if gzip_from_start {
                 roastedduck_csv::buffer::verify_gzip_header(&mut buffered, path)?;
             }
             let raw: Box<dyn Read + Send> = Box::new(buffered);
@@ -157,7 +247,11 @@ impl JsonFileHandle {
                 FileCompressionType::Zstd => Box::new(roastedduck_zstd::StreamDecoder::new(raw)),
                 _ => raw,
             };
-            return Ok(Self { reader, file_size });
+            return Ok(Self {
+                reader,
+                file_size,
+                plain_remote: None,
+            });
         }
         if let Some(file) = roastedduck_function::object_store::lookup(path) {
             let file_size = file.bytes.len() as u64;
@@ -179,7 +273,11 @@ impl JsonFileHandle {
                 FileCompressionType::Zstd => Box::new(roastedduck_zstd::StreamDecoder::new(raw)),
                 _ => raw,
             };
-            return Ok(Self { reader, file_size });
+            return Ok(Self {
+                reader,
+                file_size,
+                plain_remote: None,
+            });
         }
         let mut file = File::open(roastedduck_function::file_system::native_path(path)?)
             .map_err(|error| roastedduck_csv::buffer::open_error(path, &error))?;
@@ -213,6 +311,7 @@ impl JsonFileHandle {
         Ok(Self {
             reader,
             file_size: metadata.len(),
+            plain_remote: None,
         })
     }
 
@@ -231,7 +330,17 @@ impl JsonFileHandle {
                 Err(error) => return Err(Error::new(ErrorKind::Io, error.to_string())),
             }
         }
+        if let Some(position) = &mut self.plain_remote {
+            *position += total as u64;
+        }
         Ok(total)
+    }
+
+    /// The bytes left in an uncompressed remote file, which is read a whole request
+    /// at a time (`JSONFileHandle::ReadInternal`).
+    fn plain_remote_remaining(&self) -> Option<u64> {
+        self.plain_remote
+            .map(|position| self.file_size.saturating_sub(position))
     }
 }
 
@@ -858,6 +967,14 @@ fn read_up_to(handle: &mut JsonFileHandle, size: usize) -> Result<Vec<u8>> {
 /// files only take what they need); returns the number of bytes read.
 fn append_up_to(handle: &mut JsonFileHandle, data: &mut Vec<u8>, size: usize) -> Result<usize> {
     let start = data.len();
+    if let Some(remaining) = handle.plain_remote_remaining() {
+        let request = size.min(usize::try_from(remaining).unwrap_or(size));
+        data.reserve_exact(request.saturating_add(PADDING_SIZE));
+        data.resize(start + request, 0);
+        let read = handle.read(&mut data[start..])?;
+        data.truncate(start + read);
+        return Ok(read);
+    }
     let expected = size.min(usize::try_from(handle.file_size()).unwrap_or(size));
     if expected != 0 {
         data.reserve_exact(expected.saturating_add(PADDING_SIZE));

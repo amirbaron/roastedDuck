@@ -106,6 +106,9 @@ pub struct CsvFileHandle {
     read_position: u64,
     finished: bool,
     can_seek: bool,
+    /// The open remote file. `Reset` rewinds it instead of opening it again, so its
+    /// read buffer keeps the size sequential reads grew it to.
+    remote: Option<Arc<dyn roastedduck_function::registered_files::FileHandle>>,
 }
 
 impl std::fmt::Debug for CsvFileHandle {
@@ -173,6 +176,14 @@ const ENCODINGS: [&str; 3] = ["utf-8", "latin-1", "utf-16"];
 impl CsvFileHandle {
     /// `CSVFileHandle::OpenFile`.
     pub fn open(path: &[u8], options: &CsvReaderOptions) -> Result<Self> {
+        Self::open_with(path, options, None)
+    }
+
+    fn open_with(
+        path: &[u8],
+        options: &CsvReaderOptions,
+        remote: Option<Arc<dyn roastedduck_function::registered_files::FileHandle>>,
+    ) -> Result<Self> {
         let encoding = options.encoding.to_lowercase();
         if !ENCODINGS.contains(&encoding.as_str()) {
             let mut error = roastedduck_common::byte_format!(
@@ -188,19 +199,23 @@ impl CsvFileHandle {
         }
         roastedduck_function::file_system::verify_can_access_file(path)?;
         let compression = options.compression.resolve(path);
+        let mut kept = None;
         let (file, size, seekable): (Box<dyn Read + Send>, u64, bool) = if let Some(fs) =
             roastedduck_function::registered_files::lookup(path)
         {
-            let handle = fs.open(path, false)?;
-            let size = handle.size()?;
-            let stream = if fs.is_remote() && compression != FileCompressionType::Uncompressed {
-                handle.read_stream()?
-            } else {
-                None
+            let handle = match remote {
+                Some(handle) => handle,
+                None => fs.open(path, false)?,
             };
-            let reader = stream
-                .unwrap_or_else(|| Box::new(roastedduck_function::registered_files::Cursor::new(handle)));
-            (reader, size, true)
+            let size = handle.size()?;
+            if fs.is_remote() {
+                kept = Some(Arc::clone(&handle));
+            }
+            (
+                Box::new(roastedduck_function::registered_files::Cursor::new(handle)),
+                size,
+                true,
+            )
         } else if let Some(file) = roastedduck_function::object_store::lookup(path) {
             let size = file.bytes.len() as u64;
             (
@@ -275,6 +290,7 @@ impl CsvFileHandle {
             read_position: 0,
             finished: false,
             can_seek: seekable && compression == FileCompressionType::Uncompressed,
+            remote: kept,
         })
     }
 
@@ -326,9 +342,9 @@ impl CsvFileHandle {
         (self.can_seek && self.encoding == "utf-8").then(|| self.file_size.saturating_sub(self.read_position))
     }
 
-    /// Reopens the file from the start (`Reset`).
+    /// Reads the file from the start again (`Reset`).
     pub fn reset(&mut self, options: &CsvReaderOptions) -> Result<()> {
-        let mut reopened = Self::open(&self.path, options)?;
+        let mut reopened = Self::open_with(&self.path, options, self.remote.take())?;
         reopened.compression = self.compression;
         *self = reopened;
         Ok(())

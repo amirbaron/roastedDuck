@@ -1067,7 +1067,17 @@ impl FileSystem for S3FileSystem {
             return write::S3WriteFile::open(Self::prepare(path, false)?, self.manager.clone())
                 .map(|file| Arc::new(file) as Arc<dyn FileHandle>);
         }
+        Self::open_file(path).map(|file| Arc::new(file.buffered()) as Arc<dyn FileHandle>)
+    }
+    fn open_read_direct(&self, path: &[u8]) -> Result<Arc<dyn FileHandle>> {
         Self::open_file(path).map(|file| Arc::new(file) as Arc<dyn FileHandle>)
+    }
+    fn open_with_flags(
+        &self,
+        path: &[u8],
+        flags: roastedduck_function::registered_files::OpenFlags,
+    ) -> Result<Arc<dyn FileHandle>> {
+        super::open_with_flags(self, path, flags)
     }
     fn glob(&self, path: &[u8]) -> Result<Vec<ByteString>> {
         if let Some(mut source) = self.glob_lazy(path)? {

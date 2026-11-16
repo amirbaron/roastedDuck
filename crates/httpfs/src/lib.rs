@@ -5,7 +5,7 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use roastedduck_common::{ByteString, Error, ErrorKind, Result};
 use roastedduck_function::ExtensionOption;
-use roastedduck_function::registered_files::{FileHandle, FileSystem};
+use roastedduck_function::registered_files::{FileHandle, FileSystem, OpenFlags};
 use roastedduck_types::{LogicalType, Value};
 use ureq::unversioned::transport::{Connector as _, TcpConnector};
 
@@ -403,6 +403,112 @@ struct HttpFile {
     // Azure's opt-in stats count Content-Length even on HEAD; HTTPFS counts streamed bytes.
     azure_stats: Option<bool>,
     client: Option<std::sync::Weak<roastedduck_function::FunctionClient>>,
+    /// The read buffer of a handle opened without direct I/O; `None` reads exact ranges.
+    buffer: Option<Arc<std::sync::Mutex<ReadBuffer>>>,
+}
+
+/// `HTTPFileHandle::read_buffer` and the positions around it: reads smaller than the
+/// buffer are served from one range request of its size, which doubles from
+/// `INITIAL_READ_BUFFER_LEN` to `MAXIMUM_READ_BUFFER_LEN` while reads stay sequential.
+struct ReadBuffer {
+    /// The buffered bytes (`buffer_start..buffer_end`).
+    data: Vec<u8>,
+    start: u64,
+    /// `read_buffer.GetSize()`.
+    capacity: u64,
+    /// The offset and length of the last range request (`range_request_statistics`).
+    last_request: Option<(u64, u64)>,
+}
+
+impl ReadBuffer {
+    const INITIAL_LEN: u64 = 1 << 20;
+    const MAXIMUM_LEN: u64 = 32 << 20;
+
+    /// `AdaptReadBufferSize`, before the buffer is refilled at `next_offset`.
+    fn adapt(&mut self, next_offset: u64) {
+        if self
+            .last_request
+            .is_some_and(|(offset, length)| offset + length == next_offset)
+            && self.capacity < Self::MAXIMUM_LEN
+        {
+            self.capacity *= 2;
+        }
+    }
+}
+
+impl ReadBuffer {
+    /// The buffered part of `HTTPFileSystem::ReadInternal` for a file of `size` bytes:
+    /// fills `out` from `offset`, which must lie inside the file. `fetch` is one range
+    /// request (`TryRangeRequest`); when it returns `false` the read is abandoned.
+    fn read(
+        &mut self,
+        size: u64,
+        offset: u64,
+        out: &mut [u8],
+        mut fetch: impl FnMut(u64, &mut [u8]) -> Result<bool>,
+    ) -> Result<bool> {
+        let buffer_end = self.start + self.data.len() as u64;
+        let (mut index, mut available) = if offset >= self.start && offset < buffer_end {
+            ((offset - self.start) as usize, (buffer_end - offset) as usize)
+        } else {
+            (0, 0)
+        };
+        let mut done = 0;
+        loop {
+            let copied = available.min(out.len() - done);
+            out[done..done + copied].copy_from_slice(&self.data[index..index + copied]);
+            done += copied;
+            if done == out.len() {
+                return Ok(true);
+            }
+            let position = offset + done as u64;
+            let remaining = (out.len() - done) as u64;
+            if remaining > self.capacity.min(size - position) {
+                // More than the buffer holds: read the rest directly.
+                if !fetch(position, &mut out[done..])? {
+                    return Ok(false);
+                }
+                self.last_request = Some((position, remaining));
+                return Ok(true);
+            }
+            self.adapt(position);
+            let length = self.capacity.min(size - position);
+            self.data.clear();
+            self.data.resize(length as usize, 0);
+            self.start = position;
+            let filled = fetch(position, &mut self.data);
+            if !matches!(filled, Ok(true)) {
+                // Nothing of a failed or abandoned request stays buffered.
+                self.data.clear();
+                return filled;
+            }
+            self.last_request = Some((position, length));
+            index = 0;
+            available = length as usize;
+        }
+    }
+}
+
+impl Default for ReadBuffer {
+    fn default() -> Self {
+        Self {
+            data: Vec::new(),
+            start: 0,
+            capacity: Self::INITIAL_LEN,
+            last_request: None,
+        }
+    }
+}
+
+impl std::fmt::Debug for ReadBuffer {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ReadBuffer")
+            .field("start", &self.start)
+            .field("len", &self.data.len())
+            .field("capacity", &self.capacity)
+            .finish_non_exhaustive()
+    }
 }
 
 fn status_error(method: &str, url: &str, status: u16) -> Error {
@@ -990,7 +1096,15 @@ impl HttpFile {
             client: roastedduck_function::file_system::opener()
                 .as_ref()
                 .map(Arc::downgrade),
+            buffer: None,
         }
+    }
+
+    /// A handle opened without `FILE_FLAGS_DIRECT_IO` or parallel access
+    /// (`!SkipBuffer()`): its reads share the handle's read buffer.
+    fn buffered(mut self) -> Self {
+        self.buffer = Some(Arc::default());
+        self
     }
 
     fn initialize_metadata(&mut self) -> Result<()> {
@@ -1215,6 +1329,28 @@ impl HttpFile {
     }
 }
 
+impl HttpFile {
+    /// One range request filling `out` from `offset` (`TryRangeRequest`); `false` when
+    /// the server does not support ranges and the file was downloaded instead.
+    fn read_range(&self, offset: u64, out: &mut [u8]) -> Result<bool> {
+        let end = offset + out.len() as u64 - 1;
+        let Some(mut response) = self.range_response(offset, end)? else {
+            return Ok(false);
+        };
+        let status = response.status().as_u16();
+        let mut body = response.body_mut().as_reader();
+        if status == 200 && offset != 0 {
+            let skipped = io::copy(&mut (&mut body).take(offset), &mut io::sink()).map_err(io_error)?;
+            if skipped != offset {
+                return Err(io_error("HTTP server returned a short file"));
+            }
+        }
+        body.read_exact(out).map_err(io_error)?;
+        finish_range(&mut body)?;
+        Ok(true)
+    }
+}
+
 impl FileHandle for HttpFile {
     fn read_at(&self, offset: u64, buffer: &mut [u8]) -> Result<usize> {
         if let Some(file) = self.download.get() {
@@ -1226,30 +1362,19 @@ impl FileHandle for HttpFile {
         let count = buffer
             .len()
             .min(usize::try_from(self.size - offset).unwrap_or(usize::MAX));
-        let end = offset + count as u64 - 1;
-        let Some(mut response) = self.range_response(offset, end)? else {
-            return self.full_download()?.read_at(offset, buffer);
-        };
-        let status = response.status().as_u16();
-        let mut body = response.body_mut().as_reader();
-        if status == 200 && offset != 0 {
-            let skipped = io::copy(&mut (&mut body).take(offset), &mut io::sink()).map_err(io_error)?;
-            if skipped != offset {
-                return Err(io_error("HTTP server returned a short file"));
+        let read = match &self.buffer {
+            Some(state) => {
+                let mut state = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                state.read(self.size, offset, &mut buffer[..count], |position, bytes| {
+                    self.read_range(position, bytes)
+                })?
             }
+            None => self.read_range(offset, &mut buffer[..count])?,
+        };
+        if !read {
+            return self.full_download()?.read_at(offset, buffer);
         }
-        body.read_exact(&mut buffer[..count]).map_err(io_error)?;
-        finish_range(&mut body)?;
         Ok(count)
-    }
-    fn read_stream(&self) -> Result<Option<Box<dyn Read + Send>>> {
-        Ok(Some(Box::new(HttpReadStream {
-            file: self.clone(),
-            position: 0,
-            end: 0,
-            window: 1 << 20,
-            body: None,
-        })))
     }
     fn write_at(&self, _: u64, _: &[u8]) -> Result<usize> {
         Err(Error::not_implemented("Writing to HTTP files not supported"))
@@ -1268,81 +1393,21 @@ impl FileHandle for HttpFile {
     }
 }
 
-/// Stream adaptive HTTP range windows without allocating a window-sized cache.
-/// CSV's small input buffer consumes each response incrementally. Random-access
-/// readers retain the existing exact-range `read_at` behavior.
-struct HttpReadStream {
-    file: HttpFile,
-    position: u64,
-    end: u64,
-    window: u64,
-    body: Option<BodyReader<ureq::BodyReader<'static>>>,
-}
-
-impl std::fmt::Debug for HttpReadStream {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("HttpReadStream")
-            .field("position", &self.position)
-            .field("end", &self.end)
-            .field("window", &self.window)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Read for HttpReadStream {
-    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        if let Some(file) = self.file.download.get() {
-            let count = file.read_at(self.position, buffer).map_err(io::Error::other)?;
-            self.position += count as u64;
-            return Ok(count);
-        }
-        if buffer.is_empty() || self.position >= self.file.size {
-            return Ok(0);
-        }
-        if self.position == self.end {
-            self.body = None;
-            let end = self.position.saturating_add(self.window).min(self.file.size);
-            let response = self
-                .file
-                .range_response(self.position, end - 1)
-                .map_err(io::Error::other)?;
-            let Some(response) = response else {
-                return self.read(buffer);
-            };
-            let full_body = response.status().as_u16() == 200;
-            let mut body = response.into_body().into_reader();
-            if full_body && self.position != 0 {
-                let skipped = io::copy(&mut (&mut body).take(self.position), &mut io::sink())?;
-                if skipped != self.position {
-                    return Err(io::Error::other("HTTP server returned a short file"));
-                }
-            }
-            // A server ignoring Range already sent the whole file. Keep reading
-            // that response rather than downloading and skipping its prefix again.
-            self.end = if full_body { self.file.size } else { end };
-            self.window = self.window.saturating_mul(2).min(32 << 20);
-            self.body = Some(body);
-        }
-        let count = buffer
-            .len()
-            .min(usize::try_from(self.end - self.position).unwrap_or(usize::MAX));
-        let body = self
-            .body
-            .as_mut()
-            .ok_or_else(|| io::Error::other("Missing HTTP response body"))?;
-        let read = body.read(&mut buffer[..count])?;
-        if read == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "failed to fill whole buffer",
-            ));
-        }
-        self.position += read as u64;
-        if self.position == self.end {
-            finish_range(body).map_err(io::Error::other)?;
-        }
-        Ok(read)
+/// `open_with_flags` of the HTTP filesystems. Database files are read through it; they
+/// are opened for parallel access, which skips the handle's read buffer.
+pub(crate) fn open_with_flags(
+    filesystem: &dyn FileSystem,
+    path: &[u8],
+    flags: OpenFlags,
+) -> Result<Arc<dyn FileHandle>> {
+    if !flags.write {
+        filesystem.open_read_direct(path)
+    } else if flags.create && flags.truncate && !flags.read {
+        filesystem.open(path, true)
+    } else {
+        Err(Error::not_implemented(
+            "Registered filesystem does not support the requested file open flags",
+        ))
     }
 }
 
@@ -1364,7 +1429,14 @@ impl FileSystem for HttpFileSystem {
         if write {
             return Err(Error::not_implemented("Writing to HTTP files not supported"));
         }
+        HttpFile::open(path)
+            .map(|file| logging::logged_file(Arc::new(file.buffered()), "HTTPFileSystem", path))
+    }
+    fn open_read_direct(&self, path: &[u8]) -> Result<Arc<dyn FileHandle>> {
         HttpFile::open(path).map(|file| logging::logged_file(Arc::new(file), "HTTPFileSystem", path))
+    }
+    fn open_with_flags(&self, path: &[u8], flags: OpenFlags) -> Result<Arc<dyn FileHandle>> {
+        open_with_flags(self, path, flags)
     }
     fn glob(&self, path: &[u8]) -> Result<Vec<ByteString>> {
         let allow = roastedduck_function::file_system::opener()
@@ -1402,3 +1474,97 @@ impl FileSystem for HttpFileSystem {
 mod http_metadata_tests;
 
 mod response_header_order;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MB: u64 = 1 << 20;
+
+    /// Reads `length` bytes at `offset` of a `size`-byte file whose byte `i` is `i % 251`,
+    /// checks them, and returns the ranges requested.
+    fn read(buffer: &mut ReadBuffer, size: u64, offset: u64, length: usize) -> Vec<(u64, u64)> {
+        let mut requests = Vec::new();
+        let mut out = vec![0; length];
+        let read = buffer.read(size, offset, &mut out, |position, bytes| {
+            requests.push((position, bytes.len() as u64));
+            for (index, byte) in bytes.iter_mut().enumerate() {
+                *byte = ((position + index as u64) % 251) as u8;
+            }
+            Ok(true)
+        });
+        assert!(read.unwrap());
+        assert!(
+            out.iter()
+                .enumerate()
+                .all(|(index, byte)| *byte == ((offset + index as u64) % 251) as u8)
+        );
+        requests
+    }
+
+    #[test]
+    fn sequential_reads_double_the_buffer() {
+        let size = 80 * MB;
+        let mut buffer = ReadBuffer::default();
+        let mut requests = Vec::new();
+        let mut offset = 0;
+        while offset < size {
+            requests.extend(read(&mut buffer, size, offset, 32 << 10));
+            offset += 32 << 10;
+        }
+        assert_eq!(
+            requests,
+            [
+                (0, MB),
+                (MB, 2 * MB),
+                (3 * MB, 4 * MB),
+                (7 * MB, 8 * MB),
+                (15 * MB, 16 * MB),
+                (31 * MB, 32 * MB),
+                (63 * MB, 17 * MB),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_rewind_keeps_the_grown_buffer() {
+        let size = 10 * MB;
+        let mut buffer = ReadBuffer::default();
+        let mut offset = 0;
+        while offset < size {
+            read(&mut buffer, size, offset, 64 << 10);
+            offset += 64 << 10;
+        }
+        // 1, 2, 4 MiB and the rest were read; the buffer is now 8 MiB.
+        assert_eq!(read(&mut buffer, size, 0, 64 << 10), [(0, 8 * MB)]);
+        assert_eq!(read(&mut buffer, size, 64 << 10, 64 << 10), []);
+        assert_eq!(read(&mut buffer, size, 8 * MB, 10), [(8 * MB, 2 * MB)]);
+    }
+
+    #[test]
+    fn large_reads_bypass_the_buffer() {
+        let size = 10 * MB;
+        let mut buffer = ReadBuffer::default();
+        assert_eq!(read(&mut buffer, size, 0, 3 * MB as usize), [(0, 3 * MB)]);
+        // The direct read counts as the last request: the next refill is sequential.
+        assert_eq!(read(&mut buffer, size, 3 * MB, 10), [(3 * MB, 2 * MB)]);
+        // A read that starts inside the buffer takes its tail before going direct.
+        assert_eq!(
+            read(&mut buffer, size, 4 * MB, 5 * MB as usize),
+            [(5 * MB, 4 * MB)]
+        );
+        // The end of the file bounds the buffer.
+        assert_eq!(read(&mut buffer, size, 9 * MB, MB as usize), [(9 * MB, MB)]);
+    }
+
+    #[test]
+    fn a_failed_refill_leaves_nothing_buffered() {
+        let mut buffer = ReadBuffer::default();
+        let mut out = [0; 16];
+        let failed = buffer.read(4 * MB, 0, &mut out, |_, _| Err(io_error("refused")));
+        assert!(failed.is_err());
+        let abandoned = buffer.read(4 * MB, 0, &mut out, |_, _| Ok(false));
+        assert!(!abandoned.unwrap());
+        assert_eq!(read(&mut buffer, 4 * MB, 0, 16), [(0, MB)]);
+    }
+}
