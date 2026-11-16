@@ -54,7 +54,7 @@ with duckdb.connect("example.duckdb") as connection:
 ## Versions and platforms
 
 The compatibility target is **DuckDB 1.5.6**. The distribution version
-`1.5.6.post3` identifies a roastedDuck extension and packaging revision of that
+`1.5.6.post4` identifies a roastedDuck extension and packaging revision of that
 target. `duckdb.__version__` and `duckdb.__duckdb_version__` retain the compatibility
 version; `importlib.metadata.version("roastedduck")` identifies the installed
 distribution, and `duckdb.version()` reports both.
@@ -92,10 +92,36 @@ DuckDB is a trademark of the DuckDB Foundation. roastedDuck is not affiliated
 with or endorsed by the Foundation.
 
 
-## Bundled full-text and vector search
+## Bundled extensions
 
-The post3 build includes roastedDuck's compatible FTS and VSS implementations.
-No separate extension packages are required:
+roastedDuck ships Rust implementations of DuckDB's most used extensions in the
+same wheel. They load by name, need no download, and do not load C++ extension
+binaries:
+
+| Extension | What it provides |
+| --- | --- |
+| `httpfs` | HTTP(S), S3, R2, GCS and HuggingFace reads, S3 writes and globbing, secrets |
+| `aws` | AWS credential chains (environment, profiles, SSO, STS, web identity, container and instance metadata) |
+| `azure` | Azure Blob and ADLS Gen2 reads, writes and globbing, Azure secrets and identity providers |
+| `icu` | ICU collations, time zones and calendars |
+| `postgres_scanner` | `ATTACH ... (TYPE postgres)`, `postgres_scan`, `postgres_query` and writes |
+| `fts`, `vss` | Full-text search (BM25) and in-memory HNSW vector indexes |
+
+```python
+con = duckdb.connect(":memory:")
+con.load_extension("httpfs")
+con.execute("SELECT count(*) FROM 'https://example.com/data.parquet'")
+```
+
+With `autoload_known_extensions` enabled, using a function, file scheme or setting
+of one of these extensions loads it. `INSTALL` succeeds offline for them, because
+there is nothing to install. Each extension's original test suite was run on both
+engines; the remaining differences are listed in the
+[compatibility guide](https://amirbaron.github.io/roastedDuck/compatibility/).
+
+### Full-text and vector search
+
+FTS and VSS need no separate packages either:
 
 ```python
 con = duckdb.connect(":memory:")
