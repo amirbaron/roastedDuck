@@ -18,7 +18,7 @@ def render(version, sums):
     return f'''require "shellwords"
 
 class Roastedduck < Formula
-  desc "Analytical SQL engine in Rust with bundled compatible FTS and VSS"
+  desc "Analytical SQL engine in Rust with bundled DuckDB-compatible extensions"
   homepage "https://amirbaron.github.io/roastedDuck/"
   version "{version}"
   license "MIT"
@@ -49,7 +49,8 @@ class Roastedduck < Formula
 
   def caveats
     <<~EOS
-      FTS and VSS are bundled. Start with LOAD fts; and LOAD vss;.
+      httpfs, aws, azure, icu, postgres_scanner, fts and vss are bundled.
+      Load them by name, for example LOAD httpfs; or LOAD postgres;.
       HNSW indexes currently require an in-memory database.
       This preview targets DuckDB 1.5.6. It is independently maintained.
     EOS
@@ -72,11 +73,26 @@ class Roastedduck < Formula
       CREATE INDEX h ON vectors USING HNSW(v);
       SELECT CASE WHEN id=1 THEN 'vss-ok' ELSE error('VSS failure') END FROM (SELECT id FROM vectors ORDER BY array_distance(v,[1,0,0]::FLOAT[3]) LIMIT 1);
       EXPLAIN SELECT id FROM vectors ORDER BY array_distance(v,[1,0,0]::FLOAT[3]) LIMIT 1;
+      INSTALL httpfs;
+      LOAD httpfs;
+      LOAD aws;
+      LOAD azure;
+      LOAD icu;
+      LOAD postgres_scanner;
+      SELECT CASE WHEN count(*)=5 THEN 'extensions-ok' ELSE error('extension load failure') END FROM duckdb_extensions() WHERE loaded AND extension_name IN ('httpfs','aws','azure','icu','postgres_scanner');
+      SELECT CASE WHEN 'a' COLLATE en < 'B' AND (TIMESTAMPTZ '2024-01-01 00:00:00+00' AT TIME ZONE 'Asia/Tokyo')::VARCHAR = '2024-01-01 09:00:00' THEN 'icu-ok' ELSE error('ICU failure') END;
+      CREATE SECRET brew_s3 (TYPE s3, KEY_ID 'test', SECRET 'test', REGION 'eu-west-1');
+      SELECT CASE WHEN count(*)=1 THEN 'secret-ok' ELSE error('secret failure') END FROM duckdb_secrets() WHERE name='brew_s3' AND type='s3';
+      SELECT CASE WHEN count(*)>0 THEN 'postgres-ok' ELSE error('postgres failure') END FROM duckdb_functions() WHERE function_name='postgres_scan';
     SQL
     output = pipe_output("#{{bin}}/roastedduck".shellescape + " -batch -bail -init /dev/null :memory:", sql, 0)
     assert_match "fts-ok", output
     assert_match "vss-ok", output
     assert_match "HNSW_INDEX_SCAN", output
+    assert_match "extensions-ok", output
+    assert_match "icu-ok", output
+    assert_match "secret-ok", output
+    assert_match "postgres-ok", output
   end
 end
 '''
