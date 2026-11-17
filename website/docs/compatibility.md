@@ -1,8 +1,9 @@
 # Compatibility and preview status
 
 roastedDuck targets **DuckDB 1.5.6**, with matching version-family branch naming.
-The current `1.5.6.post2` revision completes the roastedDuck naming and updates
-validation tooling while retaining the 1.5.6 engine compatibility identifiers.
+The current `1.5.6.post4` revision bundles roastedDuck's implementations of
+DuckDB's httpfs, aws, azure, icu, postgres_scanner, FTS and VSS extensions while
+retaining the 1.5.6 engine compatibility identifiers.
 It is an experimental public preview. Evaluate your own workload and retain
 backups before using it with important data.
 
@@ -46,6 +47,26 @@ commit. The original 1.5.6 preview preserved those native bytes. The post1 secur
 revision and post2 branding/validation revision have their own client, encryption
 and installation reports. Neither claims a rerun of the entire historical corpus
 or benchmark matrix.
+
+## Bundled extensions
+
+Release 1.5.6.post4 bundles Rust implementations of DuckDB's httpfs, aws, azure,
+icu and postgres_scanner extensions; see the [extension guide](extensions.md#what-was-tested)
+for the per-extension test results. The differences that remain:
+
+- **Autoloading needs no install.** With `autoload_known_extensions` on, a bundled
+  extension loads even when `autoinstall_extension_repository` points at a missing
+  repository. Four httpfs autoloading tests expect that install to fail.
+- **PostgreSQL connection errors** are worded by roastedDuck's client, for example
+  `error connecting to server: Connection refused`, rather than libpq's
+  `Unable to connect to Postgres at "<dsn>": connection to server at ...`. A failed
+  `ATTACH` makes one connection attempt where DuckDB makes two.
+- **Debug verification pragmas:** `PRAGMA enable_verification` runs the regular
+  SELECT verifiers; `verify_external`, `verify_fetch_row`, `verify_serializer` and
+  `verify_parallelism` are accepted and do nothing.
+- **Cloud services** were tested against local fixtures (MinIO, an Azure
+  emulator and protocol fixtures, PostgreSQL 17, STS/SSO and metadata services),
+  not live AWS, Azure, Google Cloud, Redshift or Aurora accounts.
 
 ## Known exceptions
 

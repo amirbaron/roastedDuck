@@ -1,11 +1,105 @@
-# FTS and VSS
+# Extensions
 
-!!! note "Available in 1.5.6.post3"
-    roastedDuck's compatible FTS/VSS implementations are bundled in the post3
-    Homebrew and PyPI distributions. Earlier post2 packages do not include them.
-    See [installation](install.md) for the package commands.
+!!! note "Available in 1.5.6.post4"
+    roastedDuck's implementations of httpfs, aws, azure, icu and postgres_scanner
+    are bundled in the post4 Homebrew and PyPI distributions, next to the FTS and
+    VSS implementations added in post3. See [installation](install.md) for the
+    package commands.
 
-## Load the bundled implementations
+## Bundled extensions
+
+| Extension | Load with | Provides |
+| --- | --- | --- |
+| httpfs | `LOAD httpfs;` | HTTP(S), S3, R2, GCS and HuggingFace (`hf://`) reads; S3 writes and globbing; HTTP and S3 secrets; metadata and connection caching |
+| aws | `LOAD aws;` | `PROVIDER credential_chain` for S3 secrets: environment, profiles, processes, SSO, STS assume-role, web identity, container and instance metadata; `load_aws_credentials` |
+| azure | `LOAD azure;` | `az://`, `azure://`, `abfs://` and `abfss://` reads, writes and globbing; connection strings, SAS, SharedKey and the Azure identity providers |
+| icu | `LOAD icu;` | Collations such as `COLLATE de`, time zones, calendars and ICU date functions |
+| postgres_scanner | `LOAD postgres;` | `ATTACH ... (TYPE postgres)`, `postgres_scan`, `postgres_query`, `postgres_execute`, writes and DDL, pooling, RDS IAM and OAuth tokens |
+| fts | `LOAD fts;` | Full-text indexes and BM25 ranking |
+| vss | `LOAD vss;` | In-memory HNSW vector indexes |
+
+All of them are compiled into normal builds. No extra package, downloaded
+extension binary, extension repository or writable extension cache is needed, and
+official C++ extension binaries are not used. A fresh database starts with them
+installed but not loaded; repeated `LOAD` is safe. Bare `INSTALL` and
+`FORCE INSTALL` succeed offline for these names, and `FROM` or `VERSION`
+overrides are rejected: upgrade roastedDuck to update them.
+
+With `SET autoload_known_extensions=true`, a query that uses a function, file
+scheme, secret type or setting of one of these extensions loads it, as in DuckDB.
+That includes `SET`, `RESET` and `current_setting()` on an extension setting.
+
+## Remote files
+
+```sql
+LOAD httpfs;
+SELECT count(*) FROM 'https://example.com/events.parquet';
+
+LOAD aws;
+CREATE SECRET s3 (TYPE s3, PROVIDER credential_chain);
+SELECT count(*) FROM read_parquet('s3://my-bucket/events/*.parquet');
+COPY (SELECT * FROM events) TO 's3://my-bucket/export/events.parquet';
+```
+
+Reads use range requests with an adaptive read buffer, and the external file cache
+serves repeated reads of unchanged files. `SET force_download=true` downloads whole
+files instead. HTTP and S3 errors carry the same text as DuckDB's, including the
+region and credential hints for S3.
+
+```sql
+LOAD azure;
+CREATE SECRET az (TYPE azure, CONNECTION_STRING 'DefaultEndpointsProtocol=https;AccountName=...;AccountKey=...');
+SELECT count(*) FROM 'az://container/events/*.parquet';
+```
+
+Azure secrets also accept `PROVIDER credential_chain` (environment, workload
+identity, managed identity and Azure CLI) and `PROVIDER service_principal`.
+
+## PostgreSQL
+
+```sql
+LOAD postgres;
+ATTACH 'host=localhost dbname=app user=reader' AS pg (TYPE postgres, READ_ONLY);
+SELECT * FROM pg.public.orders WHERE created_at > now() - INTERVAL 1 DAY;
+SELECT * FROM postgres_query('pg', 'SELECT version()');
+```
+
+The client speaks the PostgreSQL wire protocol in Rust, with TLS (including
+`verify-full` and CRLs), SCRAM and channel binding; libpq is not used. Connection
+strings, `PG*` environment variables, service and password files, `postgres`
+secrets and the `pg_*` settings follow the pinned extension.
+
+## Time zones and collations
+
+```sql
+LOAD icu;
+SET TimeZone = 'Europe/Amsterdam';
+SELECT now(), name FROM people ORDER BY name COLLATE de;
+```
+
+The ICU data is embedded in the binary.
+
+## What was tested
+
+Each extension's original SQL tests from its pinned upstream source were run
+unchanged on DuckDB 1.5.6 and on roastedDuck, against local MinIO, Azure,
+PostgreSQL 17, STS/SSO, metadata and proxy fixtures:
+
+| Extension | Original test files | Pass on both engines | Other verdicts |
+| --- | ---: | ---: | --- |
+| icu | 63 | 63 | none |
+| azure | 27 | 27 | none |
+| aws | 21 | 20 | one credential-refresh test fails the same way on both |
+| postgres_scanner | 152 | 145 | seven skip on both: missing PostGIS, RDS, OAuth-service and concurrency prerequisites |
+| httpfs | 132 | 116 | 8 disabled upstream or setup-only; 3 with the same non-pass on both; 1 out of memory only on DuckDB; 4 expect an install from a missing repository to fail |
+
+These are local fixtures, not live AWS, Azure, Google Cloud, Redshift or Aurora
+accounts. The remaining differences are listed in the
+[compatibility guide](compatibility.md#bundled-extensions).
+
+## FTS and VSS
+
+### Load FTS and VSS
 
 ```sql
 LOAD fts;
@@ -42,7 +136,7 @@ as `stem` can also autoload after `SET autoload_known_extensions=true`; the
 existing global default is unchanged. VSS is outside the pinned autoload allowlist:
 use `LOAD vss` explicitly before its functions, settings or HNSW index creation.
 
-## Full-text search
+### Full-text search
 
 Run this against a new database, either in memory or in a file:
 
@@ -69,7 +163,7 @@ The index is a snapshot: rebuild with `overwrite=true` after document changes.
 An FTS database can be reopened by roastedDuck or the pinned C++ DuckDB 1.5.6
 with its matching FTS implementation loaded.
 
-## Vector search
+### Vector search
 
 Start with an in-memory database (`roastedDuck :memory:`):
 
@@ -109,9 +203,9 @@ Databases containing C++ HNSW indexes can be read with those indexes left unboun
 this does not provide accelerated access to their persisted graphs. Unsupported
 mutation/checkpoint binding is rejected.
 
-## Python application startup
+### Python application startup
 
-For `roastedduck` 1.5.6.post3 or later:
+For `roastedduck` 1.5.6.post3 or later (FTS and VSS were added in post3):
 
 ```python
 import duckdb
@@ -129,7 +223,7 @@ applications can execute the same `LOAD` statements as part of startup. These
 examples share the engine's SQL contract; this page does not claim a new complete
 qualification of every client package or platform.
 
-## Troubleshooting
+### Troubleshooting
 
 | Symptom | Action |
 | --- | --- |
