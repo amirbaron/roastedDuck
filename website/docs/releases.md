@@ -4,6 +4,33 @@ Install Python from [PyPI](https://pypi.org/project/roastedduck/) with
 `python -m pip install roastedduck`. Native SDKs, Swift packages, exact Python
 files and verification receipts are on [GitHub Releases](https://github.com/amirbaron/roastedDuck/releases).
 
+## 1.5.6.post4
+
+This release bundles roastedDuck's implementations of DuckDB's httpfs, aws, azure,
+icu and postgres_scanner extensions next to FTS and VSS. They load by name, need no
+download, and do not load C++ extension binaries; see the [extension guide](extensions.md).
+Each extension's original SQL tests were run unchanged on DuckDB 1.5.6 and on
+roastedDuck against local service fixtures: ICU 63/63, Azure 27/27, AWS 20/21,
+PostgreSQL 145/152 and httpfs 116/132 pass on both engines, with every other file
+accounted for in the [compatibility guide](compatibility.md#bundled-extensions).
+
+It also fixes an intermittent internal error in HNSW queries run as pending
+(streaming) queries, present since post3, and makes `PRAGMA enable_verification`
+run DuckDB's SELECT verifiers.
+
+- [Fresh source and distribution qualification](https://github.com/amirbaron/roastedDuck/actions/runs/44016875211).
+- [Trusted PyPI publication and all 15 ordinary index installs](https://github.com/amirbaron/roastedDuck/actions/runs/44048510639).
+- [Homebrew package/bottle tests](https://github.com/amirbaron/homebrew-roastedduck/actions/runs/44048570643) and [public bottle installs](https://github.com/amirbaron/homebrew-roastedduck/actions/runs/44050087459) on macOS ARM64 and Linux x86_64/ARM64.
+- [Exact release files and SHA256SUMS](https://github.com/amirbaron/roastedDuck/releases/tag/v1.5.6.post4).
+
+Two earlier qualification attempts did not produce a release. The first failed
+when a third-party license download hit a GitHub API rate limit; the second found
+the HNSW race above on Linux arm64. Both are fixed in the released commit, and
+both runs remain in the workflow history. Full local SQL conformance on the
+released commit: 4,845 passes, 33 skips and 19 documented failures, with zero
+ratchet regressions. Apple simulator checks and device builds pass; physical-device
+execution and notarization remain unverified.
+
 ## 1.5.6.post3
 
 This release adds roastedDuck's compatible FTS and VSS implementations, offline

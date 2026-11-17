@@ -33,4 +33,6 @@ class HomebrewFormulaTests(unittest.TestCase):
         self.assertIn('assert_match "HNSW_INDEX_SCAN"', formula)
         self.assertIn('.shellescape + " -batch', formula)
         self.assertIn('INSTALL fts;', formula)
+        self.assertIn('LOAD postgres_scanner;', formula)
+        self.assertIn('assert_match "extensions-ok"', formula)
         self.assertNotIn('"duckdb" =>', formula)

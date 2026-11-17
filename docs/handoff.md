@@ -1,3 +1,18 @@
+1.5.6.post4 publication, November 17, 2026:
+roastedDuck 1.5.6.post4 is public on GitHub Releases, PyPI and the Homebrew tap,
+from commit a8ff63a8. Record and links: `docs/release-post4-20261117.md`. Two
+producer attempts failed first and are explained there: a GitHub API rate limit in
+the notice collector (fixed in #16) and a real VSS pending-query race (fixed in #17).
+Release helpers used for this release are in `.context/post4-*.py` and
+`.context/assemble-post4-release.py`; artifacts are under
+`.context/artifacts/release-post4/`. ottawa's `.context/artifacts` directory is empty
+(since 2026-11-16), so the helpers use release-post3's authenticated copies of the
+signing certificate, the Swift case list and the C++ interop consumer.
+
+Open after the release: PostgreSQL connection-error wording (libpq style), the four
+no-op debug verification pragmas, and two moderate Dependabot alerts in
+`scripts/local-services/package-lock.json` (test emulator tooling, not shipped).
+
 PostgreSQL SASL selection checkpoint, November 16, 2026:
 The vendored PostgreSQL client no longer answers a `SCRAM-SHA-256-PLUS`-only
 offer with plain `SCRAM-SHA-256` when `channel_binding=disable`; it fails as libpq
