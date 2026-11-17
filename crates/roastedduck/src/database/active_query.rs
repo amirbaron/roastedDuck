@@ -104,6 +104,12 @@ pub(crate) struct PlanExecution {
     buffered: Option<Arc<BufferedData>>,
     /// Whether the plan ran to completion.
     finished: bool,
+    /// The planner's view of the connection the plan was created in. Functions that
+    /// resolve the transaction at execution time, such as HNSW scans, reach it through
+    /// the connection's function client, which holds it only weakly. Worker threads can
+    /// initialize a pending plan before the running query installs its own context, so
+    /// the plan keeps this one valid for as long as it executes.
+    context: Option<Arc<roastedduck_planner::ClientContext>>,
 }
 
 /// What a step of filling a streaming result's buffer reports (DuckDB's
@@ -133,7 +139,14 @@ impl PlanExecution {
             streaming,
             buffered: None,
             finished: false,
+            context: None,
         }
+    }
+
+    /// Keeps the context the plan was created in valid while it executes.
+    pub(crate) fn with_context(mut self, context: Arc<roastedduck_planner::ClientContext>) -> Self {
+        self.context = Some(context);
+        self
     }
 
     /// The executor, names, types, profiler and return type, to finish a materialized run.

@@ -5386,6 +5386,7 @@ impl Connection {
         let optimizer_client = optimizer_config.enabled.then(|| Arc::clone(&client));
         let preserve_insertion_order = optimizer_config.preserve_insertion_order;
         let plan_client = Arc::clone(&client);
+        let execution_client = Arc::clone(&client);
         let optimize = optimizer_config.enabled;
         if optimize {
             self.profiler
@@ -5484,7 +5485,8 @@ impl Connection {
                 return Err(error);
             }
         };
-        let run = PlanExecution::new(execution, names, types, profiler, streaming);
+        let run =
+            PlanExecution::new(execution, names, types, profiler, streaming).with_context(execution_client);
         match mode {
             RunMode::Materialize(_) => self.finish_execution(run).map(StatementRun::Done),
             RunMode::Pending { .. } => Ok(StatementRun::Executing(Box::new(run))),
