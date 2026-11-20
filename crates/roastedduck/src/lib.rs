@@ -10,6 +10,7 @@
 //! ```
 
 mod attached;
+mod avro;
 mod aws;
 #[cfg(test)]
 mod catalog_backend_tests;

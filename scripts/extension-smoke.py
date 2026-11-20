@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check bundled FTS/VSS loading and developer examples. Python 3.11+, no packages."""
+"""Check bundled extension loading and developer examples. Python 3.11+, no packages."""
 import argparse
 import hashlib
 import json
@@ -99,6 +99,24 @@ FROM duckdb_extensions() WHERE extension_name IN ('fts','vss');
         run('new-process-load-state', check, db)
         run('vss-persistence-boundary', 'LOAD vss; CREATE TABLE vectors(v FLOAT[3]); CREATE INDEX h ON vectors USING HNSW(v);',
             out / 'vectors.duckdb', 'HNSW indexes can only be created in in-memory databases')
+        avro = quote(out / 'events.avro')
+        run('avro-offline-roundtrip', f"""
+SELECT CASE WHEN installed AND NOT loaded AND install_mode='STATICALLY_LINKED'
+THEN true ELSE error('Avro discovery failed') END
+FROM duckdb_extensions() WHERE extension_name='avro';
+INSTALL avro; FORCE INSTALL avro; LOAD avro; LOAD avro;
+COPY (SELECT i, CASE WHEN i % 2=0 THEN [i, NULL] END AS items
+      FROM range(4097) t(i)) TO {avro} (FORMAT AVRO);
+SELECT CASE WHEN count(*)=4097 AND sum(i)=8390656 AND count(items)=2049
+THEN true ELSE error('Avro roundtrip failed') END
+FROM read_avro([{avro}], filename='source_file') WHERE source_file={avro};
+""")
+        run('avro-autoload', f"""SET autoload_known_extensions=true;
+SELECT CASE WHEN count(*)=4097 THEN true ELSE error('Avro autoload failed') END
+FROM read_avro({avro});""")
+        run('avro-install-repository-error', 'INSTALL avro FROM core;', expected_error='is bundled with roastedDuck')
+        run('avro-external-access', f"LOAD avro; SET enable_external_access=false; FROM read_avro({avro});",
+            expected_error='disabled')
         downloaded = list((out / 'extensions').rglob('*.duckdb_extension'))
         assert not downloaded, downloaded
         report['downloaded_extension_binaries'] = 0

@@ -240,7 +240,7 @@ int32_t slt_db_load_extension(slt_db *db, const char *name, size_t name_len, cha
 		auto directory_env = std::getenv("SLT_ORACLE_EXTENSION_DIRECTORY");
 		if (!directory_env || (extension != "fts" && extension != "vss" && extension != "httpfs" &&
 		                       extension != "aws" && extension != "azure" && extension != "postgres_scanner" &&
-		                       extension != "tpch" && extension != "tpcds")) {
+		                       extension != "tpch" && extension != "tpcds" && extension != "avro")) {
 			return SLT_EXTENSION_NOT_LOADED;
 		}
 		string directory(directory_env);

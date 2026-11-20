@@ -7,6 +7,12 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+apache-avro = { version = "0.23", default-features = false }
+lzma-rust2 = { version = "0.25", default-features = false, features = ["std"] }
+serde_json = "1"
+snap = "1"
+crc32fast = "1"
+roastedduck-zstd = { path = "../zstd" }
 roastedduck-postgres = { path = "../postgres" }
 roastedduck-aws = { path = "../aws" }
 flate2 = "1"
