@@ -113,9 +113,6 @@ impl SchemaBuilder {
         let defaults = FieldOptions::default();
         let mut seen = roastedduck_common::CaseInsensitiveSet::<ByteString>::default();
         for (name, ty) in fields {
-            if name.eq_ignore_ascii_case(EMPTY_STRUCT_MARKER) {
-                continue;
-            }
             let field = options.children.get(name).unwrap_or(&defaults);
             let name = identifier(name)?;
             seen.insert(ByteString::from(name));
@@ -184,6 +181,7 @@ impl SchemaBuilder {
                 ty.struct_children()
                     .unwrap_or_default()
                     .iter()
+                    .filter(|(name, _)| !name.eq_ignore_ascii_case(EMPTY_STRUCT_MARKER))
                     .map(|(name, ty)| (name, ty)),
                 options,
             )?,
@@ -262,6 +260,8 @@ fn bind(
         } else {
             let value = values
                 .first()
+                .map(Value::to_varchar)
+                .transpose()?
                 .map(|value| format!(" with value: '{value}'"))
                 .unwrap_or_default();
             return Err(Error::new(
