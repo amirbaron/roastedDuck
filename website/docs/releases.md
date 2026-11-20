@@ -4,6 +4,26 @@ Install Python from [PyPI](https://pypi.org/project/roastedduck/) with
 `python -m pip install roastedduck`. Native SDKs, Swift packages, exact Python
 files and verification receipts are on [GitHub Releases](https://github.com/amirbaron/roastedDuck/releases).
 
+## 1.5.6.post6
+
+This release adds offline installation and loading for the bundled Avro and Excel
+extensions. Use `read_avro` to read Avro files and `COPY ... TO (FORMAT AVRO)` to
+write them. All 19 pinned Avro SQL test files passed on both engines, and each
+engine read files written by the other. The [extension guide](extensions.md)
+describes Avro and XLSX usage.
+
+- [GitHub release and SHA256SUMS](https://github.com/amirbaron/roastedDuck/releases/tag/v1.5.6.post6).
+- [Source and distribution qualification](https://github.com/amirbaron/roastedDuck/actions/runs/44736924418).
+- [Trusted PyPI publication and 15 ordinary PyPI installs](https://github.com/amirbaron/roastedDuck/actions/runs/44779615685).
+- [Public native SDK and Python install checks](https://github.com/amirbaron/roastedDuck/actions/runs/44779616451).
+- [Homebrew bottle builds](https://github.com/amirbaron/homebrew-roastedduck/actions/runs/44780944143) and [public bottle installs](https://github.com/amirbaron/homebrew-roastedduck/actions/runs/44781994952) on macOS arm64 and Linux arm64/x86_64.
+
+The first PyPI verification attempt resolved post4 in one Linux Python 3.12
+cell during index propagation. The unchanged retry passed.
+
+The signed Apple archive passed 133 Swift tests on macOS and 133 on the iOS
+Simulator. The physical device slice passed compilation and signing checks.
+
 ## 1.5.6.post4
 
 This release bundles roastedDuck's implementations of DuckDB's httpfs, aws, azure,

@@ -1,15 +1,15 @@
 # Extensions
 
-!!! note "Available in 1.5.6.post4"
-    roastedDuck's implementations of httpfs, aws, azure, icu and postgres_scanner
-    are bundled in the post4 Homebrew and PyPI distributions, next to the FTS and
-    VSS implementations added in post3. See [installation](install.md) for the
-    package commands.
+!!! note "Available in 1.5.6.post6"
+    The public packages add Avro and Excel to the bundled extensions.
+    See [installation](install.md) for the package commands.
 
 ## Bundled extensions
 
 | Extension | Load with | Provides |
 | --- | --- | --- |
+| avro | `LOAD avro;` | `read_avro` and Avro `COPY ... TO` |
+| excel | `LOAD excel;` | XLSX import, export and number formatting |
 | httpfs | `LOAD httpfs;` | HTTP(S), S3, R2, GCS and HuggingFace (`hf://`) reads; S3 writes and globbing; HTTP and S3 secrets; metadata and connection caching |
 | aws | `LOAD aws;` | `PROVIDER credential_chain` for S3 secrets: environment, profiles, processes, SSO, STS assume-role, web identity, container and instance metadata; `load_aws_credentials` |
 | azure | `LOAD azure;` | `az://`, `azure://`, `abfs://` and `abfss://` reads, writes and globbing; connection strings, SAS, SharedKey and the Azure identity providers |
@@ -31,8 +31,7 @@ That includes `SET`, `RESET` and `current_setting()` on an extension setting.
 
 ## Avro
 
-The 1.5.6.post6 source includes a bundled Avro extension. Install and load it
-without an extension download.
+Install and load the bundled Avro extension without a download.
 
 ```sql
 INSTALL avro;
@@ -56,7 +55,7 @@ DuckDB 1.5.6 Avro contract. [DuckDB 1.5 Avro reference](https://duckdb.org/docs/
 
 ## Excel workbooks
 
-Excel is bundled starting in roastedDuck 1.5.6.post5. Load it with `LOAD excel;`
+Excel is bundled starting in roastedDuck 1.5.6.post6. Load it with `LOAD excel;`
 or Python's `con.load_extension("excel")`.
 
 ```sql

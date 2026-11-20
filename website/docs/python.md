@@ -19,7 +19,7 @@ with duckdb.connect("example.duckdb") as connection:
 from importlib.metadata import version
 import duckdb
 
-print(version("roastedduck"))  # 1.5.6.post4: public Python distribution
+print(version("roastedduck"))  # 1.5.6.post6 public Python distribution
 print(duckdb.__duckdb_version__)  # separately reported compatibility engine version
 ```
 
@@ -27,9 +27,8 @@ print(duckdb.__duckdb_version__)  # separately reported compatibility engine ver
 version-gated client compatibility. Use `version("roastedduck")` for the public
 distribution version; `duckdb.version()` reports both. The package
 metadata distinguishes security/packaging revisions from the compatibility
-target. Version 1.5.6.post4 bundles roastedDuck's implementations of httpfs, aws,
-azure, icu, postgres_scanner, FTS and VSS. Load them during startup, for example
-`con.load_extension("httpfs")` or `con.load_extension("fts")`; see the
+target. Version 1.5.6.post6 adds bundled Avro and Excel. Load Avro at startup
+with `con.load_extension("avro")`. The other bundled extensions are listed in the
 [extension guide](extensions.md).
 Release manifests bind the tested wheel bytes and their installed native images.
 
