@@ -634,22 +634,20 @@ fn convert(cell: &Cell, ty: &LogicalType, epoch: f64) -> Result<Value> {
             .value
             .parse::<f64>()
             .map_err(|error| Error::invalid_input(error.to_string()))?;
-        let days = if ty.id() == LogicalTypeId::Time {
-            number.rem_euclid(1.0)
-        } else {
-            number - epoch
-        };
-        if !days.is_finite() || days.abs() >= (i64::MAX as f64 / MICROS_PER_DAY as f64) {
+        if !number.is_finite() {
             return Err(Error::invalid_input("Excel serial date is out of range"));
         }
-        let millis = (days * (MICROS_PER_DAY / 1000) as f64).round() as i64;
-        let micros = millis
-            .checked_mul(1000)
-            .ok_or_else(|| Error::invalid_input("Excel serial date is out of range"))?;
+        let days = number - epoch;
         return Ok(match ty.id() {
-            LogicalTypeId::Date => Value::date(Date(micros.div_euclid(MICROS_PER_DAY) as i32)),
-            LogicalTypeId::Time => Value::time(Time(micros.rem_euclid(MICROS_PER_DAY))),
-            _ => Value::timestamp(Timestamp(micros)),
+            LogicalTypeId::Date => Value::date(Date(days.floor() as i32)),
+            LogicalTypeId::Time => {
+                let micros = (number.rem_euclid(1.0) * (MICROS_PER_DAY / 1000) as f64).round() as i64 * 1000;
+                Value::time(Time(micros.rem_euclid(MICROS_PER_DAY)))
+            }
+            _ => {
+                let micros = (days * (MICROS_PER_DAY / 1000) as f64).round() * 1000.0;
+                Value::timestamp(Timestamp(micros as i64))
+            }
         });
     }
     Value::varchar(&cell.value).try_cast(ty)
