@@ -55,10 +55,11 @@ No crates.io publication is claimed.
 
 ## What is verified
 
-Release 1.5.6.post4 passes fresh source/package qualification, all 15 ordinary PyPI
-install cells, and public Homebrew bottle tests on three native platforms. Each bundled
-extension's original SQL tests were run on both engines; the
-[extension guide](website/docs/extensions.md#what-was-tested) has the results.
+Release 1.5.6.post6 passed source and package qualification, all 15 ordinary
+PyPI installs, and public Homebrew bottle tests on three native platforms.
+Both engines passed all 19 pinned Avro test files. Cross-engine Avro file
+exchange passed in both directions. The [extension guide](website/docs/extensions.md#avro)
+describes the new Avro reader and writer.
 [Release and provider evidence](https://amirbaron.github.io/roastedDuck/releases/)
 keeps software checks and platform exceptions explicit.
 
@@ -111,8 +112,8 @@ for prerequisites, tests, and the existing branch workflow.
 
 ## Bundled extensions
 
-Release 1.5.6.post4 includes Rust implementations of DuckDB's httpfs, aws, azure,
-icu and postgres_scanner extensions, in addition to FTS and VSS. Load them by name:
+Release 1.5.6.post6 adds bundled Avro and Excel alongside httpfs, aws, azure,
+icu, postgres_scanner, FTS and VSS. Enable an extension with `LOAD`.
 
 ```sql
 LOAD httpfs;   -- HTTP(S), S3, R2, GCS and HuggingFace files
@@ -120,9 +121,11 @@ LOAD aws;      -- AWS credential chains for S3 secrets
 LOAD azure;    -- Azure Blob and ADLS Gen2
 LOAD icu;      -- collations, time zones and calendars
 LOAD postgres; -- ATTACH PostgreSQL databases
+LOAD avro;     -- read_avro and COPY to Avro
+LOAD excel;    -- XLSX import, export and formatting
 ```
 
-Each extension's original SQL tests were run unchanged on DuckDB 1.5.6 and on
+The post4 extensions' original SQL tests were run unchanged on DuckDB 1.5.6 and on
 roastedDuck against local MinIO, Azure, PostgreSQL and AWS identity fixtures.
 The [extension guide](website/docs/extensions.md#what-was-tested) lists the
 results and the [compatibility guide](website/docs/compatibility.md#bundled-extensions)

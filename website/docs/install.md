@@ -1,7 +1,7 @@
 # Installation
 
 Download from [GitHub Releases](https://github.com/amirbaron/roastedDuck/releases).
-The current preview is `v1.5.6.post4`, targeting DuckDB 1.5.6. Each release has a `SHA256SUMS` manifest,
+The current preview is `v1.5.6.post6`, targeting DuckDB 1.5.6. Each release has a `SHA256SUMS` manifest,
 native SDKs, Python wheels, Swift packages, and a provenance report.
 
 ## Homebrew CLI
@@ -25,19 +25,19 @@ installs the CLI and notices. Use pip separately for the Python package.
 
 | Machine | Archive |
 | --- | --- |
-| Apple Silicon Mac | `roastedduck-1.5.6.post4-macos-arm64.tar.gz` |
-| Linux ARM64 | `roastedduck-1.5.6.post4-linux-arm64.tar.gz` |
-| Linux x86_64 | `roastedduck-1.5.6.post4-linux-amd64.tar.gz` |
+| Apple Silicon Mac | `roastedduck-1.5.6.post6-macos-arm64.tar.gz` |
+| Linux ARM64 | `roastedduck-1.5.6.post6-linux-arm64.tar.gz` |
+| Linux x86_64 | `roastedduck-1.5.6.post6-linux-amd64.tar.gz` |
 
 Download the appropriate archive and `SHA256SUMS` into the same directory.
 Check the archive's digest against its line in the manifest:
 
 ```sh
 # macOS; replace the filename on Linux and use sha256sum instead.
-shasum -a 256 roastedduck-1.5.6.post4-macos-arm64.tar.gz
-grep 'roastedduck-1.5.6.post4-macos-arm64.tar.gz' SHA256SUMS
+shasum -a 256 roastedduck-1.5.6.post6-macos-arm64.tar.gz
+grep 'roastedduck-1.5.6.post6-macos-arm64.tar.gz' SHA256SUMS
 mkdir roastedduck
-tar -xzf roastedduck-1.5.6.post4-macos-arm64.tar.gz -C roastedduck
+tar -xzf roastedduck-1.5.6.post6-macos-arm64.tar.gz -C roastedduck
 cd roastedduck
 ./bin/roastedDuck -c 'SELECT 42 AS answer;'
 ```
@@ -71,7 +71,7 @@ and Intel Mac wheels are outside this preview.
 
 The distribution name is `roastedduck`; the import name is `duckdb`. Install
 in a fresh virtual environment and do not co-install the official `duckdb`
-package. To pin this release, use `python -m pip install roastedduck==1.5.6.post4`.
+package. To pin this release, use `python -m pip install roastedduck==1.5.6.post6`.
 The same wheels and the tested source archive are also available in GitHub Releases.
 
 ## Build from source

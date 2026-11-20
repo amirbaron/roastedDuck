@@ -5,7 +5,7 @@ on:
       tag:
         description: Release tag to verify
         required: true
-        default: v1.5.6.post4
+        default: v1.5.6.post6
   release:
     types: [published]
 permissions:

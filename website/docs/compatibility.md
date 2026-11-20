@@ -1,9 +1,10 @@
 # Compatibility and preview status
 
 roastedDuck targets **DuckDB 1.5.6**, with matching version-family branch naming.
-The current `1.5.6.post4` revision bundles roastedDuck's implementations of
-DuckDB's httpfs, aws, azure, icu, postgres_scanner, FTS and VSS extensions while
-retaining the 1.5.6 engine compatibility identifiers.
+The `1.5.6.post6` release adds bundled Avro and Excel and retains the 1.5.6
+engine compatibility identifiers. See the [extension guide](extensions.md)
+for the supported SQL interfaces and the [release evidence](releases.md) for
+the published package checks.
 It is an experimental public preview. Evaluate your own workload and retain
 backups before using it with important data.
 
