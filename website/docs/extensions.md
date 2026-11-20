@@ -31,7 +31,7 @@ That includes `SET`, `RESET` and `current_setting()` on an extension setting.
 
 ## Avro
 
-The 1.5.6.post5 source includes a bundled Avro extension. Install and load it
+The 1.5.6.post6 source includes a bundled Avro extension. Install and load it
 without an extension download.
 
 ```sql

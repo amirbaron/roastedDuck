@@ -106,7 +106,7 @@ fn open_input(path: &[u8]) -> Result<Box<dyn Read + Send>> {
         .as_ref()
         .filter(|cache| cache.is_enabled())
         .map_or(0, |cache| {
-            WHOLE_FILE_CACHE_LIMIT.min(cache.buffer_manager().max_memory() as u64 / 8)
+            WHOLE_FILE_CACHE_LIMIT.min(cache.buffer_manager().max_memory() / 8)
         });
     let validation = CacheValidationMode::of_client(client.as_deref());
     let handle = CachingFileHandle::open(cache, path, validation)?;
