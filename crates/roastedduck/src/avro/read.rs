@@ -15,7 +15,7 @@ use roastedduck_function::{
     TableScanState,
 };
 use roastedduck_planner::operator::COLUMN_IDENTIFIER_EMPTY;
-use roastedduck_types::{DataChunk, Date, LogicalType, Time, Timestamp, Uuid, Value, Vector};
+use roastedduck_types::{DataChunk, Date, LogicalType, LogicalTypeId, Time, Timestamp, Uuid, Value, Vector};
 
 use super::container::{Reader, avro_error};
 
@@ -261,8 +261,8 @@ impl Layout {
     fn bind(schema: &Schema) -> Result<Self> {
         let resolved = ResolvedSchema::try_from(schema).map_err(avro_error)?;
         let root = logical_type(schema, &resolved, &mut Vec::new(), 0)?;
-        let (names, types) = if let Some(fields) = root.struct_children() {
-            fields.iter().cloned().unzip()
+        let (names, types) = if root.id() == LogicalTypeId::Struct {
+            root.struct_children().unwrap_or_default().iter().cloned().unzip()
         } else {
             (
                 vec![schema.name().map_or("avro_schema", Name::name).into()],
@@ -420,7 +420,7 @@ fn scan(
                 let value = convert(datum, &data.layout.root)?;
                 let fields = value.children();
                 for (output, index, null) in &source_columns {
-                    let field = if data.layout.root.struct_children().is_some() {
+                    let field = if data.layout.root.id() == LogicalTypeId::Struct {
                         fields.and_then(|fields| fields.get(*index)).unwrap_or(null)
                     } else {
                         &value

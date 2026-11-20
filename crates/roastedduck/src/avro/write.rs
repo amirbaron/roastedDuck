@@ -5,6 +5,7 @@ use apache_avro::Schema;
 use apache_avro::types::Value as AvroValue;
 use apache_avro::writer::datum::GenericDatumWriter;
 use roastedduck_common::{ByteString, Error, Result};
+use roastedduck_function::cast::ValueCast;
 use roastedduck_function::copy::{CopyFunctionBindInput, CopyGlobalState};
 use roastedduck_function::{CopyFunction, FunctionData};
 use roastedduck_types::{LogicalType, LogicalTypeId, Value};
@@ -38,19 +39,8 @@ impl FieldOptions {
                         Error::invalid_input("Avro field ID must be an integer")
                     })?)?);
             } else if name.eq_ignore_ascii_case(b"__duckdb_nullable") {
-                let nullable = child
-                    .as_bool()
-                    .or_else(|| match child.as_str() {
-                        Some(value) if value.eq_ignore_ascii_case("true") => Some(true),
-                        Some(value) if value.eq_ignore_ascii_case("false") => Some(false),
-                        _ => None,
-                    })
-                    .ok_or_else(|| {
-                        Error::invalid_input(
-                            "Failed to cast value for FIELD_IDS __duckdb_nullable to BOOLEAN",
-                        )
-                    })?;
-                options.required = !nullable;
+                let nullable = child.default_cast_as(&LogicalType::BOOLEAN)?;
+                options.required = nullable.as_bool() == Some(false);
             } else {
                 options.children.insert(name.clone(), Self::parse(child)?);
             }
@@ -167,15 +157,6 @@ impl SchemaBuilder {
                     .ok_or_else(|| Error::internal("Avro decimal precision is out of range"))?;
                 json!({"type": "fixed", "name": name, "logicalType": "decimal", "precision": precision, "scale": scale, "size": bytes})
             }
-            Id::Enum => {
-                let symbols = ty
-                    .enum_values()
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|name| identifier(name))
-                    .collect::<Result<Vec<_>>>()?;
-                json!({"type": "enum", "name": name, "symbols": symbols})
-            }
             Id::Struct => self.record(
                 &name,
                 ty.struct_children()
@@ -206,7 +187,7 @@ impl SchemaBuilder {
             }
             _ => {
                 return Err(Error::not_implemented(format!(
-                    "Cannot convert type {ty} to Avro"
+                    "Can't convert logical type '{ty}' to Avro type"
                 )));
             }
         })
@@ -340,13 +321,6 @@ fn encode(value: &Value, schema: &Schema) -> Result<AvroValue> {
         Schema::Decimal(_) => {
             let bytes = value.as_i128().ok_or_else(mismatch)?.to_be_bytes();
             AvroValue::Decimal(apache_avro::Decimal::new(bytes).map_err(avro_error)?)
-        }
-        Schema::Enum(schema) => {
-            let index = usize::try_from(value.as_i128().ok_or_else(mismatch)?).map_err(|_| mismatch())?;
-            AvroValue::Enum(
-                index as u32,
-                schema.symbols.get(index).ok_or_else(mismatch)?.clone(),
-            )
         }
         Schema::Array(array) => {
             let values = value.children().ok_or_else(mismatch)?;
