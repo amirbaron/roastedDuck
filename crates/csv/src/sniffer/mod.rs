@@ -3,6 +3,7 @@
 
 pub mod dialect;
 mod header;
+pub use header::normalize_column_name;
 mod types;
 
 use std::collections::BTreeMap;

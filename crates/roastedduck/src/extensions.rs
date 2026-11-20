@@ -70,13 +70,14 @@ const DEFAULT_EXTENSIONS: [(&str, &str); 30] = [
 ];
 
 /// The extensions the reference build links (loading them is a no-op).
-const LINKED_EXTENSIONS: [&str; 13] = [
+const LINKED_EXTENSIONS: [&str; 14] = [
     "core_functions",
     "postgres_scanner",
     "azure",
     "aws",
     "httpfs",
     "fts",
+    "excel",
     "vss",
     "icu",
     "parquet",
@@ -313,7 +314,7 @@ fn install_extension_options(
     // must not download an unrelated C++ binary or require a writable cache.
     if !is_full_path(&info.filename) {
         let name = apply_extension_alias(&info.filename);
-        if matches!(name.as_bytes(), b"fts" | b"vss" | b"httpfs" | b"aws" | b"azure") {
+        if matches!(name.as_bytes(), b"fts" | b"vss" | b"httpfs" | b"aws" | b"azure" | b"excel") {
             if !info.repository.is_empty() || !info.version.is_empty() {
                 return Err(Error::invalid_input(byte_format!(
                     "Extension '{name}' is bundled with roastedDuck and cannot be installed from another repository or version. Use LOAD {name}; upgrade roastedDuck to update its compatible implementation."

@@ -54,7 +54,7 @@ with duckdb.connect("example.duckdb") as connection:
 ## Versions and platforms
 
 The compatibility target is **DuckDB 1.5.6**. The distribution version
-`1.5.6.post4` identifies a roastedDuck extension and packaging revision of that
+`1.5.6.post5` identifies a roastedDuck extension and packaging revision of that
 target. `duckdb.__version__` and `duckdb.__duckdb_version__` retain the compatibility
 version; `importlib.metadata.version("roastedduck")` identifies the installed
 distribution, and `duckdb.version()` reports both.
@@ -105,6 +105,7 @@ binaries:
 | `azure` | Azure Blob and ADLS Gen2 reads, writes and globbing, Azure secrets and identity providers |
 | `icu` | ICU collations, time zones and calendars |
 | `postgres_scanner` | `ATTACH ... (TYPE postgres)`, `postgres_scan`, `postgres_query` and writes |
+| `excel` | XLSX import and export, worksheet selection, and Excel-style number formatting |
 | `fts`, `vss` | Full-text search (BM25) and in-memory HNSW vector indexes |
 
 ```python
@@ -115,8 +116,7 @@ con.execute("SELECT count(*) FROM 'https://example.com/data.parquet'")
 
 With `autoload_known_extensions` enabled, using a function, file scheme or setting
 of one of these extensions loads it. `INSTALL` succeeds offline for them, because
-there is nothing to install. Each extension's original test suite was run on both
-engines; the remaining differences are listed in the
+there is nothing to install. Extension compatibility details are listed in the
 [compatibility guide](https://amirbaron.github.io/roastedDuck/compatibility/).
 
 ### Full-text and vector search
@@ -133,3 +133,12 @@ Load implementations before executing batches containing their pragmas. FTS uses
 ordinary persisted tables and BM25 macros; rebuild its snapshot after document
 changes. VSS provides in-memory Rust HNSW indexes. HNSW persistence remains out of
 scope. See the [extension guide](https://amirbaron.github.io/roastedDuck/extensions/).
+
+### Excel workbooks
+
+```python
+con = duckdb.connect(":memory:")
+con.load_extension("excel")
+con.execute("COPY (SELECT 42 AS id) TO 'report.xlsx' (FORMAT XLSX, HEADER TRUE)")
+assert con.execute("SELECT id FROM read_xlsx('report.xlsx')").fetchone() == (42,)
+```

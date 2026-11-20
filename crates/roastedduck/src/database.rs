@@ -280,6 +280,7 @@ enum StaticExtension {
     Aws,
     Httpfs,
     Fts,
+    Excel,
     Vss,
     Parquet,
     Json,
@@ -308,6 +309,7 @@ impl StaticExtension {
             "aws" => Some(Self::Aws),
             "httpfs" => Some(Self::Httpfs),
             "fts" => Some(Self::Fts),
+            "excel" => Some(Self::Excel),
             crate::vss::EXTENSION_NAME => Some(Self::Vss),
             "parquet" => Some(Self::Parquet),
             "json" => Some(Self::Json),
@@ -335,7 +337,7 @@ impl StaticExtension {
             }
             Self::Tpch => PragmaFunction::call("tpch", vec![LogicalType::BIGINT]).with_query(),
             Self::Tpcds => PragmaFunction::call("tpcds", vec![LogicalType::BIGINT]).with_query(),
-            Self::Postgres | Self::Azure | Self::Aws | Self::Httpfs | Self::Autocomplete | Self::Icu => {
+            Self::Postgres | Self::Azure | Self::Aws | Self::Httpfs | Self::Autocomplete | Self::Icu | Self::Excel => {
                 return Vec::new();
             }
         };
@@ -353,6 +355,7 @@ impl StaticExtension {
             | Self::Aws
             | Self::Httpfs
             | Self::Fts
+            | Self::Excel
             | Self::Vss
             | Self::Parquet
             | Self::Json
@@ -372,6 +375,7 @@ impl StaticExtension {
             | Self::Aws
             | Self::Httpfs
             | Self::Fts
+            | Self::Excel
             | Self::Vss
             | Self::Parquet
             | Self::Json
@@ -412,6 +416,7 @@ impl StaticExtension {
                 system.register_scalar_functions(crate::fts::stem_function())?;
             }
             Self::Vss => crate::vss::register_catalog(system)?,
+            Self::Excel => crate::excel::register(system)?,
             Self::Parquet => {
                 system.register_copy_function(roastedduck_parquet::copy::parquet_copy_function())?;
                 for set in roastedduck_parquet::parquet_table_functions() {
@@ -2711,7 +2716,7 @@ impl Database {
             // The core function library is part of the system catalog, loaded at start-up
             // as the reference build's statically linked `core_functions` is.
             "core_functions" => ExtensionLoad::Loaded,
-            "icu" | "httpfs" | "inet" | "excel" | "sqlsmith" | "spatial" | "delta" | "iceberg" | "aws"
+            "icu" | "httpfs" | "inet" | "sqlsmith" | "spatial" | "delta" | "iceberg" | "aws"
             | "azure" | "motherduck" | "postgres_scanner" | "mysql_scanner" | "sqlite_scanner" | "vss"
             | "ui" | "encodings" | "ducklake" | "avro" | "demo_capi" => ExtensionLoad::NotAvailable,
             _ => ExtensionLoad::Unknown,

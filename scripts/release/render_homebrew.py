@@ -49,7 +49,7 @@ class Roastedduck < Formula
 
   def caveats
     <<~EOS
-      httpfs, aws, azure, icu, postgres_scanner, fts and vss are bundled.
+      httpfs, aws, azure, icu, postgres_scanner, fts, vss and excel are bundled.
       Load them by name, for example LOAD httpfs; or LOAD postgres;.
       HNSW indexes currently require an in-memory database.
       This preview targets DuckDB 1.5.6. It is independently maintained.
@@ -79,6 +79,11 @@ class Roastedduck < Formula
       LOAD azure;
       LOAD icu;
       LOAD postgres_scanner;
+      INSTALL excel;
+      LOAD excel;
+      COPY (SELECT 42 AS id) TO 'brew-test.xlsx' (FORMAT XLSX, HEADER true);
+      SELECT CASE WHEN max(id)=42 AND count(*)=1 AND excel_text(1234.5, '#,##0.00')='1,234.50'
+        THEN 'excel-ok' ELSE error('Excel failure') END FROM 'brew-test.xlsx';
       SELECT CASE WHEN count(*)=5 THEN 'extensions-ok' ELSE error('extension load failure') END FROM duckdb_extensions() WHERE loaded AND extension_name IN ('httpfs','aws','azure','icu','postgres_scanner');
       SELECT CASE WHEN 'a' COLLATE en < 'B' AND (TIMESTAMPTZ '2024-01-01 00:00:00+00' AT TIME ZONE 'Asia/Tokyo')::VARCHAR = '2024-01-01 09:00:00' THEN 'icu-ok' ELSE error('ICU failure') END;
       CREATE SECRET brew_s3 (TYPE s3, KEY_ID 'test', SECRET 'test', REGION 'eu-west-1');
@@ -93,6 +98,7 @@ class Roastedduck < Formula
     assert_match "icu-ok", output
     assert_match "secret-ok", output
     assert_match "postgres-ok", output
+    assert_match "excel-ok", output
   end
 end
 '''
