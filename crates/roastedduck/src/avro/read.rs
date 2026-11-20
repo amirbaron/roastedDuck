@@ -10,6 +10,7 @@ use roastedduck_csv::multi_file::{
     create_file_list, hive_parse, multi_file_parameters, multi_file_virtual_columns, parse_paths,
 };
 use roastedduck_csv::read_csv::{client_context, transform_string_to_logical_type};
+use roastedduck_function::cast::{CastFunctionSet, CastParameters, ValueCast};
 use roastedduck_function::{
     FunctionData, TableFunction, TableFunctionBindInput, TableFunctionBindOutput, TableFunctionSet,
     TableScanState,
@@ -253,6 +254,7 @@ fn convert(value: AvroValue, ty: &LogicalType) -> Result<Value> {
 #[derive(Debug, PartialEq, Eq)]
 struct Layout {
     root: LogicalType,
+    flatten_record: bool,
     names: Vec<ByteString>,
     types: Vec<LogicalType>,
 }
@@ -261,7 +263,8 @@ impl Layout {
     fn bind(schema: &Schema) -> Result<Self> {
         let resolved = ResolvedSchema::try_from(schema).map_err(avro_error)?;
         let root = logical_type(schema, &resolved, &mut Vec::new(), 0)?;
-        let (names, types) = if root.id() == LogicalTypeId::Struct {
+        let flatten_record = matches!(schema, Schema::Record(_)) && root.id() == LogicalTypeId::Struct;
+        let (names, types) = if flatten_record {
             root.struct_children().unwrap_or_default().iter().cloned().unzip()
         } else {
             (
@@ -269,7 +272,12 @@ impl Layout {
                 vec![root.clone()],
             )
         };
-        Ok(Self { root, names, types })
+        Ok(Self {
+            root,
+            flatten_record,
+            names,
+            types,
+        })
     }
 }
 
@@ -280,6 +288,7 @@ struct AvroScan {
     types: Vec<LogicalType>,
     constants: Vec<Vec<(usize, Value)>>,
     virtual_filename: bool,
+    casts: Arc<CastFunctionSet>,
 }
 impl FunctionData for AvroScan {
     fn as_any(&self) -> &dyn Any {
@@ -346,6 +355,7 @@ fn bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOutput> {
             types,
             constants,
             virtual_filename: !options.filename,
+            casts,
         })),
     })
 }
@@ -353,7 +363,31 @@ fn bind(input: &TableFunctionBindInput<'_>) -> Result<TableFunctionBindOutput> {
 #[derive(Default)]
 struct ScanState {
     next_file: usize,
-    current: Option<Reader>,
+    current: Option<ScanFile>,
+}
+
+struct ScanFile {
+    reader: Reader,
+    layout: Layout,
+    mapping: Vec<Option<usize>>,
+}
+impl ScanFile {
+    fn open(path: &[u8], target: &Layout) -> Result<Self> {
+        let reader = Reader::open(path)?;
+        let layout = Layout::bind(&reader.schema)?;
+        let names = layout
+            .names
+            .iter()
+            .enumerate()
+            .map(|(index, name)| (name.clone(), index))
+            .collect::<roastedduck_common::CaseInsensitiveMap<usize, ByteString>>();
+        let mapping = target.names.iter().map(|name| names.get(name).copied()).collect();
+        Ok(Self {
+            reader,
+            layout,
+            mapping,
+        })
+    }
 }
 
 fn scan(
@@ -376,18 +410,16 @@ fn scan(
             let Some(path) = data.paths.get(state.next_file) else {
                 return Ok(false);
             };
-            let reader = Reader::open(path)?;
-            if Layout::bind(&reader.schema)? != data.layout {
-                return Err(Error::invalid_input(roastedduck_common::byte_format!(
-                    "Avro schema mismatch in glob: {path}"
-                )));
-            }
-            state.current = Some(reader);
+            state.current = Some(ScanFile::open(path, &data.layout)?);
             state.next_file += 1;
         }
         let file_index = state.next_file - 1;
         let path = &data.paths[file_index];
         let file_constants = &data.constants[file_index];
+        let file = state
+            .current
+            .as_mut()
+            .ok_or_else(|| Error::internal("Missing Avro file reader"))?;
         let mut vectors = Vec::with_capacity(columns.len());
         let mut source_columns = Vec::new();
         for &column in columns {
@@ -404,28 +436,36 @@ fn scan(
             if let Some(value) = constant {
                 vectors.push(Vector::constant(&value)?);
             } else if let Some(ty) = data.types.get(index) {
-                source_columns.push((vectors.len(), index, Value::null(ty.clone())));
+                let source_index = file.mapping.get(index).and_then(|entry| *entry).ok_or_else(|| {
+                    let name = &data.layout.names[index];
+                    Error::invalid_input(roastedduck_common::byte_format!(
+                        "Avro schema mismatch in glob: {path} is missing column {name}"
+                    ))
+                })?;
+                source_columns.push((vectors.len(), source_index, Value::null(ty.clone())));
                 vectors.push(Vector::flat(ty.clone(), STANDARD_VECTOR_SIZE));
             } else {
                 vectors.push(Vector::constant_null(LogicalType::BIGINT));
             }
         }
         let mut row = 0;
-        let reader = state
-            .current
-            .as_mut()
-            .ok_or_else(|| Error::internal("Missing Avro file reader"))?;
-        let count = reader.read(STANDARD_VECTOR_SIZE, |datum| {
+        let count = file.reader.read(STANDARD_VECTOR_SIZE, |datum| {
             if !source_columns.is_empty() {
-                let value = convert(datum, &data.layout.root)?;
+                let value = convert(datum, &file.layout.root)?;
                 let fields = value.children();
                 for (output, index, null) in &source_columns {
-                    let field = if data.layout.root.id() == LogicalTypeId::Struct {
+                    let field = if file.layout.flatten_record {
                         fields.and_then(|fields| fields.get(*index)).unwrap_or(null)
                     } else {
                         &value
                     };
-                    vectors[*output].set_value(row, field)?;
+                    let ty = null.logical_type();
+                    if field.logical_type() == ty || field.is_null() {
+                        vectors[*output].set_value(row, field)?;
+                    } else {
+                        let field = field.cast_with(&data.casts, ty, &mut CastParameters::new())?;
+                        vectors[*output].set_value(row, &field)?;
+                    }
                 }
             }
             row += 1;

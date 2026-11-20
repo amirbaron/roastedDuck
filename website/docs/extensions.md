@@ -44,8 +44,9 @@ SELECT * FROM read_avro('events.avro', filename=true);
 `read_avro` accepts file paths, globs and lists of paths. Use `LOAD httpfs`
 for HTTP and S3 paths. The reader uses the embedded schema, flattens top-level
 records into SQL columns and supports null, Deflate, Snappy, LZMA and Zstandard
-blocks. Files in one call must have matching output schemas. Hive partitions,
-`filename` and `file_index` are available.
+blocks. The first file supplies the output schema. Later files match columns by
+name, so field order can differ. Hive partitions, `filename` and `file_index`
+are available.
 
 Write with `COPY ... TO`, using optional `ROOT_NAME`, `FIELD_IDS` and
 `METADATA`. Writes use uncompressed Avro blocks. Read into an existing table
