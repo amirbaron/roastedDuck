@@ -20,6 +20,7 @@ mod default_functions;
 mod default_settings;
 mod default_views;
 mod extension_http;
+mod excel;
 mod extensions;
 pub mod external_extensions;
 mod fts;

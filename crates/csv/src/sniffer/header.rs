@@ -44,7 +44,7 @@ fn trim_whitespace(col_name: &str) -> String {
 
 /// `NormalizeColumnName`: ASCII letters, digits and underscores, lowercase, prefixed with
 /// `_` when starting with a digit or being a keyword.
-fn normalize_column_name(col_name: &str) -> String {
+pub fn normalize_column_name(col_name: &str) -> String {
     let nfkd: String = col_name.nfkd().collect();
     let mut ascii = String::new();
     for byte in nfkd.bytes() {

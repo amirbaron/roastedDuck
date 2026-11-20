@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check bundled FTS/VSS loading and developer examples. Python 3.11+, no packages."""
+"""Check bundled extension loading and developer examples. Python 3.11+, no packages."""
 import argparse
 import hashlib
 import json
@@ -99,6 +99,49 @@ FROM duckdb_extensions() WHERE extension_name IN ('fts','vss');
         run('new-process-load-state', check, db)
         run('vss-persistence-boundary', 'LOAD vss; CREATE TABLE vectors(v FLOAT[3]); CREATE INDEX h ON vectors USING HNSW(v);',
             out / 'vectors.duckdb', 'HNSW indexes can only be created in in-memory databases')
+        workbook = quote(out / 'excel-smoke.xlsx')
+        run('excel-offline-roundtrip', f"""
+SELECT CASE WHEN installed AND NOT loaded AND install_mode='STATICALLY_LINKED'
+    THEN true ELSE error('excel discovery failed') END
+FROM duckdb_extensions() WHERE extension_name='excel';
+INSTALL excel;
+FORCE INSTALL excel;
+LOAD excel;
+LOAD excel;
+COPY (SELECT 42 AS id, 'A&B 🦆' AS label, DATE '2026-11-20' AS day)
+    TO {workbook} (FORMAT xlsx, HEADER true, SHEET 'Data & Notes');
+SELECT CASE WHEN count(*)=1 AND max(id)=42 AND max(label)='A&B 🦆' AND max(day)=DATE '2026-11-20'
+    THEN true ELSE error('XLSX round trip failed') END
+FROM read_xlsx({workbook}, sheet='Data & Notes');
+CREATE TABLE imported(id INTEGER, label VARCHAR, day DATE);
+COPY imported FROM {workbook} (FORMAT xlsx, HEADER true);
+SELECT CASE WHEN count(*)=1 AND max(id)=42 AND max(day)=DATE '2026-11-20'
+    THEN true ELSE error('XLSX COPY FROM failed') END FROM imported;
+""")
+        run('excel-autoload-format', """
+SET autoload_known_extensions=true;
+SELECT CASE WHEN excel_text(1234.5, '$#,##0.00')='$1,234.50'
+    THEN true ELSE error('excel_text failed') END;
+""")
+        run('excel-autoload-replacement', f"""
+SET autoload_known_extensions=true;
+SELECT CASE WHEN count(*)=1 AND max(id)=42
+    THEN true ELSE error('XLSX replacement scan failed') END FROM {workbook};
+""")
+        run('excel-multiple-vectors', """
+LOAD excel;
+SET TimeZone='Asia/Jerusalem';
+COPY (SELECT TIMESTAMPTZ '2026-11-20 12:00:00+00' AS local_at)
+    TO 'excel-timezone.xlsx' (FORMAT xlsx, HEADER true);
+SELECT CASE WHEN count(*)=1 AND max(local_at)=TIMESTAMP '2026-11-20 14:00:00'
+    THEN true ELSE error('XLSX session time zone failed') END FROM 'excel-timezone.xlsx';
+COPY (SELECT i AS id, CASE WHEN i % 3 <> 0 THEN 'filled' END AS label FROM range(5000) AS t(i))
+    TO 'excel-batches.xlsx' (FORMAT xlsx, HEADER true);
+SELECT CASE WHEN count(*)=5000 AND count(label)=3333 AND sum(id)=12497500
+    THEN true ELSE error('XLSX changed data across output batches') END
+FROM read_xlsx('excel-batches.xlsx', header=true, all_varchar=false, empty_as_varchar=true);
+""")
+        run('excel-bundled-repository-error', 'INSTALL excel FROM core;', expected_error='is bundled with roastedDuck')
         downloaded = list((out / 'extensions').rglob('*.duckdb_extension'))
         assert not downloaded, downloaded
         report['downloaded_extension_binaries'] = 0

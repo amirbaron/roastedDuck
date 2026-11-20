@@ -29,6 +29,32 @@ With `SET autoload_known_extensions=true`, a query that uses a function, file
 scheme, secret type or setting of one of these extensions loads it, as in DuckDB.
 That includes `SET`, `RESET` and `current_setting()` on an extension setting.
 
+## Excel workbooks
+
+Excel is bundled starting in roastedDuck 1.5.6.post5. Load it with `LOAD excel;`
+or Python's `con.load_extension("excel")`.
+
+```sql
+LOAD excel;
+COPY (SELECT 42 AS id, 'Paid' AS status)
+    TO 'report.xlsx' (FORMAT XLSX, HEADER true, SHEET 'Orders');
+SELECT * FROM read_xlsx('report.xlsx', sheet = 'Orders', range = 'A1:B2');
+SELECT excel_text(1234.5, '$#,##0.00');
+```
+
+Use `FROM 'report.xlsx'` to read the first worksheet with inferred headers and
+column types. Use `COPY target FROM 'report.xlsx' (FORMAT XLSX, HEADER true)`
+to read into a table with a fixed schema. `read_xlsx` also accepts
+`all_varchar`, `ignore_errors`, `empty_as_varchar`, `stop_at_empty` and
+`normalize_names`. An explicit range includes blank rows by default. An inferred
+range stops at the first empty row by default.
+
+Export creates one worksheet. Use `SHEET` to name it and `SHEET_ROW_LIMIT` to
+control the row limit. Import supports Office Open XML (`.xlsx`) and uses the
+cached results of formulas. A worksheet XML part can be up to 128 MiB and five
+million XML nodes. `text` is an alias for `excel_text`, which uses a Rust
+spreadsheet number formatter. Some format strings render differently from DuckDB.
+
 ## Remote files
 
 ```sql
