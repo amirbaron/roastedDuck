@@ -266,6 +266,24 @@ pub(super) fn copy_function() -> CopyFunction {
         "sheet_row_limit".to_owned(),
         CopyOption::new(LogicalType::INTEGER, CopyOptionMode::WriteOnly),
     ));
+    function.options.push((
+        "sheet_name".to_owned(),
+        CopyOption::new(LogicalType::VARCHAR, CopyOptionMode::WriteOnly),
+    ));
+    // Bind zone conversion in the query, where the session's casts and time
+    // zone are available, before encoding timezone-free Excel serials.
+    function.copy_to_select = Some(Arc::new(|input| {
+        let types: Vec<_> = input
+            .types
+            .iter()
+            .map(|ty| match ty.id() {
+                LogicalTypeId::TimestampTz => LogicalType::TIMESTAMP,
+                LogicalTypeId::TimeTz => LogicalType::TIME,
+                _ => ty.clone(),
+            })
+            .collect();
+        Ok((types != input.types).then_some(types))
+    }));
     function.copy_to_bind = Some(Arc::new(|input, names, _| {
         if names.len() > MAX_COLUMNS {
             return Err(Error::invalid_input(format!(
@@ -273,7 +291,9 @@ pub(super) fn copy_function() -> CopyFunction {
             )));
         }
         let first = |key: &str| input.options.get(key).and_then(|values| values.first());
-        let sheet = first("sheet").map_or_else(|| Ok("Sheet1".to_owned()), Value::to_varchar)?;
+        let sheet = first("sheet")
+            .or_else(|| first("sheet_name"))
+            .map_or_else(|| Ok("Sheet1".to_owned()), Value::to_varchar)?;
         if sheet.is_empty()
             || sheet.encode_utf16().count() > 31
             || sheet.contains(['[', ']', ':', '*', '?', '/', '\\'])

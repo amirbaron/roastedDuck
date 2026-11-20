@@ -130,6 +130,11 @@ SELECT CASE WHEN count(*)=1 AND max(id)=42
 """)
         run('excel-multiple-vectors', """
 LOAD excel;
+SET TimeZone='Asia/Jerusalem';
+COPY (SELECT TIMESTAMPTZ '2026-11-20 12:00:00+00' AS local_at)
+    TO 'excel-timezone.xlsx' (FORMAT xlsx, HEADER true);
+SELECT CASE WHEN count(*)=1 AND max(local_at)=TIMESTAMP '2026-11-20 14:00:00'
+    THEN true ELSE error('XLSX session time zone failed') END FROM 'excel-timezone.xlsx';
 COPY (SELECT i AS id, CASE WHEN i % 3 <> 0 THEN 'filled' END AS label FROM range(5000) AS t(i))
     TO 'excel-batches.xlsx' (FORMAT xlsx, HEADER true);
 SELECT CASE WHEN count(*)=5000 AND count(label)=3333 AND sum(id)=12497500
