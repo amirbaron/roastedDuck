@@ -49,7 +49,7 @@ class Roastedduck < Formula
 
   def caveats
     <<~EOS
-      httpfs, aws, azure, icu, postgres_scanner, fts, vss and excel are bundled.
+      httpfs, aws, azure, icu, postgres_scanner, fts, vss, excel and avro are bundled.
       Load them by name, for example LOAD httpfs; or LOAD postgres;.
       HNSW indexes currently require an in-memory database.
       This preview targets DuckDB 1.5.6. It is independently maintained.
@@ -73,6 +73,10 @@ class Roastedduck < Formula
       CREATE INDEX h ON vectors USING HNSW(v);
       SELECT CASE WHEN id=1 THEN 'vss-ok' ELSE error('VSS failure') END FROM (SELECT id FROM vectors ORDER BY array_distance(v,[1,0,0]::FLOAT[3]) LIMIT 1);
       EXPLAIN SELECT id FROM vectors ORDER BY array_distance(v,[1,0,0]::FLOAT[3]) LIMIT 1;
+      INSTALL avro;
+      LOAD avro;
+      COPY (SELECT 42 AS value) TO '#{{testpath}}/smoke.avro' (FORMAT AVRO);
+      SELECT CASE WHEN value=42 THEN 'avro-ok' ELSE error('Avro failure') END FROM read_avro('#{{testpath}}/smoke.avro');
       INSTALL httpfs;
       LOAD httpfs;
       LOAD aws;
@@ -93,6 +97,7 @@ class Roastedduck < Formula
     output = pipe_output("#{{bin}}/roastedduck".shellescape + " -batch -bail -init /dev/null :memory:", sql, 0)
     assert_match "fts-ok", output
     assert_match "vss-ok", output
+    assert_match "avro-ok", output
     assert_match "HNSW_INDEX_SCAN", output
     assert_match "extensions-ok", output
     assert_match "icu-ok", output

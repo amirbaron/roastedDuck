@@ -275,6 +275,7 @@ pub(crate) fn static_extension_loaded(cache: &roastedduck_function::ObjectCache,
 /// An extension linked into the engine whose functions are registered on load.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StaticExtension {
+    Avro,
     Postgres,
     Azure,
     Aws,
@@ -309,6 +310,7 @@ impl StaticExtension {
             "aws" => Some(Self::Aws),
             "httpfs" => Some(Self::Httpfs),
             "fts" => Some(Self::Fts),
+            "avro" => Some(Self::Avro),
             "excel" => Some(Self::Excel),
             crate::vss::EXTENSION_NAME => Some(Self::Vss),
             "parquet" => Some(Self::Parquet),
@@ -337,7 +339,14 @@ impl StaticExtension {
             }
             Self::Tpch => PragmaFunction::call("tpch", vec![LogicalType::BIGINT]).with_query(),
             Self::Tpcds => PragmaFunction::call("tpcds", vec![LogicalType::BIGINT]).with_query(),
-            Self::Postgres | Self::Azure | Self::Aws | Self::Httpfs | Self::Autocomplete | Self::Icu | Self::Excel => {
+            Self::Avro
+            | Self::Postgres
+            | Self::Azure
+            | Self::Aws
+            | Self::Httpfs
+            | Self::Autocomplete
+            | Self::Icu
+            | Self::Excel => {
                 return Vec::new();
             }
         };
@@ -350,7 +359,8 @@ impl StaticExtension {
         match self {
             Self::Tpch => name.eq_ignore_ascii_case(b"tpch"),
             Self::Tpcds => name.eq_ignore_ascii_case(b"tpcds"),
-            Self::Postgres
+            Self::Avro
+            | Self::Postgres
             | Self::Azure
             | Self::Aws
             | Self::Httpfs
@@ -370,7 +380,8 @@ impl StaticExtension {
         match self {
             Self::Tpch => roastedduck_tpch::pragma_tpch_query(parameters),
             Self::Tpcds => roastedduck_tpcds::pragma_tpcds_query(parameters),
-            Self::Postgres
+            Self::Avro
+            | Self::Postgres
             | Self::Azure
             | Self::Aws
             | Self::Httpfs
@@ -412,6 +423,7 @@ impl StaticExtension {
                 system.register_table_functions(crate::aws::legacy_function())?;
             }
             Self::Httpfs | Self::Azure => {}
+            Self::Avro => crate::avro::register(system)?,
             Self::Fts => {
                 system.register_scalar_functions(crate::fts::stem_function())?;
             }
@@ -2716,9 +2728,9 @@ impl Database {
             // The core function library is part of the system catalog, loaded at start-up
             // as the reference build's statically linked `core_functions` is.
             "core_functions" => ExtensionLoad::Loaded,
-            "icu" | "httpfs" | "inet" | "sqlsmith" | "spatial" | "delta" | "iceberg" | "aws"
-            | "azure" | "motherduck" | "postgres_scanner" | "mysql_scanner" | "sqlite_scanner" | "vss"
-            | "ui" | "encodings" | "ducklake" | "avro" | "demo_capi" => ExtensionLoad::NotAvailable,
+            "icu" | "httpfs" | "inet" | "sqlsmith" | "spatial" | "delta" | "iceberg" | "aws" | "azure"
+            | "motherduck" | "postgres_scanner" | "mysql_scanner" | "sqlite_scanner" | "vss" | "ui"
+            | "encodings" | "ducklake" | "demo_capi" => ExtensionLoad::NotAvailable,
             _ => ExtensionLoad::Unknown,
         })
     }

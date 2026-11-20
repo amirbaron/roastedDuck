@@ -20,6 +20,7 @@ does not replace those terms or grant rights to third-party trademarks.
 | utf8proc data | [utf8proc license](crates/common/data/utf8proc-LICENSE) |
 | Zstandard | [Retained ZSTD license](crates/zstd/LICENSE-ZSTD) |
 | TPC-H dbgen / TPC-DS dsdgen | [TPC-H notice](crates/tpch/LICENSE), [TPC-DS notice](crates/tpcds/LICENSE). Measurements here are engineering workloads, not audited TPC benchmark results. |
+| Avro datum and schema encoding | Apache Avro for Rust, Apache-2.0. Its LICENSE and NOTICE are retained in the generated dependency notices. |
 | Apache Arrow ADBC interface | [Apache 2.0](crates/capi/src/adbc/LICENSE-APACHE), [NOTICE](crates/capi/src/adbc/NOTICE) |
 | Python experimental Spark compatibility helpers | [Retained Apache license](python/duckdb/experimental/spark/LICENSE) |
 | Modified miniz_oxide | [Notices](third_party/miniz_oxide/LICENSE), MIT / Apache-2.0 / zlib texts in that directory |

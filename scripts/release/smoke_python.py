@@ -70,6 +70,13 @@ with tempfile.TemporaryDirectory() as temp, duckdb.connect(":memory:") as con:
 with tempfile.TemporaryDirectory() as temp, duckdb.connect(":memory:") as con:
     (Path(temp) / "rows.csv").write_text("i\n" + "".join(f"{i}\n" for i in range(100)))
 
+    avro = str(Path(temp) / "rows.avro")
+    con.execute("SET custom_extension_repository='http://127.0.0.1:1'")
+    con.install_extension("avro")
+    con.load_extension("avro")
+    con.execute("COPY (SELECT * FROM (VALUES (1, 'one'), (2, NULL)) t(i, label)) TO ? (FORMAT AVRO)", [avro])
+    assert con.execute("SELECT * FROM read_avro(?) ORDER BY i", [avro]).fetchall() == [(1, "one"), (2, None)]
+
     class Quiet(http.server.SimpleHTTPRequestHandler):
         def log_message(self, *unused):
             pass
@@ -85,6 +92,7 @@ with tempfile.TemporaryDirectory() as temp, duckdb.connect(":memory:") as con:
         assert con.execute("SELECT 'ö' < 'z' COLLATE de, (TIMESTAMPTZ '2024-01-01 00:00:00+00' AT TIME ZONE 'Asia/Tokyo')::VARCHAR"
                            ).fetchone() == (True, "2024-01-01 09:00:00")
         assert con.execute("SELECT sum(i) FROM read_csv(?)", [f"http://127.0.0.1:{server.server_port}/rows.csv"]).fetchone() == (4950,)
+        assert con.execute("SELECT sum(i) FROM read_avro(?)", [f"http://127.0.0.1:{server.server_port}/rows.avro"]).fetchone() == (3,)
         con.execute("CREATE SECRET smoke_s3 (TYPE s3, KEY_ID 'smoke', SECRET 'smoke', REGION 'eu-west-1')")
         con.execute("CREATE SECRET smoke_chain (TYPE s3, PROVIDER credential_chain, CHAIN 'env', REGION 'eu-west-1')")
         con.execute("CREATE SECRET smoke_azure (TYPE azure, CONNECTION_STRING 'DefaultEndpointsProtocol=http;"
@@ -106,4 +114,4 @@ with tempfile.TemporaryDirectory() as temp, duckdb.connect(":memory:") as con:
 print(json.dumps({"status": "passed", "distribution": "roastedduck", "version": importlib.metadata.version("roastedduck"),
                   "engine_version": duckdb.__duckdb_version__, "extension": duckdb.__file__,
                   "checks": ["identity", "aggregate", "parameters", "unicode", "rollback", "reopen", "parquet", "bundled_fts", "bundled_vss", "offline_install",
-                             "bundled_icu", "bundled_httpfs", "bundled_aws", "bundled_azure", "bundled_postgres_scanner", "bundled_excel"]}))
+                             "bundled_icu", "bundled_httpfs", "bundled_aws", "bundled_azure", "bundled_postgres_scanner", "bundled_excel", "bundled_avro", "http_avro"]}))

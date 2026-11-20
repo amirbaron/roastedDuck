@@ -54,7 +54,7 @@ with duckdb.connect("example.duckdb") as connection:
 ## Versions and platforms
 
 The compatibility target is **DuckDB 1.5.6**. The distribution version
-`1.5.6.post5` identifies a roastedDuck extension and packaging revision of that
+`1.5.6.post6` identifies a roastedDuck extension and packaging revision of that
 target. `duckdb.__version__` and `duckdb.__duckdb_version__` retain the compatibility
 version; `importlib.metadata.version("roastedduck")` identifies the installed
 distribution, and `duckdb.version()` reports both.
@@ -105,6 +105,7 @@ binaries:
 | `azure` | Azure Blob and ADLS Gen2 reads, writes and globbing, Azure secrets and identity providers |
 | `icu` | ICU collations, time zones and calendars |
 | `postgres_scanner` | `ATTACH ... (TYPE postgres)`, `postgres_scan`, `postgres_query` and writes |
+| `avro` | Read Avro files with `read_avro` and write them with `COPY ... TO` |
 | `excel` | XLSX import and export, worksheet selection, and Excel-style number formatting |
 | `fts`, `vss` | Full-text search (BM25) and in-memory HNSW vector indexes |
 

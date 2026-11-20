@@ -29,6 +29,31 @@ With `SET autoload_known_extensions=true`, a query that uses a function, file
 scheme, secret type or setting of one of these extensions loads it, as in DuckDB.
 That includes `SET`, `RESET` and `current_setting()` on an extension setting.
 
+## Avro
+
+The 1.5.6.post6 source includes a bundled Avro extension. Install and load it
+without an extension download.
+
+```sql
+INSTALL avro;
+LOAD avro;
+COPY (SELECT 1 AS id, 'open' AS status) TO 'events.avro' (FORMAT AVRO);
+SELECT * FROM read_avro('events.avro', filename=true);
+```
+
+`read_avro` accepts file paths, globs and lists of paths. Use `LOAD httpfs`
+for HTTP and S3 paths. The reader uses the embedded schema, flattens top-level
+records into SQL columns and supports null, Deflate, Snappy, LZMA and Zstandard
+blocks. The first file supplies the output schema. Later files match columns by
+name, so field order can differ. Hive partitions, `filename` and `file_index`
+are available.
+
+Write with `COPY ... TO`, using optional `ROOT_NAME`, `FIELD_IDS` and
+`METADATA`. Writes use uncompressed Avro blocks. Read into an existing table
+with `INSERT INTO target SELECT * FROM read_avro(...)`. Recursive schemas,
+`union_by_name`, separate reader schemas and `COPY ... FROM` are outside the
+DuckDB 1.5.6 Avro contract. [DuckDB 1.5 Avro reference](https://duckdb.org/docs/1.5/core_extensions/avro).
+
 ## Excel workbooks
 
 Excel is bundled starting in roastedDuck 1.5.6.post5. Load it with `LOAD excel;`
