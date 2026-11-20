@@ -1375,6 +1375,7 @@ pub const EXTENSION_SETTINGS: &[(&str, &str)] = &[
 /// `EXTENSION_COPY_FUNCTIONS`: the extension of each of these copy functions.
 pub const EXTENSION_COPY_FUNCTIONS: &[(&str, &str)] = &[
     ("parquet", "parquet"),
+    ("xlsx", "excel"),
     ("json", "json"),
     ("avro", "avro"),
     ("iceberg", "iceberg"),

@@ -55,6 +55,15 @@ with duckdb.connect(":memory:") as con:
     con.execute("INSERT INTO vectors VALUES (1,[1,0,0]),(2,[0,1,0])")
     con.execute("CREATE INDEX h ON vectors USING HNSW(v)")
     assert con.execute("SELECT id FROM vectors ORDER BY array_distance(v,[1,0,0]::FLOAT[3]) LIMIT 1").fetchone() == (1,)
+# A real workbook round trip through the installed binding, with downloads disabled.
+with tempfile.TemporaryDirectory() as temp, duckdb.connect(":memory:") as con:
+    workbook = Path(temp) / "smoke.xlsx"
+    con.execute("SET custom_extension_repository='http://127.0.0.1:1'")
+    con.install_extension("excel")
+    con.load_extension("excel")
+    con.execute("COPY (SELECT 42 AS id, 'A&B 🦆' AS label) TO ? (FORMAT XLSX, HEADER TRUE)", [str(workbook)])
+    assert con.execute("SELECT id, label FROM read_xlsx(?)", [str(workbook)]).fetchall() == [(42, "A&B 🦆")]
+    assert con.execute("SELECT excel_text(1234.5, '#,##0.00')").fetchone() == ("1,234.50",)
 # The other bundled extensions, offline: ICU collation and time zones, the HTTP
 # filesystem against a loopback server, the S3 and Azure secret types and
 # providers, and the PostgreSQL scanner's functions.
@@ -105,4 +114,4 @@ with tempfile.TemporaryDirectory() as temp, duckdb.connect(":memory:") as con:
 print(json.dumps({"status": "passed", "distribution": "roastedduck", "version": importlib.metadata.version("roastedduck"),
                   "engine_version": duckdb.__duckdb_version__, "extension": duckdb.__file__,
                   "checks": ["identity", "aggregate", "parameters", "unicode", "rollback", "reopen", "parquet", "bundled_fts", "bundled_vss", "offline_install",
-                             "bundled_icu", "bundled_httpfs", "bundled_aws", "bundled_azure", "bundled_postgres_scanner", "bundled_avro", "http_avro"]}))
+                             "bundled_icu", "bundled_httpfs", "bundled_aws", "bundled_azure", "bundled_postgres_scanner", "bundled_excel", "bundled_avro", "http_avro"]}))

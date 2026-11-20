@@ -16,6 +16,9 @@ roastedduck-zstd = { path = "../zstd" }
 roastedduck-postgres = { path = "../postgres" }
 roastedduck-aws = { path = "../aws" }
 flate2 = "1"
+roxmltree = { version = "0.21", default-features = false, features = ["std"] }
+ssf-rs = "0.1.1"
+zip = { version = "9.8.1", default-features = false, features = ["deflate-flate2"] }
 roastedduck-snowball = { path = "../snowball" }
 roastedduck-common.workspace = true
 roastedduck-types.workspace = true

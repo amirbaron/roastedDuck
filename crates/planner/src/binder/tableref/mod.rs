@@ -412,6 +412,8 @@ fn csv_replacement_scan(base: &BaseTableRef, alias: &[u8]) -> Result<Option<Tabl
     } else if can_replace("json") || can_replace("jsonl") || can_replace("ndjson") {
         // The JSON extension's `ReadJSONReplacement`.
         "read_json_auto"
+    } else if has_extension(&full_lower_name, "xlsx") {
+        "read_xlsx"
     } else {
         return Ok(None);
     };
