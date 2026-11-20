@@ -60,7 +60,10 @@ fn excel_text(input: &DataChunk, _: &mut FunctionState, output: &mut Vector) -> 
             return Err(Error::invalid_input("Excel number format exceeds 4096 bytes"));
         }
         let format = std::str::from_utf8(format).map_err(|error| Error::invalid_input(error.to_string()))?;
-        let result = ssfmt::format_default(number, format)
+        // A malformed user-supplied format must stay a SQL error, including
+        // formats that the formatter rejects through an internal assertion.
+        let result = std::panic::catch_unwind(|| ssf_rs::format_str(format, number))
+            .map_err(|_| Error::invalid_input("Invalid Excel number format"))?
             .map_err(|error| Error::invalid_input(format!("Invalid Excel format: {error}")))?;
         out.extend_from_slice(result.as_bytes());
         Ok(true)
